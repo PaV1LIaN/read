@@ -6,9 +6,7 @@
     $ratio = trim($ratio);
     if (!in_array($ratio, ['50-50','33-67','67-33'], true)) $ratio = '50-50';
 
-    $content = [
-        'left' => $left,
-        'right' => $right,
-        'ratio' => $ratio,
-    ];
+    $b['content']['left'] = $left;
+    $b['content']['right'] = $right;
+    $b['content']['ratio'] = $ratio;
 }
