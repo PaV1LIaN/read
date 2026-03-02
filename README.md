@@ -1,251 +1,252 @@
-Ок, тогда следующий шаг без rewrite, но очень полезный для “конструктора”: **шаблоны/секции (Sections Library)** — чтобы добавлять не “один блок”, а готовую секцию из нескольких блоков (как в Tilda: “обложка”, “о нас”, “преимущества”, “галерея + текст”).
+Отлично — делаем **каталог секций (Templates Library) прямо в editor**: карточки шаблонов + поиск + кнопки **Вставить / Заменить / Переименовать / Удалить**.
 
-Сделаем минимально и быстро:
-
-* хранить шаблоны в файле `/upload/sitebuilder/templates.json`
-* API:
-
-  * `template.list`
-  * `template.createFromPage` (сохранить текущую страницу как шаблон)
-  * `template.applyToPage` (вставить шаблон в страницу: либо “в конец”, либо “заменить страницу”)
-* UI в editor.php: две кнопки
-
-  * **“Сохранить как шаблон”**
-  * **“Вставить шаблон”**
+Сделаем без превью-картинок (пока), но с полезной инфой: сколько блоков, когда создан, кем.
 
 ---
 
-# 1) api.php — добавляем templates.json
+# 1) api.php — добавляем 2 actions: `template.rename`, `template.delete`
 
-## 1.1 storage функции
+Вставь перед `UNKNOWN_ACTION`.
 
-Добавь рядом с другими `sb_read_*`:
-
-```php
-function sb_read_templates(): array { return sb_read_json_file('templates.json'); }
-function sb_write_templates(array $templates): void { sb_write_json_file('templates.json', $templates, 'Cannot open templates.json'); }
-```
-
----
-
-# 2) api.php — actions для шаблонов
-
-## 2.1 template.list
+### `template.rename`
 
 ```php
-if ($action === 'template.list') {
-    $tpl = sb_read_templates();
-    usort($tpl, fn($a,$b) => strcmp((string)($b['createdAt'] ?? ''), (string)($a['createdAt'] ?? '')));
-    echo json_encode(['ok'=>true,'templates'=>$tpl], JSON_UNESCAPED_UNICODE);
-    exit;
-}
-```
-
-## 2.2 template.createFromPage
-
-Сохраняем *снимок* блоков страницы (только `type/content/sort`), без id.
-
-```php
-if ($action === 'template.createFromPage') {
-    $siteId = (int)($_POST['siteId'] ?? 0);
-    $pageId = (int)($_POST['pageId'] ?? 0);
+if ($action === 'template.rename') {
+    $id = (int)($_POST['id'] ?? 0);
     $name = trim((string)($_POST['name'] ?? ''));
 
-    if ($siteId<=0 || $pageId<=0) { http_response_code(422); echo json_encode(['ok'=>false,'error'=>'SITE_PAGE_REQUIRED'], JSON_UNESCAPED_UNICODE); exit; }
-    if ($name==='') { http_response_code(422); echo json_encode(['ok'=>false,'error'=>'NAME_REQUIRED'], JSON_UNESCAPED_UNICODE); exit; }
-
-    sb_require_editor($siteId);
-
-    $page = sb_find_page($pageId);
-    if (!$page || (int)($page['siteId'] ?? 0) !== $siteId) { http_response_code(404); echo json_encode(['ok'=>false,'error'=>'PAGE_NOT_FOUND'], JSON_UNESCAPED_UNICODE); exit; }
-
-    $blocks = sb_read_blocks();
-    $pageBlocks = array_values(array_filter($blocks, fn($b)=> (int)($b['pageId'] ?? 0) === $pageId));
-    usort($pageBlocks, fn($a,$b)=> (int)($a['sort'] ?? 500) <=> (int)($b['sort'] ?? 500));
-
-    $snapshot = [];
-    foreach ($pageBlocks as $b) {
-        $snapshot[] = [
-            'type' => (string)($b['type'] ?? 'text'),
-            'sort' => (int)($b['sort'] ?? 500),
-            'content' => is_array($b['content'] ?? null) ? $b['content'] : [],
-        ];
-    }
+    if ($id <= 0) { http_response_code(422); echo json_encode(['ok'=>false,'error'=>'ID_REQUIRED'], JSON_UNESCAPED_UNICODE); exit; }
+    if ($name === '') { http_response_code(422); echo json_encode(['ok'=>false,'error'=>'NAME_REQUIRED'], JSON_UNESCAPED_UNICODE); exit; }
 
     $tpl = sb_read_templates();
-    $maxId = 0; foreach ($tpl as $t) $maxId = max($maxId, (int)($t['id'] ?? 0));
-    $id = $maxId + 1;
+    $found = false;
 
-    $record = [
-        'id' => $id,
-        'name' => $name,
-        'createdAt' => date('c'),
-        'createdBy' => (int)$USER->GetID(),
-        'blocks' => $snapshot,
-    ];
+    foreach ($tpl as &$t) {
+        if ((int)($t['id'] ?? 0) === $id) {
+            $t['name'] = $name;
+            $t['updatedAt'] = date('c');
+            $t['updatedBy'] = (int)$USER->GetID();
+            $found = true;
+            break;
+        }
+    }
+    unset($t);
 
-    $tpl[] = $record;
+    if (!$found) { http_response_code(404); echo json_encode(['ok'=>false,'error'=>'TEMPLATE_NOT_FOUND'], JSON_UNESCAPED_UNICODE); exit; }
+
     sb_write_templates($tpl);
-
-    echo json_encode(['ok'=>true,'template'=>$record], JSON_UNESCAPED_UNICODE);
+    echo json_encode(['ok'=>true], JSON_UNESCAPED_UNICODE);
     exit;
 }
 ```
 
-## 2.3 template.applyToPage
-
-Два режима:
-
-* `mode=append` (добавить в конец)
-* `mode=replace` (стереть старые блоки и вставить шаблон)
+### `template.delete`
 
 ```php
-if ($action === 'template.applyToPage') {
-    $siteId = (int)($_POST['siteId'] ?? 0);
-    $pageId = (int)($_POST['pageId'] ?? 0);
-    $tplId  = (int)($_POST['templateId'] ?? 0);
-    $mode   = (string)($_POST['mode'] ?? 'append');
+if ($action === 'template.delete') {
+    $id = (int)($_POST['id'] ?? 0);
+    if ($id <= 0) { http_response_code(422); echo json_encode(['ok'=>false,'error'=>'ID_REQUIRED'], JSON_UNESCAPED_UNICODE); exit; }
 
-    if ($siteId<=0 || $pageId<=0 || $tplId<=0) { http_response_code(422); echo json_encode(['ok'=>false,'error'=>'PARAMS_REQUIRED'], JSON_UNESCAPED_UNICODE); exit; }
-    if ($mode !== 'append' && $mode !== 'replace') $mode = 'append';
+    $tpl = sb_read_templates();
+    $before = count($tpl);
+    $tpl = array_values(array_filter($tpl, fn($t) => (int)($t['id'] ?? 0) !== $id));
 
-    sb_require_editor($siteId);
+    if (count($tpl) === $before) { http_response_code(404); echo json_encode(['ok'=>false,'error'=>'TEMPLATE_NOT_FOUND'], JSON_UNESCAPED_UNICODE); exit; }
 
-    $page = sb_find_page($pageId);
-    if (!$page || (int)($page['siteId'] ?? 0) !== $siteId) { http_response_code(404); echo json_encode(['ok'=>false,'error'=>'PAGE_NOT_FOUND'], JSON_UNESCAPED_UNICODE); exit; }
-
-    $tplAll = sb_read_templates();
-    $tpl = null;
-    foreach ($tplAll as $t) if ((int)($t['id'] ?? 0) === $tplId) { $tpl = $t; break; }
-    if (!$tpl) { http_response_code(404); echo json_encode(['ok'=>false,'error'=>'TEMPLATE_NOT_FOUND'], JSON_UNESCAPED_UNICODE); exit; }
-
-    $blocks = sb_read_blocks();
-
-    // очистка старых блоков
-    if ($mode === 'replace') {
-        $blocks = array_values(array_filter($blocks, fn($b)=> (int)($b['pageId'] ?? 0) !== $pageId));
-    }
-
-    // вычислим новые id и sort
-    $maxId = 0; foreach ($blocks as $b) $maxId = max($maxId, (int)($b['id'] ?? 0));
-    $nextId = $maxId + 1;
-
-    $maxSort = 0;
-    foreach ($blocks as $b) if ((int)($b['pageId'] ?? 0) === $pageId) $maxSort = max($maxSort, (int)($b['sort'] ?? 0));
-    $baseSort = ($mode === 'append') ? ($maxSort + 10) : 10;
-
-    $tplBlocks = is_array($tpl['blocks'] ?? null) ? $tpl['blocks'] : [];
-    $i = 0;
-
-    foreach ($tplBlocks as $tb) {
-        if (!is_array($tb)) continue;
-        $type = (string)($tb['type'] ?? 'text');
-        $content = is_array($tb['content'] ?? null) ? $tb['content'] : [];
-
-        $blocks[] = [
-            'id' => $nextId++,
-            'pageId' => $pageId,
-            'type' => $type,
-            'sort' => $baseSort + ($i * 10),
-            'content' => $content,
-            'createdBy' => (int)$USER->GetID(),
-            'createdAt' => date('c'),
-            'updatedAt' => date('c'),
-        ];
-        $i++;
-    }
-
-    sb_write_blocks($blocks);
-    echo json_encode(['ok'=>true,'added'=>$i], JSON_UNESCAPED_UNICODE);
+    sb_write_templates($tpl);
+    echo json_encode(['ok'=>true], JSON_UNESCAPED_UNICODE);
     exit;
 }
 ```
 
 ---
 
-# 3) editor.php — минимальный UI
+# 2) editor.php — делаем “Каталог секций” кнопкой (вместо 100 новых экранов)
 
-В верхней панели рядом с “Открыть просмотр” добавь 2 кнопки:
+## 2.1 Кнопка
+
+В top-панели добавь ещё одну:
 
 ```html
-<a class="ui-btn ui-btn-light" href="javascript:void(0)" id="btnSaveTemplate">Сохранить как шаблон</a>
-<a class="ui-btn ui-btn-light" href="javascript:void(0)" id="btnApplyTemplate">Вставить шаблон</a>
+<a class="ui-btn ui-btn-light" href="javascript:void(0)" id="btnSections">Каталог секций</a>
 ```
 
-В JS добавь:
+## 2.2 CSS для “каталога”
+
+В `<style>` добавь:
+
+```css
+/* sections library */
+.secGrid{display:grid;gap:12px;margin-top:12px;}
+@media (min-width: 820px){ .secGrid{grid-template-columns: 1fr 1fr;} }
+.secCard{border:1px solid #e5e7ea;border-radius:14px;background:#fff;padding:12px;}
+.secTitle{font-weight:800;}
+.secMeta{color:#6a737f;font-size:12px;margin-top:4px;}
+.secBtns{display:flex;gap:6px;flex-wrap:wrap;margin-top:10px;}
+.secSearch{margin-top:10px;}
+```
+
+## 2.3 JS: логика каталога
+
+Внутри `BX.ready(...)`:
+
+### 2.3.1 Получаем кнопку
+
+Рядом с другими `const ...`:
 
 ```js
-const btnSaveTemplate = document.getElementById('btnSaveTemplate');
-const btnApplyTemplate = document.getElementById('btnApplyTemplate');
+const btnSections = document.getElementById('btnSections');
+```
 
-function saveTemplateFromPage(){
-  BX.UI.Dialogs.MessageBox.show({
-    title:'Сохранить как шаблон',
-    message:`<div class="field"><label>Название шаблона</label><input id="tpl_name" class="input" placeholder="например: Обложка + преимущества"></div>`,
-    buttons: BX.UI.Dialogs.MessageBoxButtons.OK_CANCEL,
-    onOk: function(mb){
-      const name = (document.getElementById('tpl_name')?.value || '').trim();
-      if(!name){ notify('Введите название'); return; }
-      api('template.createFromPage', { siteId, pageId, name }).then(r=>{
-        if(!r || r.ok!==true){ notify('Не удалось сохранить шаблон'); return; }
-        notify('Шаблон сохранён');
-        mb.close();
-      }).catch(()=>notify('Ошибка template.createFromPage'));
-    }
-  });
-}
+### 2.3.2 Функция открытия каталога
 
-async function applyTemplateToPage(){
+Вставь **после** `api/notify/loadBlocks` (как делал с шаблонами):
+
+```js
+async function openSectionsLibrary() {
   let res;
-  try { res = await api('template.list', {}); } catch(e){ notify('Ошибка template.list'); return; }
-  if(!res || res.ok!==true){ notify('Не удалось получить шаблоны'); return; }
-  const list = res.templates || [];
-  if(!list.length){ notify('Шаблонов нет. Сначала сохрани один.'); return; }
+  try { res = await api('template.list', {}); } catch(e) { notify('Ошибка template.list'); return; }
+  if (!res || res.ok !== true) { notify('Не удалось получить шаблоны'); return; }
 
-  const opts = list.map(t=>`<option value="${t.id}">${BX.util.htmlspecialchars(t.name)} (id ${t.id})</option>`).join('');
+  let templates = res.templates || [];
+  if (!templates.length) { notify('Шаблонов нет. Сначала сохрани страницу как шаблон.'); return; }
+
+  const render = (q) => {
+    const query = (q || '').trim().toLowerCase();
+    const filtered = templates.filter(t => (t.name || '').toLowerCase().includes(query));
+
+    const cards = filtered.map(t => {
+      const blocksCount = Array.isArray(t.blocks) ? t.blocks.length : 0;
+      const createdAt = (t.createdAt || '').replace('T',' ').replace('Z','');
+      return `
+        <div class="secCard" data-tpl="${t.id}">
+          <div class="secTitle">${BX.util.htmlspecialchars(t.name || ('Template #' + t.id))}</div>
+          <div class="secMeta">id: ${t.id} • блоков: ${blocksCount} • создан: ${BX.util.htmlspecialchars(createdAt)}</div>
+
+          <div class="secBtns">
+            <button class="ui-btn ui-btn-primary ui-btn-xs" data-tpl-apply="${t.id}" data-mode="append">Вставить</button>
+            <button class="ui-btn ui-btn-light ui-btn-xs" data-tpl-apply="${t.id}" data-mode="replace">Заменить</button>
+            <button class="ui-btn ui-btn-light ui-btn-xs" data-tpl-rename="${t.id}">Переименовать</button>
+            <button class="ui-btn ui-btn-danger ui-btn-xs" data-tpl-delete="${t.id}">Удалить</button>
+          </div>
+        </div>
+      `;
+    }).join('');
+
+    return `
+      <div>
+        <div class="secSearch">
+          <input id="sec_q" class="input" placeholder="Поиск шаблонов..." value="${BX.util.htmlspecialchars(q || '')}">
+        </div>
+        <div class="secGrid">${cards || '<div class="muted">Ничего не найдено</div>'}</div>
+      </div>
+    `;
+  };
+
   BX.UI.Dialogs.MessageBox.show({
-    title:'Вставить шаблон',
-    message:`
-      <div class="field">
-        <label>Шаблон</label>
-        <select id="tpl_id" class="input">${opts}</select>
-      </div>
-      <div class="field">
-        <label>Режим</label>
-        <select id="tpl_mode" class="input">
-          <option value="append">Добавить в конец</option>
-          <option value="replace">Заменить страницу</option>
-        </select>
-      </div>
-    `,
-    buttons: BX.UI.Dialogs.MessageBoxButtons.OK_CANCEL,
-    onOk: function(mb){
-      const templateId = parseInt(document.getElementById('tpl_id')?.value || '0', 10);
-      const mode = document.getElementById('tpl_mode')?.value || 'append';
-      if(!templateId){ notify('Выбери шаблон'); return; }
-
-      api('template.applyToPage', { siteId, pageId, templateId, mode }).then(r=>{
-        if(!r || r.ok!==true){ notify('Не удалось применить шаблон'); return; }
-        notify('Готово: добавлено блоков ' + (r.added || 0));
-        mb.close();
-        loadBlocks();
-      }).catch(()=>notify('Ошибка template.applyToPage'));
-    }
+    title: 'Каталог секций',
+    message: render(''),
+    buttons: BX.UI.Dialogs.MessageBoxButtons.CANCEL,
+    onCancel: function(mb){ mb.close(); }
   });
-}
 
-btnSaveTemplate.addEventListener('click', saveTemplateFromPage);
-btnApplyTemplate.addEventListener('click', applyTemplateToPage);
+  setTimeout(() => {
+    const mb = document.querySelector('.bx-ui-dialogs-messagebox');
+    const root = mb ? mb.querySelector('.bx-ui-dialogs-messagebox-content') : null;
+    if (!root) return;
+
+    const rerender = (q) => {
+      root.innerHTML = render(q);
+      bind();
+    };
+
+    const bind = () => {
+      const q = document.getElementById('sec_q');
+      if (q) q.oninput = () => rerender(q.value);
+
+      root.querySelectorAll('[data-tpl-apply]').forEach(btn => {
+        btn.onclick = async () => {
+          const tplId = parseInt(btn.getAttribute('data-tpl-apply'), 10);
+          const mode = btn.getAttribute('data-mode') || 'append';
+          try {
+            const r = await api('template.applyToPage', { siteId, pageId, templateId: tplId, mode });
+            if (!r || r.ok !== true) { notify('Не удалось применить'); return; }
+            notify('Готово: добавлено блоков ' + (r.added || 0));
+            loadBlocks();
+          } catch(e) { notify('Ошибка apply'); }
+        };
+      });
+
+      root.querySelectorAll('[data-tpl-rename]').forEach(btn => {
+        btn.onclick = () => {
+          const tplId = parseInt(btn.getAttribute('data-tpl-rename'), 10);
+          const cur = templates.find(x => parseInt(x.id,10) === tplId);
+          BX.UI.Dialogs.MessageBox.show({
+            title: 'Переименовать',
+            message: `<div class="field"><label>Название</label><input id="rn_name" class="input" value="${BX.util.htmlspecialchars(cur?.name || '')}"></div>`,
+            buttons: BX.UI.Dialogs.MessageBoxButtons.OK_CANCEL,
+            onOk: function(mb2){
+              const name = (document.getElementById('rn_name')?.value || '').trim();
+              if (!name) { notify('Введите название'); return; }
+              api('template.rename', { id: tplId, name }).then(r=>{
+                if(!r || r.ok!==true){ notify('Не удалось переименовать'); return; }
+                notify('Переименовано');
+                const idx = templates.findIndex(x => parseInt(x.id,10) === tplId);
+                if (idx >= 0) templates[idx].name = name;
+                mb2.close();
+                const q = document.getElementById('sec_q')?.value || '';
+                rerender(q);
+              }).catch(()=>notify('Ошибка template.rename'));
+            }
+          });
+        };
+      });
+
+      root.querySelectorAll('[data-tpl-delete]').forEach(btn => {
+        btn.onclick = () => {
+          const tplId = parseInt(btn.getAttribute('data-tpl-delete'), 10);
+          BX.UI.Dialogs.MessageBox.show({
+            title: 'Удалить шаблон?',
+            message: 'Удалить навсегда?',
+            buttons: BX.UI.Dialogs.MessageBoxButtons.OK_CANCEL,
+            onOk: function(mb2){
+              api('template.delete', { id: tplId }).then(r=>{
+                if(!r || r.ok!==true){ notify('Не удалось удалить'); return; }
+                notify('Удалено');
+                templates = templates.filter(x => parseInt(x.id,10) !== tplId);
+                mb2.close();
+                const q = document.getElementById('sec_q')?.value || '';
+                rerender(q);
+              }).catch(()=>notify('Ошибка template.delete'));
+            }
+          });
+        };
+      });
+    };
+
+    bind();
+  }, 0);
+}
+```
+
+### 2.3.3 Вешаем обработчик
+
+В “buttons” секции:
+
+```js
+btnSections.addEventListener('click', openSectionsLibrary);
 ```
 
 ---
 
-# 4) Что проверить
+# 3) Проверка
 
-1. На странице с блоками нажми **“Сохранить как шаблон”** → задай имя → `templates.json` появится, ok=true
-2. Создай новую страницу (пустую) → **“Вставить шаблон”** → append → блоки появились
-3. replace → старые блоки удаляются, вставляются из шаблона
+1. Нажми **Каталог секций**
+2. Появится список карточек
+3. Вставить → блоки добавились
+4. Заменить → страница перезаписалась блоками шаблона
+5. Переименовать/Удалить → работает и сразу обновляет каталог
 
 ---
 
-Если это устроит — следующим шагом сделаем **“Каталог секций” прямо в editor**: карточки шаблонов с превью (минимальное), плюс “Удалить шаблон / Переименовать”.
+Если хочешь следующий апгрейд: **мини-превью секции** (не картинки, а “скелет”: heading/text/image-icons) — это красиво и быстро.
