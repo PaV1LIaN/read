@@ -1,143 +1,251 @@
-Ок — идём дальше без вопросов. Следующий “тильда-шаг”, который резко повышает ценность: **меню на публичной странице** (чтобы навигация работала на опубликованном сайте).
+Ок, тогда следующий шаг без rewrite, но очень полезный для “конструктора”: **шаблоны/секции (Sections Library)** — чтобы добавлять не “один блок”, а готовую секцию из нескольких блоков (как в Tilda: “обложка”, “о нас”, “преимущества”, “галерея + текст”).
 
-Сделаем так:
+Сделаем минимально и быстро:
 
-* в редакторе меню ты уже умеешь `menu.*` (у тебя в `api.php` есть menus.json)
-* в **public.php** (и при желании в view.php) добавим вывод **главного меню** + ссылки на страницы по slug.
+* хранить шаблоны в файле `/upload/sitebuilder/templates.json`
+* API:
+
+  * `template.list`
+  * `template.createFromPage` (сохранить текущую страницу как шаблон)
+  * `template.applyToPage` (вставить шаблон в страницу: либо “в конец”, либо “заменить страницу”)
+* UI в editor.php: две кнопки
+
+  * **“Сохранить как шаблон”**
+  * **“Вставить шаблон”**
 
 ---
 
-# 1) public.php — добавить вывод меню
+# 1) api.php — добавляем templates.json
 
-## 1.1 Добавь чтение menus.json
+## 1.1 storage функции
 
-В public.php рядом с другими `sb_read_*` добавь:
+Добавь рядом с другими `sb_read_*`:
 
 ```php
-function sb_read_menus(): array { return sb_read_json_file('menus.json'); }
+function sb_read_templates(): array { return sb_read_json_file('templates.json'); }
+function sb_write_templates(array $templates): void { sb_write_json_file('templates.json', $templates, 'Cannot open templates.json'); }
 ```
 
-## 1.2 Хелпер: получить меню сайта
+---
 
-Добавь функции:
+# 2) api.php — actions для шаблонов
 
-```php
-function sb_menu_get_site_record(array $all, int $siteId): ?array {
-    foreach ($all as $r) if ((int)($r['siteId'] ?? 0) === $siteId) return $r;
-    return null;
-}
-function sb_menu_pick_main(array $siteRecord): ?array {
-    $menus = $siteRecord['menus'] ?? [];
-    if (!is_array($menus) || !count($menus)) return null;
-    // пока берём первое меню как "главное"
-    return $menus[0];
-}
-```
-
-## 1.3 Хелпер: url для пункта меню
-
-Добавь:
+## 2.1 template.list
 
 ```php
-function public_page_url(int $siteId, ?array $page): string {
-    $slug = $page ? (string)($page['slug'] ?? '') : '';
-    if ($slug !== '') return '/local/sitebuilder/public.php?siteId=' . $siteId . '&p=' . urlencode($slug);
-    return '/local/sitebuilder/public.php?siteId=' . $siteId;
+if ($action === 'template.list') {
+    $tpl = sb_read_templates();
+    usort($tpl, fn($a,$b) => strcmp((string)($b['createdAt'] ?? ''), (string)($a['createdAt'] ?? '')));
+    echo json_encode(['ok'=>true,'templates'=>$tpl], JSON_UNESCAPED_UNICODE);
+    exit;
 }
 ```
 
-## 1.4 Перед выводом HTML (после выбора `$page`)
+## 2.2 template.createFromPage
 
-Собери меню:
+Сохраняем *снимок* блоков страницы (только `type/content/sort`), без id.
 
 ```php
-$menuItems = [];
-$allMenus = sb_read_menus();
-$siteRec = sb_menu_get_site_record($allMenus, $siteId);
-$mainMenu = $siteRec ? sb_menu_pick_main($siteRec) : null;
+if ($action === 'template.createFromPage') {
+    $siteId = (int)($_POST['siteId'] ?? 0);
+    $pageId = (int)($_POST['pageId'] ?? 0);
+    $name = trim((string)($_POST['name'] ?? ''));
 
-if ($mainMenu && is_array($mainMenu['items'] ?? null)) {
-    $items = $mainMenu['items'];
-    usort($items, fn($a,$b) => (int)($a['sort'] ?? 0) <=> (int)($b['sort'] ?? 0));
+    if ($siteId<=0 || $pageId<=0) { http_response_code(422); echo json_encode(['ok'=>false,'error'=>'SITE_PAGE_REQUIRED'], JSON_UNESCAPED_UNICODE); exit; }
+    if ($name==='') { http_response_code(422); echo json_encode(['ok'=>false,'error'=>'NAME_REQUIRED'], JSON_UNESCAPED_UNICODE); exit; }
 
-    foreach ($items as $it) {
-        if (!is_array($it)) continue;
-        $type = (string)($it['type'] ?? '');
-        $title = trim((string)($it['title'] ?? ''));
-        if ($title === '') $title = 'Link';
+    sb_require_editor($siteId);
 
-        $href = '#';
-        if ($type === 'page') {
-            $pid = (int)($it['pageId'] ?? 0);
-            $p = $pid > 0 ? find_page($pid) : null;
-            // безопасность: только страницы этого сайта
-            if ($p && (int)($p['siteId'] ?? 0) === $siteId) {
-                $href = public_page_url($siteId, $p);
-                if ($title === 'Link') $title = (string)($p['title'] ?? 'Page');
-            } else {
-                continue;
-            }
-        } elseif ($type === 'url') {
-            $url = trim((string)($it['url'] ?? ''));
-            if ($url === '') continue;
-            $href = $url;
-        } else {
-            continue;
-        }
+    $page = sb_find_page($pageId);
+    if (!$page || (int)($page['siteId'] ?? 0) !== $siteId) { http_response_code(404); echo json_encode(['ok'=>false,'error'=>'PAGE_NOT_FOUND'], JSON_UNESCAPED_UNICODE); exit; }
 
-        $menuItems[] = ['title' => $title, 'href' => $href];
+    $blocks = sb_read_blocks();
+    $pageBlocks = array_values(array_filter($blocks, fn($b)=> (int)($b['pageId'] ?? 0) === $pageId));
+    usort($pageBlocks, fn($a,$b)=> (int)($a['sort'] ?? 500) <=> (int)($b['sort'] ?? 500));
+
+    $snapshot = [];
+    foreach ($pageBlocks as $b) {
+        $snapshot[] = [
+            'type' => (string)($b['type'] ?? 'text'),
+            'sort' => (int)($b['sort'] ?? 500),
+            'content' => is_array($b['content'] ?? null) ? $b['content'] : [],
+        ];
     }
+
+    $tpl = sb_read_templates();
+    $maxId = 0; foreach ($tpl as $t) $maxId = max($maxId, (int)($t['id'] ?? 0));
+    $id = $maxId + 1;
+
+    $record = [
+        'id' => $id,
+        'name' => $name,
+        'createdAt' => date('c'),
+        'createdBy' => (int)$USER->GetID(),
+        'blocks' => $snapshot,
+    ];
+
+    $tpl[] = $record;
+    sb_write_templates($tpl);
+
+    echo json_encode(['ok'=>true,'template'=>$record], JSON_UNESCAPED_UNICODE);
+    exit;
 }
 ```
 
-## 1.5 В HTML добавь шапку меню
+## 2.3 template.applyToPage
 
-В `<style>` добавь:
+Два режима:
 
-```css
-.header{position:sticky;top:0;background:#fff;border-bottom:1px solid #eee;z-index:10;}
-.header .in{max-width:980px;margin:0 auto;padding:12px 24px;display:flex;gap:14px;align-items:center;flex-wrap:wrap;}
-.brand{font-weight:800;}
-.nav{display:flex;gap:12px;flex-wrap:wrap;}
-.nav a{color:#111;text-decoration:none;padding:6px 10px;border-radius:10px;}
-.nav a:hover{background:#f3f4f6;}
-```
-
-И сразу после `<body>` вставь:
+* `mode=append` (добавить в конец)
+* `mode=replace` (стереть старые блоки и вставить шаблон)
 
 ```php
-<div class="header">
-  <div class="in">
-    <div class="brand"><?=h($site['name'] ?? 'Site')?></div>
-    <?php if (count($menuItems)): ?>
-      <nav class="nav">
-        <?php foreach ($menuItems as $mi): ?>
-          <a href="<?=h($mi['href'])?>" <?=preg_match('~^https?://~i',$mi['href'])?'target="_blank" rel="noopener noreferrer"':''?>>
-            <?=h($mi['title'])?>
-          </a>
-        <?php endforeach; ?>
-      </nav>
-    <?php endif; ?>
-  </div>
-</div>
+if ($action === 'template.applyToPage') {
+    $siteId = (int)($_POST['siteId'] ?? 0);
+    $pageId = (int)($_POST['pageId'] ?? 0);
+    $tplId  = (int)($_POST['templateId'] ?? 0);
+    $mode   = (string)($_POST['mode'] ?? 'append');
+
+    if ($siteId<=0 || $pageId<=0 || $tplId<=0) { http_response_code(422); echo json_encode(['ok'=>false,'error'=>'PARAMS_REQUIRED'], JSON_UNESCAPED_UNICODE); exit; }
+    if ($mode !== 'append' && $mode !== 'replace') $mode = 'append';
+
+    sb_require_editor($siteId);
+
+    $page = sb_find_page($pageId);
+    if (!$page || (int)($page['siteId'] ?? 0) !== $siteId) { http_response_code(404); echo json_encode(['ok'=>false,'error'=>'PAGE_NOT_FOUND'], JSON_UNESCAPED_UNICODE); exit; }
+
+    $tplAll = sb_read_templates();
+    $tpl = null;
+    foreach ($tplAll as $t) if ((int)($t['id'] ?? 0) === $tplId) { $tpl = $t; break; }
+    if (!$tpl) { http_response_code(404); echo json_encode(['ok'=>false,'error'=>'TEMPLATE_NOT_FOUND'], JSON_UNESCAPED_UNICODE); exit; }
+
+    $blocks = sb_read_blocks();
+
+    // очистка старых блоков
+    if ($mode === 'replace') {
+        $blocks = array_values(array_filter($blocks, fn($b)=> (int)($b['pageId'] ?? 0) !== $pageId));
+    }
+
+    // вычислим новые id и sort
+    $maxId = 0; foreach ($blocks as $b) $maxId = max($maxId, (int)($b['id'] ?? 0));
+    $nextId = $maxId + 1;
+
+    $maxSort = 0;
+    foreach ($blocks as $b) if ((int)($b['pageId'] ?? 0) === $pageId) $maxSort = max($maxSort, (int)($b['sort'] ?? 0));
+    $baseSort = ($mode === 'append') ? ($maxSort + 10) : 10;
+
+    $tplBlocks = is_array($tpl['blocks'] ?? null) ? $tpl['blocks'] : [];
+    $i = 0;
+
+    foreach ($tplBlocks as $tb) {
+        if (!is_array($tb)) continue;
+        $type = (string)($tb['type'] ?? 'text');
+        $content = is_array($tb['content'] ?? null) ? $tb['content'] : [];
+
+        $blocks[] = [
+            'id' => $nextId++,
+            'pageId' => $pageId,
+            'type' => $type,
+            'sort' => $baseSort + ($i * 10),
+            'content' => $content,
+            'createdBy' => (int)$USER->GetID(),
+            'createdAt' => date('c'),
+            'updatedAt' => date('c'),
+        ];
+        $i++;
+    }
+
+    sb_write_blocks($blocks);
+    echo json_encode(['ok'=>true,'added'=>$i], JSON_UNESCAPED_UNICODE);
+    exit;
+}
 ```
 
-И чуть ниже у тебя уже идёт `<div class="wrap">...`
+---
+
+# 3) editor.php — минимальный UI
+
+В верхней панели рядом с “Открыть просмотр” добавь 2 кнопки:
+
+```html
+<a class="ui-btn ui-btn-light" href="javascript:void(0)" id="btnSaveTemplate">Сохранить как шаблон</a>
+<a class="ui-btn ui-btn-light" href="javascript:void(0)" id="btnApplyTemplate">Вставить шаблон</a>
+```
+
+В JS добавь:
+
+```js
+const btnSaveTemplate = document.getElementById('btnSaveTemplate');
+const btnApplyTemplate = document.getElementById('btnApplyTemplate');
+
+function saveTemplateFromPage(){
+  BX.UI.Dialogs.MessageBox.show({
+    title:'Сохранить как шаблон',
+    message:`<div class="field"><label>Название шаблона</label><input id="tpl_name" class="input" placeholder="например: Обложка + преимущества"></div>`,
+    buttons: BX.UI.Dialogs.MessageBoxButtons.OK_CANCEL,
+    onOk: function(mb){
+      const name = (document.getElementById('tpl_name')?.value || '').trim();
+      if(!name){ notify('Введите название'); return; }
+      api('template.createFromPage', { siteId, pageId, name }).then(r=>{
+        if(!r || r.ok!==true){ notify('Не удалось сохранить шаблон'); return; }
+        notify('Шаблон сохранён');
+        mb.close();
+      }).catch(()=>notify('Ошибка template.createFromPage'));
+    }
+  });
+}
+
+async function applyTemplateToPage(){
+  let res;
+  try { res = await api('template.list', {}); } catch(e){ notify('Ошибка template.list'); return; }
+  if(!res || res.ok!==true){ notify('Не удалось получить шаблоны'); return; }
+  const list = res.templates || [];
+  if(!list.length){ notify('Шаблонов нет. Сначала сохрани один.'); return; }
+
+  const opts = list.map(t=>`<option value="${t.id}">${BX.util.htmlspecialchars(t.name)} (id ${t.id})</option>`).join('');
+  BX.UI.Dialogs.MessageBox.show({
+    title:'Вставить шаблон',
+    message:`
+      <div class="field">
+        <label>Шаблон</label>
+        <select id="tpl_id" class="input">${opts}</select>
+      </div>
+      <div class="field">
+        <label>Режим</label>
+        <select id="tpl_mode" class="input">
+          <option value="append">Добавить в конец</option>
+          <option value="replace">Заменить страницу</option>
+        </select>
+      </div>
+    `,
+    buttons: BX.UI.Dialogs.MessageBoxButtons.OK_CANCEL,
+    onOk: function(mb){
+      const templateId = parseInt(document.getElementById('tpl_id')?.value || '0', 10);
+      const mode = document.getElementById('tpl_mode')?.value || 'append';
+      if(!templateId){ notify('Выбери шаблон'); return; }
+
+      api('template.applyToPage', { siteId, pageId, templateId, mode }).then(r=>{
+        if(!r || r.ok!==true){ notify('Не удалось применить шаблон'); return; }
+        notify('Готово: добавлено блоков ' + (r.added || 0));
+        mb.close();
+        loadBlocks();
+      }).catch(()=>notify('Ошибка template.applyToPage'));
+    }
+  });
+}
+
+btnSaveTemplate.addEventListener('click', saveTemplateFromPage);
+btnApplyTemplate.addEventListener('click', applyTemplateToPage);
+```
 
 ---
 
-# 2) Что проверить
+# 4) Что проверить
 
-1. Создай меню в редакторе (хотя бы 1 пункт на страницу)
-2. Открой:
-   `/local/sitebuilder/public.php?siteId=1`
-3. Вверху должна появиться шапка с названием сайта и пунктами меню
-4. Клик по пунктам “page” ведёт на `?p=slug`
+1. На странице с блоками нажми **“Сохранить как шаблон”** → задай имя → `templates.json` появится, ok=true
+2. Создай новую страницу (пустую) → **“Вставить шаблон”** → append → блоки появились
+3. replace → старые блоки удаляются, вставляются из шаблона
 
 ---
 
-# 3) Следующий шаг (после меню)
-
-**Публикация “в один адрес”**: `/s/{siteSlug}/{pageSlug}` через rewrite + автоматический `public.php` роутинг по slug’ам (без `siteId=...`). Это уже будет максимально похоже на Tilda.
-
-Сейчас просто сделай изменения в public.php и скажи: меню вверху появилось?
+Если это устроит — следующим шагом сделаем **“Каталог секций” прямо в editor**: карточки шаблонов с превью (минимальное), плюс “Удалить шаблон / Переименовать”.
