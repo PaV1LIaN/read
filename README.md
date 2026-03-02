@@ -1,232 +1,66 @@
-Да, вижу: **твой editor.php сейчас “полный” и рабочий**, и он почти совпадает по структуре с тем, что я присылал раньше. То, что мой вариант “меньше” — это просто потому, что я **убрал часть повторяющихся кусков/preview**, чтобы быстрее показать идею. Но **мы не будем заменять твой файл на “короче”** — правильнее сделать **аккуратный патч поверх твоего текущего editor.php**, чтобы ничего не потерять.
-
-Сейчас добавим **Columns2** (две колонки) **точечно** в твой файл.
+Ок — даю **точечный патч для твоего `view.php`**, чтобы поддержать `columns2` (и сделать нормально на мобилке).
 
 ---
 
-# ✅ ПАТЧ ДЛЯ ТВОЕГО ТЕКУЩЕГО editor.php (4 шага)
+# 1) CSS в `view.php`
 
-## 0) Важно
-
-Перед этим убедись, что в `api.php` ты уже добавил тип `columns2` (я писал ранее: `block.create` и `block.update`).
-
----
-
-## 1) CSS: добавь стили превью колонок
-
-В `<style>` (после `.headingPreview ...`) вставь:
+В `<style>` добавь (лучше рядом с другими `.block-*` стилями):
 
 ```css
-/* columns2 preview */
-.colsPreview { margin-top:10px; border:1px dashed #e5e7ea; border-radius:10px; padding:10px; display:grid; gap:10px; }
-.colsPreview .cell { background:#fafafa; border:1px solid #eee; border-radius:10px; padding:10px; min-height:48px; }
-.colsPreview pre { margin:0; background:transparent; border:none; padding:0; }
-```
-
----
-
-## 2) HTML: добавь кнопку “+ Columns2”
-
-В блоке кнопок (где сейчас +Text/+Image/+Button/+Heading) добавь:
-
-```html
-<button class="ui-btn ui-btn-primary" id="btnAddCols2">+ Columns2</button>
-```
-
----
-
-## 3) JS: добавить переменную кнопки + функции-хелперы
-
-В начале JS, где у тебя:
-
-```js
-const btnAddHeading = document.getElementById('btnAddHeading');
-```
-
-Добавь следом:
-
-```js
-const btnAddCols2 = document.getElementById('btnAddCols2');
-
-function colsGridTemplate(ratio) {
-  if (ratio === '33-67') return '1fr 2fr';
-  if (ratio === '67-33') return '2fr 1fr';
-  return '1fr 1fr';
+/* columns2 */
+.cols2 {
+  margin-top: 14px;
+  display: grid;
+  gap: 14px;
+}
+.cols2 .col {
+  background: #fff;
+  border: 1px solid #eee;
+  border-radius: 12px;
+  padding: 12px;
+}
+@media (max-width: 768px) {
+  .cols2 { grid-template-columns: 1fr !important; }
 }
 ```
 
+> `grid-template-columns` мы зададим inline из PHP по ratio, а на мобилке принудительно делаем 1 колонку.
+
 ---
 
-## 4) renderBlocks: добавь рендер типа `columns2`
+# 2) Рендер блока `columns2` в цикле блоков
 
-В `renderBlocks(blocks)` добавь новый блок **перед `return unknown`**:
+В `view.php` внутри `foreach ($blocks as $b)` (там где у тебя уже `text`, `image`, `button`, `heading`) вставь **ещё один обработчик**:
 
-```js
-if (type === 'columns2') {
-  const left = (b.content && typeof b.content.left === 'string') ? b.content.left : '';
-  const right = (b.content && typeof b.content.right === 'string') ? b.content.right : '';
-  const ratio = (b.content && typeof b.content.ratio === 'string') ? b.content.ratio : '50-50';
-  const tpl = colsGridTemplate(ratio);
+```php
+<?php if ($type === 'columns2'): ?>
+  <?php
+    $left  = (string)($b['content']['left'] ?? '');
+    $right = (string)($b['content']['right'] ?? '');
+    $ratio = (string)($b['content']['ratio'] ?? '50-50');
 
-  return `
-    <div class="block">
-      <div class="row">
-        <div><b>#${id}</b> <span class="muted">(columns2 | sort ${sort} | ratio ${BX.util.htmlspecialchars(ratio)})</span></div>
-        <div class="btns">
-          <button class="ui-btn ui-btn-light ui-btn-xs" data-move-block-id="${id}" data-move-dir="up">↑</button>
-          <button class="ui-btn ui-btn-light ui-btn-xs" data-move-block-id="${id}" data-move-dir="down">↓</button>
-          <button class="ui-btn ui-btn-light ui-btn-xs" data-edit-cols2-id="${id}">Редактировать</button>
-          <button class="ui-btn ui-btn-danger ui-btn-xs" data-del-block-id="${id}">Удалить</button>
-        </div>
-      </div>
+    if (!in_array($ratio, ['50-50','33-67','67-33'], true)) $ratio = '50-50';
 
-      <div class="colsPreview" style="grid-template-columns:${tpl};">
-        <div class="cell"><pre>${BX.util.htmlspecialchars(left)}</pre></div>
-        <div class="cell"><pre>${BX.util.htmlspecialchars(right)}</pre></div>
-      </div>
-    </div>
-  `;
-}
+    $tpl = '1fr 1fr';
+    if ($ratio === '33-67') $tpl = '1fr 2fr';
+    if ($ratio === '67-33') $tpl = '2fr 1fr';
+  ?>
+  <div class="cols2" style="grid-template-columns: <?=h($tpl)?>;">
+    <div class="col"><?= nl2br(h($left)) ?></div>
+    <div class="col"><?= nl2br(h($right)) ?></div>
+  </div>
+<?php endif; ?>
 ```
 
 ---
 
-## 5) Создание Columns2: добавь функцию `addCols2Block()`
+# 3) Что проверить
 
-Добавь **после addHeadingBlock()**:
-
-```js
-function addCols2Block() {
-  BX.UI.Dialogs.MessageBox.show({
-    title: 'Новый Columns2 блок',
-    message: `
-      <div>
-        <div class="field">
-          <label>Соотношение</label>
-          <select id="c_ratio" class="input">
-            <option value="50-50" selected>50 / 50</option>
-            <option value="33-67">33 / 67</option>
-            <option value="67-33">67 / 33</option>
-          </select>
-        </div>
-        <div class="field">
-          <label>Левая колонка (текст)</label>
-          <textarea id="c_left" class="input" style="height:120px;"></textarea>
-        </div>
-        <div class="field">
-          <label>Правая колонка (текст)</label>
-          <textarea id="c_right" class="input" style="height:120px;"></textarea>
-        </div>
-      </div>
-    `,
-    buttons: BX.UI.Dialogs.MessageBoxButtons.OK_CANCEL,
-    onOk: function (mb) {
-      const ratio = (document.getElementById('c_ratio')?.value || '50-50');
-      const left = (document.getElementById('c_left')?.value || '');
-      const right = (document.getElementById('c_right')?.value || '');
-
-      api('block.create', { pageId, type:'columns2', ratio, left, right })
-        .then(res => {
-          if (!res || res.ok !== true) {
-            BX.UI.Notification.Center.notify({ content:'Не удалось создать columns2' });
-            return;
-          }
-          BX.UI.Notification.Center.notify({ content:'Columns2 создан' });
-          mb.close();
-          loadBlocks();
-        })
-        .catch(() => BX.UI.Notification.Center.notify({ content:'Ошибка block.create (columns2)' }));
-    }
-  });
-}
-```
+1. В редакторе создай **Columns2** и заполни тексты
+2. Открой `view.php` — должны быть 2 колонки
+3. Поменяй ratio (50/50, 33/67, 67/33) — ширина должна меняться
+4. Сожми окно браузера до мобилки — колонки должны стать **одной под другой**
 
 ---
 
-## 6) Редактирование Columns2: функция `editCols2Block(id)`
-
-Добавь **после editHeadingBlock()**:
-
-```js
-function editCols2Block(id) {
-  api('block.list', { pageId }).then(res => {
-    if (!res || res.ok !== true) return;
-    const blk = (res.blocks || []).find(x => parseInt(x.id,10) === id);
-
-    const curRatio = blk && blk.content ? (blk.content.ratio || '50-50') : '50-50';
-    const curLeft = blk && blk.content ? (blk.content.left || '') : '';
-    const curRight = blk && blk.content ? (blk.content.right || '') : '';
-
-    BX.UI.Dialogs.MessageBox.show({
-      title: 'Редактировать Columns2 #' + id,
-      message: `
-        <div>
-          <div class="field">
-            <label>Соотношение</label>
-            <select id="ec_ratio" class="input">
-              <option value="50-50" ${curRatio==='50-50'?'selected':''}>50 / 50</option>
-              <option value="33-67" ${curRatio==='33-67'?'selected':''}>33 / 67</option>
-              <option value="67-33" ${curRatio==='67-33'?'selected':''}>67 / 33</option>
-            </select>
-          </div>
-          <div class="field">
-            <label>Левая колонка (текст)</label>
-            <textarea id="ec_left" class="input" style="height:120px;">${BX.util.htmlspecialchars(curLeft)}</textarea>
-          </div>
-          <div class="field">
-            <label>Правая колонка (текст)</label>
-            <textarea id="ec_right" class="input" style="height:120px;">${BX.util.htmlspecialchars(curRight)}</textarea>
-          </div>
-        </div>
-      `,
-      buttons: BX.UI.Dialogs.MessageBoxButtons.OK_CANCEL,
-      onOk: function (mb) {
-        const ratio = (document.getElementById('ec_ratio')?.value || '50-50');
-        const left = (document.getElementById('ec_left')?.value || '');
-        const right = (document.getElementById('ec_right')?.value || '');
-
-        api('block.update', { id, ratio, left, right })
-          .then(r => {
-            if (!r || r.ok !== true) {
-              BX.UI.Notification.Center.notify({ content:'Не удалось сохранить columns2' });
-              return;
-            }
-            BX.UI.Notification.Center.notify({ content:'Сохранено' });
-            mb.close();
-            loadBlocks();
-          })
-          .catch(() => BX.UI.Notification.Center.notify({ content:'Ошибка block.update (columns2)' }));
-      }
-    });
-  });
-}
-```
-
----
-
-## 7) Подключи обработчики кликов и кнопку
-
-### 7.1 В `document.addEventListener('click', ...)` добавь:
-
-в конце рядом с `editHeading`:
-
-```js
-const ec = e.target.closest('[data-edit-cols2-id]');
-if (ec) { editCols2Block(parseInt(ec.getAttribute('data-edit-cols2-id'), 10)); return; }
-```
-
-### 7.2 Внизу, где addEventListener на кнопки:
-
-добавь:
-
-```js
-btnAddCols2.addEventListener('click', addCols2Block);
-```
-
----
-
-# Что будет дальше
-
-После того как Columns2 появится в редакторе, следующим шагом я дам **патч для `view.php`**, чтобы колонки красиво отображались на странице (и адаптивно на мобилке — в одну колонку).
-
-Если хочешь — скажи “давай view.php”, и я пришлю точный кусок для вставки + CSS под мобилку.
+Если всё ок, следующий шаг логичный: **Gallery block** (несколько картинок из “Файлы” сайта, 2/3/4 в ряд + адаптив).
