@@ -1,224 +1,338 @@
-Отлично. Дальше сделаем очень нужный “строительный” блок для верстки лендингов: **Spacer / Divider** (отступ и/или линия-разделитель). Он кажется простым, но без него страницы быстро превращаются в кашу.
+Дальше логичнее всего сделать **Card-блок** (карточка/плитка). Это супер-практично: из него собираются “преимущества”, “тарифы”, “команда”, “кейсы”, и т.д. А потом на базе Card легко собрать “Cards grid” (3 карточки в ряд) уже как отдельный блок.
 
-Сделаем тип блока: `spacer`
+Сделаем тип блока: `card`
 
-**content:**
+### `content`:
 
 ```json
-{ "height": 40, "line": false }
-```
-
-* `height` — высота отступа в px (10..200)
-* `line` — рисовать ли тонкую линию по центру (true/false)
-
----
-
-# 1) `api.php` — добавить `spacer`
-
-## 1.1 В `block.create` добавь тип в список
-
-В проверке `in_array($type, [...])` допиши `spacer`:
-
-```php
-if (!in_array($type, ['text','image','button','heading','columns2','gallery','spacer'], true)) { ... }
-```
-
-## 1.2 В `block.create` добавь ветку
-
-После остальных типов:
-
-```php
-} elseif ($type === 'spacer') {
-    $height = (int)($_POST['height'] ?? 40);
-    if ($height < 10) $height = 10;
-    if ($height > 200) $height = 200;
-
-    $line = (string)($_POST['line'] ?? '0');
-    $line = ($line === '1' || $line === 'true');
-
-    $content = ['height' => $height, 'line' => $line];
-}
-```
-
-## 1.3 В `block.update` добавь ветку
-
-```php
-} elseif ($type === 'spacer') {
-    $height = (int)($_POST['height'] ?? 40);
-    if ($height < 10) $height = 10;
-    if ($height > 200) $height = 200;
-
-    $line = (string)($_POST['line'] ?? '0');
-    $line = ($line === '1' || $line === 'true');
-
-    $b['content']['height'] = $height;
-    $b['content']['line'] = $line;
+{
+  "title": "Заголовок",
+  "text": "Описание...",
+  "imageFileId": 123,   // опционально (из файлов сайта)
+  "buttonText": "Подробнее", // опционально
+  "buttonUrl": "/local/..."  // опционально
 }
 ```
 
 ---
 
-# 2) `editor.php` — патч (поверх твоего текущего)
+# 1) `api.php` — добавить `card`
 
-## 2.1 Добавь кнопку
+## 1.1 Добавь тип в список `block.create`
 
-В кнопки добавь:
+В проверке типов:
+
+```php
+if (!in_array($type, ['text','image','button','heading','columns2','gallery','spacer','card'], true)) { ... }
+```
+
+## 1.2 `block.create`: ветка `card`
+
+Добавь в формирование `$content`:
+
+```php
+} elseif ($type === 'card') {
+    $title = trim((string)($_POST['title'] ?? ''));
+    $text  = (string)($_POST['text'] ?? '');
+
+    $imageFileId = (int)($_POST['imageFileId'] ?? 0);
+
+    $buttonText = trim((string)($_POST['buttonText'] ?? ''));
+    $buttonUrl  = trim((string)($_POST['buttonUrl'] ?? ''));
+
+    if ($title === '') {
+        http_response_code(422);
+        echo json_encode(['ok'=>false,'error'=>'TITLE_REQUIRED'], JSON_UNESCAPED_UNICODE);
+        exit;
+    }
+
+    // картинка опционально, но если задана — должна быть в папке сайта
+    if ($imageFileId > 0 && !sb_disk_file_belongs_to_site($siteId, $imageFileId)) {
+        http_response_code(422);
+        echo json_encode(['ok'=>false,'error'=>'FILE_NOT_IN_SITE_FOLDER','fileId'=>$imageFileId], JSON_UNESCAPED_UNICODE);
+        exit;
+    }
+
+    // кнопка опционально, но если задан URL — проверим формат
+    if ($buttonUrl !== '' && !(preg_match('~^https?://~i', $buttonUrl) || str_starts_with($buttonUrl, '/'))) {
+        http_response_code(422);
+        echo json_encode(['ok'=>false,'error'=>'URL_BAD_FORMAT'], JSON_UNESCAPED_UNICODE);
+        exit;
+    }
+
+    $content = [
+        'title' => $title,
+        'text' => $text,
+        'imageFileId' => $imageFileId,
+        'buttonText' => $buttonText,
+        'buttonUrl' => $buttonUrl,
+    ];
+}
+```
+
+## 1.3 `block.update`: ветка `card`
+
+```php
+} elseif ($type === 'card') {
+    $title = trim((string)($_POST['title'] ?? ''));
+    $text  = (string)($_POST['text'] ?? '');
+
+    $imageFileId = (int)($_POST['imageFileId'] ?? 0);
+
+    $buttonText = trim((string)($_POST['buttonText'] ?? ''));
+    $buttonUrl  = trim((string)($_POST['buttonUrl'] ?? ''));
+
+    if ($title === '') {
+        http_response_code(422);
+        echo json_encode(['ok'=>false,'error'=>'TITLE_REQUIRED'], JSON_UNESCAPED_UNICODE);
+        exit;
+    }
+
+    if ($imageFileId > 0 && !sb_disk_file_belongs_to_site($siteId, $imageFileId)) {
+        http_response_code(422);
+        echo json_encode(['ok'=>false,'error'=>'FILE_NOT_IN_SITE_FOLDER','fileId'=>$imageFileId], JSON_UNESCAPED_UNICODE);
+        exit;
+    }
+
+    if ($buttonUrl !== '' && !(preg_match('~^https?://~i', $buttonUrl) || str_starts_with($buttonUrl, '/'))) {
+        http_response_code(422);
+        echo json_encode(['ok'=>false,'error'=>'URL_BAD_FORMAT'], JSON_UNESCAPED_UNICODE);
+        exit;
+    }
+
+    $b['content']['title'] = $title;
+    $b['content']['text'] = $text;
+    $b['content']['imageFileId'] = $imageFileId;
+    $b['content']['buttonText'] = $buttonText;
+    $b['content']['buttonUrl'] = $buttonUrl;
+}
+```
+
+---
+
+# 2) `editor.php` — патч (как обычно поверх твоего текущего)
+
+## 2.1 Кнопка
+
+Добавь в панель:
 
 ```html
-<button class="ui-btn ui-btn-primary" id="btnAddSpacer">+ Spacer</button>
+<button class="ui-btn ui-btn-primary" id="btnAddCard">+ Card</button>
 ```
 
-## 2.2 В JS объяви кнопку
+## 2.2 JS переменная
 
 ```js
-const btnAddSpacer = document.getElementById('btnAddSpacer');
+const btnAddCard = document.getElementById('btnAddCard');
 ```
 
-## 2.3 В renderBlocks добавь обработку spacer
+## 2.3 renderBlocks: отображение card
 
-Вставь перед unknown:
+Перед unknown добавь:
 
 ```js
-if (type === 'spacer') {
-  const height = (b.content && b.content.height) ? parseInt(b.content.height, 10) : 40;
-  const line = (b.content && (b.content.line === true || b.content.line === 'true')) ? true : false;
+if (type === 'card') {
+  const title = (b.content && typeof b.content.title === 'string') ? b.content.title : '';
+  const text = (b.content && typeof b.content.text === 'string') ? b.content.text : '';
+  const imageFileId = (b.content && b.content.imageFileId) ? parseInt(b.content.imageFileId, 10) : 0;
+  const buttonText = (b.content && typeof b.content.buttonText === 'string') ? b.content.buttonText : '';
+  const buttonUrl = (b.content && typeof b.content.buttonUrl === 'string') ? b.content.buttonUrl : '';
+
+  const img = imageFileId ? `<div class="imgPrev"><img src="${fileDownloadUrl(imageFileId)}" alt=""></div>` : '';
 
   return `
     <div class="block">
       <div class="row">
-        <div><b>#${id}</b> <span class="muted">(spacer | sort ${sort} | ${height}px | line ${line ? 'yes' : 'no'})</span></div>
+        <div><b>#${id}</b> <span class="muted">(card | sort ${sort})</span></div>
         <div class="btns">
           <button class="ui-btn ui-btn-light ui-btn-xs" data-move-block-id="${id}" data-move-dir="up">↑</button>
           <button class="ui-btn ui-btn-light ui-btn-xs" data-move-block-id="${id}" data-move-dir="down">↓</button>
-          <button class="ui-btn ui-btn-light ui-btn-xs" data-edit-spacer-id="${id}">Редактировать</button>
+          <button class="ui-btn ui-btn-light ui-btn-xs" data-edit-card-id="${id}">Редактировать</button>
           <button class="ui-btn ui-btn-danger ui-btn-xs" data-del-block-id="${id}">Удалить</button>
         </div>
       </div>
-
-      <div style="margin-top:10px; border:1px dashed #e5e7ea; border-radius:10px; padding:10px;">
-        <div style="height:${height}px; position:relative; background:#fafafa; border-radius:10px;">
-          ${line ? '<div style="position:absolute; left:0; right:0; top:50%; height:1px; background:#e5e7ea;"></div>' : ''}
-        </div>
+      <div style="margin-top:10px;">
+        <div style="font-weight:700;">${BX.util.htmlspecialchars(title)}</div>
+        <div class="muted" style="margin-top:6px; white-space:pre-wrap;">${BX.util.htmlspecialchars(text)}</div>
+        ${img}
+        ${buttonUrl ? `<a class="${btnClass('secondary')}" href="${BX.util.htmlspecialchars(buttonUrl)}" target="_blank" rel="noopener noreferrer">${BX.util.htmlspecialchars(buttonText || 'Открыть')}</a>` : ''}
       </div>
     </div>
   `;
 }
 ```
 
-## 2.4 Функции add/edit spacer
+## 2.4 addCardBlock() / editCardBlock(id)
 
-Добавь:
+Добавь функции:
 
 ```js
-function addSpacerBlock() {
+async function openCardDialog(mode, blockId, current) {
+  const curTitle = current?.title || '';
+  const curText = current?.text || '';
+  const curImage = current?.imageFileId ? parseInt(current.imageFileId, 10) : 0;
+  const curBtnText = current?.buttonText || '';
+  const curBtnUrl = current?.buttonUrl || '';
+
   BX.UI.Dialogs.MessageBox.show({
-    title: 'Новый Spacer блок',
+    title: mode === 'edit' ? ('Редактировать Card #' + blockId) : 'Новый Card блок',
     message: `
       <div>
         <div class="field">
-          <label>Высота (10..200 px)</label>
-          <input id="sp_h" class="input" type="number" min="10" max="200" value="40" />
+          <label>Заголовок</label>
+          <input id="c_title" class="input" value="${BX.util.htmlspecialchars(curTitle)}">
         </div>
         <div class="field">
-          <label><input id="sp_line" type="checkbox" /> Рисовать линию</label>
+          <label>Текст</label>
+          <textarea id="c_text" class="input" style="height:120px;">${BX.util.htmlspecialchars(curText)}</textarea>
+        </div>
+
+        <div class="field">
+          <label>Картинка (из файлов сайта, опционально)</label>
+          <select id="c_img" class="input"><option value="">Загрузка списка...</option></select>
+        </div>
+        <div id="c_img_prev" class="imgPrev" style="display:${curImage? 'block':'none'};">
+          <img id="c_img_prev_img" src="${curImage ? fileDownloadUrl(curImage) : ''}" alt="">
+        </div>
+
+        <div class="field">
+          <label>Текст кнопки (опционально)</label>
+          <input id="c_btn_text" class="input" value="${BX.util.htmlspecialchars(curBtnText)}" placeholder="например: Подробнее">
+        </div>
+        <div class="field">
+          <label>URL кнопки (опционально)</label>
+          <input id="c_btn_url" class="input" value="${BX.util.htmlspecialchars(curBtnUrl)}" placeholder="https://... или /local/...">
         </div>
       </div>
     `,
     buttons: BX.UI.Dialogs.MessageBoxButtons.OK_CANCEL,
-    onOk: function(mb){
-      const height = parseInt(document.getElementById('sp_h')?.value || '40', 10);
-      const line = document.getElementById('sp_line')?.checked ? '1' : '0';
+    onOk: function(mb) {
+      const title = (document.getElementById('c_title')?.value || '').trim();
+      const text = (document.getElementById('c_text')?.value || '');
+      const imageFileId = parseInt(document.getElementById('c_img')?.value || '0', 10);
+      const buttonText = (document.getElementById('c_btn_text')?.value || '').trim();
+      const buttonUrl = (document.getElementById('c_btn_url')?.value || '').trim();
 
-      api('block.create', { pageId, type:'spacer', height, line })
-        .then(res => {
-          if (!res || res.ok !== true) { BX.UI.Notification.Center.notify({ content:'Не удалось создать spacer' }); return; }
-          BX.UI.Notification.Center.notify({ content:'Spacer создан' });
-          mb.close(); loadBlocks();
-        })
-        .catch(() => BX.UI.Notification.Center.notify({ content:'Ошибка block.create (spacer)' }));
+      if (!title) { BX.UI.Notification.Center.notify({ content:'Введите заголовок' }); return; }
+
+      const payload = { title, text, imageFileId, buttonText, buttonUrl };
+      const call = (mode === 'edit')
+        ? api('block.update', Object.assign({ id: blockId }, payload))
+        : api('block.create', Object.assign({ pageId, type:'card' }, payload));
+
+      call.then(res => {
+        if (!res || res.ok !== true) { BX.UI.Notification.Center.notify({ content:'Не удалось сохранить card' }); return; }
+        BX.UI.Notification.Center.notify({ content: mode === 'edit' ? 'Сохранено' : 'Card создан' });
+        mb.close(); loadBlocks();
+      }).catch(() => BX.UI.Notification.Center.notify({ content:'Ошибка запроса card' }));
     }
   });
+
+  setTimeout(async () => {
+    const sel = document.getElementById('c_img');
+    const prevWrap = document.getElementById('c_img_prev');
+    const prevImg = document.getElementById('c_img_prev_img');
+    if (!sel || !prevWrap || !prevImg) return;
+
+    try {
+      const files = await getFilesForSite();
+      sel.innerHTML = '<option value="0">— без картинки —</option>' + files.map(f => {
+        const s = (parseInt(f.id,10) === curImage) ? 'selected' : '';
+        return `<option value="${f.id}" ${s}>${BX.util.htmlspecialchars(f.name)} (id ${f.id})</option>`;
+      }).join('');
+
+      const updatePrev = () => {
+        const fid = parseInt(sel.value || '0', 10);
+        if (!fid) { prevWrap.style.display = 'none'; prevImg.src = ''; return; }
+        prevWrap.style.display = 'block';
+        prevImg.src = fileDownloadUrl(fid);
+      };
+      sel.addEventListener('change', updatePrev);
+      updatePrev();
+    } catch (e) {
+      sel.innerHTML = '<option value="0">Ошибка загрузки файлов</option>';
+    }
+  }, 0);
 }
 
-function editSpacerBlock(id) {
+function addCardBlock() { openCardDialog('create', 0, null); }
+
+function editCardBlock(id) {
   api('block.list', { pageId }).then(res => {
     if (!res || res.ok !== true) return;
     const blk = (res.blocks || []).find(x => parseInt(x.id,10) === id);
-    const curH = blk && blk.content ? parseInt(blk.content.height || 40, 10) : 40;
-    const curLine = blk && blk.content ? (blk.content.line === true || blk.content.line === 'true') : false;
-
-    BX.UI.Dialogs.MessageBox.show({
-      title: 'Редактировать Spacer #' + id,
-      message: `
-        <div>
-          <div class="field">
-            <label>Высота (10..200 px)</label>
-            <input id="esp_h" class="input" type="number" min="10" max="200" value="${curH}" />
-          </div>
-          <div class="field">
-            <label><input id="esp_line" type="checkbox" ${curLine ? 'checked':''} /> Рисовать линию</label>
-          </div>
-        </div>
-      `,
-      buttons: BX.UI.Dialogs.MessageBoxButtons.OK_CANCEL,
-      onOk: function(mb){
-        const height = parseInt(document.getElementById('esp_h')?.value || String(curH), 10);
-        const line = document.getElementById('esp_line')?.checked ? '1' : '0';
-
-        api('block.update', { id, height, line })
-          .then(r => {
-            if (!r || r.ok !== true) { BX.UI.Notification.Center.notify({ content:'Не удалось сохранить spacer' }); return; }
-            BX.UI.Notification.Center.notify({ content:'Сохранено' });
-            mb.close(); loadBlocks();
-          })
-          .catch(() => BX.UI.Notification.Center.notify({ content:'Ошибка block.update (spacer)' }));
-      }
-    });
+    openCardDialog('edit', id, blk?.content || null);
   });
 }
 ```
 
 ## 2.5 Подключи клики
 
-В общий click handler добавь:
+В общий click handler:
 
 ```js
-const es = e.target.closest('[data-edit-spacer-id]');
-if (es) { editSpacerBlock(parseInt(es.getAttribute('data-edit-spacer-id'), 10)); return; }
+const ec = e.target.closest('[data-edit-card-id]');
+if (ec) { editCardBlock(parseInt(ec.getAttribute('data-edit-card-id'), 10)); return; }
 ```
 
 И кнопка:
 
 ```js
-btnAddSpacer.addEventListener('click', addSpacerBlock);
+btnAddCard.addEventListener('click', addCardBlock);
 ```
 
 ---
 
-# 3) `view.php` — рендер spacer
+# 3) `view.php` — рендер card
 
 ## 3.1 CSS
 
 В `<style>` добавь:
 
 ```css
-.spacer { width:100%; }
-.spacerLine { height:1px; background:#e5e7ea; }
+.cardBlock {
+  margin-top:14px;
+  background:#fff;
+  border:1px solid #eee;
+  border-radius:16px;
+  padding:14px;
+}
+.cardBlock img {
+  width:100%;
+  height:auto;
+  display:block;
+  border-radius:14px;
+  border:1px solid #eee;
+  margin-top:10px;
+}
+.cardTitle { font-weight:700; font-size:18px; }
+.cardText { margin-top:8px; color:#333; line-height:1.6; white-space:pre-wrap; }
+.cardBtn { display:inline-block; margin-top:10px; padding:10px 14px; border-radius:12px; border:1px solid #e5e7ea; text-decoration:none; }
 ```
 
-## 3.2 В цикле блоков:
+## 3.2 В цикле блоков добавь:
 
 ```php
-<?php if ($type === 'spacer'): ?>
+<?php if ($type === 'card'): ?>
   <?php
-    $h = (int)($b['content']['height'] ?? 40);
-    if ($h < 10) $h = 10;
-    if ($h > 200) $h = 200;
-    $line = (bool)($b['content']['line'] ?? false);
+    $title = (string)($b['content']['title'] ?? '');
+    $text  = (string)($b['content']['text'] ?? '');
+    $imgId = (int)($b['content']['imageFileId'] ?? 0);
+    $btnText = trim((string)($b['content']['buttonText'] ?? ''));
+    $btnUrl  = trim((string)($b['content']['buttonUrl'] ?? ''));
   ?>
-  <div class="spacer" style="height: <?= (int)$h ?>px; position:relative; margin-top:14px;">
-    <?php if ($line): ?>
-      <div class="spacerLine" style="position:absolute; left:0; right:0; top:50%;"></div>
+  <div class="cardBlock">
+    <div class="cardTitle"><?=h($title)?></div>
+    <?php if ($text !== ''): ?><div class="cardText"><?=nl2br(h($text))?></div><?php endif; ?>
+
+    <?php if ($imgId > 0): ?>
+      <img src="<?=h(downloadUrl($siteId, $imgId))?>" alt="">
+    <?php endif; ?>
+
+    <?php if ($btnUrl !== ''): ?>
+      <a class="cardBtn" href="<?=h($btnUrl)?>" <?= preg_match('~^https?://~i', $btnUrl) ? 'target="_blank" rel="noopener noreferrer"' : '' ?>>
+        <?=h($btnText !== '' ? $btnText : 'Открыть')?>
+      </a>
     <?php endif; ?>
   </div>
 <?php endif; ?>
@@ -226,13 +340,12 @@ btnAddSpacer.addEventListener('click', addSpacerBlock);
 
 ---
 
-## Что проверить
+## Проверка
 
-* Создать spacer 40px без линии → в `view.php` просто отступ
-* Создать spacer 20px с линией → линия по центру
-* Редактировать высоту и line → сохраняется
-* На мобилке тоже норм (это просто блок)
+* Создай Card без картинки и без кнопки → просто заголовок+текст
+* Добавь картинку → появляется
+* Добавь кнопку → появляется, внешняя ссылка открывается в новой вкладке
 
 ---
 
-Если spacer ок — дальше предложу **Card-блок (иконка/картинка + заголовок + текст + кнопка)** или **Tabs/Accordion**. Что выбираем?
+Если card встанет — следующий шаг: **Cards grid** (один блок, который содержит массив карточек 2/3/4 в ряд). Это уже прям “тильда-шаблоны”.
