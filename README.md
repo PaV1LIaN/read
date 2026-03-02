@@ -1,403 +1,238 @@
-Отлично. Следующий “тильда-уровень” — **Gallery (несколько картинок)**.
+Отлично. Дальше сделаем очень нужный “строительный” блок для верстки лендингов: **Spacer / Divider** (отступ и/или линия-разделитель). Он кажется простым, но без него страницы быстро превращаются в кашу.
 
-Сделаем тип блока: `gallery`
-**content**:
+Сделаем тип блока: `spacer`
+
+**content:**
 
 ```json
-{
-  "columns": 3,
-  "images": [
-    {"fileId": 123, "alt": "Фото 1"},
-    {"fileId": 124, "alt": "Фото 2"}
-  ]
-}
+{ "height": 40, "line": false }
 ```
 
-Ниже — готовые патчи для **api.php**, **editor.php**, **view.php**.
+* `height` — высота отступа в px (10..200)
+* `line` — рисовать ли тонкую линию по центру (true/false)
 
 ---
 
-# 1) `api.php` — добавить тип `gallery`
+# 1) `api.php` — добавить `spacer`
 
-## 1.1 Разрешить `gallery` в `block.create`
+## 1.1 В `block.create` добавь тип в список
 
-В `block.create` в проверке типов добавь `gallery`:
+В проверке `in_array($type, [...])` допиши `spacer`:
 
 ```php
-if (!in_array($type, ['text','image','button','heading','columns2','gallery'], true)) { ... }
+if (!in_array($type, ['text','image','button','heading','columns2','gallery','spacer'], true)) { ... }
 ```
 
-## 1.2 `block.create`: ветка `gallery`
+## 1.2 В `block.create` добавь ветку
 
-Внутри формирования `$content` добавь:
+После остальных типов:
 
 ```php
-} elseif ($type === 'gallery') {
-    $columns = (int)($_POST['columns'] ?? 3);
-    if (!in_array($columns, [2,3,4], true)) $columns = 3;
+} elseif ($type === 'spacer') {
+    $height = (int)($_POST['height'] ?? 40);
+    if ($height < 10) $height = 10;
+    if ($height > 200) $height = 200;
 
-    $imagesJson = (string)($_POST['images'] ?? '[]');
-    $images = json_decode($imagesJson, true);
-    if (!is_array($images)) $images = [];
+    $line = (string)($_POST['line'] ?? '0');
+    $line = ($line === '1' || $line === 'true');
 
-    // нормализуем + проверяем, что файлы лежат в папке сайта
-    $clean = [];
-    foreach ($images as $it) {
-        if (!is_array($it)) continue;
-        $fid = (int)($it['fileId'] ?? 0);
-        if ($fid <= 0) continue;
-
-        if (!sb_disk_file_belongs_to_site($siteId, $fid)) {
-            http_response_code(422);
-            echo json_encode(['ok'=>false,'error'=>'FILE_NOT_IN_SITE_FOLDER','fileId'=>$fid], JSON_UNESCAPED_UNICODE);
-            exit;
-        }
-
-        $clean[] = [
-            'fileId' => $fid,
-            'alt' => (string)($it['alt'] ?? ''),
-        ];
-    }
-
-    if (count($clean) === 0) {
-        http_response_code(422);
-        echo json_encode(['ok'=>false,'error'=>'IMAGES_REQUIRED'], JSON_UNESCAPED_UNICODE);
-        exit;
-    }
-
-    $content = [
-        'columns' => $columns,
-        'images' => $clean,
-    ];
+    $content = ['height' => $height, 'line' => $line];
 }
 ```
 
-## 1.3 `block.update`: ветка `gallery`
-
-В `block.update` добавь:
+## 1.3 В `block.update` добавь ветку
 
 ```php
-} elseif ($type === 'gallery') {
-    $columns = (int)($_POST['columns'] ?? 3);
-    if (!in_array($columns, [2,3,4], true)) $columns = 3;
+} elseif ($type === 'spacer') {
+    $height = (int)($_POST['height'] ?? 40);
+    if ($height < 10) $height = 10;
+    if ($height > 200) $height = 200;
 
-    $imagesJson = (string)($_POST['images'] ?? '[]');
-    $images = json_decode($imagesJson, true);
-    if (!is_array($images)) $images = [];
+    $line = (string)($_POST['line'] ?? '0');
+    $line = ($line === '1' || $line === 'true');
 
-    $clean = [];
-    foreach ($images as $it) {
-        if (!is_array($it)) continue;
-        $fid = (int)($it['fileId'] ?? 0);
-        if ($fid <= 0) continue;
-
-        if (!sb_disk_file_belongs_to_site($siteId, $fid)) {
-            http_response_code(422);
-            echo json_encode(['ok'=>false,'error'=>'FILE_NOT_IN_SITE_FOLDER','fileId'=>$fid], JSON_UNESCAPED_UNICODE);
-            exit;
-        }
-
-        $clean[] = [
-            'fileId' => $fid,
-            'alt' => (string)($it['alt'] ?? ''),
-        ];
-    }
-
-    if (count($clean) === 0) {
-        http_response_code(422);
-        echo json_encode(['ok'=>false,'error'=>'IMAGES_REQUIRED'], JSON_UNESCAPED_UNICODE);
-        exit;
-    }
-
-    $b['content']['columns'] = $columns;
-    $b['content']['images'] = $clean;
+    $b['content']['height'] = $height;
+    $b['content']['line'] = $line;
 }
 ```
 
 ---
 
-# 2) `editor.php` — добавить Gallery (патч поверх твоего текущего)
+# 2) `editor.php` — патч (поверх твоего текущего)
 
-## 2.1 CSS
-
-В `<style>` добавь:
-
-```css
-/* gallery preview */
-.galPrev { margin-top:10px; display:grid; gap:10px; }
-.galPrev img { width:100%; height:auto; display:block; border-radius:10px; border:1px solid #eee; background:#fafafa; }
-.galPick { margin-top:10px; max-height:260px; overflow:auto; border:1px solid #e5e7ea; border-radius:10px; padding:10px; background:#fff; }
-.galPick .row { display:flex; justify-content:flex-start; gap:10px; align-items:center; margin:6px 0; }
-.galPick small { color:#6a737f; }
-```
-
-## 2.2 Кнопка
+## 2.1 Добавь кнопку
 
 В кнопки добавь:
 
 ```html
-<button class="ui-btn ui-btn-primary" id="btnAddGallery">+ Gallery</button>
+<button class="ui-btn ui-btn-primary" id="btnAddSpacer">+ Spacer</button>
 ```
 
-## 2.3 JS: переменная кнопки
-
-Рядом с остальными:
+## 2.2 В JS объяви кнопку
 
 ```js
-const btnAddGallery = document.getElementById('btnAddGallery');
+const btnAddSpacer = document.getElementById('btnAddSpacer');
 ```
 
-## 2.4 В `renderBlocks()` добавь обработку `gallery`
+## 2.3 В renderBlocks добавь обработку spacer
 
-Перед `unknown` вставь:
+Вставь перед unknown:
 
 ```js
-if (type === 'gallery') {
-  const columns = (b.content && b.content.columns) ? parseInt(b.content.columns, 10) : 3;
-  const imgs = (b.content && Array.isArray(b.content.images)) ? b.content.images : [];
-
-  const tpl = (columns === 2) ? '1fr 1fr' : (columns === 4) ? '1fr 1fr 1fr 1fr' : '1fr 1fr 1fr';
-  const prev = imgs.map(it => {
-    const fid = parseInt(it.fileId || 0, 10);
-    if (!fid) return '';
-    return `<img src="${fileDownloadUrl(fid)}" alt="${BX.util.htmlspecialchars(it.alt || '')}">`;
-  }).join('');
+if (type === 'spacer') {
+  const height = (b.content && b.content.height) ? parseInt(b.content.height, 10) : 40;
+  const line = (b.content && (b.content.line === true || b.content.line === 'true')) ? true : false;
 
   return `
     <div class="block">
       <div class="row">
-        <div><b>#${id}</b> <span class="muted">(gallery | sort ${sort} | cols ${columns} | images ${imgs.length})</span></div>
+        <div><b>#${id}</b> <span class="muted">(spacer | sort ${sort} | ${height}px | line ${line ? 'yes' : 'no'})</span></div>
         <div class="btns">
           <button class="ui-btn ui-btn-light ui-btn-xs" data-move-block-id="${id}" data-move-dir="up">↑</button>
           <button class="ui-btn ui-btn-light ui-btn-xs" data-move-block-id="${id}" data-move-dir="down">↓</button>
-          <button class="ui-btn ui-btn-light ui-btn-xs" data-edit-gallery-id="${id}">Редактировать</button>
+          <button class="ui-btn ui-btn-light ui-btn-xs" data-edit-spacer-id="${id}">Редактировать</button>
           <button class="ui-btn ui-btn-danger ui-btn-xs" data-del-block-id="${id}">Удалить</button>
         </div>
       </div>
-      <div class="galPrev" style="grid-template-columns:${tpl};">${prev}</div>
+
+      <div style="margin-top:10px; border:1px dashed #e5e7ea; border-radius:10px; padding:10px;">
+        <div style="height:${height}px; position:relative; background:#fafafa; border-radius:10px;">
+          ${line ? '<div style="position:absolute; left:0; right:0; top:50%; height:1px; background:#e5e7ea;"></div>' : ''}
+        </div>
+      </div>
     </div>
   `;
 }
 ```
 
-## 2.5 Функции: добавить `addGalleryBlock()` и `editGalleryBlock(id)`
+## 2.4 Функции add/edit spacer
 
-Добавь **после твоих add… функций**:
+Добавь:
 
 ```js
-async function openGalleryDialog(mode, blockId, currentContent) {
-  const currentCols = currentContent?.columns ? parseInt(currentContent.columns, 10) : 3;
-  const currentImages = Array.isArray(currentContent?.images) ? currentContent.images : [];
-
+function addSpacerBlock() {
   BX.UI.Dialogs.MessageBox.show({
-    title: mode === 'edit' ? ('Редактировать Gallery #' + blockId) : 'Новый Gallery блок',
+    title: 'Новый Spacer блок',
     message: `
       <div>
         <div class="field">
-          <label>Колонки</label>
-          <select id="g_cols" class="input">
-            <option value="2" ${currentCols===2?'selected':''}>2</option>
-            <option value="3" ${currentCols===3?'selected':''}>3</option>
-            <option value="4" ${currentCols===4?'selected':''}>4</option>
-          </select>
+          <label>Высота (10..200 px)</label>
+          <input id="sp_h" class="input" type="number" min="10" max="200" value="40" />
         </div>
-
-        <div class="muted" style="margin-top:8px;">Выбери файлы из “Файлы” сайта:</div>
-        <div id="g_list" class="galPick">Загрузка списка...</div>
-
-        <div class="muted" style="margin-top:10px;">Превью:</div>
-        <div id="g_prev" class="galPrev"></div>
+        <div class="field">
+          <label><input id="sp_line" type="checkbox" /> Рисовать линию</label>
+        </div>
       </div>
     `,
     buttons: BX.UI.Dialogs.MessageBoxButtons.OK_CANCEL,
     onOk: function(mb){
-      const cols = parseInt(document.getElementById('g_cols')?.value || '3', 10);
-      const list = document.getElementById('g_list');
-      if (!list) return;
+      const height = parseInt(document.getElementById('sp_h')?.value || '40', 10);
+      const line = document.getElementById('sp_line')?.checked ? '1' : '0';
 
-      const checks = list.querySelectorAll('input[type="checkbox"][data-fid]');
-      const selected = [];
-      checks.forEach(ch => {
-        if (!ch.checked) return;
-        const fid = parseInt(ch.getAttribute('data-fid'), 10);
-        const altEl = list.querySelector(`input[data-alt-for="${fid}"]`);
-        const alt = (altEl?.value || '').trim();
-        if (fid) selected.push({ fileId: fid, alt });
-      });
-
-      if (!selected.length) {
-        BX.UI.Notification.Center.notify({ content:'Выбери хотя бы 1 файл' });
-        return;
-      }
-
-      const images = JSON.stringify(selected);
-
-      const payload = { columns: cols, images };
-      const call = (mode === 'edit')
-        ? api('block.update', Object.assign({ id: blockId }, payload))
-        : api('block.create', Object.assign({ pageId, type:'gallery' }, payload));
-
-      call.then(res => {
-        if (!res || res.ok !== true) {
-          BX.UI.Notification.Center.notify({ content:'Не удалось сохранить gallery' });
-          return;
-        }
-        BX.UI.Notification.Center.notify({ content: mode==='edit' ? 'Сохранено' : 'Gallery создан' });
-        mb.close();
-        loadBlocks();
-      }).catch(() => BX.UI.Notification.Center.notify({ content:'Ошибка запроса gallery' }));
+      api('block.create', { pageId, type:'spacer', height, line })
+        .then(res => {
+          if (!res || res.ok !== true) { BX.UI.Notification.Center.notify({ content:'Не удалось создать spacer' }); return; }
+          BX.UI.Notification.Center.notify({ content:'Spacer создан' });
+          mb.close(); loadBlocks();
+        })
+        .catch(() => BX.UI.Notification.Center.notify({ content:'Ошибка block.create (spacer)' }));
     }
   });
-
-  // заполняем список файлов + превью
-  setTimeout(async () => {
-    const box = document.getElementById('g_list');
-    const prev = document.getElementById('g_prev');
-    const colsSel = document.getElementById('g_cols');
-    if (!box || !prev || !colsSel) return;
-
-    const selectedMap = {};
-    currentImages.forEach(it => { selectedMap[parseInt(it.fileId,10)] = (it.alt || ''); });
-
-    try {
-      const files = await getFilesForSite();
-      if (!files.length) {
-        box.innerHTML = '<div class="muted">Файлов нет (загрузите в “Файлы”)</div>';
-        return;
-      }
-
-      box.innerHTML = files.map(f => {
-        const checked = selectedMap[f.id] !== undefined ? 'checked' : '';
-        const altVal = selectedMap[f.id] !== undefined ? selectedMap[f.id] : '';
-        return `
-          <div class="row">
-            <input type="checkbox" data-fid="${f.id}" ${checked}>
-            <div style="flex:1;">
-              <div><b>${BX.util.htmlspecialchars(f.name)}</b> <small>(id ${f.id})</small></div>
-              <input class="input" style="margin-top:6px;" data-alt-for="${f.id}" placeholder="alt (опционально)" value="${BX.util.htmlspecialchars(altVal)}">
-            </div>
-          </div>
-        `;
-      }).join('');
-
-      const renderPrev = () => {
-        const cols = parseInt(colsSel.value || '3', 10);
-        const tpl = (cols===2) ? '1fr 1fr' : (cols===4) ? '1fr 1fr 1fr 1fr' : '1fr 1fr 1fr';
-        prev.style.gridTemplateColumns = tpl;
-
-        const checks = box.querySelectorAll('input[type="checkbox"][data-fid]');
-        let html = '';
-        checks.forEach(ch => {
-          if (!ch.checked) return;
-          const fid = parseInt(ch.getAttribute('data-fid'), 10);
-          if (!fid) return;
-          html += `<img src="${fileDownloadUrl(fid)}" alt="">`;
-        });
-        prev.innerHTML = html || '<div class="muted">Ничего не выбрано</div>';
-      };
-
-      box.addEventListener('change', renderPrev);
-      colsSel.addEventListener('change', renderPrev);
-      renderPrev();
-
-    } catch (e) {
-      box.innerHTML = '<div class="muted">Ошибка загрузки файлов</div>';
-    }
-  }, 0);
 }
 
-function addGalleryBlock() { openGalleryDialog('create', 0, null); }
-
-function editGalleryBlock(id) {
+function editSpacerBlock(id) {
   api('block.list', { pageId }).then(res => {
     if (!res || res.ok !== true) return;
     const blk = (res.blocks || []).find(x => parseInt(x.id,10) === id);
-    openGalleryDialog('edit', id, blk?.content || null);
+    const curH = blk && blk.content ? parseInt(blk.content.height || 40, 10) : 40;
+    const curLine = blk && blk.content ? (blk.content.line === true || blk.content.line === 'true') : false;
+
+    BX.UI.Dialogs.MessageBox.show({
+      title: 'Редактировать Spacer #' + id,
+      message: `
+        <div>
+          <div class="field">
+            <label>Высота (10..200 px)</label>
+            <input id="esp_h" class="input" type="number" min="10" max="200" value="${curH}" />
+          </div>
+          <div class="field">
+            <label><input id="esp_line" type="checkbox" ${curLine ? 'checked':''} /> Рисовать линию</label>
+          </div>
+        </div>
+      `,
+      buttons: BX.UI.Dialogs.MessageBoxButtons.OK_CANCEL,
+      onOk: function(mb){
+        const height = parseInt(document.getElementById('esp_h')?.value || String(curH), 10);
+        const line = document.getElementById('esp_line')?.checked ? '1' : '0';
+
+        api('block.update', { id, height, line })
+          .then(r => {
+            if (!r || r.ok !== true) { BX.UI.Notification.Center.notify({ content:'Не удалось сохранить spacer' }); return; }
+            BX.UI.Notification.Center.notify({ content:'Сохранено' });
+            mb.close(); loadBlocks();
+          })
+          .catch(() => BX.UI.Notification.Center.notify({ content:'Ошибка block.update (spacer)' }));
+      }
+    });
   });
 }
 ```
 
-## 2.6 Подключить клики
+## 2.5 Подключи клики
 
-В `document.addEventListener('click', ...)` добавь:
+В общий click handler добавь:
 
 ```js
-const eg = e.target.closest('[data-edit-gallery-id]');
-if (eg) { editGalleryBlock(parseInt(eg.getAttribute('data-edit-gallery-id'), 10)); return; }
+const es = e.target.closest('[data-edit-spacer-id]');
+if (es) { editSpacerBlock(parseInt(es.getAttribute('data-edit-spacer-id'), 10)); return; }
 ```
 
-Внизу, где кнопки:
+И кнопка:
 
 ```js
-btnAddGallery.addEventListener('click', addGalleryBlock);
+btnAddSpacer.addEventListener('click', addSpacerBlock);
 ```
 
 ---
 
-# 3) `view.php` — рендер gallery
+# 3) `view.php` — рендер spacer
 
 ## 3.1 CSS
 
 В `<style>` добавь:
 
 ```css
-.gallery {
-  margin-top: 14px;
-  display: grid;
-  gap: 12px;
-}
-.gallery img {
-  width: 100%;
-  height: auto;
-  display: block;
-  border-radius: 12px;
-  border: 1px solid #eee;
-  background: #fafafa;
-}
-@media (max-width: 768px) {
-  .gallery { grid-template-columns: 1fr !important; }
-}
+.spacer { width:100%; }
+.spacerLine { height:1px; background:#e5e7ea; }
 ```
 
-## 3.2 В цикле блоков добавь:
+## 3.2 В цикле блоков:
 
 ```php
-<?php if ($type === 'gallery'): ?>
+<?php if ($type === 'spacer'): ?>
   <?php
-    $cols = (int)($b['content']['columns'] ?? 3);
-    if (!in_array($cols, [2,3,4], true)) $cols = 3;
-
-    $tpl = '1fr 1fr 1fr';
-    if ($cols === 2) $tpl = '1fr 1fr';
-    if ($cols === 4) $tpl = '1fr 1fr 1fr 1fr';
-
-    $imgs = $b['content']['images'] ?? [];
-    if (!is_array($imgs)) $imgs = [];
+    $h = (int)($b['content']['height'] ?? 40);
+    if ($h < 10) $h = 10;
+    if ($h > 200) $h = 200;
+    $line = (bool)($b['content']['line'] ?? false);
   ?>
-  <div class="gallery" style="grid-template-columns: <?=h($tpl)?>;">
-    <?php foreach ($imgs as $it): ?>
-      <?php
-        if (!is_array($it)) continue;
-        $fid = (int)($it['fileId'] ?? 0);
-        $alt = (string)($it['alt'] ?? '');
-        if ($fid <= 0) continue;
-      ?>
-      <img src="<?= h(downloadUrl($siteId, $fid)) ?>" alt="<?= h($alt) ?>">
-    <?php endforeach; ?>
+  <div class="spacer" style="height: <?= (int)$h ?>px; position:relative; margin-top:14px;">
+    <?php if ($line): ?>
+      <div class="spacerLine" style="position:absolute; left:0; right:0; top:50%;"></div>
+    <?php endif; ?>
   </div>
 <?php endif; ?>
 ```
 
 ---
 
-# Что проверить
+## Что проверить
 
-1. В “Файлы” загрузить 3–6 картинок
-2. В редакторе нажать **+ Gallery**, выбрать несколько файлов, cols=3 → OK
-3. В `view.php` увидеть сетку
-4. На мобилке (узкое окно) — всё становится 1 колонкой
-5. “Редактировать” gallery: добавить/убрать картинки, сменить cols.
+* Создать spacer 40px без линии → в `view.php` просто отступ
+* Создать spacer 20px с линией → линия по центру
+* Редактировать высоту и line → сохраняется
+* На мобилке тоже норм (это просто блок)
 
 ---
 
-Если gallery ок — дальше самый полезный “лендинговый” блок: **Spacer/Divider** (контролируемые отступы) *или* **Card (иконка+заголовок+текст)**.
+Если spacer ок — дальше предложу **Card-блок (иконка/картинка + заголовок + текст + кнопка)** или **Tabs/Accordion**. Что выбираем?
