@@ -1,192 +1,196 @@
-Понял. По твоему коду **почти наверняка bind() вообще не вешается**, потому что ты ищешь DOM MessageBox вот так:
+Ок, публикацию откладываем. Тогда самый полезный следующий шаг “как у тильды”, но без роутинга и без билдов — **структура страниц (дерево) + drag&drop сортировка + вложенность**. Это сразу делает проект “сайтостроителем”, а не просто списком страниц.
 
-```js
-document.querySelector('.bx-ui-dialogs-messagebox')
-  .querySelector('.bx-ui-dialogs-messagebox-content')
-```
+Сейчас у тебя у страниц уже есть поля `parentId` и `sort`, но мы ими почти не пользуемся. Давай их оживим:
 
-А в реальной разметке Bitrix UI эти классы **часто другие / вложенность другая**, поэтому `root === null`, и **кнопки внутри каталога остаются “мертвыми”** (потому что им не назначили onclick).
+## Что делаем следующим шагом (MVP)
 
-✅ Самый надёжный фикс: **не искать внутренности MessageBox по классам**, а **вставить свой контейнер с id** и потом брать его через `getElementById`. Плюс сделать **делегирование кликов**, чтобы после `rerender()` ничего не “отваливалось”.
+1. В `index.php` (где список страниц) показываем **дерево страниц**:
 
-Ниже — готовая замена функции `openSectionsLibrary()` (только её). Скопируй и **полностью замени** свою текущую `openSectionsLibrary()` на эту.
+   * корневые страницы
+   * вложенные (parentId)
+2. Добавляем действия:
+
+   * **переместить страницу вверх/вниз** среди соседей
+   * **сделать дочерней / сделать корневой**
+   * **переименовать**
+3. В `api.php` добавляем 3 actions:
+
+   * `page.updateMeta` (title/slug/sort/parentId)
+   * `page.move` (up/down)
+   * `page.setParent` (parentId)
+
+Это даст тебе:
+
+* меню сайта можно будет собирать по дереву (очень скоро)
+* навигация по сайту будет логичной
+* появляется “структура сайта”, как в тильде
 
 ---
 
-## ✅ Замени `openSectionsLibrary()` на это
+# 1) api.php — добавляем actions (готовый код)
 
-```js
-async function openSectionsLibrary() {
-  let res;
-  try { res = await api('template.list', {}); }
-  catch (e) { notify('Ошибка template.list'); return; }
+Вставь **перед UNKNOWN_ACTION**.
 
-  if (!res || res.ok !== true) { notify('Не удалось получить шаблоны'); return; }
+### A) `page.updateMeta` (переименование/slug)
 
-  let templates = res.templates || [];
-  if (!templates.length) { notify('Шаблонов нет. Сначала сохрани страницу как шаблон.'); return; }
+```php
+if ($action === 'page.updateMeta') {
+    $id = (int)($_POST['id'] ?? 0);
+    if ($id <= 0) { http_response_code(422); echo json_encode(['ok'=>false,'error'=>'ID_REQUIRED'], JSON_UNESCAPED_UNICODE); exit; }
 
-  const containerId = 'sb_sections_root_' + Date.now();
+    $page = sb_find_page($id);
+    if (!$page) { http_response_code(404); echo json_encode(['ok'=>false,'error'=>'PAGE_NOT_FOUND'], JSON_UNESCAPED_UNICODE); exit; }
 
-  const render = (q) => {
-    const query = (q || '').trim().toLowerCase();
-    const filtered = templates.filter(t => ((t.name || '') + '').toLowerCase().includes(query));
+    $siteId = (int)($page['siteId'] ?? 0);
+    sb_require_editor($siteId);
 
-    const cards = filtered.map(t => {
-      const blocksCount = Array.isArray(t.blocks) ? t.blocks.length : 0;
-      const createdAt = (t.createdAt || '').replace('T',' ').replace('Z','');
+    $title = trim((string)($_POST['title'] ?? ''));
+    $slugIn = trim((string)($_POST['slug'] ?? ''));
 
-      return `
-        <div class="secCard">
-          <div class="secTitle">${BX.util.htmlspecialchars(t.name || ('Template #' + t.id))}</div>
-          <div class="secMeta">id: ${t.id} • блоков: ${blocksCount} • создан: ${BX.util.htmlspecialchars(createdAt)}</div>
+    $pages = sb_read_pages();
+    $found = false;
 
-          <div class="secBtns">
-            <button class="ui-btn ui-btn-primary ui-btn-xs" data-tpl-apply="${t.id}" data-mode="append">Вставить</button>
-            <button class="ui-btn ui-btn-light ui-btn-xs" data-tpl-apply="${t.id}" data-mode="replace">Заменить</button>
-            <button class="ui-btn ui-btn-light ui-btn-xs" data-tpl-rename="${t.id}">Переименовать</button>
-            <button class="ui-btn ui-btn-danger ui-btn-xs" data-tpl-delete="${t.id}">Удалить</button>
-          </div>
-        </div>
-      `;
-    }).join('');
-
-    return `
-      <div id="${containerId}">
-        <div class="secSearch">
-          <input id="${containerId}_q" class="input" placeholder="Поиск шаблонов..." value="${BX.util.htmlspecialchars(q || '')}">
-        </div>
-        <div class="secGrid">${cards || '<div class="muted">Ничего не найдено</div>'}</div>
-      </div>
-    `;
-  };
-
-  BX.UI.Dialogs.MessageBox.show({
-    title: 'Каталог секций',
-    message: render(''),
-    buttons: BX.UI.Dialogs.MessageBoxButtons.CANCEL,
-    onCancel: function (mb) { mb.close(); }
-  });
-
-  setTimeout(() => {
-    const root = document.getElementById(containerId);
-    if (!root) {
-      notify('Каталог секций: не найден контейнер (проверь messagebox DOM)');
-      return;
+    // slug (если дали)
+    $newSlug = $slugIn !== '' ? sb_slugify($slugIn) : (string)($page['slug'] ?? 'page-'.$id);
+    if ($title !== '' && $slugIn === '') {
+        // если slug не задан, но title изменили — можем пересчитать slug от title (аккуратно)
+        $newSlug = sb_slugify($title);
     }
 
-    const rerender = (q) => {
-      root.outerHTML = render(q);
-      const newRoot = document.getElementById(containerId);
-      if (!newRoot) return;
+    // уникальность slug в рамках siteId
+    $existing = array_map(fn($x) => (string)($x['slug'] ?? ''),
+        array_filter($pages, fn($p) => (int)($p['siteId'] ?? 0) === $siteId && (int)($p['id'] ?? 0) !== $id)
+    );
+    $base = $newSlug; $i = 2;
+    while (in_array($newSlug, $existing, true)) { $newSlug = $base.'-'.$i; $i++; }
 
-      // заново вешаем обработчики на новый корень
-      bind(newRoot);
-    };
-
-    const bind = (r) => {
-      // поиск
-      const q = document.getElementById(containerId + '_q');
-      if (q) q.oninput = () => rerender(q.value);
-
-      // делегирование кликов по кнопкам в карточках
-      r.onclick = async (e) => {
-        const applyBtn = e.target.closest('[data-tpl-apply]');
-        if (applyBtn) {
-          const tplId = parseInt(applyBtn.getAttribute('data-tpl-apply'), 10);
-          const mode = applyBtn.getAttribute('data-mode') || 'append';
-          try {
-            const r2 = await api('template.applyToPage', { siteId, pageId, templateId: tplId, mode });
-            if (!r2 || r2.ok !== true) { notify('Не удалось применить'); return; }
-            notify('Готово: добавлено блоков ' + (r2.added || 0));
-            loadBlocks();
-          } catch (err) {
-            notify('Ошибка apply');
-          }
-          return;
+    foreach ($pages as &$p) {
+        if ((int)($p['id'] ?? 0) === $id) {
+            if ($title !== '') $p['title'] = $title;
+            $p['slug'] = $newSlug;
+            $p['updatedAt'] = date('c');
+            $p['updatedBy'] = (int)$USER->GetID();
+            $found = true;
+            break;
         }
+    }
+    unset($p);
 
-        const renameBtn = e.target.closest('[data-tpl-rename]');
-        if (renameBtn) {
-          const tplId = parseInt(renameBtn.getAttribute('data-tpl-rename'), 10);
-          const cur = templates.find(x => parseInt(x.id, 10) === tplId);
+    if (!$found) { http_response_code(404); echo json_encode(['ok'=>false,'error'=>'PAGE_NOT_FOUND'], JSON_UNESCAPED_UNICODE); exit; }
 
-          BX.UI.Dialogs.MessageBox.show({
-            title: 'Переименовать',
-            message: `<div class="field"><label>Название</label><input id="rn_name" class="input" value="${BX.util.htmlspecialchars(cur?.name || '')}"></div>`,
-            buttons: BX.UI.Dialogs.MessageBoxButtons.OK_CANCEL,
-            onOk: function (mb2) {
-              const name = (document.getElementById('rn_name')?.value || '').trim();
-              if (!name) { notify('Введите название'); return; }
+    sb_write_pages($pages);
+    echo json_encode(['ok'=>true], JSON_UNESCAPED_UNICODE);
+    exit;
+}
+```
 
-              api('template.rename', { id: tplId, name }).then(r3 => {
-                if (!r3 || r3.ok !== true) { notify('Не удалось переименовать'); return; }
-                notify('Переименовано');
-                const idx = templates.findIndex(x => parseInt(x.id, 10) === tplId);
-                if (idx >= 0) templates[idx].name = name;
-                mb2.close();
-                const qv = document.getElementById(containerId + '_q')?.value || '';
-                rerender(qv);
-              }).catch(() => notify('Ошибка template.rename'));
-            }
-          });
-          return;
+### B) `page.setParent` (вложенность)
+
+```php
+if ($action === 'page.setParent') {
+    $id = (int)($_POST['id'] ?? 0);
+    $parentId = (int)($_POST['parentId'] ?? 0); // 0 = корневая
+
+    if ($id <= 0) { http_response_code(422); echo json_encode(['ok'=>false,'error'=>'ID_REQUIRED'], JSON_UNESCAPED_UNICODE); exit; }
+
+    $page = sb_find_page($id);
+    if (!$page) { http_response_code(404); echo json_encode(['ok'=>false,'error'=>'PAGE_NOT_FOUND'], JSON_UNESCAPED_UNICODE); exit; }
+
+    $siteId = (int)($page['siteId'] ?? 0);
+    sb_require_editor($siteId);
+
+    if ($parentId > 0) {
+        $parent = sb_find_page($parentId);
+        if (!$parent || (int)($parent['siteId'] ?? 0) !== $siteId) {
+            http_response_code(422);
+            echo json_encode(['ok'=>false,'error'=>'PARENT_NOT_IN_SITE'], JSON_UNESCAPED_UNICODE);
+            exit;
         }
-
-        const delBtn = e.target.closest('[data-tpl-delete]');
-        if (delBtn) {
-          const tplId = parseInt(delBtn.getAttribute('data-tpl-delete'), 10);
-
-          BX.UI.Dialogs.MessageBox.show({
-            title: 'Удалить шаблон?',
-            message: 'Удалить навсегда?',
-            buttons: BX.UI.Dialogs.MessageBoxButtons.OK_CANCEL,
-            onOk: function (mb2) {
-              api('template.delete', { id: tplId }).then(r4 => {
-                if (!r4 || r4.ok !== true) { notify('Не удалось удалить'); return; }
-                notify('Удалено');
-                templates = templates.filter(x => parseInt(x.id, 10) !== tplId);
-                mb2.close();
-                const qv = document.getElementById(containerId + '_q')?.value || '';
-                rerender(qv);
-              }).catch(() => notify('Ошибка template.delete'));
-            }
-          });
-          return;
+        if ($parentId === $id) {
+            http_response_code(422);
+            echo json_encode(['ok'=>false,'error'=>'PARENT_SELF'], JSON_UNESCAPED_UNICODE);
+            exit;
         }
-      };
-    };
+    }
 
-    bind(root);
-  }, 0);
+    $pages = sb_read_pages();
+    foreach ($pages as &$p) {
+        if ((int)($p['id'] ?? 0) === $id) {
+            $p['parentId'] = $parentId;
+            $p['updatedAt'] = date('c');
+            $p['updatedBy'] = (int)$USER->GetID();
+            break;
+        }
+    }
+    unset($p);
+
+    sb_write_pages($pages);
+    echo json_encode(['ok'=>true], JSON_UNESCAPED_UNICODE);
+    exit;
+}
+```
+
+### C) `page.move` (up/down среди соседей)
+
+```php
+if ($action === 'page.move') {
+    $id = (int)($_POST['id'] ?? 0);
+    $dir = (string)($_POST['dir'] ?? '');
+
+    if ($id <= 0) { http_response_code(422); echo json_encode(['ok'=>false,'error'=>'ID_REQUIRED'], JSON_UNESCAPED_UNICODE); exit; }
+    if ($dir !== 'up' && $dir !== 'down') { http_response_code(422); echo json_encode(['ok'=>false,'error'=>'DIR_REQUIRED'], JSON_UNESCAPED_UNICODE); exit; }
+
+    $page = sb_find_page($id);
+    if (!$page) { http_response_code(404); echo json_encode(['ok'=>false,'error'=>'PAGE_NOT_FOUND'], JSON_UNESCAPED_UNICODE); exit; }
+
+    $siteId = (int)($page['siteId'] ?? 0);
+    sb_require_editor($siteId);
+
+    $parentId = (int)($page['parentId'] ?? 0);
+
+    $pages = sb_read_pages();
+    $siblings = array_values(array_filter($pages, fn($p) =>
+        (int)($p['siteId'] ?? 0) === $siteId && (int)($p['parentId'] ?? 0) === $parentId
+    ));
+    usort($siblings, fn($a,$b) => (int)($a['sort'] ?? 500) <=> (int)($b['sort'] ?? 500));
+
+    $pos = null;
+    for ($i=0; $i<count($siblings); $i++) {
+        if ((int)($siblings[$i]['id'] ?? 0) === $id) { $pos = $i; break; }
+    }
+    if ($pos === null) { echo json_encode(['ok'=>true], JSON_UNESCAPED_UNICODE); exit; }
+
+    if ($dir === 'up' && $pos === 0) { echo json_encode(['ok'=>true], JSON_UNESCAPED_UNICODE); exit; }
+    if ($dir === 'down' && $pos === count($siblings)-1) { echo json_encode(['ok'=>true], JSON_UNESCAPED_UNICODE); exit; }
+
+    $swap = ($dir === 'up') ? $pos-1 : $pos+1;
+
+    $idA = (int)$siblings[$pos]['id'];
+    $idB = (int)$siblings[$swap]['id'];
+    $sortA = (int)($siblings[$pos]['sort'] ?? 500);
+    $sortB = (int)($siblings[$swap]['sort'] ?? 500);
+
+    foreach ($pages as &$p) {
+        $pid = (int)($p['id'] ?? 0);
+        if ($pid === $idA) { $p['sort'] = $sortB; $p['updatedAt']=date('c'); $p['updatedBy']=(int)$USER->GetID(); }
+        if ($pid === $idB) { $p['sort'] = $sortA; $p['updatedAt']=date('c'); $p['updatedBy']=(int)$USER->GetID(); }
+    }
+    unset($p);
+
+    sb_write_pages($pages);
+    echo json_encode(['ok'=>true], JSON_UNESCAPED_UNICODE);
+    exit;
 }
 ```
 
 ---
 
-## Почему так заработает
+# 2) Дальше: правим index.php (страницы как дерево)
 
-* Мы не зависим от внутренних классов Bitrix MessageBox.
-* Всегда точно находим контент по `id`.
-* После `rerender()` события не теряются, потому что:
+Чтобы я прислал **точно подходящий** готовый `index.php`, мне нужно увидеть твой текущий `index.php` (где список сайтов/страниц сейчас).
 
-  * поиск перевешивается,
-  * клики обрабатываются **делегированно** через `root.onclick`.
+✅ Пришли содержимое `/local/sitebuilder/index.php`, и я:
 
----
-
-## Проверь ещё один момент
-
-Внизу у тебя уже есть:
-
-```js
-btnSections.addEventListener('click', openSectionsLibrary);
-```
-
-Это оставь.
-
----
-
-Если после замены кнопки всё равно не реагируют — скажи, появляется ли в консоли сообщение:
-`Каталог секций: не найден контейнер...`
-(если да — значит Bitrix экранирует HTML в `message:`; тогда будем использовать `message: ''` и вставлять через `onShow`/PopupWindow контейнер — тоже решаемо).
+* добавлю дерево страниц,
+* добавлю кнопки ↑ ↓, “вложить”, “в корень”, “переименовать”,
+* и всё будет работать с новыми actions без лишней логики.
