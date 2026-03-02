@@ -1,308 +1,190 @@
-Отлично — следующий логичный шаг: **Cards Grid** (один блок, внутри которого несколько карточек 2/3/4 в ряд). Это реально “тильда-секция”: добавил 3 карточки — получил готовый блок “Преимущества/Тарифы”.
+Идём дальше — теперь делаем **визуальный конструктор Cards** (без JSON), чтобы можно было удобно:
 
-Сделаем тип блока: `cards`
+* добавлять/удалять карточки,
+* менять порядок ↑↓,
+* выбирать картинку из “Файлы”,
+* править заголовок/текст/кнопку.
 
-### `content`
-
-```json
-{
-  "columns": 3,
-  "items": [
-    { "title":"...", "text":"...", "imageFileId":123, "buttonText":"...", "buttonUrl":"..." },
-    { "title":"...", "text":"..." }
-  ]
-}
-```
+Ниже даю **патч только для `editor.php`** (API и view у тебя уже готовы под `cards`).
 
 ---
 
-# 1) api.php — добавляем `cards`
+# 1) editor.php — что добавляем
 
-## 1.1 Разрешаем тип в `block.create`
+## 1.1 CSS (для конструктора)
 
-В проверке типов добавь `cards`:
-
-```php
-if (!in_array($type, ['text','image','button','heading','columns2','gallery','spacer','card','cards'], true)) { ... }
-```
-
-## 1.2 `block.create` — ветка `cards`
-
-Внутри формирования `$content` добавь:
-
-```php
-} elseif ($type === 'cards') {
-    $columns = (int)($_POST['columns'] ?? 3);
-    if (!in_array($columns, [2,3,4], true)) $columns = 3;
-
-    $itemsJson = (string)($_POST['items'] ?? '[]');
-    $items = json_decode($itemsJson, true);
-    if (!is_array($items)) $items = [];
-
-    $clean = [];
-    foreach ($items as $it) {
-        if (!is_array($it)) continue;
-
-        $title = trim((string)($it['title'] ?? ''));
-        $text  = (string)($it['text'] ?? '');
-
-        if ($title === '') continue; // минимум — заголовок
-
-        $imageFileId = (int)($it['imageFileId'] ?? 0);
-        if ($imageFileId > 0 && !sb_disk_file_belongs_to_site($siteId, $imageFileId)) {
-            http_response_code(422);
-            echo json_encode(['ok'=>false,'error'=>'FILE_NOT_IN_SITE_FOLDER','fileId'=>$imageFileId], JSON_UNESCAPED_UNICODE);
-            exit;
-        }
-
-        $buttonText = trim((string)($it['buttonText'] ?? ''));
-        $buttonUrl  = trim((string)($it['buttonUrl'] ?? ''));
-
-        if ($buttonUrl !== '' && !(preg_match('~^https?://~i', $buttonUrl) || str_starts_with($buttonUrl, '/'))) {
-            http_response_code(422);
-            echo json_encode(['ok'=>false,'error'=>'URL_BAD_FORMAT'], JSON_UNESCAPED_UNICODE);
-            exit;
-        }
-
-        $clean[] = [
-            'title' => $title,
-            'text' => $text,
-            'imageFileId' => $imageFileId,
-            'buttonText' => $buttonText,
-            'buttonUrl' => $buttonUrl,
-        ];
-    }
-
-    if (count($clean) === 0) {
-        http_response_code(422);
-        echo json_encode(['ok'=>false,'error'=>'ITEMS_REQUIRED'], JSON_UNESCAPED_UNICODE);
-        exit;
-    }
-
-    $content = [
-        'columns' => $columns,
-        'items' => $clean,
-    ];
-}
-```
-
-## 1.3 `block.update` — ветка `cards`
-
-Аналогично:
-
-```php
-} elseif ($type === 'cards') {
-    $columns = (int)($_POST['columns'] ?? 3);
-    if (!in_array($columns, [2,3,4], true)) $columns = 3;
-
-    $itemsJson = (string)($_POST['items'] ?? '[]');
-    $items = json_decode($itemsJson, true);
-    if (!is_array($items)) $items = [];
-
-    $clean = [];
-    foreach ($items as $it) {
-        if (!is_array($it)) continue;
-
-        $title = trim((string)($it['title'] ?? ''));
-        $text  = (string)($it['text'] ?? '');
-
-        if ($title === '') continue;
-
-        $imageFileId = (int)($it['imageFileId'] ?? 0);
-        if ($imageFileId > 0 && !sb_disk_file_belongs_to_site($siteId, $imageFileId)) {
-            http_response_code(422);
-            echo json_encode(['ok'=>false,'error'=>'FILE_NOT_IN_SITE_FOLDER','fileId'=>$imageFileId], JSON_UNESCAPED_UNICODE);
-            exit;
-        }
-
-        $buttonText = trim((string)($it['buttonText'] ?? ''));
-        $buttonUrl  = trim((string)($it['buttonUrl'] ?? ''));
-
-        if ($buttonUrl !== '' && !(preg_match('~^https?://~i', $buttonUrl) || str_starts_with($buttonUrl, '/'))) {
-            http_response_code(422);
-            echo json_encode(['ok'=>false,'error'=>'URL_BAD_FORMAT'], JSON_UNESCAPED_UNICODE);
-            exit;
-        }
-
-        $clean[] = [
-            'title' => $title,
-            'text' => $text,
-            'imageFileId' => $imageFileId,
-            'buttonText' => $buttonText,
-            'buttonUrl' => $buttonUrl,
-        ];
-    }
-
-    if (count($clean) === 0) {
-        http_response_code(422);
-        echo json_encode(['ok'=>false,'error'=>'ITEMS_REQUIRED'], JSON_UNESCAPED_UNICODE);
-        exit;
-    }
-
-    $b['content']['columns'] = $columns;
-    $b['content']['items'] = $clean;
-}
-```
-
----
-
-# 2) view.php — рендер `cards`
-
-## 2.1 CSS
-
-Добавь в `<style>`:
+В `<style>` добавь:
 
 ```css
-.cardsGrid {
-  margin-top:14px;
-  display:grid;
-  gap:14px;
-}
-.cardsGrid .cardItem {
-  background:#fff;
-  border:1px solid #eee;
-  border-radius:16px;
-  padding:14px;
-}
-.cardsGrid .cardItem img{
-  width:100%;
-  height:auto;
-  display:block;
-  border-radius:14px;
-  border:1px solid #eee;
-  background:#fafafa;
-  margin-top:10px;
-}
-.cardsGrid .t { font-weight:700; font-size:16px; }
-.cardsGrid .d { margin-top:8px; color:#333; line-height:1.6; white-space:pre-wrap; }
-.cardsGrid .a { display:inline-block; margin-top:10px; padding:10px 14px; border-radius:12px; border:1px solid #e5e7ea; text-decoration:none; }
-@media (max-width: 768px) {
-  .cardsGrid { grid-template-columns: 1fr !important; }
-}
-```
-
-## 2.2 В цикле блоков добавь:
-
-```php
-<?php if ($type === 'cards'): ?>
-  <?php
-    $cols = (int)($b['content']['columns'] ?? 3);
-    if (!in_array($cols, [2,3,4], true)) $cols = 3;
-
-    $tpl = '1fr 1fr 1fr';
-    if ($cols === 2) $tpl = '1fr 1fr';
-    if ($cols === 4) $tpl = '1fr 1fr 1fr 1fr';
-
-    $items = $b['content']['items'] ?? [];
-    if (!is_array($items)) $items = [];
-  ?>
-  <div class="cardsGrid" style="grid-template-columns: <?=h($tpl)?>;">
-    <?php foreach ($items as $it): ?>
-      <?php
-        if (!is_array($it)) continue;
-        $title = (string)($it['title'] ?? '');
-        if ($title === '') continue;
-        $text = (string)($it['text'] ?? '');
-        $imgId = (int)($it['imageFileId'] ?? 0);
-        $btnText = trim((string)($it['buttonText'] ?? ''));
-        $btnUrl  = trim((string)($it['buttonUrl'] ?? ''));
-      ?>
-      <div class="cardItem">
-        <div class="t"><?=h($title)?></div>
-        <?php if ($text !== ''): ?><div class="d"><?=nl2br(h($text))?></div><?php endif; ?>
-        <?php if ($imgId > 0): ?><img src="<?=h(downloadUrl($siteId, $imgId))?>" alt=""><?php endif; ?>
-        <?php if ($btnUrl !== ''): ?>
-          <a class="a" href="<?=h($btnUrl)?>" <?= preg_match('~^https?://~i', $btnUrl) ? 'target="_blank" rel="noopener noreferrer"' : '' ?>>
-            <?=h($btnText !== '' ? $btnText : 'Открыть')?>
-          </a>
-        <?php endif; ?>
-      </div>
-    <?php endforeach; ?>
-  </div>
-<?php endif; ?>
+/* cards builder */
+.cardsBuilder { margin-top:10px; }
+.cardsBuilder .item { border:1px solid #e5e7ea; border-radius:12px; padding:10px; margin-top:10px; background:#fff; }
+.cardsBuilder .itemHead { display:flex; gap:8px; align-items:center; justify-content:space-between; flex-wrap:wrap; }
+.cardsBuilder .miniBtns { display:flex; gap:6px; flex-wrap:wrap; }
+.cardsBuilder .grid2 { display:grid; grid-template-columns: 1fr 1fr; gap:10px; }
+@media (max-width: 720px){ .cardsBuilder .grid2 { grid-template-columns: 1fr; } }
 ```
 
 ---
 
-# 3) editor.php — как делаем проще (без огромного конструктора)
+## 1.2 renderBlocks: чтобы “Редактировать” у cards вызывало визуальный конструктор
 
-Чтобы не городить UI на 200 строк, сделаем первый вариант минимально:
-
-* “Cards” редактируем **через JSON textarea** (позже сделаем красивый конструктор)
-* Это быстрый путь и надежный.
-
-## 3.1 Кнопка
-
-Добавь:
+Если у тебя сейчас `cards` ещё в JSON-варианте — оставь превью как есть, но важно чтобы кнопка была:
 
 ```html
-<button class="ui-btn ui-btn-primary" id="btnAddCards">+ Cards</button>
+<button ... data-edit-cards-id="${id}">Редактировать</button>
 ```
 
-## 3.2 JS переменная
+(скорее всего уже есть)
+
+---
+
+# 2) editor.php — вставь функции конструктора
+
+Добавь эти функции в JS (лучше рядом с другими `open*Dialog`).
+
+### 2.1 Хелперы для Cards Builder
 
 ```js
-const btnAddCards = document.getElementById('btnAddCards');
-```
+function cardsNormalizeItem(it) {
+  const x = (it && typeof it === 'object') ? it : {};
+  return {
+    title: (x.title || '').toString(),
+    text: (x.text || '').toString(),
+    imageFileId: parseInt(x.imageFileId || 0, 10) || 0,
+    buttonText: (x.buttonText || '').toString(),
+    buttonUrl: (x.buttonUrl || '').toString(),
+  };
+}
 
-## 3.3 renderBlocks (превью)
+function cardsRenderBuilderItems(items, files) {
+  const fileOptions = (selectedId) => {
+    const opts = ['<option value="0">— без картинки —</option>'];
+    files.forEach(f => {
+      const s = (parseInt(f.id,10) === selectedId) ? 'selected' : '';
+      opts.push(`<option value="${f.id}" ${s}>${BX.util.htmlspecialchars(f.name)} (id ${f.id})</option>`);
+    });
+    return opts.join('');
+  };
 
-Добавь обработку `cards` (перед unknown):
+  return items.map((it, idx) => {
+    const title = BX.util.htmlspecialchars(it.title || '');
+    const text = BX.util.htmlspecialchars(it.text || '');
+    const btnText = BX.util.htmlspecialchars(it.buttonText || '');
+    const btnUrl = BX.util.htmlspecialchars(it.buttonUrl || '');
+    const imgId = parseInt(it.imageFileId || 0, 10) || 0;
 
-```js
-if (type === 'cards') {
-  const columns = (b.content && b.content.columns) ? parseInt(b.content.columns, 10) : 3;
-  const items = (b.content && Array.isArray(b.content.items)) ? b.content.items : [];
-  return `
-    <div class="block">
-      <div class="row">
-        <div><b>#${id}</b> <span class="muted">(cards | sort ${sort} | cols ${columns} | items ${items.length})</span></div>
-        <div class="btns">
-          <button class="ui-btn ui-btn-light ui-btn-xs" data-move-block-id="${id}" data-move-dir="up">↑</button>
-          <button class="ui-btn ui-btn-light ui-btn-xs" data-move-block-id="${id}" data-move-dir="down">↓</button>
-          <button class="ui-btn ui-btn-light ui-btn-xs" data-edit-cards-id="${id}">Редактировать</button>
-          <button class="ui-btn ui-btn-danger ui-btn-xs" data-del-block-id="${id}">Удалить</button>
+    const imgPrev = imgId ? `<div class="imgPrev"><img src="${fileDownloadUrl(imgId)}" alt=""></div>` : '';
+
+    return `
+      <div class="item" data-ci="${idx}">
+        <div class="itemHead">
+          <div><b>Карточка ${idx + 1}</b></div>
+          <div class="miniBtns">
+            <button class="ui-btn ui-btn-light ui-btn-xs" data-card-up="${idx}">↑</button>
+            <button class="ui-btn ui-btn-light ui-btn-xs" data-card-down="${idx}">↓</button>
+            <button class="ui-btn ui-btn-danger ui-btn-xs" data-card-del="${idx}">Удалить</button>
+          </div>
+        </div>
+
+        <div class="grid2" style="margin-top:10px;">
+          <div>
+            <div class="field">
+              <label>Заголовок</label>
+              <input class="input" data-card-title="${idx}" value="${title}">
+            </div>
+            <div class="field">
+              <label>Текст</label>
+              <textarea class="input" data-card-text="${idx}" style="height:120px;">${text}</textarea>
+            </div>
+          </div>
+
+          <div>
+            <div class="field">
+              <label>Картинка</label>
+              <select class="input" data-card-img="${idx}">
+                ${fileOptions(imgId)}
+              </select>
+            </div>
+            <div data-card-img-prev="${idx}">
+              ${imgPrev}
+            </div>
+
+            <div class="field">
+              <label>Текст кнопки (опц.)</label>
+              <input class="input" data-card-btntext="${idx}" value="${btnText}">
+            </div>
+            <div class="field">
+              <label>URL кнопки (опц.)</label>
+              <input class="input" data-card-btnurl="${idx}" value="${btnUrl}">
+            </div>
+          </div>
         </div>
       </div>
-      <div class="muted" style="margin-top:8px;">Пока редактирование через JSON (быстро). Потом сделаем визуальный конструктор.</div>
-      <pre>${BX.util.htmlspecialchars(JSON.stringify({columns, items}, null, 2))}</pre>
-    </div>
-  `;
+    `;
+  }).join('');
 }
 ```
 
-## 3.4 add/edit через JSON textarea
-
-Добавь функции:
+### 2.2 Основной диалог-конструктор
 
 ```js
-function openCardsJsonDialog(mode, blockId, currentContent) {
-  const cur = currentContent && typeof currentContent === 'object' ? currentContent : { columns: 3, items: [] };
-  const json = JSON.stringify(cur, null, 2);
+async function openCardsBuilderDialog(mode, blockId, currentContent) {
+  const currentCols = currentContent?.columns ? parseInt(currentContent.columns, 10) : 3;
+  let items = Array.isArray(currentContent?.items) ? currentContent.items.map(cardsNormalizeItem) : [];
+  if (!items.length) items = [cardsNormalizeItem({title:'Преимущество 1'}), cardsNormalizeItem({title:'Преимущество 2'})];
+
+  // заранее загрузим файлы (для селектов)
+  let files = [];
+  try { files = await getFilesForSite(); } catch(e) { files = []; }
+
+  // локальный "рендер" диалога: будем обновлять innerHTML при изменениях
+  const render = () => `
+    <div class="cardsBuilder">
+      <div class="field">
+        <label>Колонки</label>
+        <select id="cb_cols" class="input">
+          <option value="2" ${currentCols===2?'selected':''}>2</option>
+          <option value="3" ${currentCols===3?'selected':''}>3</option>
+          <option value="4" ${currentCols===4?'selected':''}>4</option>
+        </select>
+      </div>
+
+      <div style="margin-top:10px;">
+        <button class="ui-btn ui-btn-light" id="cb_add">+ Добавить карточку</button>
+      </div>
+
+      <div id="cb_items">
+        ${cardsRenderBuilderItems(items, files)}
+      </div>
+
+      <div class="muted" style="margin-top:10px;">
+        Минимум у карточки должен быть заголовок. Картинка и кнопка — опционально.
+      </div>
+    </div>
+  `;
 
   BX.UI.Dialogs.MessageBox.show({
     title: mode === 'edit' ? ('Редактировать Cards #' + blockId) : 'Новый Cards блок',
-    message: `
-      <div class="muted">Формат: { columns: 2|3|4, items: [ {title,text,imageFileId,buttonText,buttonUrl}, ... ] }</div>
-      <textarea id="cards_json" class="input" style="height:260px; font-family:monospace;">${BX.util.htmlspecialchars(json)}</textarea>
-    `,
+    message: render(),
     buttons: BX.UI.Dialogs.MessageBoxButtons.OK_CANCEL,
     onOk: function(mb){
-      let obj = null;
-      try {
-        obj = JSON.parse(document.getElementById('cards_json')?.value || '');
-      } catch (e) {
-        notify('JSON не валиден');
-        return;
-      }
+      // собираем данные из инпутов
+      const cols = parseInt(document.getElementById('cb_cols')?.value || '3', 10);
+      if (![2,3,4].includes(cols)) { notify('columns должен быть 2/3/4'); return; }
 
-      const columns = parseInt(obj.columns || 3, 10);
-      if (![2,3,4].includes(columns)) { notify('columns должен быть 2/3/4'); return; }
+      const collected = items.map((_, idx) => {
+        const title = (document.querySelector(`[data-card-title="${idx}"]`)?.value || '').trim();
+        const text = (document.querySelector(`[data-card-text="${idx}"]`)?.value || '');
+        const imageFileId = parseInt(document.querySelector(`[data-card-img="${idx}"]`)?.value || '0', 10) || 0;
+        const buttonText = (document.querySelector(`[data-card-btntext="${idx}"]`)?.value || '').trim();
+        const buttonUrl = (document.querySelector(`[data-card-btnurl="${idx}"]`)?.value || '').trim();
+        return { title, text, imageFileId, buttonText, buttonUrl };
+      }).filter(x => x.title !== '');
 
-      const items = Array.isArray(obj.items) ? obj.items : [];
-      if (!items.length) { notify('items пустой'); return; }
+      if (!collected.length) { notify('Добавь хотя бы одну карточку с заголовком'); return; }
 
-      const payload = { columns, items: JSON.stringify(items) };
+      const payload = { columns: cols, items: JSON.stringify(collected) };
 
       const call = (mode === 'edit')
         ? api('block.update', Object.assign({ id: blockId }, payload))
@@ -311,55 +193,133 @@ function openCardsJsonDialog(mode, blockId, currentContent) {
       call.then(res => {
         if (!res || res.ok !== true) { notify('Не удалось сохранить cards'); return; }
         notify(mode === 'edit' ? 'Сохранено' : 'Cards создан');
-        mb.close(); loadBlocks();
+        mb.close();
+        loadBlocks();
       }).catch(() => notify('Ошибка запроса cards'));
     }
   });
-}
 
-function addCardsBlock() { openCardsJsonDialog('create', 0, { columns: 3, items: [
-  { title: 'Преимущество 1', text: 'Короткое описание' },
-  { title: 'Преимущество 2', text: 'Короткое описание' },
-  { title: 'Преимущество 3', text: 'Короткое описание' }
-]}); }
+  // навешиваем события после вставки DOM
+  setTimeout(() => {
+    const root = document.querySelector('.cardsBuilder');
+    if (!root) return;
+
+    const rerender = () => {
+      // сохраняем текущие значения перед перерисовкой
+      items = items.map((it, idx) => ({
+        title: (document.querySelector(`[data-card-title="${idx}"]`)?.value || it.title || ''),
+        text: (document.querySelector(`[data-card-text="${idx}"]`)?.value || it.text || ''),
+        imageFileId: parseInt(document.querySelector(`[data-card-img="${idx}"]`)?.value || it.imageFileId || 0, 10) || 0,
+        buttonText: (document.querySelector(`[data-card-btntext="${idx}"]`)?.value || it.buttonText || ''),
+        buttonUrl: (document.querySelector(`[data-card-btnurl="${idx}"]`)?.value || it.buttonUrl || ''),
+      }));
+
+      root.innerHTML = render();
+
+      // снова подключаем слушатели
+      bind();
+    };
+
+    const bind = () => {
+      const addBtn = document.getElementById('cb_add');
+      if (addBtn) {
+        addBtn.onclick = () => {
+          items.push(cardsNormalizeItem({ title: 'Новая карточка', text: '' }));
+          rerender();
+        };
+      }
+
+      // up/down/delete
+      root.querySelectorAll('[data-card-up]').forEach(btn => {
+        btn.onclick = () => {
+          const i = parseInt(btn.getAttribute('data-card-up'), 10);
+          if (i > 0) { const t = items[i-1]; items[i-1] = items[i]; items[i] = t; rerender(); }
+        };
+      });
+      root.querySelectorAll('[data-card-down]').forEach(btn => {
+        btn.onclick = () => {
+          const i = parseInt(btn.getAttribute('data-card-down'), 10);
+          if (i < items.length - 1) { const t = items[i+1]; items[i+1] = items[i]; items[i] = t; rerender(); }
+        };
+      });
+      root.querySelectorAll('[data-card-del]').forEach(btn => {
+        btn.onclick = () => {
+          const i = parseInt(btn.getAttribute('data-card-del'), 10);
+          items.splice(i, 1);
+          if (!items.length) items.push(cardsNormalizeItem({ title: 'Новая карточка' }));
+          rerender();
+        };
+      });
+
+      // превью картинки при выборе
+      root.querySelectorAll('select[data-card-img]').forEach(sel => {
+        sel.onchange = () => {
+          const idx = parseInt(sel.getAttribute('data-card-img'), 10);
+          const fid = parseInt(sel.value || '0', 10);
+          const box = root.querySelector(`[data-card-img-prev="${idx}"]`);
+          if (!box) return;
+          box.innerHTML = fid ? `<div class="imgPrev"><img src="${fileDownloadUrl(fid)}" alt=""></div>` : '';
+        };
+      });
+    };
+
+    bind();
+  }, 0);
+}
+```
+
+### 2.3 add/edit функции (cards)
+
+Заменяем JSON-вариант (или просто переопределяем) на визуальный:
+
+```js
+function addCardsBlock() {
+  openCardsBuilderDialog('create', 0, { columns: 3, items: [
+    { title: 'Преимущество 1', text: 'Короткое описание' },
+    { title: 'Преимущество 2', text: 'Короткое описание' },
+    { title: 'Преимущество 3', text: 'Короткое описание' }
+  ]});
+}
 
 function editCardsBlock(id) {
   api('block.list', { pageId }).then(res => {
     if (!res || res.ok !== true) return;
     const blk = (res.blocks || []).find(x => parseInt(x.id,10) === id);
-    openCardsJsonDialog('edit', id, blk?.content || null);
-  });
+    openCardsBuilderDialog('edit', id, blk?.content || null);
+  }).catch(() => notify('Ошибка block.list'));
 }
 ```
 
-## 3.5 Подключи клики
+---
 
-В click handler:
+# 3) Подключение событий
+
+## 3.1 Кнопка “+ Cards”
+
+Убедись, что у тебя есть:
+
+```js
+btnAddCards.addEventListener('click', addCardsBlock);
+```
+
+## 3.2 Click-handler для редактирования
+
+В общем обработчике кликов добавь:
 
 ```js
 const ecards = e.target.closest('[data-edit-cards-id]');
 if (ecards) { editCardsBlock(parseInt(ecards.getAttribute('data-edit-cards-id'), 10)); return; }
 ```
 
-И кнопку:
+---
 
-```js
-btnAddCards.addEventListener('click', addCardsBlock);
-```
+# Что проверить
+
+1. Нажать **+ Cards** → откроется конструктор, добавится 3 карточки по умолчанию
+2. Поменять заголовки, добавить картинку (если есть файлы), поставить кнопку
+3. Поменять порядок ↑↓, удалить карточку
+4. OK → в списке блоков “cards” обновится `items count`, а на `view.php` будет сетка
 
 ---
 
-## Что проверить
-
-1. “+ Cards” → сразу создается пример из 3 карточек
-2. В `view.php` сетка отображается в 3 колонки
-3. Отредактируй JSON: поставь `columns: 2` и измени текст — сохрани
-4. Если указал `imageFileId`, картинка должна быть из папки сайта (иначе API ругнется)
-
----
-
-Если согласен — дальше делаем **визуальный конструктор Cards** (без JSON), где можно:
-
-* добавить/удалить карточку,
-* выбрать картинку из файлов,
-* двигать карточки вверх/вниз.
+Если это заработает, следующий блок я бы сделал **Form block** (форма заявки с отправкой письма / создание лида в CRM Bitrix24). Это уже “бизнес-функция”, а не просто верстка.
