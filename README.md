@@ -1,101 +1,95 @@
-Отлично, по `api.php` сразу видно **две реальные причины**, почему у тебя в `settings.php`:
+Ок, принимаю. Перестаю гадать и **делаем так, чтобы ты видел РЕАЛЬНУЮ причину**, а не “нет доступа” на всё подряд.
 
-* `site.get: нет доступа`
-* `site.update: HTTP_ERROR`
+Сейчас у тебя в `settings.php` любой фейл (`SITE_ID_REQUIRED`, `FORBIDDEN`, 500, и т.д.) отображается одной фразой “нет доступа”, поэтому ты и я “ходим кругами”.
 
-## ✅ Причина №1 (settings.php): ты НЕ отправляешь siteId в api()
+## 1) settings.php — исправь api() так, чтобы siteId всегда уходил + чтобы ты видел ошибку
 
-В твоём `settings.php` сейчас:
-
-```js
-data: Object.assign({ action, sessid: BX.bitrix_sessid() }, data || {}),
-```
-
-А **`site.get`, `page.list`, `menu.list`, `file.list`, `site.update`** в `api.php` требуют `$_POST['siteId']`.
-
-Из-за этого сервер возвращает **422 SITE_ID_REQUIRED**, а Bitrix `BX.ajax` уводит это в `onfailure` → ты видишь `HTTP_ERROR`, а в UI у тебя “нет доступа”.
-
-### 🔧 Как исправить (settings.php)
-
-В `settings.php` в функции `api()` поменяй `data:` на:
+**Замени целиком функцию `api(action, data)`** на эту:
 
 ```js
-data: Object.assign({ action, siteId, sessid: BX.bitrix_sessid() }, data || {}),
+function api(action, data) {
+  return new Promise((resolve) => {
+    BX.ajax({
+      url: '/local/sitebuilder/api.php',
+      method: 'POST',
+      dataType: 'json',
+      data: Object.assign(
+        { action, siteId, sessid: BX.bitrix_sessid() }, // <-- КРИТИЧНО: siteId всегда уходит
+        data || {}
+      ),
+      onsuccess: (res) => resolve(res),
+      onfailure: (xhr) => {
+        const status = xhr?.status || 0;
+        const raw = xhr?.responseText ? String(xhr.responseText) : '';
+        let parsed = null;
+        try { parsed = JSON.parse(raw); } catch (e) {}
+
+        resolve(Object.assign(
+          { ok: false, error: 'HTTP_ERROR', status, raw },
+          (parsed && typeof parsed === 'object') ? parsed : {}
+        ));
+      }
+    });
+  });
+}
 ```
 
-И всё: `site.get` перестанет “падать”, `site.update` начнёт реально доходить.
+## 2) settings.php — в load() покажи конкретную ошибку site.get (а не “нет доступа”)
 
----
+Вот этот кусок:
 
-## ✅ Причина №2 (api.php): у тебя вызывается sb_require_admin(), но такой функции НЕТ
+```js
+if (!sres || sres.ok !== true){ notify('site.get: нет доступа'); return; }
+```
 
-В `api.php` внутри `site.update`:
+**замени на:**
+
+```js
+if (!sres || sres.ok !== true){
+  console.log('site.get debug:', sres);
+  notify(`site.get: ${sres.error || 'UNKNOWN'}${sres.status ? ' (HTTP '+sres.status+')' : ''}${sres.role ? ' role='+sres.role : ''}`);
+  return;
+}
+```
+
+После этого ты сразу увидишь, что именно происходит:
+
+* `SITE_ID_REQUIRED` → значит siteId всё ещё не уходит (и это 100% фронт)
+* `FORBIDDEN` + `role` → значит в `access.json` у твоего `U<id>` нет прав на этот сайт
+* `HTTP_ERROR (500)` → значит на сервере фаталка/ошибка PHP
+
+## 3) api.php — site.update сейчас может падать фатально
+
+У тебя в `site.update` стоит:
 
 ```php
 sb_require_admin($siteId);
 ```
 
-Но у тебя объявлены только:
+Но **в твоём api.php нет функции `sb_require_admin()`** (в показанном куске её нет). Это даст **500**.
 
-* `sb_require_owner`
-* `sb_require_editor`
-* `sb_require_viewer`
+### Быстрый фикс (правильный)
 
-👉 Если запрос реально доходит до `site.update`, PHP даст **Fatal error: Call to undefined function sb_require_admin()** → сервер отдаст **500**, а фронт снова покажет `HTTP_ERROR`.
-
-### 🔧 Как исправить (api.php)
-
-Добавь рядом с остальными require-функциями:
+Добавь рядом с остальными:
 
 ```php
 function sb_require_admin(int $siteId): void { sb_require_site_role($siteId, 3); }
 ```
 
-То есть блок должен выглядеть так:
-
-```php
-function sb_require_owner(int $siteId): void { sb_require_site_role($siteId, 4); }
-function sb_require_admin(int $siteId): void { sb_require_site_role($siteId, 3); }
-function sb_require_editor(int $siteId): void { sb_require_site_role($siteId, 2); }
-function sb_require_viewer(int $siteId): void { sb_require_site_role($siteId, 1); }
-```
+(OWNER=4, ADMIN=3, EDITOR=2, VIEWER=1)
 
 ---
 
-## ⚠️ Ещё важное: у тебя в api.php дубли экшенов (это опасно)
+# Почему у тебя “site.get: нет доступа” даже сейчас
 
-Я вижу:
-
-* `menu.setTop` **три раза**
-* `site.get` **два раза**
-* плюс `menu.create` дважды пытается выставить `topMenuId`
-
-Это **не всегда ломает сейчас**, потому что при первом совпадении идёт `exit;`, но для серьёзного проекта это мина: правки начнут “не применяться”, потому что ты можешь править не тот блок.
-
-### Минимально правильное действие
-
-Оставь **только по одному** блоку для:
-
-* `menu.setTop`
-* `site.get`
-
-Остальные удали.
-
-(Если хочешь — я скажу конкретно “какой из трёх оставить”, но проще: оставляем самый “полный” и удаляем остальные ниже/выше.)
+Потому что `settings.php` **не показывает реальную ошибку**.
+После правок из пунктов (1) и (2) ты увидишь точный код (`SITE_ID_REQUIRED` / `FORBIDDEN` / что-то ещё) — и это сразу снимет всю неопределённость.
 
 ---
 
-# Что сделать прямо сейчас (порядок)
+## Мини-чек после правок (2 клика)
 
-1. **settings.php**: добавить `siteId` в `api()` (как выше)
-2. **api.php**: добавить `sb_require_admin()` (как выше)
-3. Проверить сохранение в settings.php:
+1. Открой `settings.php?siteId=...`
+2. Если снова ошибка — **посмотри notify + консоль** (там будет `site.get debug:` с объектом)
 
-   * открывается без ошибок
-   * `site.get` возвращает ok=true
-   * `site.update` возвращает ok=true
-4. Потом зачистить дубли `menu.setTop` и `site.get`
-
----
-
-Если после этих двух фиксов у тебя всё ещё будет `site.update: HTTP_ERROR`, пришли **ответ из консоли** (ты уже делаешь `console.log('site.update debug:', r);`) — там будет либо `FORBIDDEN` (роль не ADMIN/OWNER), либо валидация типа `ACCENT_BAD_FORMAT` / `TOP_MENU_NOT_FOUND` / `LOGO_NOT_IN_SITE_FOLDER`.
+Скинь сюда **ровно строку из notify** после этих правок (типа `site.get: SITE_ID_REQUIRED (HTTP 422)` или `site.get: FORBIDDEN role=null`) — и я дам точечный фикс без кругов.
