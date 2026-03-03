@@ -1,124 +1,143 @@
-Принял. Сейчас **делаем “пункт 1” нормально**: чистим `api.php` от дублей и опасных мест так, чтобы:
-
-* **каждый action был ровно один раз**
-* `menu.setTop` был один
-* `site.get` был один
-* `menu.create` не делал topMenu дважды
-* `site.setTopMenu` вообще не нужен (у тебя уже есть `menu.setTop` + `site.update(topMenuId)`), значит **удаляем**, чтобы не плодить интерфейсы
-
-Ниже — конкретно **что удалить/оставить** (без воды).
+Ок, тогда двигаемся по **пункту 1: “связать settings с реальным видом + улучшить UX”** — чтобы настройки **точно влияли на view.php** и были доступны из index.php.
 
 ---
 
-# ✅ 1) Удаляем второй `site.get` (у тебя он ДУБЛИРУЕТСЯ)
+## 1) index.php — добавь кнопку “Настройки” на карточке сайта
 
-Внизу файла у тебя есть **второй** блок:
+В твоём `renderSitesCards()` найди блок кнопок:
 
-```php
-if ($action === 'site.get') {
-   ...
+```js
+<div class="siteBtns">
+  <button ...>Страницы</button>
+  <a ...>Меню</a>
+  <a ...>Файлы</a>
+  <button ...>Доступы</button>
+  <button ...>Удалить</button>
+</div>
+```
+
+И вставь **между “Страницы” и “Меню”**:
+
+```html
+<a class="ui-btn ui-btn-light ui-btn-xs"
+   href="/local/sitebuilder/settings.php?siteId=${s.id}">
+  Настройки
+</a>
+```
+
+---
+
+## 2) view.php — применяем containerWidth + показываем logoFileId в шапке
+
+### 2.1. Контейнер ширины из settings
+
+У тебя в `:root` уже есть:
+
+```css
+--sb-container: <?= (int)$containerWidth ?>px;
+```
+
+Но `.container` у тебя сейчас привязан к `--container`, из-за этого настройка может **не влиять**.
+
+В CSS найди:
+
+```css
+.container{
+  max-width: var(--container);
+  margin: 0 auto;
+  padding: 0 16px;
 }
 ```
 
-Он идет **после** `if ($action === 'site.setTopMenu') { ... }`.
+И замени на:
 
-✅ **Удаляй полностью этот нижний `site.get`**, оставляем только первый (который выше, рядом с `site.update`).
+```css
+.container{
+  max-width: var(--sb-container);
+  margin: 0 auto;
+  padding: 0 16px;
+}
+```
+
+*(можешь вообще убрать `--container`, чтобы не было путаницы)*
 
 ---
 
-# ✅ 2) Оставляем ТОЛЬКО ОДИН `menu.setTop` (сейчас их 3 подряд)
+### 2.2. Логотип в “brandMark”
 
-У тебя сейчас подряд 3 раза:
+У тебя уже есть `$logoFileId`, но он не используется.
+Найди HTML в шапке:
 
 ```php
-if ($action === 'menu.setTop') { ... }  // #1
-if ($action === 'menu.setTop') { ... }  // #2
-if ($action === 'menu.setTop') { ... }  // #3
+<div class="brandMark">SB</div>
 ```
 
-✅ Оставляем **первый** (он нормальный: проверяет существование меню + пишет topMenuId).
-✅ **Удаляем полностью второй и третий**.
-
-То есть вырезаешь прям от строки:
+Замени на:
 
 ```php
-if ($action === 'menu.setTop') {
+<div class="brandMark">
+  <?php if ($logoFileId > 0): ?>
+    <img src="<?= h(downloadUrl($siteId, $logoFileId)) ?>" alt="logo">
+  <?php else: ?>
+    SB
+  <?php endif; ?>
+</div>
 ```
 
-(второе вхождение) — и до его `exit;`, и так же третье.
+И добавь/замени стили для `.brandMark` (чтобы картинка красиво влезала):
 
----
-
-# ✅ 3) В `menu.create` убираем двойную установку `topMenuId`
-
-У тебя там две одинаковые логики:
-
-1. `try { ... } catch {}`
-2. сразу после него ещё раз `// NEW: если topMenuId еще не задан`
-
-✅ Для серьёзного проекта оставляем **второй блок**, потому что он прямой и понятный.
-✅ **Удаляем первый `try { ... } catch` полностью**.
-
-То есть вырезаешь вот этот кусок:
-
-```php
-// если это первое меню у сайта — сделаем его верхним (topMenuId)
-try {
-   ...
-} catch (\Throwable $e) {
-   ...
+```css
+.brandMark{
+  width: 34px;
+  height: 34px;
+  border-radius: 12px;
+  background: var(--accentSoft);
+  border:1px solid #c7d2fe;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  color: var(--accent);
+  font-weight: 800;
+  flex:0 0 auto;
+  overflow:hidden; /* важно для img */
+}
+.brandMark img{
+  width:100%;
+  height:100%;
+  object-fit:cover;
+  display:block;
 }
 ```
 
 ---
 
-# ✅ 4) Удаляем `site.setTopMenu` (он лишний и плодит несовместимость)
+### 2.3. Ссылка на настройки прямо из view.php (удобно)
 
-У тебя есть action:
+В блоке `.actions` (где “← К списку / Меню / Редактор”) добавь кнопку:
 
 ```php
-if ($action === 'site.setTopMenu') { ... }
+<a class="btn" href="/local/sitebuilder/settings.php?siteId=<?= (int)$siteId ?>" target="_blank">Настройки</a>
 ```
 
-Но:
+Например так:
 
-* в UI (`menu.php`) ты дергаешь **menu.setTop**
-* в `settings.php` ты сохраняешь `topMenuId` через **site.update**
-
-То есть `site.setTopMenu` просто дублирует функционал и может рассинхронизировать “как правильно”.
-
-✅ **Удаляй полностью `if ($action === 'site.setTopMenu') { ... }`**
-
----
-
-# ✅ 5) Итог: какие actions должны остаться (из проблемных)
-
-В конце у тебя должно остаться:
-
-* `site.get` — **1 раз**
-* `menu.setTop` — **1 раз**
-* `site.setTopMenu` — **0 раз**
-* `menu.create` — topMenuId устанавливается **1 раз**
+```php
+<div class="actions">
+  <a class="btn" href="/local/sitebuilder/index.php">← К списку</a>
+  <a class="btn" href="/local/sitebuilder/settings.php?siteId=<?= (int)$siteId ?>" target="_blank">Настройки</a>
+  <a class="btn" href="/local/sitebuilder/menu.php?siteId=<?= (int)$siteId ?>" target="_blank">Меню</a>
+  <a class="btn btnPrimary" href="/local/sitebuilder/editor.php?siteId=<?= (int)$siteId ?>&pageId=<?= (int)$pageId ?>" target="_blank">Редактор</a>
+</div>
+```
 
 ---
 
-# 🧩 Мини-фикс (очень рекомендую): защита `site.update` от случайного удаления topMenuId/ homePageId
+## Как проверить, что всё реально работает
 
-Сейчас `site.update` принимает `topMenuId` и `homePageId` из POST и валидирует — ок.
-Но если UI отправит `topMenuId: 0`, оно сбросит топ-меню. Это нормально, но иногда пользователи жмут “Сохранить” с пустыми полями.
-
-Если хочешь “защиту от случайного сброса” — скажи, сделаем флаг “если поле не трогали — не отправляем”. Это уже UI-логика, не API.
+1. Открой `settings.php` → поменяй **containerWidth** (например 900 или 1600) → **Сохранить**
+2. Открой `view.php` — ширина должна заметно измениться
+3. Выбери логотип (logoFileId) → Сохранить → в `view.php` в левом квадратике должен появиться логотип
 
 ---
 
-# ✅ Хочешь, чтобы я дал тебе ГОТОВЫЙ `api.php` целиком без дублей?
-
-Я могу прямо сейчас вернуть **полный файл**, но он у тебя реально большой, и в чате легко ошибиться при копипасте (особенно если дальше пойдут ещё правки).
-
-Поэтому предлагаю “железобетонный” вариант для серьёзного проекта:
-
-1. Ты делаешь **4 удаления**, которые я указал.
-2. Присылаешь мне **кусок начиная с `/** -------------------- MENU -------------------- */` до конца файла** после правок.
-3. Я возвращаю финальный хвост один-в-один, чтобы ты просто заменил его целиком.
-
-Если хочешь без шагов — напиши “дай полный файл” и я пришлю целиком уже очищенный.
+Если сделал — дальше логичный следующий шаг: **добавить “быстрый предпросмотр” настроек в index.php (цвет/логотип) + мелкую валидацию на UI**, чтобы на серьёзном проекте меньше ловить ошибки на API.
