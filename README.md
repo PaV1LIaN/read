@@ -1,4 +1,3 @@
-```php
 <?php
 define('NO_KEEP_STATISTIC', true);
 define('NO_AGENT_STATISTIC', true);
@@ -6,7 +5,7 @@ define('DisableEventsCheck', true);
 
 require $_SERVER['DOCUMENT_ROOT'].'/bitrix/modules/main/include/prolog_before.php';
 
-global $USER, $APPLICATION;
+global $USER;
 
 if (!$USER->IsAuthorized()) {
     LocalRedirect('/auth/');
@@ -14,897 +13,577 @@ if (!$USER->IsAuthorized()) {
 
 header('Content-Type: text/html; charset=UTF-8');
 
-\Bitrix\Main\UI\Extension::load([
-    'main.core',
-    'ui.buttons',
-    'ui.dialogs.messagebox',
-    'ui.notification',
-]);
+$siteId = (int)($_GET['siteId'] ?? 0);
+$pageId = (int)($_GET['pageId'] ?? 0);
+
+function sb_data_path(string $file): string {
+    return $_SERVER['DOCUMENT_ROOT'] . '/upload/sitebuilder/' . $file;
+}
+function sb_read_json(string $file): array {
+    $path = sb_data_path($file);
+    if (!file_exists($path)) return [];
+    $raw = file_get_contents($path);
+    $data = json_decode((string)$raw, true);
+    return is_array($data) ? $data : [];
+}
+function h($s): string { return htmlspecialcharsbx((string)$s); }
+
+function downloadUrl(int $siteId, int $fileId): string {
+    return '/local/sitebuilder/download.php?siteId=' . $siteId . '&fileId=' . $fileId;
+}
+
+function viewUrl(int $siteId, int $pageId): string {
+    return '/local/sitebuilder/view.php?siteId=' . $siteId . '&pageId=' . $pageId;
+}
+
+function sb_index_pages_by_id(array $pages, int $siteId): array {
+    $byId = [];
+    foreach ($pages as $p) {
+        if ((int)($p['siteId'] ?? 0) !== $siteId) continue;
+        $id = (int)($p['id'] ?? 0);
+        if ($id > 0) $byId[$id] = $p;
+    }
+    return $byId;
+}
+
+function sb_build_breadcrumbs(array $pagesById, int $currentPageId): array {
+    // возвращает массив страниц от корня к текущей (включая текущую)
+    $chain = [];
+    $guard = 0;
+    $curId = $currentPageId;
+
+    while ($curId > 0 && isset($pagesById[$curId])) {
+        $chain[] = $pagesById[$curId];
+        $parentId = (int)($pagesById[$curId]['parentId'] ?? 0);
+        if ($parentId <= 0) break;
+        $curId = $parentId;
+
+        $guard++;
+        if ($guard > 50) break; // защита от циклов
+    }
+
+    return array_reverse($chain);
+}
+
+function sb_get_children_pages(array $pages, int $siteId, int $parentId): array {
+    $kids = array_values(array_filter($pages, function($p) use ($siteId, $parentId){
+        return (int)($p['siteId'] ?? 0) === $siteId && (int)($p['parentId'] ?? 0) === $parentId;
+    }));
+    usort($kids, function($a, $b){
+        $sa = (int)($a['sort'] ?? 500);
+        $sb = (int)($b['sort'] ?? 500);
+        if ($sa === $sb) return ((int)($a['id'] ?? 0) <=> (int)($b['id'] ?? 0));
+        return $sa <=> $sb;
+    });
+    return $kids;
+}
+
+// load data
+$sites = sb_read_json('sites.json');
+$pages = sb_read_json('pages.json');
+$blocksAll = sb_read_json('blocks.json');
+$menusAll = sb_read_json('menus.json');
+
+// find site/page
+$site = null;
+foreach ($sites as $s) {
+    if ((int)($s['id'] ?? 0) === $siteId) { $site = $s; break; }
+}
+
+$page = null;
+foreach ($pages as $p) {
+    if ((int)($p['id'] ?? 0) === $pageId && (int)($p['siteId'] ?? 0) === $siteId) { $page = $p; break; }
+}
+
+if (!$site || !$page) {
+    http_response_code(404);
+    ?>
+    <!doctype html><html lang="ru"><head><meta charset="utf-8"><title>Не найдено</title></head>
+    <body style="font-family:Arial;padding:24px;background:#f6f7f8;">
+      <div style="background:#fff;border:1px solid #e5e7ea;border-radius:12px;padding:16px;">
+        <h2 style="margin-top:0;">Страница не найдена</h2>
+        <div>siteId=<?= (int)$siteId ?>, pageId=<?= (int)$pageId ?></div>
+        <div style="margin-top:12px;"><a href="/local/sitebuilder/index.php">← Назад</a></div>
+      </div>
+    </body></html>
+    <?php
+    exit;
+}
+
+$topMenuId = (int)($site['topMenuId'] ?? 0);
+
+// site pages (for fallback nav / editor link)
+$sitePages = array_values(array_filter($pages, fn($p) => (int)($p['siteId'] ?? 0) === $siteId));
+usort($sitePages, fn($a, $b) => (int)($a['sort'] ?? 500) <=> (int)($b['sort'] ?? 500));
+
+$pagesById = sb_index_pages_by_id($pages, $siteId);
+$breadcrumbs = sb_build_breadcrumbs($pagesById, $pageId);
+$children = sb_get_children_pages($pages, $siteId, $pageId);
+$parentId = (int)($page['parentId'] ?? 0);
+$parentChildren = $parentId > 0 ? sb_get_children_pages($pages, $siteId, $parentId) : [];
+
+// blocks for current page
+$blocks = array_values(array_filter($blocksAll, fn($b) => (int)($b['pageId'] ?? 0) === $pageId));
+usort($blocks, fn($a, $b) => (int)($a['sort'] ?? 500) <=> (int)($b['sort'] ?? 500));
+
+// menu: take topMenuId for this site (if set), otherwise fallback to first menu
+$menuItems = [];
+foreach ($menusAll as $rec) {
+    if ((int)($rec['siteId'] ?? 0) !== $siteId) continue;
+
+    $menus = $rec['menus'] ?? [];
+    if (!is_array($menus) || !count($menus)) break;
+
+    $picked = null;
+
+    if ($topMenuId > 0) {
+        foreach ($menus as $m) {
+            if ((int)($m['id'] ?? 0) === $topMenuId) { $picked = $m; break; }
+        }
+    }
+
+    if (!$picked) $picked = $menus[0];
+
+    $menuItems = $picked['items'] ?? [];
+    if (!is_array($menuItems)) $menuItems = [];
+    usort($menuItems, fn($a, $b) => (int)($a['sort'] ?? 0) <=> (int)($b['sort'] ?? 0));
+    break;
+}
 ?>
 <!doctype html>
 <html lang="ru">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>SiteBuilder</title>
-
-  <?php $APPLICATION->ShowHead(); ?>
-
+  <title><?=h($page['title'])?> — <?=h($site['name'])?></title>
   <style>
-    html, body { height: 100%; margin: 0; }
-    body { font-family: Arial, sans-serif; background:#f6f7f8; color:#111; }
+    body { font-family: Arial, sans-serif; margin: 0; background:#f6f7f8; color:#111; }
+    .top {
+      background:#fff;
+      border-bottom:1px solid #e5e7ea;
+      padding:12px 16px;
+      display:flex;
+      gap:10px;
+      align-items:center;
+      flex-wrap:wrap;
+    }
+    .content { padding: 18px; }
+    .card { background:#fff; border:1px solid #e5e7ea; border-radius:12px; padding:16px; }
     a { color:#0b57d0; text-decoration:none; }
     a:hover { text-decoration:underline; }
-
-    .wrap { max-width: 1200px; margin: 0 auto; padding: 22px; }
-    .header {
-      background:#fff; border:1px solid #e5e7ea; border-radius:16px;
-      padding:16px; display:flex; gap:12px; align-items:center; flex-wrap:wrap;
-      box-shadow: 0 1px 0 rgba(0,0,0,0.02);
-    }
-    .titleBox { display:flex; flex-direction:column; gap:4px; min-width: 220px; }
-    .title { font-size:20px; font-weight:800; margin:0; line-height:1.2; }
-    .sub { font-size:12px; color:#6a737f; }
-    code { background:#f3f4f6; padding:2px 6px; border-radius:6px; }
-
-    .spacer { flex:1; }
-
-    .toolbar { display:flex; gap:10px; align-items:flex-end; flex-wrap:wrap; width:100%; }
-    .field { display:flex; flex-direction:column; gap:4px; }
-    .field label { font-size:12px; color:#6a737f; }
-    .input {
-      width: 320px; max-width: 100%;
-      padding:8px 10px; border:1px solid #d0d7de; border-radius:10px;
-      box-sizing:border-box; background:#fff;
-    }
-
-    .content {
-      margin-top:14px;
-      background:#fff; border:1px solid #e5e7ea; border-radius:16px;
-      padding:16px;
-    }
-
     .muted { color:#6a737f; }
-    .hint { font-size:12px; color:#6a737f; margin-top:6px; }
+    .menu { display:flex; gap:10px; flex-wrap:wrap; }
+    .menu a { padding:6px 10px; border-radius:999px; }
+    .menu a.active { background:#eef2ff; font-weight:bold; }
+    .block-text { margin-top:12px; line-height:1.6; font-size:16px; }
+    .block-img { margin-top:14px; }
+    .block-img img { max-width:100%; height:auto; border-radius:12px; border:1px solid #eee; display:block; }
+    code { background:#f3f4f6; padding:2px 6px; border-radius:6px; }
+    .btn { display:inline-block; padding:10px 14px; border-radius:12px; border:1px solid #e5e7ea; text-decoration:none; }
+    .btn-primary { background:#2563eb; color:#fff; border-color:#2563eb; }
+    .btn-secondary { background:#fff; color:#111; }
 
-    /* ---- cards grid ---- */
-    .grid {
-      margin-top:12px;
-      display:grid;
-      gap:12px;
-      grid-template-columns: 1fr;
+        /* columns2 */
+    .cols2 {
+    margin-top: 14px;
+    display: grid;
+    gap: 14px;
     }
-    @media (min-width: 720px){ .grid { grid-template-columns: 1fr 1fr; } }
-    @media (min-width: 1080px){ .grid { grid-template-columns: 1fr 1fr 1fr; } }
-
-    .siteCard {
-      border:1px solid #e5e7ea;
-      border-radius:16px;
-      padding:14px;
-      background:#fff;
-      display:flex;
-      flex-direction:column;
-      gap:10px;
-      transition: box-shadow .15s ease, transform .15s ease;
+    .cols2 .col {
+    background: #fff;
+    border: 1px solid #eee;
+    border-radius: 12px;
+    padding: 12px;
     }
-    .siteCard:hover { box-shadow: 0 10px 24px rgba(0,0,0,.06); transform: translateY(-1px); }
-
-    .siteTop { display:flex; gap:10px; align-items:flex-start; justify-content:space-between; }
-    .siteName { font-weight:800; font-size:16px; line-height:1.25; }
-    .siteMeta { margin-top:6px; display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
-    .pill {
-      font-size:12px;
-      background:#f3f4f6;
-      border:1px solid #eef0f2;
-      color:#374151;
-      padding:3px 8px;
-      border-radius:999px;
+    @media (max-width: 768px) {
+    .cols2 { grid-template-columns: 1fr !important; }
     }
-    .pillStrong { background:#eef2ff; border-color:#c7d2fe; color:#1e3a8a; }
 
-    .siteInfo { font-size:12px; color:#6a737f; display:flex; gap:10px; flex-wrap:wrap; }
-    .siteInfo b { color:#111; font-weight:700; }
-
-    .siteBtns { display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-top:2px; }
-    .btnRow { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
-
-    /* ---- dialogs helpers ---- */
-    .dField { margin-top:10px; }
-    .dField label { display:block; font-size:12px; color:#6a737f; margin-bottom:4px; }
-    .dInput, select, textarea { width:100%; padding:8px; border:1px solid #d0d7de; border-radius:10px; box-sizing:border-box; }
-
-    .searchRow{display:flex; gap:10px; align-items:flex-end; flex-wrap:wrap; margin-bottom:10px;}
-    .hint2 { font-size:12px; color:#6a737f; margin-top:8px; }
-
-    /* ---- pages tree (your existing styles, kept) ---- */
-    .tree { margin-top: 12px; }
-    .node { border:1px solid #eef0f2; border-radius:14px; padding:12px; background:#fff; margin-top:10px; }
-    .nodeHead { display:flex; gap:12px; align-items:flex-start; justify-content:space-between; flex-wrap:wrap; }
-    .nodeLeft { display:flex; gap:10px; align-items:flex-start; }
-    .nodeIcon {
-      width:22px; height:22px; border-radius:8px; background:#f3f4f6;
-      display:flex; align-items:center; justify-content:center; color:#6a737f; font-weight:700;
-      flex:0 0 auto;
+    .gallery {
+        margin-top: 14px;
+        display: grid;
+        gap: 12px;
     }
-    .nodeMain { min-width: 240px; }
-    .nodeTitleLine { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
-    .nodeTitleLine b { font-size:14px; }
-    .nodeSlug { font-size:12px; background:#f3f4f6; padding:2px 8px; border-radius:999px; color:#374151; }
-    .nodeMeta { margin-top:4px; font-size:12px; color:#6a737f; display:flex; gap:10px; flex-wrap:wrap; }
-    .nodeBtns { display:flex; gap:6px; flex-wrap:wrap; align-items:center; }
-    .children { margin-left:18px; border-left:2px dashed #e5e7ea; padding-left:12px; margin-top:10px; }
-    .btnTiny { padding:0 8px; height:26px; line-height:26px; }
+    .gallery img {
+        width: 100%;
+        height: auto;
+        display: block;
+        border-radius: 12px;
+        border: 1px solid #eee;
+        background: #fafafa;
+    }
+    @media (max-width: 768px) {
+        .gallery { grid-template-columns: 1fr !important; }
+    }
 
-    /* ---- picker cards (parent picker) ---- */
-    .secGrid{display:grid;gap:12px;margin-top:12px;}
-    @media (min-width: 820px){ .secGrid{grid-template-columns: 1fr 1fr;} }
-    .secCard{border:1px solid #e5e7ea;border-radius:14px;background:#fff;padding:12px;}
-    .secTitle{font-weight:800;}
-    .secMeta{color:#6a737f;font-size:12px;margin-top:4px;}
-    .secSearch{margin-top:10px;}
+    .spacer { width:100%; }
+    .spacerLine { height:1px; background:#e5e7ea; }
+
+    .cardBlock {
+        margin-top:14px;
+        background:#fff;
+        border:1px solid #eee;
+        border-radius:16px;
+        padding:14px;
+    }
+    .cardBlock img {
+        width:100%;
+        height:auto;
+        display:block;
+        border-radius:14px;
+        border:1px solid #eee;
+        margin-top:10px;
+    }
+    .cardTitle { font-weight:700; font-size:18px; }
+    .cardText { margin-top:8px; color:#333; line-height:1.6; white-space:pre-wrap; }
+    .cardBtn { display:inline-block; margin-top:10px; padding:10px 14px; border-radius:12px; border:1px solid #e5e7ea; text-decoration:none; }
+
+    .cardsGrid {
+        margin-top:14px;
+        display:grid;
+        gap:14px;
+    }
+    .cardsGrid .cardItem {
+        background:#fff;
+        border:1px solid #eee;
+        border-radius:16px;
+        padding:14px;
+    }
+    .cardsGrid .cardItem img{
+        width:100%;
+        height:auto;
+        display:block;
+        border-radius:14px;
+        border:1px solid #eee;
+        background:#fafafa;
+        margin-top:10px;
+    }
+    .cardsGrid .t { font-weight:700; font-size:16px; }
+    .cardsGrid .d { margin-top:8px; color:#333; line-height:1.6; white-space:pre-wrap; }
+    .cardsGrid .a { display:inline-block; margin-top:10px; padding:10px 14px; border-radius:12px; border:1px solid #e5e7ea; text-decoration:none; }
+    @media (max-width: 768px) {
+        .cardsGrid { grid-template-columns: 1fr !important; }
+    }
+
+    .breadcrumbs { display:flex; gap:6px; flex-wrap:wrap; align-items:center; }
+    .breadcrumbs a, .breadcrumbs span { font-size:12px; color:#6a737f; }
+    .breadcrumbs a { color:#0b57d0; }
+    .breadcrumbs .sep { color:#9aa3af; }
+
+    .sectionNav {
+        margin-top:14px;
+        border:1px solid #e5e7ea;
+        border-radius:14px;
+        padding:12px;
+        background:#fff;
+    }
+    .sectionNavTitle { font-weight:700; font-size:13px; }
+    .sectionNavList { margin-top:10px; display:flex; gap:8px; flex-wrap:wrap; }
+    .sectionNavList a {
+        display:inline-block;
+        padding:6px 10px;
+        border-radius:999px;
+        border:1px solid #e5e7ea;
+        background:#fff;
+        text-decoration:none;
+    }
+    .sectionNavList a.active { background:#eef2ff; border-color:#c7d2fe; font-weight:700; }
+    .sectionNavHint { margin-top:8px; font-size:12px; color:#6a737f; }
   </style>
 </head>
 <body>
-  <div class="wrap">
+  <div class="top">
+    <a href="/local/sitebuilder/index.php">← Назад</a>
+    <div class="muted">/</div>
+    <div><b><?=h($site['name'])?></b></div>
+    <div class="muted">/</div>
+    <div><?=h($page['title'])?></div>
 
-    <div class="header">
-      <div class="titleBox">
-        <div class="title">SiteBuilder</div>
-        <div class="sub">
-          Ты авторизован как: <b><?=htmlspecialcharsbx($USER->GetLogin())?></b> ·
-          <span class="muted">путь:</span> <code>/local/sitebuilder/index.php</code>
-        </div>
-      </div>
+    <div style="flex:1;"></div>
 
-      <div class="spacer"></div>
+    <a href="/local/sitebuilder/editor.php?siteId=<?= (int)$siteId ?>&pageId=<?= (int)$pageId ?>" target="_blank">Редактор</a>
+    <a href="/local/sitebuilder/menu.php?siteId=<?= (int)$siteId ?>" target="_blank">Меню</a>
 
-      <div class="btnRow">
-        <button class="ui-btn ui-btn-primary" id="btnCreateSite">Создать сайт</button>
-      </div>
+        <div style="flex-basis:100%; height:0;"></div>
 
-      <div class="toolbar">
-        <div class="field" style="flex:1; min-width:240px;">
-          <label>Поиск по сайтам</label>
-          <input class="input" id="qSites" placeholder="название / slug / id..." />
-        </div>
-        <div class="field" style="min-width:220px;">
-          <label>Сортировка</label>
-          <select class="input" id="sortSites">
-            <option value="id_asc">ID ↑</option>
-            <option value="id_desc">ID ↓</option>
-            <option value="name_asc">Название A→Z</option>
-            <option value="name_desc">Название Z→A</option>
-            <option value="created_desc">Создано (новые)</option>
-            <option value="created_asc">Создано (старые)</option>
-          </select>
-        </div>
-      </div>
+    <?php if ($breadcrumbs && count($breadcrumbs) > 1): ?>
+    <div class="breadcrumbs">
+        <?php foreach ($breadcrumbs as $i => $bc): ?>
+        <?php
+            $isLast = ($i === count($breadcrumbs)-1);
+            $bcId = (int)($bc['id'] ?? 0);
+            $bcTitle = (string)($bc['title'] ?? ('page#'.$bcId));
+        ?>
+        <?php if ($i > 0): ?><span class="sep">/</span><?php endif; ?>
+        <?php if ($isLast): ?>
+            <span><?= h($bcTitle) ?></span>
+        <?php else: ?>
+            <a href="<?= h(viewUrl($siteId, $bcId)) ?>"><?= h($bcTitle) ?></a>
+        <?php endif; ?>
+        <?php endforeach; ?>
     </div>
+    <?php endif; ?>
 
-    <div class="content">
-      <div class="muted">Сайты, доступные тебе. Открой “Страницы”, чтобы управлять деревом и редактировать контент.</div>
-      <div id="sitesBox" style="margin-top:12px;"></div>
-    </div>
+    <div style="flex-basis:100%; height:0;"></div>
 
+    <?php if ($menuItems): ?>
+      <div class="menu">
+        <?php foreach ($menuItems as $it): ?>
+          <?php
+            $type = (string)($it['type'] ?? '');
+            $title = (string)($it['title'] ?? '');
+            $isActive = false;
+            $href = '#';
+
+            if ($type === 'page') {
+              $pid = (int)($it['pageId'] ?? 0);
+              $href = viewUrl($siteId, $pid);
+              $isActive = ($pid === $pageId);
+              if ($title === '') $title = 'page#'.$pid;
+            } elseif ($type === 'url') {
+              $u = (string)($it['url'] ?? '');
+              $href = $u !== '' ? $u : '#';
+              if ($title === '') $title = $href;
+            } else {
+              $href = '#';
+              if ($title === '') $title = '(unknown)';
+            }
+          ?>
+          <a class="<?= $isActive ? 'active' : '' ?>" href="<?= h($href) ?>" <?= ($type === 'url' && preg_match('~^https?://~i', $href)) ? 'target="_blank" rel="noopener noreferrer"' : '' ?>>
+            <?= h($title) ?>
+          </a>
+        <?php endforeach; ?>
+      </div>
+    <?php else: ?>
+      <!-- fallback: если меню ещё не создано -->
+      <div class="menu">
+        <?php foreach ($sitePages as $sp): ?>
+          <?php $isActive = ((int)($sp['id'] ?? 0) === (int)$pageId); ?>
+          <a class="<?= $isActive ? 'active' : '' ?>" href="<?= h(viewUrl($siteId, (int)($sp['id'] ?? 0))) ?>">
+            <?= h($sp['title'] ?? '') ?>
+          </a>
+        <?php endforeach; ?>
+      </div>
+    <?php endif; ?>
   </div>
 
-<script>
-BX.ready(function () {
-  const sitesBox = document.getElementById('sitesBox');
-  const btnCreate = document.getElementById('btnCreateSite');
-  const qSites = document.getElementById('qSites');
-  const sortSites = document.getElementById('sortSites');
+  <div class="content">
+    <div class="card">
+      <h1 style="margin-top:0;"><?=h($page['title'])?></h1>
 
-  function notify(msg) {
-    BX.UI.Notification.Center.notify({ content: msg });
-  }
+      <?php
+        // что показываем:
+        // 1) если у текущей страницы есть дети -> показываем “Страницы раздела”
+        // 2) иначе, если у страницы есть родитель -> показываем “В этом разделе” (соседи)
+        ?>
+        <?php if ($children && count($children) > 0): ?>
+        <div class="sectionNav">
+            <div class="sectionNavTitle">Страницы раздела</div>
+            <div class="sectionNavList">
+            <?php foreach ($children as $ch): ?>
+                <?php $chId = (int)($ch['id'] ?? 0); ?>
+                <a href="<?= h(viewUrl($siteId, $chId)) ?>">
+                <?= h((string)($ch['title'] ?? ('page#'.$chId))) ?>
+                </a>
+            <?php endforeach; ?>
+            </div>
+            <div class="sectionNavHint">Раздел — это страница, у которой есть дочерние страницы (parentId = <?= (int)$pageId ?>).</div>
+        </div>
+        <?php elseif ($parentId > 0 && $parentChildren && count($parentChildren) > 0): ?>
+        <div class="sectionNav">
+            <div class="sectionNavTitle">В этом разделе</div>
+            <div class="sectionNavList">
+            <?php foreach ($parentChildren as $ch): ?>
+                <?php $chId = (int)($ch['id'] ?? 0); $active = ($chId === $pageId); ?>
+                <a class="<?= $active ? 'active' : '' ?>" href="<?= h(viewUrl($siteId, $chId)) ?>">
+                <?= h((string)($ch['title'] ?? ('page#'.$chId))) ?>
+                </a>
+            <?php endforeach; ?>
+            </div>
+            <div class="sectionNavHint">Ты внутри раздела (parentId = <?= (int)$parentId ?>). Тут показаны “соседи”.</div>
+        </div>
+        <?php endif; ?>
 
-  function api(action, data) {
-    return new Promise((resolve, reject) => {
-      BX.ajax({
-        url: '/local/sitebuilder/api.php',
-        method: 'POST',
-        dataType: 'json',
-        data: Object.assign({ action, sessid: BX.bitrix_sessid() }, data || {}),
-        onsuccess: resolve,
-        onfailure: reject
-      });
-    });
-  }
+      <?php if (!$blocks): ?>
+        <div class="muted">Блоков пока нет. Добавь их в редакторе.</div>
+      <?php else: ?>
+        <?php foreach ($blocks as $b): ?>
+          <?php $type = (string)($b['type'] ?? ''); ?>
 
-  // ------- utils -------
-  function safeStr(v){ return (v === null || v === undefined) ? '' : String(v); }
+          <?php if ($type === 'text'): ?>
+            <div class="block-text">
+              <?= nl2br(h((string)($b['content']['text'] ?? ''))) ?>
+            </div>
+          <?php endif; ?>
 
-  function sitePills(s){
-    const pills = [];
-    if (parseInt(s.topMenuId || 0, 10) > 0) pills.push('<span class="pill pillStrong">TOP MENU</span>');
-    if (parseInt(s.homePageId || 0, 10) > 0) pills.push('<span class="pill pillStrong">HOME</span>');
-    pills.push('<span class="pill">ID ' + parseInt(s.id||0,10) + '</span>');
-    pills.push('<span class="pill"><code>' + BX.util.htmlspecialchars(safeStr(s.slug)) + '</code></span>');
-    return pills.join('');
-  }
+          <?php if ($type === 'button'): ?>
+			  <?php
+				$text = (string)($b['content']['text'] ?? '');
+				$url = (string)($b['content']['url'] ?? '#');
+				$variant = (string)($b['content']['variant'] ?? 'primary');
+				$cls = ($variant === 'secondary') ? 'btn btn-secondary' : 'btn btn-primary';
+			  ?>
+			  <div class="block-btn" style="margin-top:14px;">
+				<a class="<?=h($cls)?>" href="<?=h($url)?>" <?= preg_match('~^https?://~i', $url) ? 'target="_blank" rel="noopener noreferrer"' : '' ?>>
+				  <?=h($text)?>
+				</a>
+			  </div>
+			<?php endif; ?>
 
-  function sortSitesArr(arr, mode){
-    const a = arr.slice();
-    const name = (x) => (safeStr(x.name)).toLowerCase();
-    const created = (x) => safeStr(x.createdAt);
-    switch(mode){
-      case 'id_desc': a.sort((x,y)=> (parseInt(y.id,10)||0) - (parseInt(x.id,10)||0)); break;
-      case 'name_asc': a.sort((x,y)=> name(x).localeCompare(name(y))); break;
-      case 'name_desc': a.sort((x,y)=> name(y).localeCompare(name(x))); break;
-      case 'created_asc': a.sort((x,y)=> created(x).localeCompare(created(y))); break;
-      case 'created_desc': a.sort((x,y)=> created(y).localeCompare(created(x))); break;
-      case 'id_asc':
-      default: a.sort((x,y)=> (parseInt(x.id,10)||0) - (parseInt(y.id,10)||0)); break;
-    }
-    return a;
-  }
-
-  // ---------- SITES (CARDS) ----------
-  let sitesCache = [];
-
-  function renderSitesCards(sites) {
-    if (!sites || !sites.length) {
-      sitesBox.innerHTML = '<div class="muted">Сайтов, доступных тебе, пока нет. Создай первый.</div>';
-      return;
-    }
-
-    sitesBox.innerHTML = `
-      <div class="grid">
-        ${sites.map(s => `
-          <div class="siteCard" data-site-card="${s.id}">
-            <div class="siteTop">
-              <div style="flex:1; min-width: 200px;">
-                <div class="siteName">${BX.util.htmlspecialchars(safeStr(s.name))}</div>
-                <div class="siteMeta">${sitePills(s)}</div>
-                <div class="siteInfo" style="margin-top:8px;">
-                  <span><b>Создан:</b> ${BX.util.htmlspecialchars(safeStr(s.createdAt))}</span>
-                  <span><b>Создал:</b> ${parseInt(s.createdBy||0,10) ? ('U' + parseInt(s.createdBy||0,10)) : '—'}</span>
-                </div>
+          <?php if ($type === 'image'): ?>
+            <?php $fileId = (int)($b['content']['fileId'] ?? 0); ?>
+            <?php $alt = (string)($b['content']['alt'] ?? ''); ?>
+            <?php if ($fileId > 0): ?>
+              <div class="block-img">
+                <img src="<?= h(downloadUrl($siteId, $fileId)) ?>" alt="<?= h($alt) ?>">
               </div>
+            <?php else: ?>
+              <div class="muted" style="margin-top:12px;">(image) файл не выбран</div>
+            <?php endif; ?>
+          <?php endif; ?>
+
+          <?php if ($type === 'heading'): ?>
+
+          <?php
+            $text = (string)($b['content']['text'] ?? '');
+            $level = (string)($b['content']['level'] ?? 'h2');
+            $align = (string)($b['content']['align'] ?? 'left');
+            if (!in_array($level, ['h1','h2','h3'], true)) $level = 'h2';
+            if (!in_array($align, ['left','center','right'], true)) $align = 'left';
+          ?>
+            <<?=h($level)?> style="margin-top:16px; text-align:<?=h($align)?>;">
+                <?=h($text)?>
+            </<?=h($level)?>>
+            <?php endif; ?>
+
+
+          <?php if ($type === 'columns2'): ?>
+            <?php
+                $left  = (string)($b['content']['left'] ?? '');
+                $right = (string)($b['content']['right'] ?? '');
+                $ratio = (string)($b['content']['ratio'] ?? '50-50');
+
+                if (!in_array($ratio, ['50-50','33-67','67-33'], true)) $ratio = '50-50';
+
+                $tpl = '1fr 1fr';
+                if ($ratio === '33-67') $tpl = '1fr 2fr';
+                if ($ratio === '67-33') $tpl = '2fr 1fr';
+            ?>
+            <div class="cols2" style="grid-template-columns: <?=h($tpl)?>;">
+                <div class="col"><?= nl2br(h($left)) ?></div>
+                <div class="col"><?= nl2br(h($right)) ?></div>
             </div>
+            <?php endif; ?>
 
-            <div class="siteBtns">
-              <button class="ui-btn ui-btn-light ui-btn-xs" data-open-pages-site-id="${s.id}" data-open-pages-site-name="${BX.util.htmlspecialchars(safeStr(s.name))}">
-                Страницы
-              </button>
+            <?php if ($type === 'gallery'): ?>
+                <?php
+                    $cols = (int)($b['content']['columns'] ?? 3);
+                    if (!in_array($cols, [2,3,4], true)) $cols = 3;
 
-              <a class="ui-btn ui-btn-light ui-btn-xs" href="/local/sitebuilder/menu.php?siteId=${s.id}">
-                Меню
-              </a>
+                    $tpl = '1fr 1fr 1fr';
+                    if ($cols === 2) $tpl = '1fr 1fr';
+                    if ($cols === 4) $tpl = '1fr 1fr 1fr 1fr';
 
-              <a class="ui-btn ui-btn-light ui-btn-xs" href="/local/sitebuilder/files.php?siteId=${s.id}" target="_blank">
-                Файлы
-              </a>
-
-              <button class="ui-btn ui-btn-light ui-btn-xs" data-open-access-site-id="${s.id}" data-open-access-site-name="${BX.util.htmlspecialchars(safeStr(s.name))}">
-                Доступы
-              </button>
-
-              <button class="ui-btn ui-btn-danger ui-btn-xs" data-delete-site-id="${s.id}">
-                Удалить
-              </button>
-            </div>
-          </div>
-        `).join('')}
-      </div>
-    `;
-  }
-
-  function applySitesView() {
-    const q = (qSites?.value || '').trim().toLowerCase();
-    const mode = (sortSites?.value || 'id_asc');
-
-    let list = sitesCache.slice();
-
-    if (q) {
-      list = list.filter(s => {
-        const id = String(parseInt(s.id||0,10));
-        const nm = safeStr(s.name).toLowerCase();
-        const sl = safeStr(s.slug).toLowerCase();
-        return id.includes(q) || nm.includes(q) || sl.includes(q);
-      });
-    }
-
-    list = sortSitesArr(list, mode);
-    renderSitesCards(list);
-  }
-
-  function loadSites() {
-    api('site.list').then(res => {
-      if (!res || res.ok !== true) {
-        notify('Не удалось загрузить список сайтов');
-        return;
-      }
-      sitesCache = res.sites || [];
-      applySitesView();
-    }).catch(() => notify('Ошибка запроса site.list'));
-  }
-
-  function openCreateSiteDialog() {
-    const formHtml = `
-      <div style="display:flex; flex-direction:column; gap:10px;">
-        <div class="dField">
-          <label>Название сайта</label>
-          <input type="text" id="sb_name" class="dInput" placeholder="Например: Лаборатория" />
-        </div>
-        <div class="dField">
-          <label>Slug (необязательно)</label>
-          <input type="text" id="sb_slug" class="dInput" placeholder="lab (если пусто — сделаем автоматически)" />
-        </div>
-      </div>
-    `;
-
-    BX.UI.Dialogs.MessageBox.show({
-      title: 'Создать сайт',
-      message: formHtml,
-      buttons: BX.UI.Dialogs.MessageBoxButtons.OK_CANCEL,
-      onOk: function (mb) {
-        const name = document.getElementById('sb_name')?.value?.trim() || '';
-        const slug = document.getElementById('sb_slug')?.value?.trim() || '';
-        if (!name) { notify('Введите название сайта'); return; }
-
-        api('site.create', { name, slug }).then(res => {
-          if (!res || res.ok !== true) { notify('Не удалось создать сайт'); return; }
-          notify(`Сайт создан: ${BX.util.htmlspecialchars(res.site.name)} (${BX.util.htmlspecialchars(res.site.slug)})`);
-          mb.close();
-          loadSites();
-        }).catch(() => notify('Ошибка запроса site.create'));
-      }
-    });
-  }
-
-  // ---------- ACCESS UI (unchanged) ----------
-  function renderAccess(container, access, siteId) {
-    if (!access || !access.length) {
-      container.innerHTML = '<div class="muted">Правил доступа пока нет (кроме владельца).</div>';
-      return;
-    }
-
-    const rows = access.map(r => {
-      const code = r.accessCode || '';
-      const role = r.role || '';
-      const userId = (code.startsWith('U') ? parseInt(code.slice(1), 10) : 0);
-
-      return `
-        <tr>
-          <td style="padding:8px;border-bottom:1px solid #eee;"><code>${BX.util.htmlspecialchars(code)}</code></td>
-          <td style="padding:8px;border-bottom:1px solid #eee;">${BX.util.htmlspecialchars(role)}</td>
-          <td style="padding:8px;border-bottom:1px solid #eee; white-space:nowrap;">
-            <button class="ui-btn ui-btn-danger ui-btn-xs"
-                    data-access-del-site-id="${siteId}"
-                    data-access-del-user-id="${userId}">Удалить</button>
-          </td>
-        </tr>
-      `;
-    }).join('');
-
-    container.innerHTML = `
-      <table style="width:100%; border-collapse:collapse; margin-top:6px;">
-        <thead>
-          <tr>
-            <th style="text-align:left;padding:8px;border-bottom:1px solid #eee;">AccessCode</th>
-            <th style="text-align:left;padding:8px;border-bottom:1px solid #eee;">Role</th>
-            <th style="text-align:left;padding:8px;border-bottom:1px solid #eee;">Действия</th>
-          </tr>
-        </thead>
-        <tbody>${rows}</tbody>
-      </table>
-    `;
-  }
-
-  function loadAccess(siteId, container) {
-    api('access.list', { siteId }).then(res => {
-      if (!res || res.ok !== true) { notify('Нет прав на просмотр/изменение доступов (нужен OWNER)'); return; }
-      renderAccess(container, res.access, siteId);
-    }).catch(() => notify('Ошибка access.list'));
-  }
-
-  function openAccessDialog(siteId, siteName) {
-    const html = `
-      <div>
-        <div class="muted" style="margin-bottom:10px;">
-          Управление доступами (только OWNER). Пока добавляем по <b>UserID</b>.
-        </div>
-
-        <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:flex-end; margin-bottom:10px;">
-          <div style="flex:1; min-width:160px;">
-            <div style="font-size:12px;color:#6a737f;margin-bottom:4px;">UserID</div>
-            <input type="number" id="acc_user_id" class="dInput" placeholder="Например: 15" />
-          </div>
-          <div style="min-width:160px;">
-            <div style="font-size:12px;color:#6a737f;margin-bottom:4px;">Role</div>
-            <select id="acc_role" class="dInput">
-              <option value="VIEWER">VIEWER</option>
-              <option value="EDITOR">EDITOR</option>
-              <option value="ADMIN">ADMIN</option>
-              <option value="OWNER">OWNER</option>
-            </select>
-          </div>
-          <div>
-            <button class="ui-btn ui-btn-primary" id="btnAccSet">Назначить</button>
-          </div>
-        </div>
-
-        <div id="accessBox"></div>
-      </div>
-    `;
-
-    BX.UI.Dialogs.MessageBox.show({
-      title: 'Доступы сайта: ' + BX.util.htmlspecialchars(siteName),
-      message: html,
-      buttons: BX.UI.Dialogs.MessageBoxButtons.CLOSE
-    });
-
-    setTimeout(function () {
-      const box = document.getElementById('accessBox');
-      if (!box) return;
-
-      loadAccess(siteId, box);
-
-      document.getElementById('btnAccSet')?.addEventListener('click', function () {
-        const userId = parseInt(document.getElementById('acc_user_id')?.value || '0', 10);
-        const role = document.getElementById('acc_role')?.value || 'VIEWER';
-        if (!userId) { notify('Введите UserID'); return; }
-
-        api('access.set', { siteId, userId, role }).then(res => {
-          if (!res || res.ok !== true) { notify('Не удалось назначить доступ (нужен OWNER)'); return; }
-          notify('Доступ назначен');
-          loadAccess(siteId, box);
-          loadSites();
-        }).catch(() => notify('Ошибка access.set'));
-      });
-    }, 0);
-  }
-
-  // ---------- PAGES (your UI, kept) ----------
-  function buildTree(pages) {
-    const byId = {};
-    pages.forEach(p => { byId[p.id] = Object.assign({ children: [] }, p); });
-
-    const roots = [];
-    pages.forEach(p => {
-      const pid = parseInt(p.parentId || 0, 10) || 0;
-      if (pid && byId[pid]) byId[pid].children.push(byId[p.id]);
-      else roots.push(byId[p.id]);
-    });
-
-    const sortFn = (a,b) => (parseInt(a.sort||500,10) - parseInt(b.sort||500,10)) || (a.id - b.id);
-    const sortRec = (arr) => { arr.sort(sortFn); arr.forEach(x => sortRec(x.children)); };
-    sortRec(roots);
-
-    return { roots, byId };
-  }
-
-  function renderPagesTree(container, siteId, pages, q) {
-    const query = (q || '').trim().toLowerCase();
-    const matches = (p) => {
-      if (!query) return true;
-      const t = (p.title||'').toLowerCase();
-      const s = (p.slug||'').toLowerCase();
-      return t.includes(query) || s.includes(query) || String(p.id).includes(query);
-    };
-
-    const { roots } = buildTree(pages);
-
-    const renderNode = (node) => {
-      const kidsHtml = (node.children || [])
-        .map(renderNode)
-        .filter(Boolean)
-        .join('');
-
-      const selfMatch = matches(node);
-      const hasVisibleKids = kidsHtml !== '';
-      if (!selfMatch && !hasVisibleKids) return '';
-
-      const pid = parseInt(node.parentId||0,10)||0;
-      const parentLabel = pid ? `parent: #${pid}` : 'root';
-
-      return `
-        <div class="node">
-          <div class="nodeHead">
-            <div class="nodeLeft">
-              <div class="nodeIcon">≡</div>
-              <div class="nodeMain">
-                <div class="nodeTitleLine">
-                  <b>#${node.id} ${BX.util.htmlspecialchars(node.title || '')}</b>
-                  <span class="nodeSlug">${BX.util.htmlspecialchars(node.slug || '')}</span>
+                    $imgs = $b['content']['images'] ?? [];
+                    if (!is_array($imgs)) $imgs = [];
+                ?>
+                <div class="gallery" style="grid-template-columns: <?=h($tpl)?>;">
+                    <?php foreach ($imgs as $it): ?>
+                    <?php
+                        if (!is_array($it)) continue;
+                        $fid = (int)($it['fileId'] ?? 0);
+                        $alt = (string)($it['alt'] ?? '');
+                        if ($fid <= 0) continue;
+                    ?>
+                    <img src="<?= h(downloadUrl($siteId, $fid)) ?>" alt="<?= h($alt) ?>">
+                    <?php endforeach; ?>
                 </div>
-                <div class="nodeMeta">
-                  <span>sort: ${parseInt(node.sort||500,10)}</span>
-                  <span>${parentLabel}</span>
+                <?php endif; ?>
+
+
+            <?php if ($type === 'spacer'): ?>
+                <?php
+                    $h = (int)($b['content']['height'] ?? 40);
+                    if ($h < 10) $h = 10;
+                    if ($h > 200) $h = 200;
+                    $line = (bool)($b['content']['line'] ?? false);
+                ?>
+                <div class="spacer" style="height: <?= (int)$h ?>px; position:relative; margin-top:14px;">
+                    <?php if ($line): ?>
+                    <div class="spacerLine" style="position:absolute; left:0; right:0; top:50%;"></div>
+                    <?php endif; ?>
                 </div>
-              </div>
-            </div>
+            <?php endif; ?>
 
-            <div class="nodeBtns">
-              <button class="ui-btn ui-btn-light ui-btn-xs btnTiny" data-page-move="${node.id}" data-dir="up">↑</button>
-              <button class="ui-btn ui-btn-light ui-btn-xs btnTiny" data-page-move="${node.id}" data-dir="down">↓</button>
+            <?php if ($type === 'card'): ?>
+                <?php
+                    $title = (string)($b['content']['title'] ?? '');
+                    $text  = (string)($b['content']['text'] ?? '');
+                    $imgId = (int)($b['content']['imageFileId'] ?? 0);
+                    $btnText = trim((string)($b['content']['buttonText'] ?? ''));
+                    $btnUrl  = trim((string)($b['content']['buttonUrl'] ?? ''));
+                ?>
+                <div class="cardBlock">
+                    <div class="cardTitle"><?=h($title)?></div>
+                    <?php if ($text !== ''): ?><div class="cardText"><?=nl2br(h($text))?></div><?php endif; ?>
 
-              <button class="ui-btn ui-btn-light ui-btn-xs btnTiny" data-page-parent="${node.id}">Вложить…</button>
-              <button class="ui-btn ui-btn-light ui-btn-xs btnTiny" data-page-root="${node.id}">В корень</button>
+                    <?php if ($imgId > 0): ?>
+                    <img src="<?=h(downloadUrl($siteId, $imgId))?>" alt="">
+                    <?php endif; ?>
 
-              <button class="ui-btn ui-btn-light ui-btn-xs btnTiny" data-page-rename="${node.id}">Имя/slug</button>
+                    <?php if ($btnUrl !== ''): ?>
+                    <a class="cardBtn" href="<?=h($btnUrl)?>" <?= preg_match('~^https?://~i', $btnUrl) ? 'target="_blank" rel="noopener noreferrer"' : '' ?>>
+                        <?=h($btnText !== '' ? $btnText : 'Открыть')?>
+                    </a>
+                    <?php endif; ?>
+                </div>
+            <?php endif; ?>
 
-              <a class="ui-btn ui-btn-primary ui-btn-xs btnTiny"
-                 href="/local/sitebuilder/editor.php?siteId=${siteId}&pageId=${node.id}"
-                 target="_blank">Редактор</a>
+            <?php if ($type === 'cards'): ?>
+                <?php
+                    $cols = (int)($b['content']['columns'] ?? 3);
+                    if (!in_array($cols, [2,3,4], true)) $cols = 3;
 
-              <a class="ui-btn ui-btn-light ui-btn-xs btnTiny"
-                 href="/local/sitebuilder/view.php?siteId=${siteId}&pageId=${node.id}"
-                 target="_blank">Открыть</a>
+                    $tpl = '1fr 1fr 1fr';
+                    if ($cols === 2) $tpl = '1fr 1fr';
+                    if ($cols === 4) $tpl = '1fr 1fr 1fr 1fr';
 
-              <button class="ui-btn ui-btn-danger ui-btn-xs btnTiny" data-page-delete="${node.id}">Удалить</button>
-            </div>
-          </div>
+                    $items = $b['content']['items'] ?? [];
+                    if (!is_array($items)) $items = [];
+                ?>
+                <div class="cardsGrid" style="grid-template-columns: <?=h($tpl)?>;">
+                    <?php foreach ($items as $it): ?>
+                    <?php
+                        if (!is_array($it)) continue;
+                        $title = (string)($it['title'] ?? '');
+                        if ($title === '') continue;
+                        $text = (string)($it['text'] ?? '');
+                        $imgId = (int)($it['imageFileId'] ?? 0);
+                        $btnText = trim((string)($it['buttonText'] ?? ''));
+                        $btnUrl  = trim((string)($it['buttonUrl'] ?? ''));
+                    ?>
+                    <div class="cardItem">
+                        <div class="t"><?=h($title)?></div>
+                        <?php if ($text !== ''): ?><div class="d"><?=nl2br(h($text))?></div><?php endif; ?>
+                        <?php if ($imgId > 0): ?><img src="<?=h(downloadUrl($siteId, $imgId))?>" alt=""><?php endif; ?>
+                        <?php if ($btnUrl !== ''): ?>
+                        <a class="a" href="<?=h($btnUrl)?>" <?= preg_match('~^https?://~i', $btnUrl) ? 'target="_blank" rel="noopener noreferrer"' : '' ?>>
+                            <?=h($btnText !== '' ? $btnText : 'Открыть')?>
+                        </a>
+                        <?php endif; ?>
+                    </div>
+                    <?php endforeach; ?>
+                </div>
+            <?php endif; ?>
 
-          ${hasVisibleKids ? `<div class="children">${kidsHtml}</div>` : ''}
-        </div>
-      `;
-    };
+        <?php endforeach; ?>
+      <?php endif; ?>
 
-    const html = roots.map(renderNode).filter(Boolean).join('');
-    container.innerHTML = html || '<div class="muted">Страниц пока нет.</div>';
-  }
-
-  function openCreatePageDialog(siteId, onDone) {
-    const formHtml = `
-      <div style="display:flex; flex-direction:column; gap:10px;">
-        <div class="dField">
-          <label>Заголовок страницы</label>
-          <input type="text" id="pg_title" class="dInput" placeholder="Например: Главная" />
-        </div>
-        <div class="dField">
-          <label>Slug (необязательно)</label>
-          <input type="text" id="pg_slug" class="dInput" placeholder="home (если пусто — сделаем автоматически)" />
-        </div>
+      <div style="margin-top:16px;" class="muted">
+        <div><b>slug:</b> <code><?=h($page['slug'])?></code></div>
+        <div><b>pageId:</b> <?= (int)$page['id'] ?> &nbsp; <b>siteId:</b> <?= (int)$site['id'] ?></div>
       </div>
-    `;
-
-    BX.UI.Dialogs.MessageBox.show({
-      title: 'Создать страницу',
-      message: formHtml,
-      buttons: BX.UI.Dialogs.MessageBoxButtons.OK_CANCEL,
-      onOk: function (mb) {
-        const title = document.getElementById('pg_title')?.value?.trim() || '';
-        const slug  = document.getElementById('pg_slug')?.value?.trim() || '';
-        if (!title) { notify('Введите заголовок страницы'); return; }
-
-        api('page.create', { siteId, title, slug }).then(res => {
-          if (!res || res.ok !== true) { notify('Не удалось создать страницу (возможно нет прав)'); return; }
-          notify(`Страница создана: ${BX.util.htmlspecialchars(res.page.title)} (${BX.util.htmlspecialchars(res.page.slug)})`);
-          mb.close();
-          if (typeof onDone === 'function') onDone();
-        }).catch(() => notify('Ошибка page.create'));
-      }
-    });
-  }
-
-  function openRenamePageDialog(siteId, pageId, pagesCache, reload) {
-    const cur = (pagesCache || []).find(x => parseInt(x.id,10) === parseInt(pageId,10));
-    const curTitle = cur?.title || '';
-    const curSlug  = cur?.slug || '';
-
-    BX.UI.Dialogs.MessageBox.show({
-      title: 'Имя / slug для #' + pageId,
-      message: `
-        <div style="display:flex; flex-direction:column; gap:10px;">
-          <div class="dField">
-            <label>Заголовок</label>
-            <input id="rn_title" class="dInput" value="${BX.util.htmlspecialchars(curTitle)}" />
-          </div>
-          <div class="dField">
-            <label>Slug (можно пусто — пересчитаем)</label>
-            <input id="rn_slug" class="dInput" value="${BX.util.htmlspecialchars(curSlug)}" />
-          </div>
-          <div class="hint2">Slug должен быть уникален в пределах сайта — если совпадёт, добавим суффикс.</div>
-        </div>
-      `,
-      buttons: BX.UI.Dialogs.MessageBoxButtons.OK_CANCEL,
-      onOk: function(mb){
-        const title = (document.getElementById('rn_title')?.value || '').trim();
-        const slug = (document.getElementById('rn_slug')?.value || '').trim();
-        if (!title) { notify('Заголовок не может быть пустым'); return; }
-
-        api('page.updateMeta', { id: pageId, title, slug }).then(r => {
-          if (!r || r.ok !== true) { notify('Не удалось сохранить'); return; }
-          notify('Сохранено');
-          mb.close();
-          reload();
-        }).catch(()=>notify('Ошибка page.updateMeta'));
-      }
-    });
-  }
-
-  function openSetParentDialog(siteId, pageId, pagesCache, reload) {
-    const pages = Array.isArray(pagesCache) ? pagesCache : [];
-    const current = pages.find(x => parseInt(x.id,10) === parseInt(pageId,10));
-    const currentParentId = parseInt(current?.parentId || 0, 10) || 0;
-
-    let selectedParentId = currentParentId;
-
-    const { roots } = buildTree(pages);
-    const flat = [];
-    const walk = (arr, depth) => {
-      arr.forEach(n => {
-        flat.push({ id: n.id, title: n.title||'', slug:n.slug||'', depth });
-        walk(n.children||[], depth+1);
-      });
-    };
-    walk(roots, 0);
-
-    const renderListInner = (q) => {
-      const query = (q||'').trim().toLowerCase();
-
-      const items = flat.filter(x => {
-        if (parseInt(x.id,10) === parseInt(pageId,10)) return false;
-        if (!query) return true;
-        return (x.title||'').toLowerCase().includes(query)
-          || (x.slug||'').toLowerCase().includes(query)
-          || String(x.id).includes(query);
-      });
-
-      const rows = items.map(x => {
-        const pad = 12 + x.depth * 16;
-        const active = (parseInt(x.id,10) === selectedParentId)
-          ? 'background:#eff6ff;border-color:#bfdbfe;'
-          : '';
-        return `
-          <div class="secCard" data-parent-pick="${x.id}" style="cursor:pointer; padding-left:${pad}px; ${active}">
-            <div class="secTitle">#${x.id} ${BX.util.htmlspecialchars(x.title)}</div>
-            <div class="secMeta">${BX.util.htmlspecialchars(x.slug)}</div>
-          </div>
-        `;
-      }).join('');
-
-      const activeRoot = selectedParentId === 0 ? 'background:#eff6ff;border-color:#bfdbfe;' : '';
-
-      return `
-        <div class="secSearch">
-          <input id="par_q" class="dInput" placeholder="Поиск родителя..." value="${BX.util.htmlspecialchars(q||'')}">
-        </div>
-        <div class="secGrid" style="grid-template-columns: 1fr; margin-top:10px;">
-          <div class="secCard" data-parent-pick="0" style="cursor:pointer; ${activeRoot}">
-            <div class="secTitle">— Корень —</div>
-            <div class="secMeta">Сделать страницу верхнего уровня</div>
-          </div>
-          ${rows || '<div class="muted">Ничего не найдено</div>'}
-        </div>
-        <div class="hint2" style="margin-top:10px;">Кликни по карточке родителя. Потом нажми OK.</div>
-      `;
-    };
-
-    BX.UI.Dialogs.MessageBox.show({
-      title: 'Вложить страницу #' + pageId,
-      message: `<div id="sb_parent_picker_root">${renderListInner('')}</div>`,
-      buttons: BX.UI.Dialogs.MessageBoxButtons.OK_CANCEL,
-      onOk: function(mb){
-        const parentId = parseInt(selectedParentId || 0, 10) || 0;
-
-        api('page.setParent', { id: pageId, parentId }).then(r=>{
-          if (!r || r.ok !== true) { notify('Не удалось изменить parent'); return; }
-          notify('Готово');
-          mb.close();
-          reload();
-        }).catch(()=>notify('Ошибка page.setParent'));
-      }
-    });
-
-    setTimeout(() => {
-      const root = document.getElementById('sb_parent_picker_root');
-      if (!root) return;
-
-      const bind = () => {
-        const q = document.getElementById('par_q');
-        if (q) {
-          q.oninput = () => {
-            root.innerHTML = renderListInner(q.value);
-            bind();
-          };
-        }
-        root.querySelectorAll('[data-parent-pick]').forEach(el => {
-          el.onclick = () => {
-            const id = parseInt(el.getAttribute('data-parent-pick')||'0',10) || 0;
-            selectedParentId = id;
-            const curQ = document.getElementById('par_q')?.value || '';
-            root.innerHTML = renderListInner(curQ);
-            bind();
-          };
-        });
-      };
-
-      bind();
-    }, 0);
-  }
-
-  async function openPagesDialog(siteId, siteName) {
-    let pagesCache = [];
-
-    const html = `
-      <div>
-        <div class="searchRow">
-          <div>
-            <button class="ui-btn ui-btn-primary ui-btn-xs" id="btnCreatePage">Создать страницу</button>
-          </div>
-          <div class="dField" style="flex:1; min-width:220px;">
-            <label>Поиск</label>
-            <input id="pg_q" class="dInput" placeholder="title / slug / id..." />
-          </div>
-        </div>
-
-        <div class="hint2">
-          Дерево: <code>parentId</code>. Порядок: <code>sort</code> (стрелки ↑/↓ меняют порядок среди “соседей”).
-        </div>
-
-        <div id="pagesBox" class="tree"></div>
-      </div>
-    `;
-
-    BX.UI.Dialogs.MessageBox.show({
-      title: 'Страницы сайта: ' + BX.util.htmlspecialchars(siteName),
-      message: html,
-      buttons: BX.UI.Dialogs.MessageBoxButtons.CLOSE
-    });
-
-    const loadAndRender = async () => {
-      const container = document.getElementById('pagesBox');
-      const q = document.getElementById('pg_q')?.value || '';
-      if (!container) return;
-
-      try {
-        const res = await api('page.list', { siteId });
-        if (!res || res.ok !== true) { notify('Не удалось загрузить страницы (возможно нет прав)'); return; }
-        pagesCache = res.pages || [];
-        renderPagesTree(container, siteId, pagesCache, q);
-      } catch (e) {
-        notify('Ошибка page.list');
-      }
-    };
-
-    setTimeout(() => {
-      const container = document.getElementById('pagesBox');
-      const q = document.getElementById('pg_q');
-      const btn = document.getElementById('btnCreatePage');
-
-      if (btn) btn.onclick = () => openCreatePageDialog(siteId, loadAndRender);
-      if (q) q.oninput = () => loadAndRender();
-
-      if (container) {
-        container.addEventListener('click', function(e){
-          const mv = e.target.closest('[data-page-move]');
-          if (mv) {
-            const id = parseInt(mv.getAttribute('data-page-move'),10);
-            const dir = mv.getAttribute('data-dir');
-            api('page.move', { id, dir }).then(r=>{
-              if(!r || r.ok!==true){ notify('Не удалось переместить'); return; }
-              loadAndRender();
-            }).catch(()=>notify('Ошибка page.move'));
-            return;
-          }
-
-          const rn = e.target.closest('[data-page-rename]');
-          if (rn) {
-            const id = parseInt(rn.getAttribute('data-page-rename'),10);
-            openRenamePageDialog(siteId, id, pagesCache, loadAndRender);
-            return;
-          }
-
-          const pr = e.target.closest('[data-page-parent]');
-          if (pr) {
-            const id = parseInt(pr.getAttribute('data-page-parent'),10);
-            openSetParentDialog(siteId, id, pagesCache, loadAndRender);
-            return;
-          }
-
-          const rt = e.target.closest('[data-page-root]');
-          if (rt) {
-            const id = parseInt(rt.getAttribute('data-page-root'),10);
-            api('page.setParent', { id, parentId: 0 }).then(r=>{
-              if(!r || r.ok!==true){ notify('Не удалось'); return; }
-              loadAndRender();
-            }).catch(()=>notify('Ошибка page.setParent'));
-            return;
-          }
-
-          const del = e.target.closest('[data-page-delete]');
-          if (del) {
-            const id = parseInt(del.getAttribute('data-page-delete'),10);
-            BX.UI.Dialogs.MessageBox.show({
-              title: 'Удалить страницу #' + id + '?',
-              message: 'Нужны права EDITOR/ADMIN/OWNER. Продолжить?',
-              buttons: BX.UI.Dialogs.MessageBoxButtons.OK_CANCEL,
-              onOk: function(mb){
-                api('page.delete', { id }).then(r=>{
-                  if(!r || r.ok!==true){ notify('Не удалось удалить (возможно нет прав)'); return; }
-                  notify('Страница удалена');
-                  mb.close();
-                  loadAndRender();
-                }).catch(()=>notify('Ошибка page.delete'));
-              }
-            });
-            return;
-          }
-        });
-      }
-
-      loadAndRender();
-    }, 0);
-  }
-
-  // ---------- EVENTS ----------
-  document.addEventListener('click', function (e) {
-    const delSiteBtn = e.target.closest('[data-delete-site-id]');
-    if (delSiteBtn) {
-      const id = parseInt(delSiteBtn.getAttribute('data-delete-site-id'), 10);
-      if (!id) return;
-
-      BX.UI.Dialogs.MessageBox.show({
-        title: 'Удалить сайт?',
-        message: 'Удаление доступно только владельцу (OWNER). Продолжить?',
-        buttons: BX.UI.Dialogs.MessageBoxButtons.OK_CANCEL,
-        onOk: function (mb) {
-          api('site.delete', { id }).then(res => {
-            if (!res || res.ok !== true) { notify('Не удалось удалить сайт (нужен OWNER)'); return; }
-            notify('Сайт удалён');
-            mb.close();
-            loadSites();
-          }).catch(() => notify('Ошибка site.delete'));
-        }
-      });
-      return;
-    }
-
-    const openPagesBtn = e.target.closest('[data-open-pages-site-id]');
-    if (openPagesBtn) {
-      const siteId = parseInt(openPagesBtn.getAttribute('data-open-pages-site-id'), 10);
-      const siteName = openPagesBtn.getAttribute('data-open-pages-site-name') || ('ID ' + siteId);
-      if (!siteId) return;
-      openPagesDialog(siteId, siteName);
-      return;
-    }
-
-    const openAccBtn = e.target.closest('[data-open-access-site-id]');
-    if (openAccBtn) {
-      const siteId = parseInt(openAccBtn.getAttribute('data-open-access-site-id'), 10);
-      const siteName = openAccBtn.getAttribute('data-open-access-site-name') || ('ID ' + siteId);
-      if (!siteId) return;
-      openAccessDialog(siteId, siteName);
-      return;
-    }
-
-    const delAccBtn = e.target.closest('[data-access-del-site-id]');
-    if (delAccBtn) {
-      const siteId = parseInt(delAccBtn.getAttribute('data-access-del-site-id'), 10);
-      const userId = parseInt(delAccBtn.getAttribute('data-access-del-user-id'), 10);
-      if (!siteId || !userId) return;
-
-      BX.UI.Dialogs.MessageBox.show({
-        title: 'Удалить правило доступа?',
-        message: 'Продолжить? (только OWNER)',
-        buttons: BX.UI.Dialogs.MessageBoxButtons.OK_CANCEL,
-        onOk: function (mb) {
-          api('access.delete', { siteId, userId }).then(res => {
-            if (!res || res.ok !== true) { notify('Не удалось удалить правило (нужен OWNER)'); return; }
-            notify('Удалено');
-            mb.close();
-
-            const accessBox = document.getElementById('accessBox');
-            if (accessBox) loadAccess(siteId, accessBox);
-            loadSites();
-          }).catch(() => notify('Ошибка access.delete'));
-        }
-      });
-      return;
-    }
-  });
-
-  if (btnCreate) btnCreate.addEventListener('click', openCreateSiteDialog);
-  if (qSites) qSites.addEventListener('input', applySitesView);
-  if (sortSites) sortSites.addEventListener('change', applySitesView);
-
-  loadSites();
-});
-</script>
+    </div>
+  </div>
 </body>
 </html>
-```
