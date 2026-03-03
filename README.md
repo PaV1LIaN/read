@@ -5,40 +5,27 @@ define('DisableEventsCheck', true);
 
 require $_SERVER['DOCUMENT_ROOT'].'/bitrix/modules/main/include/prolog_before.php';
 
-use Bitrix\Main\Loader;
-use Bitrix\Disk\File;
-use Bitrix\Disk\Folder;
-
 global $USER;
 
+// Пока public не “по-настоящему публичный” — держим под авторизацией
 if (!$USER->IsAuthorized()) {
-    http_response_code(401);
-    echo 'NOT_AUTHORIZED';
-    exit;
-}
-
-if (!Loader::includeModule('disk')) {
-    http_response_code(500);
-    echo 'DISK_NOT_INSTALLED';
-    exit;
+    LocalRedirect('/auth/');
 }
 
 $siteId = (int)($_GET['siteId'] ?? 0);
-$fileId = (int)($_GET['fileId'] ?? 0);
 
-if ($siteId <= 0 || $fileId <= 0) {
-    http_response_code(422);
-    echo 'BAD_PARAMS';
-    exit;
-}
+// совместимость со старым вариантом:
+// public.php?siteId=1&p=about
+$slug = trim((string)($_GET['p'] ?? ''));
 
-/** ---------------- helpers: same access rules as api.php ---------------- */
+// совместимость с “прямым” открытием:
+// public.php?siteId=1&pageId=10
+$pageId = (int)($_GET['pageId'] ?? 0);
 
 function sb_data_path(string $file): string {
     return $_SERVER['DOCUMENT_ROOT'] . '/upload/sitebuilder/' . $file;
 }
-
-function sb_read_json_file(string $file): array {
+function sb_read_json(string $file): array {
     $path = sb_data_path($file);
     if (!file_exists($path)) return [];
 
@@ -63,141 +50,81 @@ function sb_read_json_file(string $file): array {
     return is_array($data) ? $data : [];
 }
 
-function sb_user_access_code(): string {
-    return 'U' . (int)$GLOBALS['USER']->GetID();
-}
+if ($siteId <= 0) { http_response_code(404); echo 'SITE_ID_REQUIRED'; exit; }
 
-function sb_get_role(int $siteId, string $accessCode): ?string {
-    $access = sb_read_json_file('access.json');
-    foreach ($access as $r) {
-        if ((int)($r['siteId'] ?? 0) === $siteId && (string)($r['accessCode'] ?? '') === $accessCode) {
-            $role = strtoupper((string)($r['role'] ?? ''));
-            return $role !== '' ? $role : null;
+$sites = sb_read_json('sites.json');
+$pages = sb_read_json('pages.json');
+
+$site = null;
+foreach ($sites as $s) {
+    if ((int)($s['id'] ?? 0) === $siteId) { $site = $s; break; }
+}
+if (!$site) { http_response_code(404); echo 'SITE_NOT_FOUND'; exit; }
+
+// --- 1) Явный pageId ---
+$targetPageId = 0;
+if ($pageId > 0) {
+    foreach ($pages as $p) {
+        if ((int)($p['id'] ?? 0) === $pageId && (int)($p['siteId'] ?? 0) === $siteId) {
+            $targetPageId = $pageId;
+            break;
         }
     }
-    return null;
 }
 
-function sb_role_rank(?string $role): int {
-    $role = strtoupper((string)$role);
-    return match ($role) {
-        'OWNER'  => 4,
-        'ADMIN'  => 3,
-        'EDITOR' => 2,
-        'VIEWER' => 1,
-        default  => 0,
-    };
-}
-
-function sb_require_viewer(int $siteId): void {
-    $role = sb_get_role($siteId, sb_user_access_code());
-    if (sb_role_rank($role) < 1) {
-        http_response_code(403);
-        echo 'FORBIDDEN';
-        exit;
-    }
-}
-
-function sb_site_disk_folder_id(int $siteId): int {
-    $sites = sb_read_json_file('sites.json');
-    foreach ($sites as $s) {
-        if ((int)($s['id'] ?? 0) === $siteId) {
-            return (int)($s['diskFolderId'] ?? 0);
+// --- 2) slug p=... ---
+if ($targetPageId <= 0 && $slug !== '') {
+    foreach ($pages as $p) {
+        if ((int)($p['siteId'] ?? 0) === $siteId && (string)($p['slug'] ?? '') === $slug) {
+            $targetPageId = (int)($p['id'] ?? 0);
+            break;
         }
     }
-    return 0;
 }
 
-/** ---------------- access check ---------------- */
-
-sb_require_viewer($siteId);
-
-/** ---------------- load site folder ---------------- */
-
-$folderId = sb_site_disk_folder_id($siteId);
-if ($folderId <= 0) {
-    http_response_code(404);
-    echo 'SITE_FOLDER_NOT_FOUND';
-    exit;
-}
-
-$folder = Folder::loadById($folderId);
-if (!$folder) {
-    http_response_code(404);
-    echo 'SITE_FOLDER_NOT_FOUND';
-    exit;
-}
-
-/** ---------------- load file + ensure it belongs to folder ---------------- */
-
-$file = File::loadById($fileId);
-if (!$file) {
-    http_response_code(404);
-    echo 'FILE_NOT_FOUND';
-    exit;
-}
-
-if ((int)$file->getParentId() !== (int)$folder->getId()) {
-    http_response_code(403);
-    echo 'FOREIGN_FILE';
-    exit;
-}
-
-/** ---------------- get physical file id robustly ---------------- */
-
-$realFileId = 0;
-
-// 1) Prefer getFileId() if exists
-if (method_exists($file, 'getFileId')) {
-    $realFileId = (int)$file->getFileId();
-}
-
-// 2) Fallback: getFile() may return array or object depending on version
-if ($realFileId <= 0 && method_exists($file, 'getFile')) {
-    $src = $file->getFile();
-
-    if (is_array($src)) {
-        $realFileId = (int)($src['ID'] ?? $src['Id'] ?? $src['id'] ?? 0);
-    } elseif (is_object($src) && method_exists($src, 'getId')) {
-        $realFileId = (int)$src->getId();
+// --- 3) homePageId ---
+if ($targetPageId <= 0) {
+    $home = (int)($site['homePageId'] ?? 0);
+    if ($home > 0) {
+        foreach ($pages as $p) {
+            if ((int)($p['id'] ?? 0) === $home && (int)($p['siteId'] ?? 0) === $siteId) {
+                $targetPageId = $home;
+                break;
+            }
+        }
     }
 }
 
-if ($realFileId <= 0) {
-    http_response_code(500);
-    echo 'FILE_SOURCE_NOT_FOUND';
-    exit;
+// --- 4) первая корневая (parentId=0) по sort/id ---
+if ($targetPageId <= 0) {
+    $rootPages = array_values(array_filter($pages, function($p) use ($siteId){
+        return (int)($p['siteId'] ?? 0) === $siteId && (int)($p['parentId'] ?? 0) === 0;
+    }));
+
+    usort($rootPages, function($a, $b){
+        $sa = (int)($a['sort'] ?? 500);
+        $sb = (int)($b['sort'] ?? 500);
+        if ($sa === $sb) return ((int)($a['id'] ?? 0) <=> (int)($b['id'] ?? 0));
+        return $sa <=> $sb;
+    });
+
+    if ($rootPages) $targetPageId = (int)($rootPages[0]['id'] ?? 0);
 }
 
-/** ---------------- stream physical file ---------------- */
-
-$rel = \CFile::GetPath($realFileId);
-if (!is_string($rel) || $rel === '') {
-    http_response_code(404);
-    echo 'FILE_NOT_ON_DISK';
-    exit;
+// --- 5) fallback: вообще первая страница сайта ---
+if ($targetPageId <= 0) {
+    $sitePages = array_values(array_filter($pages, fn($p)=> (int)($p['siteId'] ?? 0) === $siteId));
+    usort($sitePages, function($a, $b){
+        $sa = (int)($a['sort'] ?? 500);
+        $sb = (int)($b['sort'] ?? 500);
+        if ($sa === $sb) return ((int)($a['id'] ?? 0) <=> (int)($b['id'] ?? 0));
+        return $sa <=> $sb;
+    });
+    if ($sitePages) $targetPageId = (int)($sitePages[0]['id'] ?? 0);
 }
 
-$abs = $_SERVER['DOCUMENT_ROOT'] . $rel;
-if (!is_file($abs)) {
-    http_response_code(404);
-    echo 'FILE_NOT_ON_DISK';
-    exit;
-}
+if ($targetPageId <= 0) { http_response_code(404); echo 'NO_PAGES'; exit; }
 
-$downloadName = (string)$file->getName();
-
-// mime (best effort)
-$mime = 'application/octet-stream';
-if (function_exists('mime_content_type')) {
-    $m = @mime_content_type($abs);
-    if (is_string($m) && $m !== '') $mime = $m;
-}
-
-header('Content-Type: ' . $mime);
-header('Content-Disposition: attachment; filename="' . rawurlencode($downloadName) . '"');
-header('Content-Length: ' . filesize($abs));
-header('X-Content-Type-Options: nosniff');
-
-readfile($abs);
-exit;
+// Сейчас используем единый рендерер:
+// позже поменяем на public_view.php (для настоящего публичного режима)
+LocalRedirect('/local/sitebuilder/view.php?siteId='.$siteId.'&pageId='.$targetPageId);
