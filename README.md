@@ -1,3 +1,17 @@
+Ок, делаем **визуальное улучшение `view.php` без изменения модели данных** (всё продолжит работать с твоими `sites.json / pages.json / blocks.json / menus.json` и `topMenuId`).
+
+Ниже — **готовый `view.php` целиком**:
+
+* нормальная шапка (бренд + крошки + действия)
+* меню как “пилюли” с ховером и активным состоянием
+* контент в **контейнере** (по центру, ширина 1100px)
+* блоки смотрятся как “секции” (воздух, типографика)
+* `sectionNav` (дети/соседи) оформлен как “карточки”
+* аккуратный футер с meta
+
+> Просто замени файл `view.php` на этот.
+
+```php
 <?php
 define('NO_KEEP_STATISTIC', true);
 define('NO_AGENT_STATISTIC', true);
@@ -31,7 +45,6 @@ function h($s): string { return htmlspecialcharsbx((string)$s); }
 function downloadUrl(int $siteId, int $fileId): string {
     return '/local/sitebuilder/download.php?siteId=' . $siteId . '&fileId=' . $fileId;
 }
-
 function viewUrl(int $siteId, int $pageId): string {
     return '/local/sitebuilder/view.php?siteId=' . $siteId . '&pageId=' . $pageId;
 }
@@ -47,7 +60,6 @@ function sb_index_pages_by_id(array $pages, int $siteId): array {
 }
 
 function sb_build_breadcrumbs(array $pagesById, int $currentPageId): array {
-    // возвращает массив страниц от корня к текущей (включая текущую)
     $chain = [];
     $guard = 0;
     $curId = $currentPageId;
@@ -59,7 +71,7 @@ function sb_build_breadcrumbs(array $pagesById, int $currentPageId): array {
         $curId = $parentId;
 
         $guard++;
-        if ($guard > 50) break; // защита от циклов
+        if ($guard > 50) break;
     }
 
     return array_reverse($chain);
@@ -89,7 +101,6 @@ $site = null;
 foreach ($sites as $s) {
     if ((int)($s['id'] ?? 0) === $siteId) { $site = $s; break; }
 }
-
 $page = null;
 foreach ($pages as $p) {
     if ((int)($p['id'] ?? 0) === $pageId && (int)($p['siteId'] ?? 0) === $siteId) { $page = $p; break; }
@@ -112,7 +123,7 @@ if (!$site || !$page) {
 
 $topMenuId = (int)($site['topMenuId'] ?? 0);
 
-// site pages (for fallback nav / editor link)
+// site pages (fallback nav)
 $sitePages = array_values(array_filter($pages, fn($p) => (int)($p['siteId'] ?? 0) === $siteId));
 usort($sitePages, fn($a, $b) => (int)($a['sort'] ?? 500) <=> (int)($b['sort'] ?? 500));
 
@@ -157,177 +168,436 @@ foreach ($menusAll as $rec) {
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title><?=h($page['title'])?> — <?=h($site['name'])?></title>
   <style>
-    body { font-family: Arial, sans-serif; margin: 0; background:#f6f7f8; color:#111; }
-    .top {
-      background:#fff;
-      border-bottom:1px solid #e5e7ea;
-      padding:12px 16px;
+    :root{
+      --bg:#f6f7f8;
+      --card:#ffffff;
+      --text:#0f172a;
+      --muted:#667085;
+      --line:#e5e7ea;
+      --line2:#eef0f2;
+      --accent:#2563eb;
+      --accentSoft:#eef2ff;
+      --radius:16px;
+      --shadow: 0 1px 2px rgba(16,24,40,.06);
+      --container: 1100px;
+    }
+
+    *{ box-sizing:border-box; }
+    body{
+      margin:0;
+      font-family: Arial, sans-serif;
+      background:var(--bg);
+      color:var(--text);
+    }
+    a{ color:var(--accent); text-decoration:none; }
+    a:hover{ text-decoration:underline; }
+
+    .container{
+      max-width: var(--container);
+      margin: 0 auto;
+      padding: 0 16px;
+    }
+
+    /* Top bar */
+    .topWrap{
+      position: sticky;
+      top: 0;
+      z-index: 20;
+      background: rgba(246,247,248,.92);
+      backdrop-filter: blur(10px);
+      border-bottom: 1px solid var(--line);
+    }
+    .top{
+      padding: 12px 0;
+    }
+
+    .topRow{
       display:flex;
-      gap:10px;
+      gap:12px;
+      align-items:center;
+      justify-content:space-between;
+      flex-wrap:wrap;
+    }
+
+    .brand{
+      display:flex;
+      gap:12px;
+      align-items:center;
+      min-width: 240px;
+    }
+    .brandMark{
+      width: 34px;
+      height: 34px;
+      border-radius: 12px;
+      background: var(--accentSoft);
+      border:1px solid #c7d2fe;
+      display:flex;
+      align-items:center;
+      justify-content:center;
+      color: var(--accent);
+      font-weight: 800;
+      flex:0 0 auto;
+    }
+    .brandTxt{
+      display:flex;
+      flex-direction:column;
+      line-height:1.2;
+    }
+    .siteName{
+      font-weight:800;
+      font-size:14px;
+    }
+    .pageName{
+      font-size:12px;
+      color:var(--muted);
+    }
+
+    .actions{
+      display:flex;
+      gap:8px;
       align-items:center;
       flex-wrap:wrap;
     }
-    .content { padding: 18px; }
-    .card { background:#fff; border:1px solid #e5e7ea; border-radius:12px; padding:16px; }
-    a { color:#0b57d0; text-decoration:none; }
-    a:hover { text-decoration:underline; }
-    .muted { color:#6a737f; }
-    .menu { display:flex; gap:10px; flex-wrap:wrap; }
-    .menu a { padding:6px 10px; border-radius:999px; }
-    .menu a.active { background:#eef2ff; font-weight:bold; }
-    .block-text { margin-top:12px; line-height:1.6; font-size:16px; }
-    .block-img { margin-top:14px; }
-    .block-img img { max-width:100%; height:auto; border-radius:12px; border:1px solid #eee; display:block; }
-    code { background:#f3f4f6; padding:2px 6px; border-radius:6px; }
-    .btn { display:inline-block; padding:10px 14px; border-radius:12px; border:1px solid #e5e7ea; text-decoration:none; }
-    .btn-primary { background:#2563eb; color:#fff; border-color:#2563eb; }
-    .btn-secondary { background:#fff; color:#111; }
+    .btn{
+      display:inline-flex;
+      align-items:center;
+      justify-content:center;
+      gap:8px;
+      padding: 9px 12px;
+      border-radius: 12px;
+      border:1px solid var(--line);
+      background:#fff;
+      color: #111;
+      text-decoration:none;
+      box-shadow: var(--shadow);
+      cursor:pointer;
+      font-size: 13px;
+      line-height: 1;
+    }
+    .btn:hover{ text-decoration:none; border-color:#d0d7de; }
+    .btnPrimary{
+      background: var(--accent);
+      border-color: var(--accent);
+      color:#fff;
+    }
+    .btnPrimary:hover{ filter: brightness(.98); }
 
-        /* columns2 */
-    .cols2 {
-    margin-top: 14px;
-    display: grid;
-    gap: 14px;
+    .crumbs{
+      margin-top: 10px;
+      display:flex;
+      gap:6px;
+      flex-wrap:wrap;
+      align-items:center;
+      color:var(--muted);
+      font-size:12px;
     }
-    .cols2 .col {
-    background: #fff;
-    border: 1px solid #eee;
-    border-radius: 12px;
-    padding: 12px;
+    .crumbs a{ color:var(--accent); }
+    .sep{ color:#98a2b3; }
+
+    /* Menu */
+    .menu{
+      margin-top: 10px;
+      display:flex;
+      gap:8px;
+      flex-wrap:wrap;
     }
-    @media (max-width: 768px) {
-    .cols2 { grid-template-columns: 1fr !important; }
+    .menu a{
+      display:inline-flex;
+      align-items:center;
+      gap:8px;
+      padding: 8px 12px;
+      border-radius: 999px;
+      border:1px solid var(--line);
+      background:#fff;
+      color:#111;
+      font-size:13px;
+      text-decoration:none;
+      box-shadow: var(--shadow);
+    }
+    .menu a:hover{ border-color:#d0d7de; }
+    .menu a.active{
+      background: var(--accentSoft);
+      border-color:#c7d2fe;
+      color: var(--accent);
+      font-weight: 700;
     }
 
-    .gallery {
-        margin-top: 14px;
-        display: grid;
-        gap: 12px;
+    /* Main */
+    .content{
+      padding: 18px 0 28px;
     }
-    .gallery img {
-        width: 100%;
-        height: auto;
-        display: block;
-        border-radius: 12px;
-        border: 1px solid #eee;
-        background: #fafafa;
+    .card{
+      background:var(--card);
+      border:1px solid var(--line);
+      border-radius: var(--radius);
+      padding: 18px;
+      box-shadow: var(--shadow);
     }
-    @media (max-width: 768px) {
-        .gallery { grid-template-columns: 1fr !important; }
+    .title{
+      margin:0;
+      font-size: 26px;
+      line-height: 1.2;
+      letter-spacing: -0.2px;
+    }
+    .subtitle{
+      margin-top: 8px;
+      color: var(--muted);
+      font-size: 13px;
     }
 
-    .spacer { width:100%; }
-    .spacerLine { height:1px; background:#e5e7ea; }
+    /* Section nav */
+    .sectionNav{
+      margin-top:14px;
+      border:1px solid var(--line);
+      border-radius: var(--radius);
+      padding: 14px;
+      background: #fff;
+      box-shadow: var(--shadow);
+    }
+    .sectionNavTitle{
+      font-weight:800;
+      font-size:13px;
+    }
+    .sectionNavHint{
+      margin-top:8px;
+      font-size:12px;
+      color:var(--muted);
+    }
+    .sectionGrid{
+      margin-top: 12px;
+      display:grid;
+      gap:10px;
+    }
+    @media (min-width: 760px){
+      .sectionGrid{ grid-template-columns: 1fr 1fr; }
+    }
+    .sectionCard{
+      border:1px solid var(--line2);
+      border-radius: 14px;
+      background:#fff;
+      padding: 12px;
+      display:flex;
+      gap:10px;
+      align-items:flex-start;
+      text-decoration:none;
+      color:#111;
+    }
+    .sectionCard:hover{ border-color:#d0d7de; text-decoration:none; }
+    .sectionCard.active{
+      background: var(--accentSoft);
+      border-color:#c7d2fe;
+    }
+    .sectionCard .dot{
+      width: 10px; height:10px; border-radius:999px;
+      background:#e5e7ea; flex:0 0 auto; margin-top: 4px;
+    }
+    .sectionCard.active .dot{ background: var(--accent); }
+    .sectionCard .t{
+      font-weight:700;
+      font-size:13px;
+      line-height:1.3;
+    }
+    .sectionCard .m{
+      margin-top:4px;
+      font-size:12px;
+      color:var(--muted);
+    }
 
-    .cardBlock {
-        margin-top:14px;
-        background:#fff;
-        border:1px solid #eee;
-        border-radius:16px;
-        padding:14px;
+    /* Blocks */
+    .block{ margin-top: 14px; }
+    .blockText{
+      line-height:1.75;
+      font-size:16px;
+      color:#0b1220;
+      white-space:pre-wrap;
     }
-    .cardBlock img {
-        width:100%;
-        height:auto;
-        display:block;
-        border-radius:14px;
-        border:1px solid #eee;
-        margin-top:10px;
-    }
-    .cardTitle { font-weight:700; font-size:18px; }
-    .cardText { margin-top:8px; color:#333; line-height:1.6; white-space:pre-wrap; }
-    .cardBtn { display:inline-block; margin-top:10px; padding:10px 14px; border-radius:12px; border:1px solid #e5e7ea; text-decoration:none; }
 
-    .cardsGrid {
-        margin-top:14px;
-        display:grid;
-        gap:14px;
+    .blockImg img{
+      width:100%;
+      height:auto;
+      display:block;
+      border-radius: 16px;
+      border:1px solid var(--line2);
+      background:#fafafa;
     }
-    .cardsGrid .cardItem {
-        background:#fff;
-        border:1px solid #eee;
-        border-radius:16px;
-        padding:14px;
+
+    /* buttons block */
+    .btnBlock{ margin-top: 14px; }
+
+    /* columns2 */
+    .cols2{
+      display:grid;
+      gap:14px;
+      margin-top: 14px;
     }
+    .cols2 .col{
+      border:1px solid var(--line2);
+      border-radius: 16px;
+      padding: 14px;
+      background:#fff;
+      line-height:1.7;
+    }
+    @media (max-width: 768px){
+      .cols2{ grid-template-columns: 1fr !important; }
+    }
+
+    /* gallery */
+    .gallery{
+      margin-top: 14px;
+      display:grid;
+      gap: 12px;
+    }
+    .gallery img{
+      width:100%;
+      height:auto;
+      display:block;
+      border-radius: 16px;
+      border:1px solid var(--line2);
+      background:#fafafa;
+    }
+    @media (max-width: 768px){
+      .gallery{ grid-template-columns: 1fr !important; }
+    }
+
+    /* spacer */
+    .spacer{ width:100%; }
+    .spacerLine{ height:1px; background:var(--line); }
+
+    /* card block */
+    .cardBlock{
+      border:1px solid var(--line2);
+      border-radius: 18px;
+      padding: 14px;
+      background:#fff;
+    }
+    .cardTitle{ font-weight:800; font-size:18px; }
+    .cardText{ margin-top:8px; color:#1f2937; line-height:1.7; white-space:pre-wrap; }
+    .cardBlock img{
+      width:100%;
+      height:auto;
+      display:block;
+      border-radius: 16px;
+      border:1px solid var(--line2);
+      margin-top: 10px;
+      background:#fafafa;
+    }
+    .cardBtn{
+      display:inline-flex;
+      align-items:center;
+      justify-content:center;
+      margin-top: 12px;
+      padding: 10px 14px;
+      border-radius: 12px;
+      border:1px solid var(--line);
+      background:#fff;
+      color:#111;
+      text-decoration:none;
+    }
+    .cardBtn:hover{ text-decoration:none; border-color:#d0d7de; }
+
+    /* cards grid */
+    .cardsGrid{
+      margin-top: 14px;
+      display:grid;
+      gap: 14px;
+    }
+    .cardsGrid .cardItem{
+      border:1px solid var(--line2);
+      border-radius: 18px;
+      padding: 14px;
+      background:#fff;
+    }
+    .cardsGrid .t{ font-weight:800; font-size:16px; }
+    .cardsGrid .d{ margin-top:8px; color:#1f2937; line-height:1.7; white-space:pre-wrap; }
     .cardsGrid .cardItem img{
-        width:100%;
-        height:auto;
-        display:block;
-        border-radius:14px;
-        border:1px solid #eee;
-        background:#fafafa;
-        margin-top:10px;
+      width:100%;
+      height:auto;
+      display:block;
+      border-radius: 16px;
+      border:1px solid var(--line2);
+      background:#fafafa;
+      margin-top: 10px;
     }
-    .cardsGrid .t { font-weight:700; font-size:16px; }
-    .cardsGrid .d { margin-top:8px; color:#333; line-height:1.6; white-space:pre-wrap; }
-    .cardsGrid .a { display:inline-block; margin-top:10px; padding:10px 14px; border-radius:12px; border:1px solid #e5e7ea; text-decoration:none; }
-    @media (max-width: 768px) {
-        .cardsGrid { grid-template-columns: 1fr !important; }
+    .cardsGrid .a{
+      display:inline-flex;
+      align-items:center;
+      justify-content:center;
+      margin-top: 12px;
+      padding: 10px 14px;
+      border-radius: 12px;
+      border:1px solid var(--line);
+      background:#fff;
+      color:#111;
+      text-decoration:none;
+    }
+    .cardsGrid .a:hover{ text-decoration:none; border-color:#d0d7de; }
+
+    @media (max-width: 768px){
+      .cardsGrid{ grid-template-columns: 1fr !important; }
     }
 
-    .breadcrumbs { display:flex; gap:6px; flex-wrap:wrap; align-items:center; }
-    .breadcrumbs a, .breadcrumbs span { font-size:12px; color:#6a737f; }
-    .breadcrumbs a { color:#0b57d0; }
-    .breadcrumbs .sep { color:#9aa3af; }
-
-    .sectionNav {
-        margin-top:14px;
-        border:1px solid #e5e7ea;
-        border-radius:14px;
-        padding:12px;
-        background:#fff;
+    /* Footer meta */
+    .meta{
+      margin-top: 18px;
+      padding-top: 14px;
+      border-top: 1px dashed var(--line);
+      color: var(--muted);
+      font-size: 12px;
+      display:flex;
+      gap: 12px;
+      flex-wrap:wrap;
+      align-items:center;
+      justify-content:space-between;
     }
-    .sectionNavTitle { font-weight:700; font-size:13px; }
-    .sectionNavList { margin-top:10px; display:flex; gap:8px; flex-wrap:wrap; }
-    .sectionNavList a {
-        display:inline-block;
-        padding:6px 10px;
-        border-radius:999px;
-        border:1px solid #e5e7ea;
-        background:#fff;
-        text-decoration:none;
+    code{
+      background:#f3f4f6;
+      padding:2px 6px;
+      border-radius: 8px;
+      border:1px solid #eef0f2;
+      color:#374151;
     }
-    .sectionNavList a.active { background:#eef2ff; border-color:#c7d2fe; font-weight:700; }
-    .sectionNavHint { margin-top:8px; font-size:12px; color:#6a737f; }
   </style>
 </head>
 <body>
-  <div class="top">
-    <a href="/local/sitebuilder/index.php">← Назад</a>
-    <div class="muted">/</div>
-    <div><b><?=h($site['name'])?></b></div>
-    <div class="muted">/</div>
-    <div><?=h($page['title'])?></div>
 
-    <div style="flex:1;"></div>
+<div class="topWrap">
+  <div class="container top">
+    <div class="topRow">
+      <div class="brand">
+        <div class="brandMark">SB</div>
+        <div class="brandTxt">
+          <div class="siteName"><?=h($site['name'])?></div>
+          <div class="pageName"><?=h($page['title'])?></div>
+        </div>
+      </div>
 
-    <a href="/local/sitebuilder/editor.php?siteId=<?= (int)$siteId ?>&pageId=<?= (int)$pageId ?>" target="_blank">Редактор</a>
-    <a href="/local/sitebuilder/menu.php?siteId=<?= (int)$siteId ?>" target="_blank">Меню</a>
-
-        <div style="flex-basis:100%; height:0;"></div>
+      <div class="actions">
+        <a class="btn" href="/local/sitebuilder/index.php">← К списку</a>
+        <a class="btn" href="/local/sitebuilder/menu.php?siteId=<?= (int)$siteId ?>" target="_blank">Меню</a>
+        <a class="btn btnPrimary" href="/local/sitebuilder/editor.php?siteId=<?= (int)$siteId ?>&pageId=<?= (int)$pageId ?>" target="_blank">Редактор</a>
+      </div>
+    </div>
 
     <?php if ($breadcrumbs && count($breadcrumbs) > 1): ?>
-    <div class="breadcrumbs">
+      <div class="crumbs">
         <?php foreach ($breadcrumbs as $i => $bc): ?>
-        <?php
+          <?php
             $isLast = ($i === count($breadcrumbs)-1);
             $bcId = (int)($bc['id'] ?? 0);
             $bcTitle = (string)($bc['title'] ?? ('page#'.$bcId));
-        ?>
-        <?php if ($i > 0): ?><span class="sep">/</span><?php endif; ?>
-        <?php if ($isLast): ?>
+          ?>
+          <?php if ($i > 0): ?><span class="sep">/</span><?php endif; ?>
+          <?php if ($isLast): ?>
             <span><?= h($bcTitle) ?></span>
-        <?php else: ?>
+          <?php else: ?>
             <a href="<?= h(viewUrl($siteId, $bcId)) ?>"><?= h($bcTitle) ?></a>
-        <?php endif; ?>
+          <?php endif; ?>
         <?php endforeach; ?>
-    </div>
+      </div>
     <?php endif; ?>
 
-    <div style="flex-basis:100%; height:0;"></div>
-
     <?php if ($menuItems): ?>
-      <div class="menu">
+      <nav class="menu" aria-label="Site menu">
         <?php foreach ($menuItems as $it): ?>
           <?php
             $type = (string)($it['type'] ?? '');
@@ -349,241 +619,270 @@ foreach ($menusAll as $rec) {
               if ($title === '') $title = '(unknown)';
             }
           ?>
-          <a class="<?= $isActive ? 'active' : '' ?>" href="<?= h($href) ?>" <?= ($type === 'url' && preg_match('~^https?://~i', $href)) ? 'target="_blank" rel="noopener noreferrer"' : '' ?>>
+          <a class="<?= $isActive ? 'active' : '' ?>"
+             href="<?= h($href) ?>"
+             <?= ($type === 'url' && preg_match('~^https?://~i', $href)) ? 'target="_blank" rel="noopener noreferrer"' : '' ?>>
             <?= h($title) ?>
           </a>
         <?php endforeach; ?>
-      </div>
+      </nav>
     <?php else: ?>
-      <!-- fallback: если меню ещё не создано -->
-      <div class="menu">
+      <nav class="menu" aria-label="Fallback site menu">
         <?php foreach ($sitePages as $sp): ?>
           <?php $isActive = ((int)($sp['id'] ?? 0) === (int)$pageId); ?>
           <a class="<?= $isActive ? 'active' : '' ?>" href="<?= h(viewUrl($siteId, (int)($sp['id'] ?? 0))) ?>">
             <?= h($sp['title'] ?? '') ?>
           </a>
         <?php endforeach; ?>
-      </div>
+      </nav>
     <?php endif; ?>
-  </div>
 
-  <div class="content">
+  </div>
+</div>
+
+<div class="content">
+  <div class="container">
     <div class="card">
-      <h1 style="margin-top:0;"><?=h($page['title'])?></h1>
+      <h1 class="title"><?=h($page['title'])?></h1>
+      <div class="subtitle">
+        <?=h($site['name'])?> • pageId: <code><?= (int)$pageId ?></code> • siteId: <code><?= (int)$siteId ?></code>
+      </div>
 
       <?php
-        // что показываем:
-        // 1) если у текущей страницы есть дети -> показываем “Страницы раздела”
-        // 2) иначе, если у страницы есть родитель -> показываем “В этом разделе” (соседи)
-        ?>
-        <?php if ($children && count($children) > 0): ?>
+        // Раздел/соседи
+      ?>
+      <?php if ($children && count($children) > 0): ?>
         <div class="sectionNav">
-            <div class="sectionNavTitle">Страницы раздела</div>
-            <div class="sectionNavList">
+          <div class="sectionNavTitle">Страницы раздела</div>
+          <div class="sectionGrid">
             <?php foreach ($children as $ch): ?>
-                <?php $chId = (int)($ch['id'] ?? 0); ?>
-                <a href="<?= h(viewUrl($siteId, $chId)) ?>">
-                <?= h((string)($ch['title'] ?? ('page#'.$chId))) ?>
-                </a>
+              <?php $chId = (int)($ch['id'] ?? 0); ?>
+              <a class="sectionCard" href="<?= h(viewUrl($siteId, $chId)) ?>">
+                <span class="dot"></span>
+                <span>
+                  <div class="t"><?= h((string)($ch['title'] ?? ('page#'.$chId))) ?></div>
+                  <div class="m">slug: <code><?= h((string)($ch['slug'] ?? '')) ?></code></div>
+                </span>
+              </a>
             <?php endforeach; ?>
-            </div>
-            <div class="sectionNavHint">Раздел — это страница, у которой есть дочерние страницы (parentId = <?= (int)$pageId ?>).</div>
+          </div>
+          <div class="sectionNavHint">Раздел — это страница, у которой есть дочерние страницы (parentId = <?= (int)$pageId ?>).</div>
         </div>
-        <?php elseif ($parentId > 0 && $parentChildren && count($parentChildren) > 0): ?>
+      <?php elseif ($parentId > 0 && $parentChildren && count($parentChildren) > 0): ?>
         <div class="sectionNav">
-            <div class="sectionNavTitle">В этом разделе</div>
-            <div class="sectionNavList">
+          <div class="sectionNavTitle">В этом разделе</div>
+          <div class="sectionGrid">
             <?php foreach ($parentChildren as $ch): ?>
-                <?php $chId = (int)($ch['id'] ?? 0); $active = ($chId === $pageId); ?>
-                <a class="<?= $active ? 'active' : '' ?>" href="<?= h(viewUrl($siteId, $chId)) ?>">
-                <?= h((string)($ch['title'] ?? ('page#'.$chId))) ?>
-                </a>
+              <?php $chId = (int)($ch['id'] ?? 0); $active = ($chId === $pageId); ?>
+              <a class="sectionCard <?= $active ? 'active' : '' ?>" href="<?= h(viewUrl($siteId, $chId)) ?>">
+                <span class="dot"></span>
+                <span>
+                  <div class="t"><?= h((string)($ch['title'] ?? ('page#'.$chId))) ?></div>
+                  <div class="m">slug: <code><?= h((string)($ch['slug'] ?? '')) ?></code></div>
+                </span>
+              </a>
             <?php endforeach; ?>
-            </div>
-            <div class="sectionNavHint">Ты внутри раздела (parentId = <?= (int)$parentId ?>). Тут показаны “соседи”.</div>
+          </div>
+          <div class="sectionNavHint">Ты внутри раздела (parentId = <?= (int)$parentId ?>). Тут показаны “соседи”.</div>
         </div>
-        <?php endif; ?>
+      <?php endif; ?>
 
       <?php if (!$blocks): ?>
-        <div class="muted">Блоков пока нет. Добавь их в редакторе.</div>
+        <div class="block muted" style="margin-top:14px;">Блоков пока нет. Добавь их в редакторе.</div>
       <?php else: ?>
         <?php foreach ($blocks as $b): ?>
           <?php $type = (string)($b['type'] ?? ''); ?>
 
           <?php if ($type === 'text'): ?>
-            <div class="block-text">
-              <?= nl2br(h((string)($b['content']['text'] ?? ''))) ?>
-            </div>
+            <div class="block blockText"><?= nl2br(h((string)($b['content']['text'] ?? ''))) ?></div>
           <?php endif; ?>
 
           <?php if ($type === 'button'): ?>
-			  <?php
-				$text = (string)($b['content']['text'] ?? '');
-				$url = (string)($b['content']['url'] ?? '#');
-				$variant = (string)($b['content']['variant'] ?? 'primary');
-				$cls = ($variant === 'secondary') ? 'btn btn-secondary' : 'btn btn-primary';
-			  ?>
-			  <div class="block-btn" style="margin-top:14px;">
-				<a class="<?=h($cls)?>" href="<?=h($url)?>" <?= preg_match('~^https?://~i', $url) ? 'target="_blank" rel="noopener noreferrer"' : '' ?>>
-				  <?=h($text)?>
-				</a>
-			  </div>
-			<?php endif; ?>
+            <?php
+              $text = (string)($b['content']['text'] ?? '');
+              $url = (string)($b['content']['url'] ?? '#');
+              $variant = (string)($b['content']['variant'] ?? 'primary');
+              $cls = ($variant === 'secondary') ? 'btn' : 'btn btnPrimary';
+            ?>
+            <div class="block btnBlock">
+              <a class="<?= h($cls) ?>" href="<?= h($url) ?>" <?= preg_match('~^https?://~i', $url) ? 'target="_blank" rel="noopener noreferrer"' : '' ?>>
+                <?= h($text) ?>
+              </a>
+            </div>
+          <?php endif; ?>
 
           <?php if ($type === 'image'): ?>
             <?php $fileId = (int)($b['content']['fileId'] ?? 0); ?>
             <?php $alt = (string)($b['content']['alt'] ?? ''); ?>
             <?php if ($fileId > 0): ?>
-              <div class="block-img">
+              <div class="block blockImg">
                 <img src="<?= h(downloadUrl($siteId, $fileId)) ?>" alt="<?= h($alt) ?>">
               </div>
             <?php else: ?>
-              <div class="muted" style="margin-top:12px;">(image) файл не выбран</div>
+              <div class="block muted">(image) файл не выбран</div>
             <?php endif; ?>
           <?php endif; ?>
 
           <?php if ($type === 'heading'): ?>
-
-          <?php
-            $text = (string)($b['content']['text'] ?? '');
-            $level = (string)($b['content']['level'] ?? 'h2');
-            $align = (string)($b['content']['align'] ?? 'left');
-            if (!in_array($level, ['h1','h2','h3'], true)) $level = 'h2';
-            if (!in_array($align, ['left','center','right'], true)) $align = 'left';
-          ?>
-            <<?=h($level)?> style="margin-top:16px; text-align:<?=h($align)?>;">
-                <?=h($text)?>
+            <?php
+              $text = (string)($b['content']['text'] ?? '');
+              $level = (string)($b['content']['level'] ?? 'h2');
+              $align = (string)($b['content']['align'] ?? 'left');
+              if (!in_array($level, ['h1','h2','h3'], true)) $level = 'h2';
+              if (!in_array($align, ['left','center','right'], true)) $align = 'left';
+            ?>
+            <<?=h($level)?> class="block" style="margin-top:16px; text-align:<?=h($align)?>;">
+              <?=h($text)?>
             </<?=h($level)?>>
-            <?php endif; ?>
-
+          <?php endif; ?>
 
           <?php if ($type === 'columns2'): ?>
             <?php
-                $left  = (string)($b['content']['left'] ?? '');
-                $right = (string)($b['content']['right'] ?? '');
-                $ratio = (string)($b['content']['ratio'] ?? '50-50');
-
-                if (!in_array($ratio, ['50-50','33-67','67-33'], true)) $ratio = '50-50';
-
-                $tpl = '1fr 1fr';
-                if ($ratio === '33-67') $tpl = '1fr 2fr';
-                if ($ratio === '67-33') $tpl = '2fr 1fr';
+              $left  = (string)($b['content']['left'] ?? '');
+              $right = (string)($b['content']['right'] ?? '');
+              $ratio = (string)($b['content']['ratio'] ?? '50-50');
+              if (!in_array($ratio, ['50-50','33-67','67-33'], true)) $ratio = '50-50';
+              $tpl = '1fr 1fr';
+              if ($ratio === '33-67') $tpl = '1fr 2fr';
+              if ($ratio === '67-33') $tpl = '2fr 1fr';
             ?>
-            <div class="cols2" style="grid-template-columns: <?=h($tpl)?>;">
-                <div class="col"><?= nl2br(h($left)) ?></div>
-                <div class="col"><?= nl2br(h($right)) ?></div>
+            <div class="block cols2" style="grid-template-columns: <?=h($tpl)?>;">
+              <div class="col"><?= nl2br(h($left)) ?></div>
+              <div class="col"><?= nl2br(h($right)) ?></div>
             </div>
-            <?php endif; ?>
+          <?php endif; ?>
 
-            <?php if ($type === 'gallery'): ?>
+          <?php if ($type === 'gallery'): ?>
+            <?php
+              $cols = (int)($b['content']['columns'] ?? 3);
+              if (!in_array($cols, [2,3,4], true)) $cols = 3;
+              $tpl = '1fr 1fr 1fr';
+              if ($cols === 2) $tpl = '1fr 1fr';
+              if ($cols === 4) $tpl = '1fr 1fr 1fr 1fr';
+
+              $imgs = $b['content']['images'] ?? [];
+              if (!is_array($imgs)) $imgs = [];
+            ?>
+            <div class="block gallery" style="grid-template-columns: <?=h($tpl)?>;">
+              <?php foreach ($imgs as $it): ?>
                 <?php
-                    $cols = (int)($b['content']['columns'] ?? 3);
-                    if (!in_array($cols, [2,3,4], true)) $cols = 3;
-
-                    $tpl = '1fr 1fr 1fr';
-                    if ($cols === 2) $tpl = '1fr 1fr';
-                    if ($cols === 4) $tpl = '1fr 1fr 1fr 1fr';
-
-                    $imgs = $b['content']['images'] ?? [];
-                    if (!is_array($imgs)) $imgs = [];
+                  if (!is_array($it)) continue;
+                  $fid = (int)($it['fileId'] ?? 0);
+                  $alt = (string)($it['alt'] ?? '');
+                  if ($fid <= 0) continue;
                 ?>
-                <div class="gallery" style="grid-template-columns: <?=h($tpl)?>;">
-                    <?php foreach ($imgs as $it): ?>
-                    <?php
-                        if (!is_array($it)) continue;
-                        $fid = (int)($it['fileId'] ?? 0);
-                        $alt = (string)($it['alt'] ?? '');
-                        if ($fid <= 0) continue;
-                    ?>
-                    <img src="<?= h(downloadUrl($siteId, $fid)) ?>" alt="<?= h($alt) ?>">
-                    <?php endforeach; ?>
-                </div>
-                <?php endif; ?>
+                <img src="<?= h(downloadUrl($siteId, $fid)) ?>" alt="<?= h($alt) ?>">
+              <?php endforeach; ?>
+            </div>
+          <?php endif; ?>
 
+          <?php if ($type === 'spacer'): ?>
+            <?php
+              $h = (int)($b['content']['height'] ?? 40);
+              if ($h < 10) $h = 10;
+              if ($h > 200) $h = 200;
+              $line = (bool)($b['content']['line'] ?? false);
+            ?>
+            <div class="block spacer" style="height: <?= (int)$h ?>px; position:relative;">
+              <?php if ($line): ?>
+                <div class="spacerLine" style="position:absolute; left:0; right:0; top:50%;"></div>
+              <?php endif; ?>
+            </div>
+          <?php endif; ?>
 
-            <?php if ($type === 'spacer'): ?>
+          <?php if ($type === 'card'): ?>
+            <?php
+              $title = (string)($b['content']['title'] ?? '');
+              $text  = (string)($b['content']['text'] ?? '');
+              $imgId = (int)($b['content']['imageFileId'] ?? 0);
+              $btnText = trim((string)($b['content']['buttonText'] ?? ''));
+              $btnUrl  = trim((string)($b['content']['buttonUrl'] ?? ''));
+            ?>
+            <div class="block cardBlock">
+              <div class="cardTitle"><?=h($title)?></div>
+              <?php if ($text !== ''): ?><div class="cardText"><?=nl2br(h($text))?></div><?php endif; ?>
+              <?php if ($imgId > 0): ?><img src="<?=h(downloadUrl($siteId, $imgId))?>" alt=""><?php endif; ?>
+              <?php if ($btnUrl !== ''): ?>
+                <a class="cardBtn" href="<?=h($btnUrl)?>" <?= preg_match('~^https?://~i', $btnUrl) ? 'target="_blank" rel="noopener noreferrer"' : '' ?>>
+                  <?=h($btnText !== '' ? $btnText : 'Открыть')?>
+                </a>
+              <?php endif; ?>
+            </div>
+          <?php endif; ?>
+
+          <?php if ($type === 'cards'): ?>
+            <?php
+              $cols = (int)($b['content']['columns'] ?? 3);
+              if (!in_array($cols, [2,3,4], true)) $cols = 3;
+              $tpl = '1fr 1fr 1fr';
+              if ($cols === 2) $tpl = '1fr 1fr';
+              if ($cols === 4) $tpl = '1fr 1fr 1fr 1fr';
+
+              $items = $b['content']['items'] ?? [];
+              if (!is_array($items)) $items = [];
+            ?>
+            <div class="block cardsGrid" style="grid-template-columns: <?=h($tpl)?>;">
+              <?php foreach ($items as $it): ?>
                 <?php
-                    $h = (int)($b['content']['height'] ?? 40);
-                    if ($h < 10) $h = 10;
-                    if ($h > 200) $h = 200;
-                    $line = (bool)($b['content']['line'] ?? false);
+                  if (!is_array($it)) continue;
+                  $title = (string)($it['title'] ?? '');
+                  if ($title === '') continue;
+                  $text = (string)($it['text'] ?? '');
+                  $imgId = (int)($it['imageFileId'] ?? 0);
+                  $btnText = trim((string)($it['buttonText'] ?? ''));
+                  $btnUrl  = trim((string)($it['buttonUrl'] ?? ''));
                 ?>
-                <div class="spacer" style="height: <?= (int)$h ?>px; position:relative; margin-top:14px;">
-                    <?php if ($line): ?>
-                    <div class="spacerLine" style="position:absolute; left:0; right:0; top:50%;"></div>
-                    <?php endif; ?>
-                </div>
-            <?php endif; ?>
-
-            <?php if ($type === 'card'): ?>
-                <?php
-                    $title = (string)($b['content']['title'] ?? '');
-                    $text  = (string)($b['content']['text'] ?? '');
-                    $imgId = (int)($b['content']['imageFileId'] ?? 0);
-                    $btnText = trim((string)($b['content']['buttonText'] ?? ''));
-                    $btnUrl  = trim((string)($b['content']['buttonUrl'] ?? ''));
-                ?>
-                <div class="cardBlock">
-                    <div class="cardTitle"><?=h($title)?></div>
-                    <?php if ($text !== ''): ?><div class="cardText"><?=nl2br(h($text))?></div><?php endif; ?>
-
-                    <?php if ($imgId > 0): ?>
-                    <img src="<?=h(downloadUrl($siteId, $imgId))?>" alt="">
-                    <?php endif; ?>
-
-                    <?php if ($btnUrl !== ''): ?>
-                    <a class="cardBtn" href="<?=h($btnUrl)?>" <?= preg_match('~^https?://~i', $btnUrl) ? 'target="_blank" rel="noopener noreferrer"' : '' ?>>
-                        <?=h($btnText !== '' ? $btnText : 'Открыть')?>
+                <div class="cardItem">
+                  <div class="t"><?=h($title)?></div>
+                  <?php if ($text !== ''): ?><div class="d"><?=nl2br(h($text))?></div><?php endif; ?>
+                  <?php if ($imgId > 0): ?><img src="<?=h(downloadUrl($siteId, $imgId))?>" alt=""><?php endif; ?>
+                  <?php if ($btnUrl !== ''): ?>
+                    <a class="a" href="<?=h($btnUrl)?>" <?= preg_match('~^https?://~i', $btnUrl) ? 'target="_blank" rel="noopener noreferrer"' : '' ?>>
+                      <?=h($btnText !== '' ? $btnText : 'Открыть')?>
                     </a>
-                    <?php endif; ?>
+                  <?php endif; ?>
                 </div>
-            <?php endif; ?>
-
-            <?php if ($type === 'cards'): ?>
-                <?php
-                    $cols = (int)($b['content']['columns'] ?? 3);
-                    if (!in_array($cols, [2,3,4], true)) $cols = 3;
-
-                    $tpl = '1fr 1fr 1fr';
-                    if ($cols === 2) $tpl = '1fr 1fr';
-                    if ($cols === 4) $tpl = '1fr 1fr 1fr 1fr';
-
-                    $items = $b['content']['items'] ?? [];
-                    if (!is_array($items)) $items = [];
-                ?>
-                <div class="cardsGrid" style="grid-template-columns: <?=h($tpl)?>;">
-                    <?php foreach ($items as $it): ?>
-                    <?php
-                        if (!is_array($it)) continue;
-                        $title = (string)($it['title'] ?? '');
-                        if ($title === '') continue;
-                        $text = (string)($it['text'] ?? '');
-                        $imgId = (int)($it['imageFileId'] ?? 0);
-                        $btnText = trim((string)($it['buttonText'] ?? ''));
-                        $btnUrl  = trim((string)($it['buttonUrl'] ?? ''));
-                    ?>
-                    <div class="cardItem">
-                        <div class="t"><?=h($title)?></div>
-                        <?php if ($text !== ''): ?><div class="d"><?=nl2br(h($text))?></div><?php endif; ?>
-                        <?php if ($imgId > 0): ?><img src="<?=h(downloadUrl($siteId, $imgId))?>" alt=""><?php endif; ?>
-                        <?php if ($btnUrl !== ''): ?>
-                        <a class="a" href="<?=h($btnUrl)?>" <?= preg_match('~^https?://~i', $btnUrl) ? 'target="_blank" rel="noopener noreferrer"' : '' ?>>
-                            <?=h($btnText !== '' ? $btnText : 'Открыть')?>
-                        </a>
-                        <?php endif; ?>
-                    </div>
-                    <?php endforeach; ?>
-                </div>
-            <?php endif; ?>
+              <?php endforeach; ?>
+            </div>
+          <?php endif; ?>
 
         <?php endforeach; ?>
       <?php endif; ?>
 
-      <div style="margin-top:16px;" class="muted">
-        <div><b>slug:</b> <code><?=h($page['slug'])?></code></div>
-        <div><b>pageId:</b> <?= (int)$page['id'] ?> &nbsp; <b>siteId:</b> <?= (int)$site['id'] ?></div>
+      <div class="meta">
+        <div>
+          slug: <code><?=h((string)($page['slug'] ?? ''))?></code>
+        </div>
+        <div>
+          pageId: <code><?= (int)($page['id'] ?? 0) ?></code> • siteId: <code><?= (int)($site['id'] ?? 0) ?></code>
+        </div>
       </div>
+
     </div>
   </div>
+</div>
+
 </body>
 </html>
+```
+
+---
+
+### Что проверить после замены (быстро, по пунктам)
+
+1. Открыть любую страницу: `view.php?siteId=...&pageId=...` — шапка на месте, меню отображается.
+2. Если `topMenuId` не задан — меню берётся “первое” (fallback).
+3. Вложенность:
+
+   * если у страницы есть дети → появляются карточки “Страницы раздела”
+   * если детей нет, но есть родитель → “В этом разделе” (соседи)
+4. Все блоки (text/image/button/heading/columns2/gallery/spacer/card/cards) отображаются нормально.
+
+---
+
+Если ок — следующим шагом делаем **settings.php + `api.site.update`** и аккуратно “привяжем”:
+
+* container width
+* accent color
+* возможно logoFileId
+  к реальным настройкам в `sites.json`, чтобы визуал был управляемый как у продукта.
