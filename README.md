@@ -1,134 +1,165 @@
-Ок, делаем **п.5 (menu.php: кнопка “Сделать верхним”)**.
-Я дам **точно куда вставлять** и **что заменить**, потому что у тебя сейчас в `menu.php` уже есть заготовка, но там есть 2 ошибки, из-за которых “верхнее меню” нормально не подтянется:
-
-* в `loadAll()` ты пишешь `api('site.get')`, но переменная у тебя названа `pagesRes/menusRes`, а возвращаешь `siteRes` (которого нет)
-* `render()` принимает `{menus, pages, topMenuId}`, а ты передаёшь `render(data)` где `data.site.topMenuId` лежит внутри `site`.
-
-Ниже — **минимальные правки** в `menu.php`:
+Отлично, идём дальше по “серьёзному” пути: **фиксируем данные и делаем `topMenuId` реальным источником правды.**
+Теперь нужно **2 action’а в `api.php`** + **1 правка в `view.php`**, чтобы меню отображалось именно то, которое назначено “верхним”.
 
 ---
 
-## 1) loadAll — замени целиком функцию
+# A) api.php — добавляем `site.get`
 
-Найди в `menu.php`:
+**Куда вставлять:** в `api.php` в блоке `/** -------------------- SITES -------------------- */` **после** `site.list` (или перед ним — не принципиально, главное до `http_response_code(400)`).
 
-```js
-async function loadAll() {
-  const [menusRes, pagesRes] = await Promise.all([
-    api('menu.list'),
-    api('page.list'),
-    api('site.get')
-  ]);
+Вставь:
 
-  if (!menusRes || menusRes.ok !== true) throw new Error('menu.list failed');
-  if (!pagesRes || pagesRes.ok !== true) throw new Error('page.list failed');
+```php
+if ($action === 'site.get') {
+    $siteId = (int)($_POST['siteId'] ?? 0);
+    if ($siteId <= 0) {
+        http_response_code(422);
+        echo json_encode(['ok'=>false,'error'=>'SITE_ID_REQUIRED'], JSON_UNESCAPED_UNICODE);
+        exit;
+    }
 
-  return { menus: menusRes.menus||[], pages: pagesRes.pages||[], site: siteRes.site||{} };
+    sb_require_viewer($siteId);
+
+    $sites = sb_read_sites();
+    foreach ($sites as $s) {
+        if ((int)($s['id'] ?? 0) === $siteId) {
+            echo json_encode(['ok'=>true,'site'=>$s], JSON_UNESCAPED_UNICODE);
+            exit;
+        }
+    }
+
+    http_response_code(404);
+    echo json_encode(['ok'=>false,'error'=>'SITE_NOT_FOUND'], JSON_UNESCAPED_UNICODE);
+    exit;
+}
+```
+
+---
+
+# B) api.php — добавляем `menu.setTop`
+
+**Куда вставлять:** в `api.php` в блоке `/** -------------------- MENU -------------------- */`
+Лучше всего **после** `menu.update` (rename) и **до** `menu.item.add`.
+
+Вставь:
+
+```php
+if ($action === 'menu.setTop') {
+    $siteId = (int)($_POST['siteId'] ?? 0);
+    $menuId = (int)($_POST['menuId'] ?? 0);
+
+    if ($siteId <= 0) { http_response_code(422); echo json_encode(['ok'=>false,'error'=>'SITE_ID_REQUIRED'], JSON_UNESCAPED_UNICODE); exit; }
+    if ($menuId <= 0) { http_response_code(422); echo json_encode(['ok'=>false,'error'=>'MENU_ID_REQUIRED'], JSON_UNESCAPED_UNICODE); exit; }
+
+    sb_require_editor($siteId);
+
+    // проверим, что такое меню реально существует у этого сайта
+    $all = sb_read_menus();
+    $rec = sb_menu_get_site_record($all, $siteId);
+    if (!$rec) { http_response_code(404); echo json_encode(['ok'=>false,'error'=>'MENU_NOT_FOUND'], JSON_UNESCAPED_UNICODE); exit; }
+
+    $found = false;
+    foreach (($rec['menus'] ?? []) as $m) {
+        if ((int)($m['id'] ?? 0) === $menuId) { $found = true; break; }
+    }
+    if (!$found) { http_response_code(404); echo json_encode(['ok'=>false,'error'=>'MENU_NOT_FOUND'], JSON_UNESCAPED_UNICODE); exit; }
+
+    // пишем topMenuId в sites.json
+    $sites = sb_read_sites();
+    $ok = false;
+    foreach ($sites as &$s) {
+        if ((int)($s['id'] ?? 0) === $siteId) {
+            $s['topMenuId'] = $menuId;
+            $s['updatedAt'] = date('c');
+            $s['updatedBy'] = (int)$USER->GetID();
+            $ok = true;
+            break;
+        }
+    }
+    unset($s);
+
+    if (!$ok) { http_response_code(404); echo json_encode(['ok'=>false,'error'=>'SITE_NOT_FOUND'], JSON_UNESCAPED_UNICODE); exit; }
+
+    sb_write_sites($sites);
+
+    echo json_encode(['ok'=>true,'topMenuId'=>$menuId], JSON_UNESCAPED_UNICODE);
+    exit;
+}
+```
+
+---
+
+# C) view.php — показываем именно верхнее меню (`topMenuId`)
+
+Сейчас `view.php` берёт **первое меню**. Это неправильно для серьёзного проекта.
+
+### 1) Считаем `topMenuId` у сайта
+
+После того как нашли `$site` (у тебя блок “find site/page”), добавь:
+
+```php
+$topMenuId = (int)($site['topMenuId'] ?? 0);
+```
+
+### 2) Заменяем блок “menu: take first menu”
+
+Найди в `view.php`:
+
+```php
+// menu: take first menu for this site (if exists)
+$menuItems = [];
+foreach ($menusAll as $rec) {
+    if ((int)($rec['siteId'] ?? 0) === $siteId) {
+        $menus = $rec['menus'] ?? [];
+        if (is_array($menus) && count($menus) > 0) {
+            $first = $menus[0];
+            $menuItems = $first['items'] ?? [];
+            if (!is_array($menuItems)) $menuItems = [];
+            usort($menuItems, fn($a, $b) => (int)($a['sort'] ?? 0) <=> (int)($b['sort'] ?? 0));
+        }
+        break;
+    }
 }
 ```
 
 И **замени полностью** на:
 
-```js
-async function loadAll() {
-  const [menusRes, pagesRes, siteRes] = await Promise.all([
-    api('menu.list'),
-    api('page.list'),
-    api('site.get', { siteId }) // можно и без siteId, но так надёжнее
-  ]);
+```php
+// menu: take topMenuId for this site (if set), otherwise fallback to first menu
+$menuItems = [];
+foreach ($menusAll as $rec) {
+    if ((int)($rec['siteId'] ?? 0) !== $siteId) continue;
 
-  if (!menusRes || menusRes.ok !== true) throw new Error('menu.list failed');
-  if (!pagesRes || pagesRes.ok !== true) throw new Error('page.list failed');
-  if (!siteRes || siteRes.ok !== true) throw new Error('site.get failed');
+    $menus = $rec['menus'] ?? [];
+    if (!is_array($menus) || !count($menus)) break;
 
-  return {
-    menus: menusRes.menus || [],
-    pages: pagesRes.pages || [],
-    site: siteRes.site || {}
-  };
-}
-```
+    $picked = null;
 
----
-
-## 2) render — поправь сигнатуру и использование topMenuId
-
-Найди:
-
-```js
-function render({menus, pages, topMenuId}) {
-```
-
-И замени на:
-
-```js
-function render({ menus, pages, site }) {
-  const topMenuId = parseInt(site?.topMenuId || 0, 10) || 0;
-```
-
-> Внутри `render()` дальше код с `topMenuId` у тебя уже правильный, он будет работать.
-
----
-
-## 3) Кнопка “Сделать верхним” — HTML уже вставлен правильно
-
-Вот этот кусок у тебя **правильный** и должен быть **внутри** `menus.map(m => ...)` в `render()`:
-
-```js
-${parseInt(m.id,10) === (topMenuId||0)
-  ? `<span class="muted small" style="padding:6px 8px;">Верхнее меню</span>`
-  : `<button class="ui-btn ui-btn-success ui-btn-xs" data-menu-set-top="${m.id}">Сделать верхним</button>`
-}
-```
-
-Если ты всё же сомневаешься “куда” — он должен стоять **в шапке карточки меню**, рядом с “Переименовать” и “+ Пункт”.
-
----
-
-## 4) Обработчик клика — у тебя он тоже по месту, но проверь где стоит
-
-Этот блок должен быть **внутри**:
-
-```js
-document.addEventListener('click', async function (e) {
-  ...
-});
-```
-
-и **после** остальных обработчиков (или до — неважно), но точно **до закрывающей скобки** этого listener.
-
-Вот корректный обработчик (можешь заменить свой `const st...` блок полностью):
-
-```js
-const st = e.target.closest('[data-menu-set-top]');
-if (st) {
-  const menuId = parseInt(st.getAttribute('data-menu-set-top'), 10);
-  api('menu.setTop', { menuId }).then(res => {
-    if (!res || res.ok !== true) {
-      BX.UI.Notification.Center.notify({ content: 'Не удалось назначить верхнее меню (нужен EDITOR+)' });
-      return;
+    if ($topMenuId > 0) {
+        foreach ($menus as $m) {
+            if ((int)($m['id'] ?? 0) === $topMenuId) { $picked = $m; break; }
+        }
     }
-    BX.UI.Notification.Center.notify({ content: 'Верхнее меню назначено' });
-    refresh();
-  }).catch(() => BX.UI.Notification.Center.notify({ content: 'Ошибка menu.setTop' }));
-  return;
+
+    if (!$picked) $picked = $menus[0];
+
+    $menuItems = $picked['items'] ?? [];
+    if (!is_array($menuItems)) $menuItems = [];
+    usort($menuItems, fn($a, $b) => (int)($a['sort'] ?? 0) <=> (int)($b['sort'] ?? 0));
+    break;
 }
 ```
 
 ---
 
-## Важно: без API это не заработает
+# D) Что будет в итоге (логика “как должно работать”)
 
-`menu.php` вызывает:
+* В `menu.php` ты назначаешь конкретное меню как верхнее → `sites.json.topMenuId = X`
+* `view.php` при показе страницы берёт **именно это меню X**
+* Если `topMenuId` не задан — работает fallback на первое меню
 
-* `api('site.get')`
-* `api('menu.setTop')`
+---
 
-Значит в `api.php` должны быть обработчики:
-
-* `site.get` → вернуть объект сайта (хотя бы `topMenuId`)
-* `menu.setTop` → сохранить `topMenuId` в `sites.json`
-
-Если хочешь — я прямо сейчас дам **готовые два action’а для api.php** (это следующий шаг), но ты спросил именно “куда и что вставлять в menu.php” — выше всё по местам.
-
-Скажи только: `sites.json` у тебя уже содержит `topMenuId` или пока нет? Если нет — `menu.setTop` просто добавит поле при записи.
+Если ты уже добавил кнопки в `menu.php` и всё ок — **следующий серьёзный шаг**:
+**в index.php рядом с “Меню” показывать, какое меню назначено верхним (и предупреждать, если не назначено).**
+Хочешь — сразу дам готовый патч для `index.php` (минимальный, без “переписывания дизайна”).
