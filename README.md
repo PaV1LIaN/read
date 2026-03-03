@@ -1,180 +1,104 @@
-Ок, идём дальше. Раз у тебя **`site.get` уже есть**, следующий логичный “серьёзный” набор пунктов для меню — это:
+Ок, клонирование пропускаем. Тогда для “серьёзного проекта” самое полезное прямо сейчас (и не мешает текущей логике) — **журнал действий (audit log)**. Он реально спасает, когда много людей и непонятно “кто сломал меню/страницу/блок”.
 
-1. **API: `menu.setTop`** (сохранять `topMenuId` в `sites.json`)
-2. **API: `menu.delete`** (удаление меню целиком)
-3. **Безопасность/целостность:** если удалили меню, которое было `topMenuId` → **сбросить `topMenuId` в 0**
-4. **UI menu.php:** кнопка “Удалить меню” + подтверждение
-5. **view.php:** ты уже сделал чтение `topMenuId` — супер (там останется как есть)
+## Что сделаем дальше: Audit Log (история изменений)
 
-Ниже — готовые вставки.
+**Цель:** фиксировать в файл/JSON каждое важное действие: создание/удаление сайта, страницы, блоков, меню, смена верхнего меню, права доступа, загрузка/удаление файлов.
+
+### Почему это must-have
+
+* расследование “почему пропало меню/страница”
+* откат руками (видишь что меняли)
+* дисциплина при командной работе
 
 ---
 
-## 1) api.php — добавить action `menu.setTop`
+# План (коротко)
 
-Вставь **в секцию MENU** (рядом с `menu.create/menu.update/...`), например после `menu.update`:
+1. **api.php**: добавить функции `sb_log()` и запись в `audit.json`
+2. Вызывать `sb_log()` в ключевых action’ах (site/page/block/menu/access/file)
+3. **Новая страница** `/local/sitebuilder/audit.php?siteId=...` — просмотр с фильтром (позже, но можно сразу)
+
+---
+
+## 1) api.php — добавить JSON-хранилище audit.json
+
+Рядом с другими `sb_read_*` добавь:
 
 ```php
-// menu.setTop (EDITOR+): назначить меню верхним
-if ($action === 'menu.setTop') {
-    $siteId = (int)($_POST['siteId'] ?? 0);
-    $menuId = (int)($_POST['menuId'] ?? 0);
+function sb_read_audit(): array { return sb_read_json_file('audit.json'); }
+function sb_write_audit(array $audit): void { sb_write_json_file('audit.json', $audit, 'Cannot open audit.json'); }
 
-    if ($siteId <= 0) { http_response_code(422); echo json_encode(['ok'=>false,'error'=>'SITE_ID_REQUIRED'], JSON_UNESCAPED_UNICODE); exit; }
-    if ($menuId <= 0) { http_response_code(422); echo json_encode(['ok'=>false,'error'=>'MENU_ID_REQUIRED'], JSON_UNESCAPED_UNICODE); exit; }
+function sb_audit_add(array $row): void {
+    $audit = sb_read_audit();
+    $audit[] = $row;
 
-    sb_require_editor($siteId);
-
-    // проверим, что такое меню вообще существует у сайта
-    $all = sb_read_menus();
-    $rec = sb_menu_get_site_record($all, $siteId);
-    if (!$rec) { http_response_code(404); echo json_encode(['ok'=>false,'error'=>'MENU_NOT_FOUND'], JSON_UNESCAPED_UNICODE); exit; }
-
-    $exists = false;
-    foreach (($rec['menus'] ?? []) as $m) {
-        if ((int)($m['id'] ?? 0) === $menuId) { $exists = true; break; }
+    // ограничим размер, чтобы файл не рос бесконечно (например 5000 записей)
+    $max = 5000;
+    if (count($audit) > $max) {
+        $audit = array_slice($audit, -$max);
     }
-    if (!$exists) { http_response_code(404); echo json_encode(['ok'=>false,'error'=>'MENU_NOT_FOUND'], JSON_UNESCAPED_UNICODE); exit; }
+    sb_write_audit($audit);
+}
 
-    // записываем topMenuId в sites.json
-    $sites = sb_read_sites();
-    $found = false;
-    foreach ($sites as &$s) {
-        if ((int)($s['id'] ?? 0) === $siteId) {
-            $s['topMenuId'] = $menuId;
-            $s['updatedAt'] = date('c');
-            $s['updatedBy'] = (int)$USER->GetID();
-            $found = true;
-            break;
-        }
+function sb_log(string $event, array $ctx = []): void {
+    try {
+        sb_audit_add([
+            'ts' => date('c'),
+            'userId' => (int)$GLOBALS['USER']->GetID(),
+            'login' => (string)$GLOBALS['USER']->GetLogin(),
+            'ip' => (string)($_SERVER['REMOTE_ADDR'] ?? ''),
+            'event' => $event,
+            'ctx' => $ctx,
+        ]);
+    } catch (\Throwable $e) {
+        // лог не должен ломать работу API
     }
-    unset($s);
-
-    if (!$found) { http_response_code(404); echo json_encode(['ok'=>false,'error'=>'SITE_NOT_FOUND'], JSON_UNESCAPED_UNICODE); exit; }
-
-    sb_write_sites($sites);
-
-    echo json_encode(['ok'=>true,'topMenuId'=>$menuId], JSON_UNESCAPED_UNICODE);
-    exit;
 }
 ```
 
 ---
 
-## 2) api.php — добавить action `menu.delete`
+## 2) Куда вставлять вызовы `sb_log()` (минимальный набор)
 
-Вставь **в секцию MENU** (лучше после `menu.update` или после `menu.create`):
+Прямо перед `echo json_encode(['ok'=>true ...])` в экшенах:
 
-```php
-// menu.delete (EDITOR+): удалить меню целиком
-if ($action === 'menu.delete') {
-    $siteId = (int)($_POST['siteId'] ?? 0);
-    $menuId = (int)($_POST['menuId'] ?? 0);
+* `site.create` → `sb_log('site.create', ['siteId'=>$id,'name'=>$name,'slug'=>$slug]);`
+* `site.delete` → `sb_log('site.delete', ['siteId'=>$id]);`
+* `page.create` → `sb_log('page.create', ['siteId'=>$siteId,'pageId'=>$id,'title'=>$title,'slug'=>$slug]);`
+* `page.delete` → `sb_log('page.delete', ['siteId'=>$siteId,'pageId'=>$id]);`
+* `page.setParent` → `sb_log('page.setParent', ['siteId'=>$siteId,'pageId'=>$id,'parentId'=>$parentId]);`
+* `block.create/update/delete/move`
+* `menu.create/update/item.add/item.delete/item.move`
+* `menu.setTop` (у тебя уже есть) → `sb_log('menu.setTop', ['siteId'=>$siteId,'menuId'=>$menuId]);`
+* `access.set/delete`
+* `file.upload/delete`
 
-    if ($siteId <= 0) { http_response_code(422); echo json_encode(['ok'=>false,'error'=>'SITE_ID_REQUIRED'], JSON_UNESCAPED_UNICODE); exit; }
-    if ($menuId <= 0) { http_response_code(422); echo json_encode(['ok'=>false,'error'=>'MENU_ID_REQUIRED'], JSON_UNESCAPED_UNICODE); exit; }
-
-    sb_require_editor($siteId);
-
-    // удаляем меню из menus.json
-    $all = sb_read_menus();
-    $rec = sb_menu_get_site_record($all, $siteId);
-    if (!$rec) { http_response_code(404); echo json_encode(['ok'=>false,'error'=>'MENU_NOT_FOUND'], JSON_UNESCAPED_UNICODE); exit; }
-
-    $menus = $rec['menus'] ?? [];
-    $before = count($menus);
-    $menus = array_values(array_filter($menus, fn($m) => (int)($m['id'] ?? 0) !== $menuId));
-    if (count($menus) === $before) {
-        http_response_code(404);
-        echo json_encode(['ok'=>false,'error'=>'MENU_NOT_FOUND'], JSON_UNESCAPED_UNICODE);
-        exit;
-    }
-
-    $rec['menus'] = $menus;
-    sb_menu_upsert_site_record($all, $siteId, $rec);
-    sb_write_menus($all);
-
-    // если это меню было верхним — сбрасываем topMenuId
-    $sites = sb_read_sites();
-    foreach ($sites as &$s) {
-        if ((int)($s['id'] ?? 0) === $siteId) {
-            $top = (int)($s['topMenuId'] ?? 0);
-            if ($top === $menuId) {
-                $s['topMenuId'] = 0;
-                $s['updatedAt'] = date('c');
-                $s['updatedBy'] = (int)$USER->GetID();
-            }
-            break;
-        }
-    }
-    unset($s);
-    sb_write_sites($sites);
-
-    echo json_encode(['ok'=>true], JSON_UNESCAPED_UNICODE);
-    exit;
-}
-```
+Это 10–15 строк добавок, но даёт огромную пользу.
 
 ---
 
-## 3) menu.php — UI: кнопка “Удалить меню” + обработчик
+## 3) Просмотр (UI) — можно сделать быстро
 
-### 3.1. В render() добавь кнопку рядом с “Переименовать”
+Добавим страницу `audit.php`, которая:
 
-В твоём блоке кнопок меню (там где `data-menu-rename` и `data-item-add`) добавь:
+* показывает последние 200 записей
+* фильтр по `siteId` (если есть в ctx)
+* поиск по `event/login`
 
-```js
-<button class="ui-btn ui-btn-danger ui-btn-xs" data-menu-delete="${m.id}">Удалить меню</button>
-```
-
-Например так:
-
-```js
-<div class="btns">
-  ...кнопка "Сделать верхним"...
-  <button class="ui-btn ui-btn-light ui-btn-xs" data-menu-rename="${m.id}">Переименовать</button>
-  <button class="ui-btn ui-btn-primary ui-btn-xs" data-item-add="${m.id}">+ Пункт</button>
-  <button class="ui-btn ui-btn-danger ui-btn-xs" data-menu-delete="${m.id}">Удалить меню</button>
-</div>
-```
-
-### 3.2. В document.addEventListener('click'...) добавь обработчик
-
-После обработчика `data-menu-rename` (или где удобно), добавь:
-
-```js
-const md = e.target.closest('[data-menu-delete]');
-if (md) {
-  const menuId = parseInt(md.getAttribute('data-menu-delete'), 10);
-  BX.UI.Dialogs.MessageBox.show({
-    title: 'Удалить меню #' + menuId + '?',
-    message: 'Меню будет удалено навсегда. Продолжить?',
-    buttons: BX.UI.Dialogs.MessageBoxButtons.OK_CANCEL,
-    onOk: function(mb){
-      api('menu.delete', { menuId }).then(res => {
-        if (!res || res.ok !== true) {
-          BX.UI.Notification.Center.notify({ content: 'Не удалось удалить меню (нужен EDITOR+)' });
-          return;
-        }
-        BX.UI.Notification.Center.notify({ content: 'Меню удалено' });
-        mb.close();
-        refresh();
-      }).catch(() => BX.UI.Notification.Center.notify({ content: 'Ошибка menu.delete' }));
-    }
-  });
-  return;
-}
-```
+Если хочешь — я сразу пришлю готовый `audit.php` (как делали `menu.php`/`index.php`) **без изменения архитектуры**.
 
 ---
 
-## 4) Что проверить после этих пунктов
+### Альтернатива, если не хочешь лог прямо сейчас
 
-1. Создай 2 меню → назначь одно верхним → открой `view.php` → должно показывать **именно верхнее**.
-2. Удали верхнее меню → `topMenuId` должен стать 0 → `view.php` должен взять **первое меню** (fallback).
-3. Назначь верхним другое меню → снова `view.php` показывает его.
+Второй по полезности следующий шаг: **корзина удаления (soft-delete)** для страниц/блоков (не удалять навсегда, а помечать `deletedAt`, и сделать “восстановить”). Тоже очень “серьёзно” и уменьшает риск потерь.
 
 ---
 
-Если всё ок — следующий “серьёзный” блок после меню:
-**страницы: HomePage + роут `/{siteSlug}` на homePageId + `/{siteSlug}/{pageSlug}` на страницы**, но без rewrite можно сделать через `router.php?site=...` или просто `view.php` как сейчас.
+Скажи что выбираем дальше:
+
+1. **Audit log** (рекомендую первым)
+2. **Корзина (soft-delete)** для страниц/блоков
+3. **Импорт/экспорт JSON** (перенос между сайтами)
+
+Я начну сразу с выбранного варианта и дам конкретные вставки “куда и что”.
