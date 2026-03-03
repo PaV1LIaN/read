@@ -1,95 +1,124 @@
-Ок, принимаю. Перестаю гадать и **делаем так, чтобы ты видел РЕАЛЬНУЮ причину**, а не “нет доступа” на всё подряд.
+Ок, давай делаем **`public.php` как “стабильную ссылку на сайт”** (в серьёзном проекте это must-have): ты даёшь людям **один URL**, а он сам открывает **домашнюю страницу сайта** (или первую корневую, если home не задан). Никаких `pageId` руками.
 
-Сейчас у тебя в `settings.php` любой фейл (`SITE_ID_REQUIRED`, `FORBIDDEN`, 500, и т.д.) отображается одной фразой “нет доступа”, поэтому ты и я “ходим кругами”.
+## Что делает `public.php`
 
-## 1) settings.php — исправь api() так, чтобы siteId всегда уходил + чтобы ты видел ошибку
+* Принимает `siteId`
+* Определяет, какую страницу открыть:
 
-**Замени целиком функцию `api(action, data)`** на эту:
+  1. если передан `pageId` — откроет её (если она в этом site)
+  2. иначе если у сайта задан `homePageId` — откроет её
+  3. иначе откроет **первую корневую страницу** (`parentId=0`, по sort/id)
+* Делает редирект на `view.php?siteId=...&pageId=...`
+* (Пока) требует авторизацию — так безопаснее. Позже легко расширим до публичного доступа по токену/флагу.
 
-```js
-function api(action, data) {
-  return new Promise((resolve) => {
-    BX.ajax({
-      url: '/local/sitebuilder/api.php',
-      method: 'POST',
-      dataType: 'json',
-      data: Object.assign(
-        { action, siteId, sessid: BX.bitrix_sessid() }, // <-- КРИТИЧНО: siteId всегда уходит
-        data || {}
-      ),
-      onsuccess: (res) => resolve(res),
-      onfailure: (xhr) => {
-        const status = xhr?.status || 0;
-        const raw = xhr?.responseText ? String(xhr.responseText) : '';
-        let parsed = null;
-        try { parsed = JSON.parse(raw); } catch (e) {}
+---
 
-        resolve(Object.assign(
-          { ok: false, error: 'HTTP_ERROR', status, raw },
-          (parsed && typeof parsed === 'object') ? parsed : {}
-        ));
-      }
+## Файл `/local/sitebuilder/public.php` (создай новый)
+
+```php
+<?php
+define('NO_KEEP_STATISTIC', true);
+define('NO_AGENT_STATISTIC', true);
+define('DisableEventsCheck', true);
+
+require $_SERVER['DOCUMENT_ROOT'].'/bitrix/modules/main/include/prolog_before.php';
+
+global $USER;
+
+if (!$USER->IsAuthorized()) {
+    // если у тебя другой путь логина — замени
+    LocalRedirect('/auth/');
+}
+
+$siteId = (int)($_GET['siteId'] ?? 0);
+$pageId = (int)($_GET['pageId'] ?? 0);
+
+function sb_data_path(string $file): string {
+    return $_SERVER['DOCUMENT_ROOT'] . '/upload/sitebuilder/' . $file;
+}
+function sb_read_json(string $file): array {
+    $path = sb_data_path($file);
+    if (!file_exists($path)) return [];
+    $raw = file_get_contents($path);
+    $data = json_decode((string)$raw, true);
+    return is_array($data) ? $data : [];
+}
+
+if ($siteId <= 0) {
+    http_response_code(404);
+    echo 'SITE_NOT_FOUND';
+    exit;
+}
+
+$sites = sb_read_json('sites.json');
+$pages = sb_read_json('pages.json');
+
+$site = null;
+foreach ($sites as $s) {
+    if ((int)($s['id'] ?? 0) === $siteId) { $site = $s; break; }
+}
+if (!$site) {
+    http_response_code(404);
+    echo 'SITE_NOT_FOUND';
+    exit;
+}
+
+// 1) если pageId передали — проверим принадлежность сайту
+$targetPageId = 0;
+if ($pageId > 0) {
+    foreach ($pages as $p) {
+        if ((int)($p['id'] ?? 0) === $pageId && (int)($p['siteId'] ?? 0) === $siteId) {
+            $targetPageId = $pageId;
+            break;
+        }
+    }
+}
+
+// 2) иначе homePageId
+if ($targetPageId <= 0) {
+    $home = (int)($site['homePageId'] ?? 0);
+    if ($home > 0) {
+        foreach ($pages as $p) {
+            if ((int)($p['id'] ?? 0) === $home && (int)($p['siteId'] ?? 0) === $siteId) {
+                $targetPageId = $home;
+                break;
+            }
+        }
+    }
+}
+
+// 3) иначе первая корневая страница
+if ($targetPageId <= 0) {
+    $rootPages = array_values(array_filter($pages, function($p) use ($siteId){
+        return (int)($p['siteId'] ?? 0) === $siteId && (int)($p['parentId'] ?? 0) === 0;
+    }));
+    usort($rootPages, function($a, $b){
+        $sa = (int)($a['sort'] ?? 500);
+        $sb = (int)($b['sort'] ?? 500);
+        if ($sa === $sb) return ((int)($a['id'] ?? 0) <=> (int)($b['id'] ?? 0));
+        return $sa <=> $sb;
     });
-  });
+    if ($rootPages) $targetPageId = (int)($rootPages[0]['id'] ?? 0);
 }
-```
 
-## 2) settings.php — в load() покажи конкретную ошибку site.get (а не “нет доступа”)
-
-Вот этот кусок:
-
-```js
-if (!sres || sres.ok !== true){ notify('site.get: нет доступа'); return; }
-```
-
-**замени на:**
-
-```js
-if (!sres || sres.ok !== true){
-  console.log('site.get debug:', sres);
-  notify(`site.get: ${sres.error || 'UNKNOWN'}${sres.status ? ' (HTTP '+sres.status+')' : ''}${sres.role ? ' role='+sres.role : ''}`);
-  return;
+if ($targetPageId <= 0) {
+    http_response_code(404);
+    echo 'NO_PAGES';
+    exit;
 }
+
+LocalRedirect('/local/sitebuilder/view.php?siteId='.$siteId.'&pageId='.$targetPageId);
 ```
-
-После этого ты сразу увидишь, что именно происходит:
-
-* `SITE_ID_REQUIRED` → значит siteId всё ещё не уходит (и это 100% фронт)
-* `FORBIDDEN` + `role` → значит в `access.json` у твоего `U<id>` нет прав на этот сайт
-* `HTTP_ERROR (500)` → значит на сервере фаталка/ошибка PHP
-
-## 3) api.php — site.update сейчас может падать фатально
-
-У тебя в `site.update` стоит:
-
-```php
-sb_require_admin($siteId);
-```
-
-Но **в твоём api.php нет функции `sb_require_admin()`** (в показанном куске её нет). Это даст **500**.
-
-### Быстрый фикс (правильный)
-
-Добавь рядом с остальными:
-
-```php
-function sb_require_admin(int $siteId): void { sb_require_site_role($siteId, 3); }
-```
-
-(OWNER=4, ADMIN=3, EDITOR=2, VIEWER=1)
 
 ---
 
-# Почему у тебя “site.get: нет доступа” даже сейчас
+## Что проверить после создания
 
-Потому что `settings.php` **не показывает реальную ошибку**.
-После правок из пунктов (1) и (2) ты увидишь точный код (`SITE_ID_REQUIRED` / `FORBIDDEN` / что-то ещё) — и это сразу снимет всю неопределённость.
+1. В настройках сайта выстави “Домашняя страница” → сохрани
+2. Открой в браузере:
+   `/local/sitebuilder/public.php?siteId=1`
+   Должно перекинуть на `view.php` с нужным `pageId`.
 
 ---
 
-## Мини-чек после правок (2 клика)
-
-1. Открой `settings.php?siteId=...`
-2. Если снова ошибка — **посмотри notify + консоль** (там будет `site.get debug:` с объектом)
-
-Скинь сюда **ровно строку из notify** после этих правок (типа `site.get: SITE_ID_REQUIRED (HTTP 422)` или `site.get: FORBIDDEN role=null`) — и я дам точечный фикс без кругов.
+Если хочешь — следующим шагом сделаем **“Публичная ссылка”** в `settings.php` (просто показывать/копировать URL `public.php?siteId=...`) и кнопку “Открыть публично”. Потом уже добавим **режим без авторизации** (через `publicEnabled` + `token`).
