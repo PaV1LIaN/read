@@ -1,130 +1,42 @@
-<?php
-define('NO_KEEP_STATISTIC', true);
-define('NO_AGENT_STATISTIC', true);
-define('DisableEventsCheck', true);
+Скорее всего ты сейчас **одновременно показываешь “плашку” SB и сам логотип-картинку** (то есть логотип рисуется **в двух местах**, либо картинка добавляется рядом, а “SB” остаётся).
 
-require $_SERVER['DOCUMENT_ROOT'].'/bitrix/modules/main/include/prolog_before.php';
+Правильнее для серьёзного проекта: **в шапке должен быть ровно один “знак бренда”** — либо картинка, либо fallback “SB”.
 
-global $USER;
+## Что сделать (в `view.php`)
 
-// Пока public не “по-настоящему публичный” — держим под авторизацией
-if (!$USER->IsAuthorized()) {
-    LocalRedirect('/auth/');
-}
+Найди в шапке блок примерно такой:
 
-$siteId = (int)($_GET['siteId'] ?? 0);
+```php
+<div class="brandMark">SB</div>
+```
 
-// совместимость со старым вариантом:
-// public.php?siteId=1&p=about
-$slug = trim((string)($_GET['p'] ?? ''));
+И замени на **условный вывод**:
 
-// совместимость с “прямым” открытием:
-// public.php?siteId=1&pageId=10
-$pageId = (int)($_GET['pageId'] ?? 0);
+```php
+<div class="brandMark">
+  <?php if ($logoFileId > 0): ?>
+    <img src="<?= h(downloadUrl($siteId, $logoFileId)) ?>" alt="logo">
+  <?php else: ?>
+    SB
+  <?php endif; ?>
+</div>
+```
 
-function sb_data_path(string $file): string {
-    return $_SERVER['DOCUMENT_ROOT'] . '/upload/sitebuilder/' . $file;
-}
-function sb_read_json(string $file): array {
-    $path = sb_data_path($file);
-    if (!file_exists($path)) return [];
+И добавь (или проверь) CSS, чтобы картинка “занимала” плашку:
 
-    $fp = fopen($path, 'rb');
-    if (!$fp) return [];
+```css
+.brandMark{ overflow:hidden; }
+.brandMark img{ width:100%; height:100%; object-fit:cover; display:block; }
+```
 
-    $raw = '';
-    if (flock($fp, LOCK_SH)) {
-        $raw = stream_get_contents($fp);
-        flock($fp, LOCK_UN);
-    } else {
-        $raw = stream_get_contents($fp);
-    }
-    fclose($fp);
+### Важно
 
-    // remove UTF-8 BOM (just in case)
-    if (strncmp($raw, "\xEF\xBB\xBF", 3) === 0) {
-        $raw = substr($raw, 3);
-    }
+Если в `view.php` у тебя **ещё где-то есть отдельный `<img ...logo...>` рядом с `.brandMark`** (например внутри `.brand`), **его нужно удалить**, иначе будет два логотипа: один в `.brandMark`, второй отдельным тегом.
 
-    $data = json_decode((string)$raw, true);
-    return is_array($data) ? $data : [];
-}
+## То же самое для `public.php` (если там тоже два)
 
-if ($siteId <= 0) { http_response_code(404); echo 'SITE_ID_REQUIRED'; exit; }
+Аналогично: в шапке делай **или картинку, или текст**, но не оба варианта одновременно.
 
-$sites = sb_read_json('sites.json');
-$pages = sb_read_json('pages.json');
+---
 
-$site = null;
-foreach ($sites as $s) {
-    if ((int)($s['id'] ?? 0) === $siteId) { $site = $s; break; }
-}
-if (!$site) { http_response_code(404); echo 'SITE_NOT_FOUND'; exit; }
-
-// --- 1) Явный pageId ---
-$targetPageId = 0;
-if ($pageId > 0) {
-    foreach ($pages as $p) {
-        if ((int)($p['id'] ?? 0) === $pageId && (int)($p['siteId'] ?? 0) === $siteId) {
-            $targetPageId = $pageId;
-            break;
-        }
-    }
-}
-
-// --- 2) slug p=... ---
-if ($targetPageId <= 0 && $slug !== '') {
-    foreach ($pages as $p) {
-        if ((int)($p['siteId'] ?? 0) === $siteId && (string)($p['slug'] ?? '') === $slug) {
-            $targetPageId = (int)($p['id'] ?? 0);
-            break;
-        }
-    }
-}
-
-// --- 3) homePageId ---
-if ($targetPageId <= 0) {
-    $home = (int)($site['homePageId'] ?? 0);
-    if ($home > 0) {
-        foreach ($pages as $p) {
-            if ((int)($p['id'] ?? 0) === $home && (int)($p['siteId'] ?? 0) === $siteId) {
-                $targetPageId = $home;
-                break;
-            }
-        }
-    }
-}
-
-// --- 4) первая корневая (parentId=0) по sort/id ---
-if ($targetPageId <= 0) {
-    $rootPages = array_values(array_filter($pages, function($p) use ($siteId){
-        return (int)($p['siteId'] ?? 0) === $siteId && (int)($p['parentId'] ?? 0) === 0;
-    }));
-
-    usort($rootPages, function($a, $b){
-        $sa = (int)($a['sort'] ?? 500);
-        $sb = (int)($b['sort'] ?? 500);
-        if ($sa === $sb) return ((int)($a['id'] ?? 0) <=> (int)($b['id'] ?? 0));
-        return $sa <=> $sb;
-    });
-
-    if ($rootPages) $targetPageId = (int)($rootPages[0]['id'] ?? 0);
-}
-
-// --- 5) fallback: вообще первая страница сайта ---
-if ($targetPageId <= 0) {
-    $sitePages = array_values(array_filter($pages, fn($p)=> (int)($p['siteId'] ?? 0) === $siteId));
-    usort($sitePages, function($a, $b){
-        $sa = (int)($a['sort'] ?? 500);
-        $sb = (int)($b['sort'] ?? 500);
-        if ($sa === $sb) return ((int)($a['id'] ?? 0) <=> (int)($b['id'] ?? 0));
-        return $sa <=> $sb;
-    });
-    if ($sitePages) $targetPageId = (int)($sitePages[0]['id'] ?? 0);
-}
-
-if ($targetPageId <= 0) { http_response_code(404); echo 'NO_PAGES'; exit; }
-
-// Сейчас используем единый рендерер:
-// позже поменяем на public_view.php (для настоящего публичного режима)
-LocalRedirect('/local/sitebuilder/view.php?siteId='.$siteId.'&pageId='.$targetPageId);
+Если хочешь — просто скинь кусок шапки из `view.php` (примерно блок `.brand ...`), и я точечно скажу *какой именно второй элемент сейчас лишний* и что удалить, чтобы осталось ровно 1 логотип.
