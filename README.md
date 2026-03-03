@@ -1,27 +1,26 @@
-Да, вижу. У тебя **логика “Вложить…” уже есть**, проблема в другом: **в `openSetParentDialog()` ты пытаешься найти корень MessageBox вот так:**
+Ага, по скрину сразу понятно, почему “как будто не выбирается”.
 
-```js
-const mb = document.querySelector('.bx-ui-dialogs-messagebox');
-const root = mb ? mb.querySelector('.bx-ui-dialogs-messagebox-content') : null;
-```
+У меня в той версии **selection реально сбрасывается при каждом перерисовывании**:
 
-А в твоей версии Bitrix **эти классы могут отличаться**, поэтому `root === null`, `bind()` не навешивается, и при клике по карточке родителя **ничего не меняется** (и в итоге `picked_parent` остаётся прежним).
+* ты кликаешь по карточке → я ставлю `picked_parent = id`
+* **сразу делаю rerender**
+* а `renderListInner()` снова рисует `<input id="picked_parent" value="...">` **со старым `currentParentId`**
+* в итоге визуально ничего не меняется и выбор “пропадает”.
 
-### Решение (самое надёжное)
+То есть обработчик клика может срабатывать, но мы сами же затираем выбор.
 
-**Не искать внутренности MessageBox по классам**, а рисовать “пикер” в контейнер с уникальным `id` и работать только с ним.
+## ✅ Исправление (1 переменная selectedParentId)
 
-Ниже — *готовая замена* твоей функции `openSetParentDialog(...)`. Просто **замени её целиком** в `index.php` (всё остальное не трогай).
-
----
-
-## ✅ Замени `openSetParentDialog` на эту версию
+Заменяешь свою текущую `openSetParentDialog(...)` на эту версию (она такая же, но с `selectedParentId`, который обновляется при клике и используется в рендере):
 
 ```js
 function openSetParentDialog(siteId, pageId, pagesCache, reload) {
   const pages = Array.isArray(pagesCache) ? pagesCache : [];
   const current = pages.find(x => parseInt(x.id,10) === parseInt(pageId,10));
   const currentParentId = parseInt(current?.parentId || 0, 10) || 0;
+
+  // ВАЖНО: выбранный родитель должен быть изменяемым, а не константой
+  let selectedParentId = currentParentId;
 
   const { roots } = buildTree(pages);
   const flat = [];
@@ -46,18 +45,19 @@ function openSetParentDialog(siteId, pageId, pagesCache, reload) {
 
     const rows = items.map(x => {
       const pad = 12 + x.depth * 16;
-      const active = (parseInt(x.id,10) === currentParentId)
+      const active = (parseInt(x.id,10) === selectedParentId)
         ? 'background:#eff6ff;border-color:#bfdbfe;'
         : '';
       return `
-        <div class="secCard" data-parent-pick="${x.id}" style="cursor:pointer; padding-left:${pad}px; ${active}">
+        <div class="secCard" data-parent-pick="${x.id}"
+             style="cursor:pointer; padding-left:${pad}px; ${active}">
           <div class="secTitle">#${x.id} ${BX.util.htmlspecialchars(x.title)}</div>
           <div class="secMeta">${BX.util.htmlspecialchars(x.slug)}</div>
         </div>
       `;
     }).join('');
 
-    const activeRoot = currentParentId === 0 ? 'background:#eff6ff;border-color:#bfdbfe;' : '';
+    const activeRoot = selectedParentId === 0 ? 'background:#eff6ff;border-color:#bfdbfe;' : '';
 
     return `
       <div class="secSearch">
@@ -73,7 +73,6 @@ function openSetParentDialog(siteId, pageId, pagesCache, reload) {
         ${rows || '<div class="muted">Ничего не найдено</div>'}
       </div>
 
-      <input type="hidden" id="picked_parent" value="${currentParentId}">
       <div class="hint" style="margin-top:10px;">Кликни по карточке родителя. Потом нажми OK.</div>
     `;
   };
@@ -83,7 +82,7 @@ function openSetParentDialog(siteId, pageId, pagesCache, reload) {
     message: `<div id="sb_parent_picker_root">${renderListInner('')}</div>`,
     buttons: BX.UI.Dialogs.MessageBoxButtons.OK_CANCEL,
     onOk: function(mb){
-      const parentId = parseInt(document.getElementById('picked_parent')?.value || '0', 10) || 0;
+      const parentId = parseInt(selectedParentId || 0, 10) || 0;
 
       api('page.setParent', { id: pageId, parentId }).then(r=>{
         if (!r || r.ok !== true) { notify('Не удалось изменить parent'); return; }
@@ -110,12 +109,9 @@ function openSetParentDialog(siteId, pageId, pagesCache, reload) {
       root.querySelectorAll('[data-parent-pick]').forEach(el => {
         el.onclick = () => {
           const id = parseInt(el.getAttribute('data-parent-pick')||'0',10) || 0;
-          const hid = document.getElementById('picked_parent');
-          if (hid) hid.value = String(id);
-
-          // визуально обновим выделение (перерисуем)
+          selectedParentId = id; // ✅ сохраняем выбор
           const curQ = document.getElementById('par_q')?.value || '';
-          root.innerHTML = renderListInner(curQ);
+          root.innerHTML = renderListInner(curQ); // ✅ перерисовка уже с новым selectedParentId
           bind();
         };
       });
@@ -126,16 +122,9 @@ function openSetParentDialog(siteId, pageId, pagesCache, reload) {
 }
 ```
 
----
+### Что поменяется после фикса
 
-### Почему это точно чинит
+* при клике карточка будет **подсвечиваться** (как выбранная)
+* и при OK будет уходить **правильный parentId** в `page.setParent`.
 
-* Мы **вообще не зависим** от внутренних CSS-классов Bitrix MessageBox.
-* Всегда находим контейнер по `id="sb_parent_picker_root"`.
-* События навешиваются гарантированно и после перерисовок.
-
----
-
-Если после этого *OK нажимаешь, но всё равно parentId не меняется* — тогда уже проблема будет в ответе API (403/422). Но по твоему описанию сейчас именно **клик по выбору “не происходит”**, а это ровно оно.
-
-Хочешь — я ещё добавлю в карточке страницы в дереве “родитель: Название” (а не `parent: #id`), чтобы визуально было понятнее.
+Если после этого подсветка есть, но parent не меняется — тогда уже посмотрим **ответ API** (403/422) и что приходит в `page.setParent`.
