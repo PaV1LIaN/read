@@ -5,7 +5,7 @@ define('DisableEventsCheck', true);
 
 require $_SERVER['DOCUMENT_ROOT'].'/bitrix/modules/main/include/prolog_before.php';
 
-global $USER, $APPLICATION;
+global $USER;
 
 if (!$USER->IsAuthorized()) {
     LocalRedirect('/auth/');
@@ -13,372 +13,439 @@ if (!$USER->IsAuthorized()) {
 
 header('Content-Type: text/html; charset=UTF-8');
 
-\Bitrix\Main\UI\Extension::load([
-    'main.core',
-    'ui.buttons',
-    'ui.dialogs.messagebox',
-    'ui.notification',
-]);
-
 $siteId = (int)($_GET['siteId'] ?? 0);
+$pageId = (int)($_GET['pageId'] ?? 0);
+
+function sb_data_path(string $file): string {
+    return $_SERVER['DOCUMENT_ROOT'] . '/upload/sitebuilder/' . $file;
+}
+function sb_read_json(string $file): array {
+    $path = sb_data_path($file);
+    if (!file_exists($path)) return [];
+    $raw = file_get_contents($path);
+    $data = json_decode((string)$raw, true);
+    return is_array($data) ? $data : [];
+}
+function h($s): string { return htmlspecialcharsbx((string)$s); }
+
+function downloadUrl(int $siteId, int $fileId): string {
+    return '/local/sitebuilder/download.php?siteId=' . $siteId . '&fileId=' . $fileId;
+}
+function viewUrl(int $siteId, int $pageId): string {
+    return '/local/sitebuilder/view.php?siteId=' . $siteId . '&pageId=' . $pageId;
+}
+
+// load data
+$sites = sb_read_json('sites.json');
+$pages = sb_read_json('pages.json');
+$blocksAll = sb_read_json('blocks.json');
+$menusAll = sb_read_json('menus.json');
+
+// find site/page
+$site = null;
+foreach ($sites as $s) {
+    if ((int)($s['id'] ?? 0) === $siteId) { $site = $s; break; }
+}
+
+$page = null;
+foreach ($pages as $p) {
+    if ((int)($p['id'] ?? 0) === $pageId && (int)($p['siteId'] ?? 0) === $siteId) { $page = $p; break; }
+}
+
+if (!$site || !$page) {
+    http_response_code(404);
+    ?>
+    <!doctype html><html lang="ru"><head><meta charset="utf-8"><title>Не найдено</title></head>
+    <body style="font-family:Arial;padding:24px;background:#f6f7f8;">
+      <div style="background:#fff;border:1px solid #e5e7ea;border-radius:12px;padding:16px;">
+        <h2 style="margin-top:0;">Страница не найдена</h2>
+        <div>siteId=<?= (int)$siteId ?>, pageId=<?= (int)$pageId ?></div>
+        <div style="margin-top:12px;"><a href="/local/sitebuilder/index.php">← Назад</a></div>
+      </div>
+    </body></html>
+    <?php
+    exit;
+}
+
+// site pages (for fallback nav / editor link)
+$sitePages = array_values(array_filter($pages, fn($p) => (int)($p['siteId'] ?? 0) === $siteId));
+usort($sitePages, fn($a, $b) => (int)($a['sort'] ?? 500) <=> (int)($b['sort'] ?? 500));
+
+// blocks for current page
+$blocks = array_values(array_filter($blocksAll, fn($b) => (int)($b['pageId'] ?? 0) === $pageId));
+usort($blocks, fn($a, $b) => (int)($a['sort'] ?? 500) <=> (int)($b['sort'] ?? 500));
+
+// menu: take first menu for this site (if exists)
+$menuItems = [];
+foreach ($menusAll as $rec) {
+    if ((int)($rec['siteId'] ?? 0) === $siteId) {
+        $menus = $rec['menus'] ?? [];
+        if (is_array($menus) && count($menus) > 0) {
+            $first = $menus[0];
+            $menuItems = $first['items'] ?? [];
+            if (!is_array($menuItems)) $menuItems = [];
+            usort($menuItems, fn($a, $b) => (int)($a['sort'] ?? 0) <=> (int)($b['sort'] ?? 0));
+        }
+        break;
+    }
+}
 ?>
 <!doctype html>
 <html lang="ru">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Меню сайта</title>
-  <?php $APPLICATION->ShowHead(); ?>
+  <title><?=h($page['title'])?> — <?=h($site['name'])?></title>
   <style>
-    body { font-family: Arial, sans-serif; margin:0; background:#f6f7f8; }
-    .top { background:#fff; border-bottom:1px solid #e5e7ea; padding:12px 16px; display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
+    body { font-family: Arial, sans-serif; margin: 0; background:#f6f7f8; color:#111; }
+    .top {
+      background:#fff;
+      border-bottom:1px solid #e5e7ea;
+      padding:12px 16px;
+      display:flex;
+      gap:10px;
+      align-items:center;
+      flex-wrap:wrap;
+    }
     .content { padding: 18px; }
     .card { background:#fff; border:1px solid #e5e7ea; border-radius:12px; padding:16px; }
-    .muted { color:#6a737f; }
     a { color:#0b57d0; text-decoration:none; }
     a:hover { text-decoration:underline; }
+    .muted { color:#6a737f; }
+    .menu { display:flex; gap:10px; flex-wrap:wrap; }
+    .menu a { padding:6px 10px; border-radius:999px; }
+    .menu a.active { background:#eef2ff; font-weight:bold; }
+    .block-text { margin-top:12px; line-height:1.6; font-size:16px; }
+    .block-img { margin-top:14px; }
+    .block-img img { max-width:100%; height:auto; border-radius:12px; border:1px solid #eee; display:block; }
     code { background:#f3f4f6; padding:2px 6px; border-radius:6px; }
-    .row { display:flex; gap:10px; align-items:center; justify-content:space-between; flex-wrap:wrap; }
-    .btns { display:flex; gap:6px; flex-wrap:wrap; }
-    .menuCard { border:1px solid #eee; border-radius:12px; padding:12px; margin-top:12px; }
-    table { width:100%; border-collapse:collapse; margin-top:10px; }
-    th, td { padding:8px; border-bottom:1px solid #eee; text-align:left; vertical-align:top; }
-    select, input { padding:8px; border:1px solid #d0d7de; border-radius:8px; }
-    .small { font-size:12px; }
+    .btn { display:inline-block; padding:10px 14px; border-radius:12px; border:1px solid #e5e7ea; text-decoration:none; }
+    .btn-primary { background:#2563eb; color:#fff; border-color:#2563eb; }
+    .btn-secondary { background:#fff; color:#111; }
+
+        /* columns2 */
+    .cols2 {
+    margin-top: 14px;
+    display: grid;
+    gap: 14px;
+    }
+    .cols2 .col {
+    background: #fff;
+    border: 1px solid #eee;
+    border-radius: 12px;
+    padding: 12px;
+    }
+    @media (max-width: 768px) {
+    .cols2 { grid-template-columns: 1fr !important; }
+    }
+
+    .gallery {
+        margin-top: 14px;
+        display: grid;
+        gap: 12px;
+    }
+    .gallery img {
+        width: 100%;
+        height: auto;
+        display: block;
+        border-radius: 12px;
+        border: 1px solid #eee;
+        background: #fafafa;
+    }
+    @media (max-width: 768px) {
+        .gallery { grid-template-columns: 1fr !important; }
+    }
+
+    .spacer { width:100%; }
+    .spacerLine { height:1px; background:#e5e7ea; }
+
+    .cardBlock {
+        margin-top:14px;
+        background:#fff;
+        border:1px solid #eee;
+        border-radius:16px;
+        padding:14px;
+    }
+    .cardBlock img {
+        width:100%;
+        height:auto;
+        display:block;
+        border-radius:14px;
+        border:1px solid #eee;
+        margin-top:10px;
+    }
+    .cardTitle { font-weight:700; font-size:18px; }
+    .cardText { margin-top:8px; color:#333; line-height:1.6; white-space:pre-wrap; }
+    .cardBtn { display:inline-block; margin-top:10px; padding:10px 14px; border-radius:12px; border:1px solid #e5e7ea; text-decoration:none; }
+
+    .cardsGrid {
+        margin-top:14px;
+        display:grid;
+        gap:14px;
+    }
+    .cardsGrid .cardItem {
+        background:#fff;
+        border:1px solid #eee;
+        border-radius:16px;
+        padding:14px;
+    }
+    .cardsGrid .cardItem img{
+        width:100%;
+        height:auto;
+        display:block;
+        border-radius:14px;
+        border:1px solid #eee;
+        background:#fafafa;
+        margin-top:10px;
+    }
+    .cardsGrid .t { font-weight:700; font-size:16px; }
+    .cardsGrid .d { margin-top:8px; color:#333; line-height:1.6; white-space:pre-wrap; }
+    .cardsGrid .a { display:inline-block; margin-top:10px; padding:10px 14px; border-radius:12px; border:1px solid #e5e7ea; text-decoration:none; }
+    @media (max-width: 768px) {
+        .cardsGrid { grid-template-columns: 1fr !important; }
+    }
   </style>
 </head>
 <body>
   <div class="top">
     <a href="/local/sitebuilder/index.php">← Назад</a>
-    <div class="muted">Меню сайта</div>
-    <div class="muted">|</div>
-    <div><b>siteId:</b> <code><?= (int)$siteId ?></code></div>
+    <div class="muted">/</div>
+    <div><b><?=h($site['name'])?></b></div>
+    <div class="muted">/</div>
+    <div><?=h($page['title'])?></div>
+
     <div style="flex:1;"></div>
-    <button class="ui-btn ui-btn-light" id="btnRefresh">Обновить</button>
-    <button class="ui-btn ui-btn-primary" id="btnCreateMenu">+ Меню</button>
+
+    <a href="/local/sitebuilder/editor.php?siteId=<?= (int)$siteId ?>&pageId=<?= (int)$pageId ?>" target="_blank">Редактор</a>
+    <a href="/local/sitebuilder/menu.php?siteId=<?= (int)$siteId ?>" target="_blank">Меню</a>
+
+    <div style="flex-basis:100%; height:0;"></div>
+
+    <?php if ($menuItems): ?>
+      <div class="menu">
+        <?php foreach ($menuItems as $it): ?>
+          <?php
+            $type = (string)($it['type'] ?? '');
+            $title = (string)($it['title'] ?? '');
+            $isActive = false;
+            $href = '#';
+
+            if ($type === 'page') {
+              $pid = (int)($it['pageId'] ?? 0);
+              $href = viewUrl($siteId, $pid);
+              $isActive = ($pid === $pageId);
+              if ($title === '') $title = 'page#'.$pid;
+            } elseif ($type === 'url') {
+              $u = (string)($it['url'] ?? '');
+              $href = $u !== '' ? $u : '#';
+              if ($title === '') $title = $href;
+            } else {
+              $href = '#';
+              if ($title === '') $title = '(unknown)';
+            }
+          ?>
+          <a class="<?= $isActive ? 'active' : '' ?>" href="<?= h($href) ?>" <?= ($type === 'url' && preg_match('~^https?://~i', $href)) ? 'target="_blank" rel="noopener noreferrer"' : '' ?>>
+            <?= h($title) ?>
+          </a>
+        <?php endforeach; ?>
+      </div>
+    <?php else: ?>
+      <!-- fallback: если меню ещё не создано -->
+      <div class="menu">
+        <?php foreach ($sitePages as $sp): ?>
+          <?php $isActive = ((int)($sp['id'] ?? 0) === (int)$pageId); ?>
+          <a class="<?= $isActive ? 'active' : '' ?>" href="<?= h(viewUrl($siteId, (int)($sp['id'] ?? 0))) ?>">
+            <?= h($sp['title'] ?? '') ?>
+          </a>
+        <?php endforeach; ?>
+      </div>
+    <?php endif; ?>
   </div>
 
   <div class="content">
     <div class="card">
-      <div class="muted">Меню — это набор пунктов. Пункт может вести на страницу сайта (type=page) или на внешний URL (type=url).</div>
-      <div id="box" style="margin-top:12px;"></div>
+      <h1 style="margin-top:0;"><?=h($page['title'])?></h1>
+
+      <?php if (!$blocks): ?>
+        <div class="muted">Блоков пока нет. Добавь их в редакторе.</div>
+      <?php else: ?>
+        <?php foreach ($blocks as $b): ?>
+          <?php $type = (string)($b['type'] ?? ''); ?>
+
+          <?php if ($type === 'text'): ?>
+            <div class="block-text">
+              <?= nl2br(h((string)($b['content']['text'] ?? ''))) ?>
+            </div>
+          <?php endif; ?>
+
+          <?php if ($type === 'button'): ?>
+			  <?php
+				$text = (string)($b['content']['text'] ?? '');
+				$url = (string)($b['content']['url'] ?? '#');
+				$variant = (string)($b['content']['variant'] ?? 'primary');
+				$cls = ($variant === 'secondary') ? 'btn btn-secondary' : 'btn btn-primary';
+			  ?>
+			  <div class="block-btn" style="margin-top:14px;">
+				<a class="<?=h($cls)?>" href="<?=h($url)?>" <?= preg_match('~^https?://~i', $url) ? 'target="_blank" rel="noopener noreferrer"' : '' ?>>
+				  <?=h($text)?>
+				</a>
+			  </div>
+			<?php endif; ?>
+
+          <?php if ($type === 'image'): ?>
+            <?php $fileId = (int)($b['content']['fileId'] ?? 0); ?>
+            <?php $alt = (string)($b['content']['alt'] ?? ''); ?>
+            <?php if ($fileId > 0): ?>
+              <div class="block-img">
+                <img src="<?= h(downloadUrl($siteId, $fileId)) ?>" alt="<?= h($alt) ?>">
+              </div>
+            <?php else: ?>
+              <div class="muted" style="margin-top:12px;">(image) файл не выбран</div>
+            <?php endif; ?>
+          <?php endif; ?>
+
+          <?php if ($type === 'heading'): ?>
+
+          <?php
+            $text = (string)($b['content']['text'] ?? '');
+            $level = (string)($b['content']['level'] ?? 'h2');
+            $align = (string)($b['content']['align'] ?? 'left');
+            if (!in_array($level, ['h1','h2','h3'], true)) $level = 'h2';
+            if (!in_array($align, ['left','center','right'], true)) $align = 'left';
+          ?>
+            <<?=h($level)?> style="margin-top:16px; text-align:<?=h($align)?>;">
+                <?=h($text)?>
+            </<?=h($level)?>>
+            <?php endif; ?>
+
+
+          <?php if ($type === 'columns2'): ?>
+            <?php
+                $left  = (string)($b['content']['left'] ?? '');
+                $right = (string)($b['content']['right'] ?? '');
+                $ratio = (string)($b['content']['ratio'] ?? '50-50');
+
+                if (!in_array($ratio, ['50-50','33-67','67-33'], true)) $ratio = '50-50';
+
+                $tpl = '1fr 1fr';
+                if ($ratio === '33-67') $tpl = '1fr 2fr';
+                if ($ratio === '67-33') $tpl = '2fr 1fr';
+            ?>
+            <div class="cols2" style="grid-template-columns: <?=h($tpl)?>;">
+                <div class="col"><?= nl2br(h($left)) ?></div>
+                <div class="col"><?= nl2br(h($right)) ?></div>
+            </div>
+            <?php endif; ?>
+
+            <?php if ($type === 'gallery'): ?>
+                <?php
+                    $cols = (int)($b['content']['columns'] ?? 3);
+                    if (!in_array($cols, [2,3,4], true)) $cols = 3;
+
+                    $tpl = '1fr 1fr 1fr';
+                    if ($cols === 2) $tpl = '1fr 1fr';
+                    if ($cols === 4) $tpl = '1fr 1fr 1fr 1fr';
+
+                    $imgs = $b['content']['images'] ?? [];
+                    if (!is_array($imgs)) $imgs = [];
+                ?>
+                <div class="gallery" style="grid-template-columns: <?=h($tpl)?>;">
+                    <?php foreach ($imgs as $it): ?>
+                    <?php
+                        if (!is_array($it)) continue;
+                        $fid = (int)($it['fileId'] ?? 0);
+                        $alt = (string)($it['alt'] ?? '');
+                        if ($fid <= 0) continue;
+                    ?>
+                    <img src="<?= h(downloadUrl($siteId, $fid)) ?>" alt="<?= h($alt) ?>">
+                    <?php endforeach; ?>
+                </div>
+                <?php endif; ?>
+
+
+            <?php if ($type === 'spacer'): ?>
+                <?php
+                    $h = (int)($b['content']['height'] ?? 40);
+                    if ($h < 10) $h = 10;
+                    if ($h > 200) $h = 200;
+                    $line = (bool)($b['content']['line'] ?? false);
+                ?>
+                <div class="spacer" style="height: <?= (int)$h ?>px; position:relative; margin-top:14px;">
+                    <?php if ($line): ?>
+                    <div class="spacerLine" style="position:absolute; left:0; right:0; top:50%;"></div>
+                    <?php endif; ?>
+                </div>
+            <?php endif; ?>
+
+            <?php if ($type === 'card'): ?>
+                <?php
+                    $title = (string)($b['content']['title'] ?? '');
+                    $text  = (string)($b['content']['text'] ?? '');
+                    $imgId = (int)($b['content']['imageFileId'] ?? 0);
+                    $btnText = trim((string)($b['content']['buttonText'] ?? ''));
+                    $btnUrl  = trim((string)($b['content']['buttonUrl'] ?? ''));
+                ?>
+                <div class="cardBlock">
+                    <div class="cardTitle"><?=h($title)?></div>
+                    <?php if ($text !== ''): ?><div class="cardText"><?=nl2br(h($text))?></div><?php endif; ?>
+
+                    <?php if ($imgId > 0): ?>
+                    <img src="<?=h(downloadUrl($siteId, $imgId))?>" alt="">
+                    <?php endif; ?>
+
+                    <?php if ($btnUrl !== ''): ?>
+                    <a class="cardBtn" href="<?=h($btnUrl)?>" <?= preg_match('~^https?://~i', $btnUrl) ? 'target="_blank" rel="noopener noreferrer"' : '' ?>>
+                        <?=h($btnText !== '' ? $btnText : 'Открыть')?>
+                    </a>
+                    <?php endif; ?>
+                </div>
+            <?php endif; ?>
+
+            <?php if ($type === 'cards'): ?>
+                <?php
+                    $cols = (int)($b['content']['columns'] ?? 3);
+                    if (!in_array($cols, [2,3,4], true)) $cols = 3;
+
+                    $tpl = '1fr 1fr 1fr';
+                    if ($cols === 2) $tpl = '1fr 1fr';
+                    if ($cols === 4) $tpl = '1fr 1fr 1fr 1fr';
+
+                    $items = $b['content']['items'] ?? [];
+                    if (!is_array($items)) $items = [];
+                ?>
+                <div class="cardsGrid" style="grid-template-columns: <?=h($tpl)?>;">
+                    <?php foreach ($items as $it): ?>
+                    <?php
+                        if (!is_array($it)) continue;
+                        $title = (string)($it['title'] ?? '');
+                        if ($title === '') continue;
+                        $text = (string)($it['text'] ?? '');
+                        $imgId = (int)($it['imageFileId'] ?? 0);
+                        $btnText = trim((string)($it['buttonText'] ?? ''));
+                        $btnUrl  = trim((string)($it['buttonUrl'] ?? ''));
+                    ?>
+                    <div class="cardItem">
+                        <div class="t"><?=h($title)?></div>
+                        <?php if ($text !== ''): ?><div class="d"><?=nl2br(h($text))?></div><?php endif; ?>
+                        <?php if ($imgId > 0): ?><img src="<?=h(downloadUrl($siteId, $imgId))?>" alt=""><?php endif; ?>
+                        <?php if ($btnUrl !== ''): ?>
+                        <a class="a" href="<?=h($btnUrl)?>" <?= preg_match('~^https?://~i', $btnUrl) ? 'target="_blank" rel="noopener noreferrer"' : '' ?>>
+                            <?=h($btnText !== '' ? $btnText : 'Открыть')?>
+                        </a>
+                        <?php endif; ?>
+                    </div>
+                    <?php endforeach; ?>
+                </div>
+            <?php endif; ?>
+
+        <?php endforeach; ?>
+      <?php endif; ?>
+
+      <div style="margin-top:16px;" class="muted">
+        <div><b>slug:</b> <code><?=h($page['slug'])?></code></div>
+        <div><b>pageId:</b> <?= (int)$page['id'] ?> &nbsp; <b>siteId:</b> <?= (int)$site['id'] ?></div>
+      </div>
     </div>
   </div>
-
-<script>
-BX.ready(function () {
-  const siteId = <?= (int)$siteId ?>;
-
-  const box = document.getElementById('box');
-  const btnRefresh = document.getElementById('btnRefresh');
-  const btnCreateMenu = document.getElementById('btnCreateMenu');
-
-  function api(action, data) {
-    return new Promise((resolve, reject) => {
-      BX.ajax({
-        url: '/local/sitebuilder/api.php',
-        method: 'POST',
-        dataType: 'json',
-        data: Object.assign({ action, siteId, sessid: BX.bitrix_sessid() }, data || {}),
-        onsuccess: resolve,
-        onfailure: reject
-      });
-    });
-  }
-
-  async function loadAll() {
-    const [menusRes, pagesRes] = await Promise.all([
-      api('menu.list'),
-      api('page.list')
-    ]);
-
-    if (!menusRes || menusRes.ok !== true) throw new Error('menu.list failed');
-    if (!pagesRes || pagesRes.ok !== true) throw new Error('page.list failed');
-
-    return { menus: menusRes.menus || [], pages: pagesRes.pages || [] };
-  }
-
-  function pageTitle(pages, pageId) {
-    const p = pages.find(x => parseInt(x.id,10) === parseInt(pageId,10));
-    return p ? p.title : ('page#' + pageId);
-  }
-
-  function render({menus, pages}) {
-    if (!menus.length) {
-      box.innerHTML = '<div class="muted">Меню пока нет. Нажми “+ Меню”.</div>';
-      return;
-    }
-
-    box.innerHTML = menus.map(m => {
-      const items = m.items || [];
-      const rows = items.length ? items.map(it => {
-        const type = it.type;
-        const title = it.title || '';
-        const sort = it.sort || 0;
-        const id = it.id;
-
-        let target = '';
-        if (type === 'page') {
-          target = 'pageId=' + it.pageId + ' (' + BX.util.htmlspecialchars(pageTitle(pages, it.pageId)) + ')';
-        } else {
-          target = BX.util.htmlspecialchars(it.url || '');
-        }
-
-        return `
-          <tr>
-            <td>${id}</td>
-            <td>${BX.util.htmlspecialchars(type)}</td>
-            <td>${BX.util.htmlspecialchars(title)}</td>
-            <td class="muted">${BX.util.htmlspecialchars(String(target))}</td>
-            <td class="muted">${sort}</td>
-            <td style="white-space:nowrap;">
-              <button class="ui-btn ui-btn-light ui-btn-xs" data-item-move="${id}" data-menu-id="${m.id}" data-dir="up">↑</button>
-              <button class="ui-btn ui-btn-light ui-btn-xs" data-item-move="${id}" data-menu-id="${m.id}" data-dir="down">↓</button>
-              <button class="ui-btn ui-btn-danger ui-btn-xs" data-item-del="${id}" data-menu-id="${m.id}">Удалить</button>
-            </td>
-          </tr>
-        `;
-      }).join('') : `<tr><td colspan="6" class="muted">Пунктов нет</td></tr>`;
-
-      return `
-        <div class="menuCard">
-          <div class="row">
-            <div>
-              <b>${BX.util.htmlspecialchars(m.name || ('Меню #' + m.id))}</b>
-              <span class="muted small"> (menuId: ${m.id})</span>
-            </div>
-            <div class="btns">
-              <button class="ui-btn ui-btn-light ui-btn-xs" data-menu-rename="${m.id}">Переименовать</button>
-              <button class="ui-btn ui-btn-primary ui-btn-xs" data-item-add="${m.id}">+ Пункт</button>
-            </div>
-          </div>
-
-          <table>
-            <thead>
-              <tr>
-                <th>ID</th>
-                <th>Тип</th>
-                <th>Название</th>
-                <th>Куда</th>
-                <th>Sort</th>
-                <th>Действия</th>
-              </tr>
-            </thead>
-            <tbody>${rows}</tbody>
-          </table>
-        </div>
-      `;
-    }).join('');
-  }
-
-  function createMenu() {
-    BX.UI.Dialogs.MessageBox.show({
-      title: 'Создать меню',
-      message: `<input id="new_menu_name" style="width:100%;" placeholder="например: Верхнее меню" />`,
-      buttons: BX.UI.Dialogs.MessageBoxButtons.OK_CANCEL,
-      onOk: function (mb) {
-        const name = (document.getElementById('new_menu_name')?.value || '').trim();
-        if (!name) {
-          BX.UI.Notification.Center.notify({ content: 'Введите название' });
-          return;
-        }
-        api('menu.create', { name }).then(res => {
-          if (!res || res.ok !== true) {
-            BX.UI.Notification.Center.notify({ content: 'Не удалось создать меню (нужен EDITOR+)' });
-            return;
-          }
-          BX.UI.Notification.Center.notify({ content: 'Меню создано' });
-          mb.close();
-          refresh();
-        });
-      }
-    });
-  }
-
-  function renameMenu(menuId) {
-    BX.UI.Dialogs.MessageBox.show({
-      title: 'Переименовать меню #' + menuId,
-      message: `<input id="rename_menu_name" style="width:100%;" placeholder="Новое название" />`,
-      buttons: BX.UI.Dialogs.MessageBoxButtons.OK_CANCEL,
-      onOk: function (mb) {
-        const name = (document.getElementById('rename_menu_name')?.value || '').trim();
-        if (!name) { BX.UI.Notification.Center.notify({ content: 'Введите название' }); return; }
-        api('menu.update', { menuId, name }).then(res => {
-          if (!res || res.ok !== true) {
-            BX.UI.Notification.Center.notify({ content: 'Не удалось переименовать (нужен EDITOR+)' });
-            return;
-          }
-          BX.UI.Notification.Center.notify({ content: 'Сохранено' });
-          mb.close();
-          refresh();
-        });
-      }
-    });
-  }
-
-  function addItem(menuId, pages) {
-    BX.UI.Dialogs.MessageBox.show({
-      title: 'Добавить пункт меню #' + menuId,
-      message: `
-        <div class="small muted">Тип пункта:</div>
-        <select id="it_type" style="width:100%;margin-top:6px;">
-          <option value="page">Страница сайта</option>
-          <option value="url">Внешний URL</option>
-        </select>
-
-        <div style="margin-top:10px;" id="it_page_wrap">
-          <div class="small muted">Страница:</div>
-          <select id="it_page" style="width:100%;margin-top:6px;">
-            ${pages.map(p => `<option value="${p.id}">${BX.util.htmlspecialchars(p.title)} (id ${p.id})</option>`).join('')}
-          </select>
-        </div>
-
-        <div style="margin-top:10px;display:none;" id="it_url_wrap">
-          <div class="small muted">URL:</div>
-          <input id="it_url" style="width:100%;margin-top:6px;" placeholder="https://example.com или /local/..." />
-        </div>
-
-        <div style="margin-top:10px;">
-          <div class="small muted">Название пункта (можно оставить пустым):</div>
-          <input id="it_title" style="width:100%;margin-top:6px;" placeholder="например: Главная" />
-        </div>
-      `,
-      buttons: BX.UI.Dialogs.MessageBoxButtons.OK_CANCEL,
-      onOk: function (mb) {
-        const type = (document.getElementById('it_type')?.value || 'page');
-        const title = (document.getElementById('it_title')?.value || '').trim();
-
-        if (type === 'page') {
-          const pageId = parseInt(document.getElementById('it_page')?.value || '0', 10);
-          api('menu.item.add', { menuId, type: 'page', pageId, title }).then(res => {
-            if (!res || res.ok !== true) {
-              BX.UI.Notification.Center.notify({ content: 'Не удалось добавить пункт (нужен EDITOR+)' });
-              return;
-            }
-            BX.UI.Notification.Center.notify({ content: 'Пункт добавлен' });
-            mb.close();
-            refresh();
-          });
-        } else {
-          const url = (document.getElementById('it_url')?.value || '').trim();
-          if (!url) { BX.UI.Notification.Center.notify({ content: 'Введите URL' }); return; }
-          api('menu.item.add', { menuId, type: 'url', url, title }).then(res => {
-            if (!res || res.ok !== true) {
-              BX.UI.Notification.Center.notify({ content: 'Не удалось добавить пункт (нужен EDITOR+)' });
-              return;
-            }
-            BX.UI.Notification.Center.notify({ content: 'Пункт добавлен' });
-            mb.close();
-            refresh();
-          });
-        }
-      }
-    });
-
-    // переключатель type
-    setTimeout(() => {
-      const t = document.getElementById('it_type');
-      const pageWrap = document.getElementById('it_page_wrap');
-      const urlWrap = document.getElementById('it_url_wrap');
-      if (!t || !pageWrap || !urlWrap) return;
-
-      const apply = () => {
-        const v = t.value;
-        if (v === 'page') {
-          pageWrap.style.display = '';
-          urlWrap.style.display = 'none';
-        } else {
-          pageWrap.style.display = 'none';
-          urlWrap.style.display = '';
-        }
-      };
-      t.addEventListener('change', apply);
-      apply();
-    }, 0);
-  }
-
-  function deleteItem(menuId, itemId) {
-    BX.UI.Dialogs.MessageBox.show({
-      title: 'Удалить пункт #' + itemId + '?',
-      message: 'Продолжить?',
-      buttons: BX.UI.Dialogs.MessageBoxButtons.OK_CANCEL,
-      onOk: function (mb) {
-        api('menu.item.delete', { menuId, itemId }).then(res => {
-          if (!res || res.ok !== true) {
-            BX.UI.Notification.Center.notify({ content: 'Не удалось удалить (нужен EDITOR+)' });
-            return;
-          }
-          BX.UI.Notification.Center.notify({ content: 'Удалено' });
-          mb.close();
-          refresh();
-        });
-      }
-    });
-  }
-
-  function moveItem(menuId, itemId, dir) {
-    api('menu.item.move', { menuId, itemId, dir }).then(res => {
-      if (!res || res.ok !== true) {
-        BX.UI.Notification.Center.notify({ content: 'Не удалось переместить (нужен EDITOR+)' });
-        return;
-      }
-      refresh();
-    });
-  }
-
-  async function refresh() {
-    try {
-      const data = await loadAll();
-      render(data);
-    } catch (e) {
-      BX.UI.Notification.Center.notify({ content: 'Ошибка загрузки меню/страниц (возможно нет прав VIEWER)' });
-      box.innerHTML = '<div class="muted">Ошибка загрузки.</div>';
-    }
-  }
-
-  btnRefresh.addEventListener('click', refresh);
-  btnCreateMenu.addEventListener('click', createMenu);
-
-  document.addEventListener('click', async function (e) {
-    const rn = e.target.closest('[data-menu-rename]');
-    if (rn) {
-      renameMenu(parseInt(rn.getAttribute('data-menu-rename'), 10));
-      return;
-    }
-
-    const add = e.target.closest('[data-item-add]');
-    if (add) {
-      const menuId = parseInt(add.getAttribute('data-item-add'), 10);
-      try {
-        const pagesRes = await api('page.list');
-        if (!pagesRes || pagesRes.ok !== true) throw new Error();
-        addItem(menuId, pagesRes.pages || []);
-      } catch (e) {
-        BX.UI.Notification.Center.notify({ content: 'Не удалось загрузить страницы' });
-      }
-      return;
-    }
-
-    const del = e.target.closest('[data-item-del]');
-    if (del) {
-      const menuId = parseInt(del.getAttribute('data-menu-id'), 10);
-      const itemId = parseInt(del.getAttribute('data-item-del'), 10);
-      deleteItem(menuId, itemId);
-      return;
-    }
-
-    const mv = e.target.closest('[data-item-move]');
-    if (mv) {
-      const menuId = parseInt(mv.getAttribute('data-menu-id'), 10);
-      const itemId = parseInt(mv.getAttribute('data-item-move'), 10);
-      const dir = mv.getAttribute('data-dir');
-      moveItem(menuId, itemId, dir);
-      return;
-    }
-  });
-
-  refresh();
-});
-</script>
 </body>
 </html>
