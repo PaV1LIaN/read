@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 <?php
 define('NO_KEEP_STATISTIC', true);
 define('NO_AGENT_STATISTIC', true);
@@ -1915,17 +1916,63 @@ if ($action === 'menu.update') {
         $m['name'] = $name;
         $m['updatedAt'] = date('c');
         return $m;
+=======
+Смотрю `settings.php` — **ошибка у тебя ровно в одном месте**:
+
+### ✅ Проблема №1 (из-за неё “site.get: нет доступа”)
+
+Твой `api()` **НЕ передаёт `siteId`** автоматически.
+
+А дальше ты вызываешь:
+
+```js
+api('site.get')
+api('page.list')
+api('menu.list')
+api('file.list')
+```
+
+Но все эти экшены в `api.php` ждут `$_POST['siteId']`.
+В итоге на сервер уходит `siteId=0` ⇒ сервер отвечает **422 SITE_ID_REQUIRED**, а ты показываешь это как “нет доступа”.
+
+---
+
+## 1) Исправь `api()` в settings.php
+
+Найди в `settings.php` функцию `api()` и замени строку `data: ...` на вариант **с `siteId`**:
+
+```js
+data: Object.assign({ action, siteId, sessid: BX.bitrix_sessid() }, data || {}),
+```
+
+То есть целиком:
+
+```js
+function api(action, data) {
+  return new Promise((resolve) => {
+    BX.ajax({
+      url: '/local/sitebuilder/api.php',
+      method: 'POST',
+      dataType: 'json',
+      data: Object.assign({ action, siteId, sessid: BX.bitrix_sessid() }, data || {}),
+      onsuccess: (res) => resolve(res),
+      onfailure: (xhr) => {
+        const status = xhr && xhr.status ? xhr.status : 0;
+        const raw = (xhr && xhr.responseText) ? String(xhr.responseText) : '';
+        let parsed = null;
+        try { parsed = JSON.parse(raw); } catch (e) {}
+        resolve(Object.assign(
+          { ok: false, error: 'HTTP_ERROR', status, raw },
+          (parsed && typeof parsed === 'object') ? parsed : {}
+        ));
+      }
+>>>>>>> 102ad393eb9e680712b5c766a8c598bebe686caa
     });
-
-    if (!$ok) { http_response_code(404); echo json_encode(['ok'=>false,'error'=>'MENU_NOT_FOUND'], JSON_UNESCAPED_UNICODE); exit; }
-
-    sb_menu_upsert_site_record($all, $siteId, $rec);
-    sb_write_menus($all);
-
-    echo json_encode(['ok' => true], JSON_UNESCAPED_UNICODE);
-    exit;
+  });
 }
+```
 
+<<<<<<< HEAD
 // menu.delete (EDITOR+): удалить меню целиком
 if ($action === 'menu.delete') {
     $siteId = (int)($_POST['siteId'] ?? 0);
@@ -2106,120 +2153,52 @@ if ($action === 'menu.item.add') {
     $menuId = (int)($_POST['menuId'] ?? 0);
     $type = strtolower(trim((string)($_POST['type'] ?? 'page')));
     $title = trim((string)($_POST['title'] ?? ''));
+=======
+После этого `site.get/page.list/menu.list/file.list` начнут работать нормально.
+>>>>>>> 102ad393eb9e680712b5c766a8c598bebe686caa
 
-    if ($siteId <= 0) { http_response_code(422); echo json_encode(['ok'=>false,'error'=>'SITE_ID_REQUIRED'], JSON_UNESCAPED_UNICODE); exit; }
-    if ($menuId <= 0) { http_response_code(422); echo json_encode(['ok'=>false,'error'=>'MENU_ID_REQUIRED'], JSON_UNESCAPED_UNICODE); exit; }
-    if (!in_array($type, ['page','url'], true)) { http_response_code(422); echo json_encode(['ok'=>false,'error'=>'TYPE_REQUIRED'], JSON_UNESCAPED_UNICODE); exit; }
-    sb_require_editor($siteId);
+---
 
-    $all = sb_read_menus();
-    $rec = sb_menu_get_site_record($all, $siteId);
-    if (!$rec) $rec = ['siteId' => $siteId, 'menus' => []];
+## 2) Добавь защиту на пустой siteId (желательно)
 
-    $menu = sb_menu_find_menu($rec, $menuId);
-    if (!$menu) { http_response_code(404); echo json_encode(['ok'=>false,'error'=>'MENU_NOT_FOUND'], JSON_UNESCAPED_UNICODE); exit; }
+Сразу после:
 
-    $items = $menu['items'] ?? [];
-    $itemId = sb_menu_next_item_id($menu);
-    $sort = sb_menu_next_sort($items);
+```php
+$siteId = (int)($_GET['siteId'] ?? 0);
+```
 
-    $item = [
-        'id' => $itemId,
-        'type' => $type,
-        'title' => $title,
-        'sort' => $sort,
-    ];
+добавь:
 
-    if ($type === 'page') {
-        $pageId = (int)($_POST['pageId'] ?? 0);
-        if ($pageId <= 0) { http_response_code(422); echo json_encode(['ok'=>false,'error'=>'PAGE_ID_REQUIRED'], JSON_UNESCAPED_UNICODE); exit; }
-        $p = sb_find_page($pageId);
-        if (!$p || (int)($p['siteId'] ?? 0) !== $siteId) {
-            http_response_code(422);
-            echo json_encode(['ok'=>false,'error'=>'PAGE_NOT_IN_SITE'], JSON_UNESCAPED_UNICODE);
-            exit;
-        }
-        $item['pageId'] = $pageId;
-        if ($item['title'] === '') $item['title'] = (string)($p['title'] ?? ('page#'.$pageId));
-    } else {
-        $url = trim((string)($_POST['url'] ?? ''));
-        if ($url === '') { http_response_code(422); echo json_encode(['ok'=>false,'error'=>'URL_REQUIRED'], JSON_UNESCAPED_UNICODE); exit; }
-        if (!(preg_match('~^https?://~i', $url) || str_starts_with($url, '/'))) {
-            http_response_code(422);
-            echo json_encode(['ok'=>false,'error'=>'URL_BAD_FORMAT'], JSON_UNESCAPED_UNICODE);
-            exit;
-        }
-        $item['url'] = $url;
-        if ($item['title'] === '') $item['title'] = $url;
-    }
-
-    $items[] = $item;
-    $menu['items'] = $items;
-    $menu['updatedAt'] = date('c');
-
-    sb_menu_update_menu($rec, $menuId, fn($_) => $menu);
-    sb_menu_upsert_site_record($all, $siteId, $rec);
-    sb_write_menus($all);
-
-    echo json_encode(['ok' => true, 'item' => $item], JSON_UNESCAPED_UNICODE);
-    exit;
+```php
+if ($siteId <= 0) {
+  http_response_code(400);
+  echo 'siteId required';
+  exit;
 }
+```
 
-// menu.item.update (EDITOR+)
-if ($action === 'menu.item.update') {
-    $siteId = (int)($_POST['siteId'] ?? 0);
-    $menuId = (int)($_POST['menuId'] ?? 0);
-    $itemId = (int)($_POST['itemId'] ?? 0);
+---
 
-    if ($siteId <= 0) { http_response_code(422); echo json_encode(['ok'=>false,'error'=>'SITE_ID_REQUIRED'], JSON_UNESCAPED_UNICODE); exit; }
-    if ($menuId <= 0) { http_response_code(422); echo json_encode(['ok'=>false,'error'=>'MENU_ID_REQUIRED'], JSON_UNESCAPED_UNICODE); exit; }
-    if ($itemId <= 0) { http_response_code(422); echo json_encode(['ok'=>false,'error'=>'ITEM_ID_REQUIRED'], JSON_UNESCAPED_UNICODE); exit; }
-    sb_require_editor($siteId);
+# Теперь про `site.update:HTTP_ERROR`
 
-    $all = sb_read_menus();
-    $rec = sb_menu_get_site_record($all, $siteId);
-    if (!$rec) { http_response_code(404); echo json_encode(['ok'=>false,'error'=>'MENU_NOT_FOUND'], JSON_UNESCAPED_UNICODE); exit; }
+После фикса `api()` у тебя `site.update` станет “честным”:
 
-    $ok = sb_menu_update_menu($rec, $menuId, function($m) use ($siteId, $itemId) {
-        $items = $m['items'] ?? [];
-        $found = false;
+* если в `api.php` **нет обработчика `site.update`** → будет `UNKNOWN_ACTION`
+* если обработчик есть, но **права недостаточны** → будет `403 FORBIDDEN` (роль)
+* если не передавался `siteId` → было `422 SITE_ID_REQUIRED` (это и было у тебя)
 
-        foreach ($items as &$it) {
-            if ((int)($it['id'] ?? 0) !== $itemId) continue;
+✅ Сначала сделай правку `api()` — это ключевое.
 
-            $title = trim((string)($_POST['title'] ?? ''));
-            if ($title !== '') $it['title'] = $title;
+---
 
-            if (($it['type'] ?? '') === 'page') {
-                $pageId = (int)($_POST['pageId'] ?? 0);
-                if ($pageId > 0) {
-                    $p = sb_find_page($pageId);
-                    if (!$p || (int)($p['siteId'] ?? 0) !== $siteId) {
-                        http_response_code(422);
-                        echo json_encode(['ok'=>false,'error'=>'PAGE_NOT_IN_SITE'], JSON_UNESCAPED_UNICODE);
-                        exit;
-                    }
-                    $it['pageId'] = $pageId;
-                }
-            } else {
-                $url = trim((string)($_POST['url'] ?? ''));
-                if ($url !== '') {
-                    if (!(preg_match('~^https?://~i', $url) || str_starts_with($url, '/'))) {
-                        http_response_code(422);
-                        echo json_encode(['ok'=>false,'error'=>'URL_BAD_FORMAT'], JSON_UNESCAPED_UNICODE);
-                        exit;
-                    }
-                    $it['url'] = $url;
-                }
-            }
+## Чтобы я сказал точно, почему `site.update` падает:
 
-            $found = true;
-            break;
-        }
-        unset($it);
+скинь кусок из **api.php**, где у тебя сейчас есть/нет:
 
-        if (!$found) return $m;
+* `if ($action === 'site.update') { ... }`
+* и блок с `sb_require_*` (роль/ранги)
 
+<<<<<<< HEAD
         $m['items'] = $items;
         $m['updatedAt'] = date('c');
         return $m;
@@ -2561,3 +2540,6 @@ if ($action === 'site.get') {
 
 http_response_code(400);
 echo json_encode(['ok' => false, 'error' => 'UNKNOWN_ACTION', 'action' => $action], JSON_UNESCAPED_UNICODE);
+=======
+И я дам точный патч: куда вставить и что именно должно сохраняться (settings/name/slug/home/topMenu/logo) и какие проверки сделать.
+>>>>>>> 102ad393eb9e680712b5c766a8c598bebe686caa
