@@ -1,272 +1,403 @@
-([Past chat][1])([Past chat][1])([Past chat][1])([Past chat][1])
+<?php
+define('NO_KEEP_STATISTIC', true);
+define('NO_AGENT_STATISTIC', true);
+define('DisableEventsCheck', true);
 
-Ок, тогда делаем “как для серьёзного проекта”: **иерархия страниц = структура (sitemap/хлебные крошки/URL-логика), а верхнее меню выбирается явно у сайта**.
+require $_SERVER['DOCUMENT_ROOT'].'/bitrix/modules/main/include/prolog_before.php';
 
-Сейчас у тебя меню в `view.php` берётся “первое попавшееся” — это и есть причина, почему непонятно где оно должно отображаться и что выбирать. Делаем правильно: **в `sites.json` добавляем `topMenuId`**, и в UI (menu.php) появится кнопка “Сделать верхним”.
+global $USER, $APPLICATION;
 
-Ниже — конкретные правки.
-
----
-
-## 1) Миграция данных (один раз)
-
-В `sites.json` у каждого сайта появится поле:
-
-```json
-"topMenuId": 0
-```
-
-Пока можешь руками не править — мы сделаем “автозаполнение по умолчанию” при `menu.create` и “ленивую миграцию” в `view.php`.
-
----
-
-## 2) api.php — автопроставление topMenuId при первом меню
-
-Найди блок `if ($action === 'menu.create') { ... }` и **после сохранения меню** добавь:
-
-```php
-// если это первое меню у сайта — сделаем его верхним (topMenuId)
-try {
-    $sites = sb_read_sites();
-    $changed = false;
-    foreach ($sites as &$s) {
-        if ((int)($s['id'] ?? 0) === $siteId) {
-            $curTop = (int)($s['topMenuId'] ?? 0);
-            if ($curTop <= 0) {
-                $s['topMenuId'] = (int)$menuId;
-                $s['updatedAt'] = date('c');
-                $s['updatedBy'] = (int)$USER->GetID();
-                $changed = true;
-            }
-            break;
-        }
-    }
-    unset($s);
-    if ($changed) sb_write_sites($sites);
-} catch (\Throwable $e) {
-    // молча, это не критично
-}
-```
-
-Так у нового сайта первое созданное меню автоматически становится верхним.
-
----
-
-## 3) api.php — новый action: site.setTopMenu
-
-В конец файла **перед** `UNKNOWN_ACTION` добавь новый обработчик:
-
-```php
-if ($action === 'site.setTopMenu') {
-    $siteId = (int)($_POST['siteId'] ?? 0);
-    $menuId = (int)($_POST['menuId'] ?? 0);
-
-    if ($siteId <= 0) { http_response_code(422); echo json_encode(['ok'=>false,'error'=>'SITE_ID_REQUIRED'], JSON_UNESCAPED_UNICODE); exit; }
-    if ($menuId <= 0) { http_response_code(422); echo json_encode(['ok'=>false,'error'=>'MENU_ID_REQUIRED'], JSON_UNESCAPED_UNICODE); exit; }
-
-    sb_require_editor($siteId);
-
-    // проверим, что меню реально принадлежит сайту
-    $all = sb_read_menus();
-    $rec = sb_menu_get_site_record($all, $siteId);
-    $menus = $rec ? ($rec['menus'] ?? []) : [];
-    $exists = false;
-    foreach ($menus as $m) {
-        if ((int)($m['id'] ?? 0) === $menuId) { $exists = true; break; }
-    }
-    if (!$exists) { http_response_code(404); echo json_encode(['ok'=>false,'error'=>'MENU_NOT_FOUND'], JSON_UNESCAPED_UNICODE); exit; }
-
-    $sites = sb_read_sites();
-    $found = false;
-    foreach ($sites as &$s) {
-        if ((int)($s['id'] ?? 0) === $siteId) {
-            $s['topMenuId'] = $menuId;
-            $s['updatedAt'] = date('c');
-            $s['updatedBy'] = (int)$USER->GetID();
-            $found = true;
-            break;
-        }
-    }
-    unset($s);
-
-    if (!$found) { http_response_code(404); echo json_encode(['ok'=>false,'error'=>'SITE_NOT_FOUND'], JSON_UNESCAPED_UNICODE); exit; }
-
-    sb_write_sites($sites);
-    echo json_encode(['ok'=>true], JSON_UNESCAPED_UNICODE);
-    exit;
-}
-```
-
----
-
-## 4) view.php — выбирать меню по topMenuId (и “ленивая миграция”)
-
-Сейчас у тебя: “берём первое меню”. Заменяем логику на:
-
-* читаем `topMenuId` из `$site`
-* если его нет/0 — берём первое меню и **(опционально)** запоминаем в `sites.json` (лениво)
-
-В `view.php` найди блок:
-
-```php
-// menu: take first menu for this site (if exists)
-$menuItems = [];
-foreach ($menusAll as $rec) {
- ...
-}
-```
-
-И замени на:
-
-```php
-$menuItems = [];
-$topMenuId = (int)($site['topMenuId'] ?? 0);
-
-$selectedMenu = null;
-$siteMenusRecIndex = null;
-
-foreach ($menusAll as $i => $rec) {
-    if ((int)($rec['siteId'] ?? 0) !== $siteId) continue;
-    $siteMenusRecIndex = $i;
-
-    $menus = $rec['menus'] ?? [];
-    if (!is_array($menus) || !count($menus)) break;
-
-    // 1) пробуем найти по topMenuId
-    if ($topMenuId > 0) {
-        foreach ($menus as $m) {
-            if ((int)($m['id'] ?? 0) === $topMenuId) { $selectedMenu = $m; break; }
-        }
-    }
-
-    // 2) если topMenuId пустой/битый — берём первый
-    if (!$selectedMenu) {
-        $selectedMenu = $menus[0];
-
-        // ленивая миграция: запомним выбранное меню как верхнее
-        if ($topMenuId <= 0 && isset($selectedMenu['id'])) {
-            try {
-                $sitesAll = sb_read_json('sites.json'); // у тебя уже есть sb_read_json выше
-                foreach ($sitesAll as &$ss) {
-                    if ((int)($ss['id'] ?? 0) === $siteId) {
-                        $ss['topMenuId'] = (int)$selectedMenu['id'];
-                        break;
-                    }
-                }
-                unset($ss);
-                // и запишем обратно
-                file_put_contents(sb_data_path('sites.json'), json_encode(array_values($sitesAll), JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT));
-            } catch (\Throwable $e) {}
-        }
-    }
-    break;
+if (!$USER->IsAuthorized()) {
+    LocalRedirect('/auth/');
 }
 
-if ($selectedMenu) {
-    $menuItems = $selectedMenu['items'] ?? [];
-    if (!is_array($menuItems)) $menuItems = [];
-    usort($menuItems, fn($a,$b) => (int)($a['sort'] ?? 0) <=> (int)($b['sort'] ?? 0));
-}
-```
+header('Content-Type: text/html; charset=UTF-8');
 
-> Да, тут “ленивая запись” через `file_put_contents` — чтобы не тащить все функции записи из api.php в view.php. Если хочешь “совсем правильно”, вынесем storage-функции в общий `lib/storage.php` и подключим.
-
----
-
-## 5) menu.php — кнопка “Сделать верхним” (UI)
-
-Чтобы управлять этим из интерфейса, `menu.php` должен знать `topMenuId` сайта. Самый простой путь без новых API: **добавим action `site.list` уже возвращает сайт**, но menu.php сейчас не загружает site. Поэтому проще добавить новый action `site.get`.
-
-### Быстро: добавим action site.get в api.php
-
-В api.php добавь:
-
-```php
-if ($action === 'site.get') {
-    $siteId = (int)($_POST['siteId'] ?? 0);
-    if ($siteId <= 0) { http_response_code(422); echo json_encode(['ok'=>false,'error'=>'SITE_ID_REQUIRED'], JSON_UNESCAPED_UNICODE); exit; }
-    sb_require_viewer($siteId);
-
-    $sites = sb_read_sites();
-    foreach ($sites as $s) {
-        if ((int)($s['id'] ?? 0) === $siteId) {
-            echo json_encode(['ok'=>true,'site'=>$s], JSON_UNESCAPED_UNICODE);
-            exit;
-        }
-    }
-    http_response_code(404);
-    echo json_encode(['ok'=>false,'error'=>'SITE_NOT_FOUND'], JSON_UNESCAPED_UNICODE);
-    exit;
-}
-```
-
-### menu.php (JS)
-
-1. В `loadAll()` добавь третий запрос `site.get`:
-
-```js
-const [menusRes, pagesRes, siteRes] = await Promise.all([
-  api('menu.list'),
-  api('page.list'),
-  api('site.get')
+\Bitrix\Main\UI\Extension::load([
+    'main.core',
+    'ui.buttons',
+    'ui.dialogs.messagebox',
+    'ui.notification',
 ]);
-...
-return { menus: menusRes.menus||[], pages: pagesRes.pages||[], site: siteRes.site||{} };
-```
 
-2. В `render({menus,pages,site})` получи `topMenuId`:
+$siteId = (int)($_GET['siteId'] ?? 0);
+?>
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Меню сайта</title>
+  <?php $APPLICATION->ShowHead(); ?>
+  <style>
+    body { font-family: Arial, sans-serif; margin:0; background:#f6f7f8; }
+    .top { background:#fff; border-bottom:1px solid #e5e7ea; padding:12px 16px; display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
+    .content { padding: 18px; }
+    .card { background:#fff; border:1px solid #e5e7ea; border-radius:12px; padding:16px; }
+    .muted { color:#6a737f; }
+    a { color:#0b57d0; text-decoration:none; }
+    a:hover { text-decoration:underline; }
+    code { background:#f3f4f6; padding:2px 6px; border-radius:6px; }
+    .row { display:flex; gap:10px; align-items:center; justify-content:space-between; flex-wrap:wrap; }
+    .btns { display:flex; gap:6px; flex-wrap:wrap; }
+    .menuCard { border:1px solid #eee; border-radius:12px; padding:12px; margin-top:12px; }
+    table { width:100%; border-collapse:collapse; margin-top:10px; }
+    th, td { padding:8px; border-bottom:1px solid #eee; text-align:left; vertical-align:top; }
+    select, input { padding:8px; border:1px solid #d0d7de; border-radius:8px; }
+    .small { font-size:12px; }
+  </style>
+</head>
+<body>
+  <div class="top">
+    <a href="/local/sitebuilder/index.php">← Назад</a>
+    <div class="muted">Меню сайта</div>
+    <div class="muted">|</div>
+    <div><b>siteId:</b> <code><?= (int)$siteId ?></code></div>
+    <div style="flex:1;"></div>
+    <button class="ui-btn ui-btn-light" id="btnRefresh">Обновить</button>
+    <button class="ui-btn ui-btn-primary" id="btnCreateMenu">+ Меню</button>
+  </div>
 
-```js
-const topMenuId = parseInt(site?.topMenuId || 0, 10) || 0;
-```
+  <div class="content">
+    <div class="card">
+      <div class="muted">Меню — это набор пунктов. Пункт может вести на страницу сайта (type=page) или на внешний URL (type=url).</div>
+      <div id="box" style="margin-top:12px;"></div>
+    </div>
+  </div>
 
-3. В карточку меню добавь кнопку и бейдж:
+<script>
+BX.ready(function () {
+  const siteId = <?= (int)$siteId ?>;
 
-```js
-const isTop = parseInt(m.id,10) === topMenuId;
-...
-<div>
-  <b>...</b>
-  ${isTop ? '<span class="muted small" style="margin-left:8px; background:#eef2ff; padding:2px 8px; border-radius:999px; color:#1d4ed8;">TOP</span>' : ''}
-</div>
-...
-<button class="ui-btn ui-btn-light ui-btn-xs" data-menu-top="${m.id}">Сделать верхним</button>
-```
+  const box = document.getElementById('box');
+  const btnRefresh = document.getElementById('btnRefresh');
+  const btnCreateMenu = document.getElementById('btnCreateMenu');
 
-4. В обработчик кликов добавь:
+  function api(action, data) {
+    return new Promise((resolve, reject) => {
+      BX.ajax({
+        url: '/local/sitebuilder/api.php',
+        method: 'POST',
+        dataType: 'json',
+        data: Object.assign({ action, siteId, sessid: BX.bitrix_sessid() }, data || {}),
+        onsuccess: resolve,
+        onfailure: reject
+      });
+    });
+  }
 
-```js
-const top = e.target.closest('[data-menu-top]');
-if (top) {
-  const menuId = parseInt(top.getAttribute('data-menu-top'), 10);
-  api('site.setTopMenu', { menuId }).then(r=>{
-    if(!r || r.ok!==true){ BX.UI.Notification.Center.notify({content:'Не удалось (нужен EDITOR+)'}); return; }
-    BX.UI.Notification.Center.notify({content:'Верхнее меню обновлено'});
-    refresh();
+  async function loadAll() {
+    const [menusRes, pagesRes] = await Promise.all([
+      api('menu.list'),
+      api('page.list'),
+      api('site.get')
+    ]);
+
+    if (!menusRes || menusRes.ok !== true) throw new Error('menu.list failed');
+    if (!pagesRes || pagesRes.ok !== true) throw new Error('page.list failed');
+
+    return { menus: menusRes.menus||[], pages: pagesRes.pages||[], site: siteRes.site||{} };
+  }
+
+  function pageTitle(pages, pageId) {
+    const p = pages.find(x => parseInt(x.id,10) === parseInt(pageId,10));
+    return p ? p.title : ('page#' + pageId);
+  }
+
+  function render({menus, pages, topMenuId}) {
+    if (!menus.length) {
+      box.innerHTML = '<div class="muted">Меню пока нет. Нажми “+ Меню”.</div>';
+      return;
+    }
+
+    box.innerHTML = menus.map(m => {
+      const items = m.items || [];
+      const rows = items.length ? items.map(it => {
+        const type = it.type;
+        const title = it.title || '';
+        const sort = it.sort || 0;
+        const id = it.id;
+
+        let target = '';
+        if (type === 'page') {
+          target = 'pageId=' + it.pageId + ' (' + BX.util.htmlspecialchars(pageTitle(pages, it.pageId)) + ')';
+        } else {
+          target = BX.util.htmlspecialchars(it.url || '');
+        }
+
+        return `
+          <tr>
+            <td>${id}</td>
+            <td>${BX.util.htmlspecialchars(type)}</td>
+            <td>${BX.util.htmlspecialchars(title)}</td>
+            <td class="muted">${BX.util.htmlspecialchars(String(target))}</td>
+            <td class="muted">${sort}</td>
+            <td style="white-space:nowrap;">
+              <button class="ui-btn ui-btn-light ui-btn-xs" data-item-move="${id}" data-menu-id="${m.id}" data-dir="up">↑</button>
+              <button class="ui-btn ui-btn-light ui-btn-xs" data-item-move="${id}" data-menu-id="${m.id}" data-dir="down">↓</button>
+              <button class="ui-btn ui-btn-danger ui-btn-xs" data-item-del="${id}" data-menu-id="${m.id}">Удалить</button>
+            </td>
+          </tr>
+        `;
+      }).join('') : `<tr><td colspan="6" class="muted">Пунктов нет</td></tr>`;
+
+      return `
+        <div class="menuCard">
+          <div class="row">
+            <div>
+              <b>${BX.util.htmlspecialchars(m.name || ('Меню #' + m.id))}</b>
+              <span class="muted small"> (menuId: ${m.id})</span>
+            </div>
+            <div class="btns">
+                ${parseInt(m.id,10) === (topMenuId||0)
+                    ? `<span class="muted small" style="padding:6px 8px;">Верхнее меню</span>`
+                    : `<button class="ui-btn ui-btn-success ui-btn-xs" data-menu-set-top="${m.id}">Сделать верхним</button>`
+                }
+                <button class="ui-btn ui-btn-light ui-btn-xs" data-menu-rename="${m.id}">Переименовать</button>
+                <button class="ui-btn ui-btn-primary ui-btn-xs" data-item-add="${m.id}">+ Пункт</button>
+            </div>
+          </div>
+
+          <table>
+            <thead>
+              <tr>
+                <th>ID</th>
+                <th>Тип</th>
+                <th>Название</th>
+                <th>Куда</th>
+                <th>Sort</th>
+                <th>Действия</th>
+              </tr>
+            </thead>
+            <tbody>${rows}</tbody>
+          </table>
+        </div>
+      `;
+    }).join('');
+  }
+
+  function createMenu() {
+    BX.UI.Dialogs.MessageBox.show({
+      title: 'Создать меню',
+      message: `<input id="new_menu_name" style="width:100%;" placeholder="например: Верхнее меню" />`,
+      buttons: BX.UI.Dialogs.MessageBoxButtons.OK_CANCEL,
+      onOk: function (mb) {
+        const name = (document.getElementById('new_menu_name')?.value || '').trim();
+        if (!name) {
+          BX.UI.Notification.Center.notify({ content: 'Введите название' });
+          return;
+        }
+        api('menu.create', { name }).then(res => {
+          if (!res || res.ok !== true) {
+            BX.UI.Notification.Center.notify({ content: 'Не удалось создать меню (нужен EDITOR+)' });
+            return;
+          }
+          BX.UI.Notification.Center.notify({ content: 'Меню создано' });
+          mb.close();
+          refresh();
+        });
+      }
+    });
+  }
+
+  function renameMenu(menuId) {
+    BX.UI.Dialogs.MessageBox.show({
+      title: 'Переименовать меню #' + menuId,
+      message: `<input id="rename_menu_name" style="width:100%;" placeholder="Новое название" />`,
+      buttons: BX.UI.Dialogs.MessageBoxButtons.OK_CANCEL,
+      onOk: function (mb) {
+        const name = (document.getElementById('rename_menu_name')?.value || '').trim();
+        if (!name) { BX.UI.Notification.Center.notify({ content: 'Введите название' }); return; }
+        api('menu.update', { menuId, name }).then(res => {
+          if (!res || res.ok !== true) {
+            BX.UI.Notification.Center.notify({ content: 'Не удалось переименовать (нужен EDITOR+)' });
+            return;
+          }
+          BX.UI.Notification.Center.notify({ content: 'Сохранено' });
+          mb.close();
+          refresh();
+        });
+      }
+    });
+  }
+
+  function addItem(menuId, pages) {
+    BX.UI.Dialogs.MessageBox.show({
+      title: 'Добавить пункт меню #' + menuId,
+      message: `
+        <div class="small muted">Тип пункта:</div>
+        <select id="it_type" style="width:100%;margin-top:6px;">
+          <option value="page">Страница сайта</option>
+          <option value="url">Внешний URL</option>
+        </select>
+
+        <div style="margin-top:10px;" id="it_page_wrap">
+          <div class="small muted">Страница:</div>
+          <select id="it_page" style="width:100%;margin-top:6px;">
+            ${pages.map(p => `<option value="${p.id}">${BX.util.htmlspecialchars(p.title)} (id ${p.id})</option>`).join('')}
+          </select>
+        </div>
+
+        <div style="margin-top:10px;display:none;" id="it_url_wrap">
+          <div class="small muted">URL:</div>
+          <input id="it_url" style="width:100%;margin-top:6px;" placeholder="https://example.com или /local/..." />
+        </div>
+
+        <div style="margin-top:10px;">
+          <div class="small muted">Название пункта (можно оставить пустым):</div>
+          <input id="it_title" style="width:100%;margin-top:6px;" placeholder="например: Главная" />
+        </div>
+      `,
+      buttons: BX.UI.Dialogs.MessageBoxButtons.OK_CANCEL,
+      onOk: function (mb) {
+        const type = (document.getElementById('it_type')?.value || 'page');
+        const title = (document.getElementById('it_title')?.value || '').trim();
+
+        if (type === 'page') {
+          const pageId = parseInt(document.getElementById('it_page')?.value || '0', 10);
+          api('menu.item.add', { menuId, type: 'page', pageId, title }).then(res => {
+            if (!res || res.ok !== true) {
+              BX.UI.Notification.Center.notify({ content: 'Не удалось добавить пункт (нужен EDITOR+)' });
+              return;
+            }
+            BX.UI.Notification.Center.notify({ content: 'Пункт добавлен' });
+            mb.close();
+            refresh();
+          });
+        } else {
+          const url = (document.getElementById('it_url')?.value || '').trim();
+          if (!url) { BX.UI.Notification.Center.notify({ content: 'Введите URL' }); return; }
+          api('menu.item.add', { menuId, type: 'url', url, title }).then(res => {
+            if (!res || res.ok !== true) {
+              BX.UI.Notification.Center.notify({ content: 'Не удалось добавить пункт (нужен EDITOR+)' });
+              return;
+            }
+            BX.UI.Notification.Center.notify({ content: 'Пункт добавлен' });
+            mb.close();
+            refresh();
+          });
+        }
+      }
+    });
+
+    // переключатель type
+    setTimeout(() => {
+      const t = document.getElementById('it_type');
+      const pageWrap = document.getElementById('it_page_wrap');
+      const urlWrap = document.getElementById('it_url_wrap');
+      if (!t || !pageWrap || !urlWrap) return;
+
+      const apply = () => {
+        const v = t.value;
+        if (v === 'page') {
+          pageWrap.style.display = '';
+          urlWrap.style.display = 'none';
+        } else {
+          pageWrap.style.display = 'none';
+          urlWrap.style.display = '';
+        }
+      };
+      t.addEventListener('change', apply);
+      apply();
+    }, 0);
+  }
+
+  function deleteItem(menuId, itemId) {
+    BX.UI.Dialogs.MessageBox.show({
+      title: 'Удалить пункт #' + itemId + '?',
+      message: 'Продолжить?',
+      buttons: BX.UI.Dialogs.MessageBoxButtons.OK_CANCEL,
+      onOk: function (mb) {
+        api('menu.item.delete', { menuId, itemId }).then(res => {
+          if (!res || res.ok !== true) {
+            BX.UI.Notification.Center.notify({ content: 'Не удалось удалить (нужен EDITOR+)' });
+            return;
+          }
+          BX.UI.Notification.Center.notify({ content: 'Удалено' });
+          mb.close();
+          refresh();
+        });
+      }
+    });
+  }
+
+  function moveItem(menuId, itemId, dir) {
+    api('menu.item.move', { menuId, itemId, dir }).then(res => {
+      if (!res || res.ok !== true) {
+        BX.UI.Notification.Center.notify({ content: 'Не удалось переместить (нужен EDITOR+)' });
+        return;
+      }
+      refresh();
+    });
+  }
+
+  async function refresh() {
+    try {
+      const data = await loadAll();
+      render(data);
+    } catch (e) {
+      BX.UI.Notification.Center.notify({ content: 'Ошибка загрузки меню/страниц (возможно нет прав VIEWER)' });
+      box.innerHTML = '<div class="muted">Ошибка загрузки.</div>';
+    }
+  }
+
+  btnRefresh.addEventListener('click', refresh);
+  btnCreateMenu.addEventListener('click', createMenu);
+
+  document.addEventListener('click', async function (e) {
+    const rn = e.target.closest('[data-menu-rename]');
+    if (rn) {
+      renameMenu(parseInt(rn.getAttribute('data-menu-rename'), 10));
+      return;
+    }
+
+    const add = e.target.closest('[data-item-add]');
+    if (add) {
+      const menuId = parseInt(add.getAttribute('data-item-add'), 10);
+      try {
+        const pagesRes = await api('page.list');
+        if (!pagesRes || pagesRes.ok !== true) throw new Error();
+        addItem(menuId, pagesRes.pages || []);
+      } catch (e) {
+        BX.UI.Notification.Center.notify({ content: 'Не удалось загрузить страницы' });
+      }
+      return;
+    }
+
+    const del = e.target.closest('[data-item-del]');
+    if (del) {
+      const menuId = parseInt(del.getAttribute('data-menu-id'), 10);
+      const itemId = parseInt(del.getAttribute('data-item-del'), 10);
+      deleteItem(menuId, itemId);
+      return;
+    }
+
+    const mv = e.target.closest('[data-item-move]');
+    if (mv) {
+      const menuId = parseInt(mv.getAttribute('data-menu-id'), 10);
+      const itemId = parseInt(mv.getAttribute('data-item-move'), 10);
+      const dir = mv.getAttribute('data-dir');
+      moveItem(menuId, itemId, dir);
+      return;
+    }
+
+    const st = e.target.closest('[data-menu-set-top]');
+    if (st) {
+        const menuId = parseInt(st.getAttribute('data-menu-set-top'), 10);
+        api('menu.setTop', { menuId }).then(res => {
+            if (!res || res.ok !== true) {
+            BX.UI.Notification.Center.notify({ content: 'Не удалось назначить верхнее меню (нужен EDITOR+)' });
+            return;
+            }
+            BX.UI.Notification.Center.notify({ content: 'Верхнее меню назначено' });
+            refresh();
+        }).catch(() => BX.UI.Notification.Center.notify({ content: 'Ошибка menu.setTop' }));
+        return;
+    }
   });
-  return;
-}
-```
 
----
-
-# Как должна работать вложенность (правильно)
-
-Для “серьёзного проекта” вложенность страниц обычно используется так:
-
-1. **Структура (Sitemap):** дерево страниц для админа/редактора.
-2. **Навигация:**
-
-   * хлебные крошки (родители → текущая)
-   * “в этом разделе” (дети текущей)
-3. **URL-логика:** либо `/parent/child`, либо хотя бы вычисляемый “path” для навигации/SEO (даже если реальный роутинг пока не нужен).
-4. **Меню отдельно:** верхнее меню — это **выборка страниц/URL**, не обязано совпадать с деревом.
-
-Сейчас мы как раз отделили **меню** от **дерева**. Следующий “правильный” шаг по дереву — сделать в `view.php`:
-
-* хлебные крошки по `parentId`
-* блок “дочерние страницы” (если есть дети)
-
-Если ок — в следующем сообщении я дам готовый патч для `view.php`: *breadcrumbs + children navigation* (без rewrite и роутинга).
-
-[1]: https://chatgpt.com/c/6997ed68-f66c-8395-8b8f-7fa8af7d70b9 "Создание сайта на Битрикс24"
+  refresh();
+});
+</script>
+</body>
+</html>
