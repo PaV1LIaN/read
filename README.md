@@ -155,6 +155,13 @@ function sb_site_exists(int $siteId): bool {
     return false;
 }
 
+function sb_find_site(int $siteId): ?array {
+    foreach (sb_read_sites() as $s) {
+        if ((int)($s['id'] ?? 0) === $siteId) return $s;
+    }
+    return null;
+}
+
 function sb_find_page(int $pageId): ?array {
     foreach (sb_read_pages() as $p) {
         if ((int)($p['id'] ?? 0) === $pageId) return $p;
@@ -556,6 +563,160 @@ if ($action === 'site.list') {
     exit;
 }
 
+if ($action === 'site.update') {
+    $siteId = (int)($_POST['siteId'] ?? 0);
+    if ($siteId <= 0) { http_response_code(422); echo json_encode(['ok'=>false,'error'=>'SITE_ID_REQUIRED'], JSON_UNESCAPED_UNICODE); exit; }
+
+    // для серьёзного проекта: только ADMIN/OWNER
+    sb_require_admin($siteId);
+
+    $sites = sb_read_sites();
+    $idx = null;
+    foreach ($sites as $i => $s) {
+        if ((int)($s['id'] ?? 0) === $siteId) { $idx = $i; break; }
+    }
+    if ($idx === null) { http_response_code(404); echo json_encode(['ok'=>false,'error'=>'SITE_NOT_FOUND'], JSON_UNESCAPED_UNICODE); exit; }
+
+    $site = $sites[$idx];
+
+    // --- name ---
+    if (array_key_exists('name', $_POST)) {
+        $name = trim((string)$_POST['name']);
+        if ($name === '') { http_response_code(422); echo json_encode(['ok'=>false,'error'=>'NAME_REQUIRED'], JSON_UNESCAPED_UNICODE); exit; }
+        $site['name'] = $name;
+    }
+
+    // --- slug ---
+    if (array_key_exists('slug', $_POST)) {
+        $slugIn = trim((string)$_POST['slug']);
+        $baseName = (string)($site['name'] ?? ('site-'.$siteId));
+        $newSlug = ($slugIn === '') ? sb_slugify($baseName) : sb_slugify($slugIn);
+
+        // уникальность slug среди сайтов
+        $existing = [];
+        foreach ($sites as $s) {
+            if ((int)($s['id'] ?? 0) === $siteId) continue;
+            $existing[] = (string)($s['slug'] ?? '');
+        }
+        $base = $newSlug; $k = 2;
+        while (in_array($newSlug, $existing, true)) { $newSlug = $base.'-'.$k; $k++; }
+
+        $site['slug'] = $newSlug;
+    }
+
+    // --- settings ---
+    $settings = (isset($site['settings']) && is_array($site['settings'])) ? $site['settings'] : [];
+
+    if (array_key_exists('containerWidth', $_POST)) {
+        $w = (int)$_POST['containerWidth'];
+        if ($w < 900) $w = 900;
+        if ($w > 1600) $w = 1600;
+        $settings['containerWidth'] = $w;
+    }
+
+    if (array_key_exists('accent', $_POST)) {
+        $accent = trim((string)$_POST['accent']);
+        if (!preg_match('~^#[0-9a-fA-F]{6}$~', $accent)) {
+            http_response_code(422);
+            echo json_encode(['ok'=>false,'error'=>'ACCENT_BAD_FORMAT'], JSON_UNESCAPED_UNICODE);
+            exit;
+        }
+        $settings['accent'] = strtoupper($accent);
+    }
+
+    if (array_key_exists('logoFileId', $_POST)) {
+        $logoFileId = (int)$_POST['logoFileId'];
+        if ($logoFileId <= 0) {
+            $settings['logoFileId'] = 0;
+        } else {
+            // файл должен лежать в папке сайта на диске
+            if (!sb_disk_file_belongs_to_site($siteId, $logoFileId)) {
+                http_response_code(422);
+                echo json_encode(['ok'=>false,'error'=>'LOGO_NOT_IN_SITE_FOLDER','fileId'=>$logoFileId], JSON_UNESCAPED_UNICODE);
+                exit;
+            }
+            $settings['logoFileId'] = $logoFileId;
+        }
+    }
+
+    $site['settings'] = $settings;
+
+    // --- homePageId (optional) ---
+    if (array_key_exists('homePageId', $_POST)) {
+        $homePageId = (int)$_POST['homePageId'];
+        if ($homePageId <= 0) {
+            $site['homePageId'] = 0;
+        } else {
+            $p = sb_find_page($homePageId);
+            if (!$p || (int)($p['siteId'] ?? 0) !== $siteId) {
+                http_response_code(422);
+                echo json_encode(['ok'=>false,'error'=>'HOME_PAGE_NOT_IN_SITE'], JSON_UNESCAPED_UNICODE);
+                exit;
+            }
+            $site['homePageId'] = $homePageId;
+        }
+    }
+
+    // --- topMenuId (optional) ---
+    if (array_key_exists('topMenuId', $_POST)) {
+        $topMenuId = (int)$_POST['topMenuId'];
+        if ($topMenuId <= 0) {
+            $site['topMenuId'] = 0;
+        } else {
+            // проверим, что такое меню есть у сайта
+            $menusAll = sb_read_menus();
+            $exists = false;
+            foreach ($menusAll as $rec) {
+                if ((int)($rec['siteId'] ?? 0) !== $siteId) continue;
+                $menus = $rec['menus'] ?? [];
+                if (!is_array($menus)) break;
+                foreach ($menus as $m) {
+                    if ((int)($m['id'] ?? 0) === $topMenuId) { $exists = true; break; }
+                }
+                break;
+            }
+            if (!$exists) {
+                http_response_code(422);
+                echo json_encode(['ok'=>false,'error'=>'TOP_MENU_NOT_FOUND'], JSON_UNESCAPED_UNICODE);
+                exit;
+            }
+            $site['topMenuId'] = $topMenuId;
+        }
+    }
+
+    $site['updatedAt'] = date('c');
+    $site['updatedBy'] = (int)$USER->GetID();
+
+    $sites[$idx] = $site;
+    sb_write_sites($sites);
+
+    echo json_encode(['ok'=>true,'site'=>$site], JSON_UNESCAPED_UNICODE);
+    exit;
+}
+
+if ($action === 'site.get') {
+    $siteId = (int)($_POST['siteId'] ?? 0);
+    if ($siteId <= 0) {
+        http_response_code(422);
+        echo json_encode(['ok'=>false,'error'=>'SITE_ID_REQUIRED'], JSON_UNESCAPED_UNICODE);
+        exit;
+    }
+
+    sb_require_viewer($siteId);
+
+    $sites = sb_read_sites();
+    foreach ($sites as $s) {
+        if ((int)($s['id'] ?? 0) === $siteId) {
+            echo json_encode(['ok'=>true,'site'=>$s], JSON_UNESCAPED_UNICODE);
+            exit;
+        }
+    }
+
+    http_response_code(404);
+    echo json_encode(['ok'=>false,'error'=>'SITE_NOT_FOUND'], JSON_UNESCAPED_UNICODE);
+    exit;
+}
+
 if ($action === 'site.create') {
     $name = trim((string)($_POST['name'] ?? ''));
     if ($name === '') {
@@ -583,6 +744,14 @@ if ($action === 'site.create') {
         'createdBy' => (int)$USER->GetID(),
         'createdAt' => date('c'),
         'diskFolderId' => 0,
+
+        // NEW: какое меню считать верхним (0 = не задано)
+        'topMenuId' => 0,
+        'settings' => [
+            'containerWidth' => 1100,
+            'accent' => '#2563eb',
+            'logoFileId' => 0,
+        ],
     ];
 
     $sites[] = $site;
@@ -1647,7 +1816,13 @@ if ($action === 'menu.list') {
     }
     unset($m);
 
-    echo json_encode(['ok' => true, 'menus' => $menus], JSON_UNESCAPED_UNICODE);
+    $sites = sb_read_sites();
+    $topMenuId = 0;
+    foreach ($sites as $s) {
+        if ((int)($s['id'] ?? 0) === $siteId) { $topMenuId = (int)($s['topMenuId'] ?? 0); break; }
+    }
+
+    echo json_encode(['ok' => true, 'menus' => $menus, 'topMenuId' => $topMenuId], JSON_UNESCAPED_UNICODE);
     exit;
 }
 
@@ -1676,6 +1851,47 @@ if ($action === 'menu.create') {
     $rec['menus'][] = $menu;
     sb_menu_upsert_site_record($all, $siteId, $rec);
     sb_write_menus($all);
+
+    // если это первое меню у сайта — сделаем его верхним (topMenuId)
+    try {
+        $sites = sb_read_sites();
+        $changed = false;
+        foreach ($sites as &$s) {
+            if ((int)($s['id'] ?? 0) === $siteId) {
+                $curTop = (int)($s['topMenuId'] ?? 0);
+                if ($curTop <= 0) {
+                    $s['topMenuId'] = (int)$menuId;
+                    $s['updatedAt'] = date('c');
+                    $s['updatedBy'] = (int)$USER->GetID();
+                    $changed = true;
+                }
+                break;
+            }
+        }
+        unset($s);
+        if ($changed) sb_write_sites($sites);
+    } catch (\Throwable $e) {
+        // молча, это не критично
+    }
+
+    // NEW: если topMenuId еще не задан — сделать первое меню верхним
+    $sites = sb_read_sites();
+    $changedSite = false;
+    foreach ($sites as &$s) {
+        if ((int)($s['id'] ?? 0) === $siteId) {
+            $top = (int)($s['topMenuId'] ?? 0);
+            if ($top <= 0) {
+                $s['topMenuId'] = (int)$menuId;
+                $s['updatedAt'] = date('c');
+                $s['updatedBy'] = (int)$USER->GetID();
+                $changedSite = true;
+            }
+            break;
+        }
+    }
+    unset($s);
+
+    if ($changedSite) sb_write_sites($sites);
 
     echo json_encode(['ok' => true, 'menu' => $menu], JSON_UNESCAPED_UNICODE);
     exit;
@@ -1707,6 +1923,180 @@ if ($action === 'menu.update') {
     sb_write_menus($all);
 
     echo json_encode(['ok' => true], JSON_UNESCAPED_UNICODE);
+    exit;
+}
+
+// menu.delete (EDITOR+): удалить меню целиком
+if ($action === 'menu.delete') {
+    $siteId = (int)($_POST['siteId'] ?? 0);
+    $menuId = (int)($_POST['menuId'] ?? 0);
+
+    if ($siteId <= 0) { http_response_code(422); echo json_encode(['ok'=>false,'error'=>'SITE_ID_REQUIRED'], JSON_UNESCAPED_UNICODE); exit; }
+    if ($menuId <= 0) { http_response_code(422); echo json_encode(['ok'=>false,'error'=>'MENU_ID_REQUIRED'], JSON_UNESCAPED_UNICODE); exit; }
+
+    sb_require_editor($siteId);
+
+    // удаляем меню из menus.json
+    $all = sb_read_menus();
+    $rec = sb_menu_get_site_record($all, $siteId);
+    if (!$rec) { http_response_code(404); echo json_encode(['ok'=>false,'error'=>'MENU_NOT_FOUND'], JSON_UNESCAPED_UNICODE); exit; }
+
+    $menus = $rec['menus'] ?? [];
+    $before = count($menus);
+    $menus = array_values(array_filter($menus, fn($m) => (int)($m['id'] ?? 0) !== $menuId));
+    if (count($menus) === $before) {
+        http_response_code(404);
+        echo json_encode(['ok'=>false,'error'=>'MENU_NOT_FOUND'], JSON_UNESCAPED_UNICODE);
+        exit;
+    }
+
+    $rec['menus'] = $menus;
+    sb_menu_upsert_site_record($all, $siteId, $rec);
+    sb_write_menus($all);
+
+    // если это меню было верхним — сбрасываем topMenuId
+    $sites = sb_read_sites();
+    foreach ($sites as &$s) {
+        if ((int)($s['id'] ?? 0) === $siteId) {
+            $top = (int)($s['topMenuId'] ?? 0);
+            if ($top === $menuId) {
+                $s['topMenuId'] = 0;
+                $s['updatedAt'] = date('c');
+                $s['updatedBy'] = (int)$USER->GetID();
+            }
+            break;
+        }
+    }
+    unset($s);
+    sb_write_sites($sites);
+
+    echo json_encode(['ok'=>true], JSON_UNESCAPED_UNICODE);
+    exit;
+}
+
+// menu.setTop (EDITOR+): назначить меню верхним
+if ($action === 'menu.setTop') {
+    $siteId = (int)($_POST['siteId'] ?? 0);
+    $menuId = (int)($_POST['menuId'] ?? 0);
+
+    if ($siteId <= 0) { http_response_code(422); echo json_encode(['ok'=>false,'error'=>'SITE_ID_REQUIRED'], JSON_UNESCAPED_UNICODE); exit; }
+    if ($menuId <= 0) { http_response_code(422); echo json_encode(['ok'=>false,'error'=>'MENU_ID_REQUIRED'], JSON_UNESCAPED_UNICODE); exit; }
+
+    sb_require_editor($siteId);
+
+    // проверим, что такое меню вообще существует у сайта
+    $all = sb_read_menus();
+    $rec = sb_menu_get_site_record($all, $siteId);
+    if (!$rec) { http_response_code(404); echo json_encode(['ok'=>false,'error'=>'MENU_NOT_FOUND'], JSON_UNESCAPED_UNICODE); exit; }
+
+    $exists = false;
+    foreach (($rec['menus'] ?? []) as $m) {
+        if ((int)($m['id'] ?? 0) === $menuId) { $exists = true; break; }
+    }
+    if (!$exists) { http_response_code(404); echo json_encode(['ok'=>false,'error'=>'MENU_NOT_FOUND'], JSON_UNESCAPED_UNICODE); exit; }
+
+    // записываем topMenuId в sites.json
+    $sites = sb_read_sites();
+    $found = false;
+    foreach ($sites as &$s) {
+        if ((int)($s['id'] ?? 0) === $siteId) {
+            $s['topMenuId'] = $menuId;
+            $s['updatedAt'] = date('c');
+            $s['updatedBy'] = (int)$USER->GetID();
+            $found = true;
+            break;
+        }
+    }
+    unset($s);
+
+    if (!$found) { http_response_code(404); echo json_encode(['ok'=>false,'error'=>'SITE_NOT_FOUND'], JSON_UNESCAPED_UNICODE); exit; }
+
+    sb_write_sites($sites);
+
+    echo json_encode(['ok'=>true,'topMenuId'=>$menuId], JSON_UNESCAPED_UNICODE);
+    exit;
+}
+
+if ($action === 'menu.setTop') {
+    $siteId = (int)($_POST['siteId'] ?? 0);
+    $menuId = (int)($_POST['menuId'] ?? 0);
+
+    if ($siteId <= 0) { http_response_code(422); echo json_encode(['ok'=>false,'error'=>'SITE_ID_REQUIRED'], JSON_UNESCAPED_UNICODE); exit; }
+    if ($menuId <= 0) { http_response_code(422); echo json_encode(['ok'=>false,'error'=>'MENU_ID_REQUIRED'], JSON_UNESCAPED_UNICODE); exit; }
+
+    sb_require_editor($siteId);
+
+    // проверим, что такое меню реально существует у этого сайта
+    $all = sb_read_menus();
+    $rec = sb_menu_get_site_record($all, $siteId);
+    if (!$rec) { http_response_code(404); echo json_encode(['ok'=>false,'error'=>'MENU_NOT_FOUND'], JSON_UNESCAPED_UNICODE); exit; }
+
+    $found = false;
+    foreach (($rec['menus'] ?? []) as $m) {
+        if ((int)($m['id'] ?? 0) === $menuId) { $found = true; break; }
+    }
+    if (!$found) { http_response_code(404); echo json_encode(['ok'=>false,'error'=>'MENU_NOT_FOUND'], JSON_UNESCAPED_UNICODE); exit; }
+
+    // пишем topMenuId в sites.json
+    $sites = sb_read_sites();
+    $ok = false;
+    foreach ($sites as &$s) {
+        if ((int)($s['id'] ?? 0) === $siteId) {
+            $s['topMenuId'] = $menuId;
+            $s['updatedAt'] = date('c');
+            $s['updatedBy'] = (int)$USER->GetID();
+            $ok = true;
+            break;
+        }
+    }
+    unset($s);
+
+    if (!$ok) { http_response_code(404); echo json_encode(['ok'=>false,'error'=>'SITE_NOT_FOUND'], JSON_UNESCAPED_UNICODE); exit; }
+
+    sb_write_sites($sites);
+
+    echo json_encode(['ok'=>true,'topMenuId'=>$menuId], JSON_UNESCAPED_UNICODE);
+    exit;
+}
+
+// menu.setTop (EDITOR+): назначить верхнее меню сайта
+if ($action === 'menu.setTop') {
+    $siteId = (int)($_POST['siteId'] ?? 0);
+    $menuId = (int)($_POST['menuId'] ?? 0);
+
+    if ($siteId <= 0) { http_response_code(422); echo json_encode(['ok'=>false,'error'=>'SITE_ID_REQUIRED'], JSON_UNESCAPED_UNICODE); exit; }
+    if ($menuId <= 0) { http_response_code(422); echo json_encode(['ok'=>false,'error'=>'MENU_ID_REQUIRED'], JSON_UNESCAPED_UNICODE); exit; }
+
+    sb_require_editor($siteId);
+
+    // убедимся, что меню существует у этого сайта
+    $all = sb_read_menus();
+    $rec = sb_menu_get_site_record($all, $siteId);
+    if (!$rec) { http_response_code(404); echo json_encode(['ok'=>false,'error'=>'MENU_NOT_FOUND'], JSON_UNESCAPED_UNICODE); exit; }
+
+    $menu = sb_menu_find_menu($rec, $menuId);
+    if (!$menu) { http_response_code(404); echo json_encode(['ok'=>false,'error'=>'MENU_NOT_FOUND'], JSON_UNESCAPED_UNICODE); exit; }
+
+    // пишем в sites.json
+    $sites = sb_read_sites();
+    $found = false;
+
+    foreach ($sites as &$s) {
+        if ((int)($s['id'] ?? 0) === $siteId) {
+            $s['topMenuId'] = $menuId;
+            $s['updatedAt'] = date('c');
+            $s['updatedBy'] = (int)$USER->GetID();
+            $found = true;
+            break;
+        }
+    }
+    unset($s);
+
+    if (!$found) { http_response_code(404); echo json_encode(['ok'=>false,'error'=>'SITE_NOT_FOUND'], JSON_UNESCAPED_UNICODE); exit; }
+
+    sb_write_sites($sites);
+
+    echo json_encode(['ok'=>true], JSON_UNESCAPED_UNICODE);
     exit;
 }
 
@@ -2110,6 +2500,62 @@ if ($action === 'page.move') {
 
     sb_write_pages($pages);
     echo json_encode(['ok'=>true], JSON_UNESCAPED_UNICODE);
+    exit;
+}
+
+if ($action === 'site.setTopMenu') {
+    $siteId = (int)($_POST['siteId'] ?? 0);
+    $menuId = (int)($_POST['menuId'] ?? 0);
+
+    if ($siteId <= 0) { http_response_code(422); echo json_encode(['ok'=>false,'error'=>'SITE_ID_REQUIRED'], JSON_UNESCAPED_UNICODE); exit; }
+    if ($menuId <= 0) { http_response_code(422); echo json_encode(['ok'=>false,'error'=>'MENU_ID_REQUIRED'], JSON_UNESCAPED_UNICODE); exit; }
+
+    sb_require_editor($siteId);
+
+    // проверим, что меню реально принадлежит сайту
+    $all = sb_read_menus();
+    $rec = sb_menu_get_site_record($all, $siteId);
+    $menus = $rec ? ($rec['menus'] ?? []) : [];
+    $exists = false;
+    foreach ($menus as $m) {
+        if ((int)($m['id'] ?? 0) === $menuId) { $exists = true; break; }
+    }
+    if (!$exists) { http_response_code(404); echo json_encode(['ok'=>false,'error'=>'MENU_NOT_FOUND'], JSON_UNESCAPED_UNICODE); exit; }
+
+    $sites = sb_read_sites();
+    $found = false;
+    foreach ($sites as &$s) {
+        if ((int)($s['id'] ?? 0) === $siteId) {
+            $s['topMenuId'] = $menuId;
+            $s['updatedAt'] = date('c');
+            $s['updatedBy'] = (int)$USER->GetID();
+            $found = true;
+            break;
+        }
+    }
+    unset($s);
+
+    if (!$found) { http_response_code(404); echo json_encode(['ok'=>false,'error'=>'SITE_NOT_FOUND'], JSON_UNESCAPED_UNICODE); exit; }
+
+    sb_write_sites($sites);
+    echo json_encode(['ok'=>true], JSON_UNESCAPED_UNICODE);
+    exit;
+}
+
+if ($action === 'site.get') {
+    $siteId = (int)($_POST['siteId'] ?? 0);
+    if ($siteId <= 0) { http_response_code(422); echo json_encode(['ok'=>false,'error'=>'SITE_ID_REQUIRED'], JSON_UNESCAPED_UNICODE); exit; }
+    sb_require_viewer($siteId);
+
+    $sites = sb_read_sites();
+    foreach ($sites as $s) {
+        if ((int)($s['id'] ?? 0) === $siteId) {
+            echo json_encode(['ok'=>true,'site'=>$s], JSON_UNESCAPED_UNICODE);
+            exit;
+        }
+    }
+    http_response_code(404);
+    echo json_encode(['ok'=>false,'error'=>'SITE_NOT_FOUND'], JSON_UNESCAPED_UNICODE);
     exit;
 }
 
