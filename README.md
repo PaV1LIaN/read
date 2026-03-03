@@ -1,463 +1,185 @@
-Отлично. Тогда следующий шаг — **`settings.php` + `api.site.update`** (и чуть-чуть дополним структуру сайта в `sites.json`, но без ломания обратной совместимости).
+Ок, делаем **применение настроек из `sites.json` в `view.php`**:
 
-Ниже даю:
+* `containerWidth` → ограничение ширины контента + центрирование
+* `accent` → цвет кнопок/активных элементов/ссылок
+* `logoFileId` → логотип в шапке (если задан)
 
-1. **что именно будем хранить в site**
-2. **готовый код для `api.site.update`** (вставка в `api.php`)
-3. **готовый `settings.php` целиком** (страница настроек сайта)
-
----
-
-## 1) Что добавим в `sites.json` (мягко, без обязательности)
-
-Мы добавим поле `settings` (если его нет — считаем дефолт):
-
-```json
-{
-  "settings": {
-    "containerWidth": 1100,
-    "accent": "#2563eb",
-    "logoFileId": 0
-  }
-}
-```
-
-Ничего старого не ломает: если `settings` отсутствует — `view.php` просто использует свои дефолты (у тебя сейчас так и есть).
+Ниже даю **точечные вставки** (чтобы не пересылать весь файл).
 
 ---
 
-## 2) Вставь в `api.php`: `site.update`
+## 1) PHP: достаём settings (вверху, после `$topMenuId`)
 
-Вставь этот блок **рядом с другими site.* экшенами** (логично: после `site.get` или после `site.setHome` — не важно, главное ДО финального `UNKNOWN_ACTION`).
-
-```php
-// site.update (EDITOR+)
-if ($action === 'site.update') {
-    $siteId = (int)($_POST['siteId'] ?? 0);
-    if ($siteId <= 0) {
-        http_response_code(422);
-        echo json_encode(['ok'=>false,'error'=>'SITE_ID_REQUIRED'], JSON_UNESCAPED_UNICODE);
-        exit;
-    }
-
-    sb_require_editor($siteId);
-
-    $name = trim((string)($_POST['name'] ?? ''));
-    $slugIn = trim((string)($_POST['slug'] ?? ''));
-
-    $containerWidth = (int)($_POST['containerWidth'] ?? 0);
-    $accent = trim((string)($_POST['accent'] ?? ''));
-    $logoFileId = (int)($_POST['logoFileId'] ?? 0);
-
-    // валидация name/slug
-    if ($name === '') {
-        http_response_code(422);
-        echo json_encode(['ok'=>false,'error'=>'NAME_REQUIRED'], JSON_UNESCAPED_UNICODE);
-        exit;
-    }
-
-    $slug = $slugIn !== '' ? sb_slugify($slugIn) : sb_slugify($name);
-
-    // проверка цвета (простая)
-    if ($accent !== '' && !preg_match('~^#[0-9a-fA-F]{6}$~', $accent)) {
-        http_response_code(422);
-        echo json_encode(['ok'=>false,'error'=>'ACCENT_BAD_FORMAT'], JSON_UNESCAPED_UNICODE);
-        exit;
-    }
-
-    // ширина контейнера (если 0 — оставим как есть/дефолт)
-    if ($containerWidth !== 0) {
-        if ($containerWidth < 900) $containerWidth = 900;
-        if ($containerWidth > 1600) $containerWidth = 1600;
-    }
-
-    // logoFileId опционально, но если задан — должен лежать в папке сайта
-    if ($logoFileId > 0) {
-        if (!sb_disk_file_belongs_to_site($siteId, $logoFileId)) {
-            http_response_code(422);
-            echo json_encode(['ok'=>false,'error'=>'FILE_NOT_IN_SITE_FOLDER','fileId'=>$logoFileId], JSON_UNESCAPED_UNICODE);
-            exit;
-        }
-    }
-
-    $sites = sb_read_sites();
-    $found = false;
-
-    // уникальность slug среди сайтов
-    $existing = array_map(fn($x) => (string)($x['slug'] ?? ''), array_filter($sites, fn($s) => (int)($s['id'] ?? 0) !== $siteId));
-    $base = $slug; $i = 2;
-    while (in_array($slug, $existing, true)) { $slug = $base.'-'.$i; $i++; }
-
-    foreach ($sites as &$s) {
-        if ((int)($s['id'] ?? 0) !== $siteId) continue;
-
-        $s['name'] = $name;
-        $s['slug'] = $slug;
-
-        // settings
-        if (!isset($s['settings']) || !is_array($s['settings'])) $s['settings'] = [];
-
-        if ($containerWidth !== 0) $s['settings']['containerWidth'] = $containerWidth;
-        if ($accent !== '') $s['settings']['accent'] = $accent;
-
-        // logo можно сбрасывать в 0
-        $s['settings']['logoFileId'] = $logoFileId;
-
-        $s['updatedAt'] = date('c');
-        $s['updatedBy'] = (int)$USER->GetID();
-
-        $found = true;
-        break;
-    }
-    unset($s);
-
-    if (!$found) {
-        http_response_code(404);
-        echo json_encode(['ok'=>false,'error'=>'SITE_NOT_FOUND'], JSON_UNESCAPED_UNICODE);
-        exit;
-    }
-
-    sb_write_sites($sites);
-
-    echo json_encode([
-        'ok' => true,
-        'siteId' => $siteId,
-        'name' => $name,
-        'slug' => $slug,
-    ], JSON_UNESCAPED_UNICODE);
-    exit;
-}
-```
-
-### Маленькое улучшение (желательно): дефолт settings при `site.create`
-
-В твоём `site.create` добавь в массив `$site`:
+Найди у себя в `view.php` строку:
 
 ```php
-'settings' => [
-  'containerWidth' => 1100,
-  'accent' => '#2563eb',
-  'logoFileId' => 0,
-],
+$topMenuId = (int)($site['topMenuId'] ?? 0);
 ```
 
-Это не обязательно, но красиво.
+СРАЗУ ПОСЛЕ неё вставь:
+
+```php
+$settings = (isset($site['settings']) && is_array($site['settings'])) ? $site['settings'] : [];
+
+$containerWidth = (int)($settings['containerWidth'] ?? 1100);
+if ($containerWidth < 900) $containerWidth = 900;
+if ($containerWidth > 1600) $containerWidth = 1600;
+
+$accent = (string)($settings['accent'] ?? '#2563eb');
+if (!preg_match('~^#[0-9a-fA-F]{6}$~', $accent)) $accent = '#2563eb';
+
+$logoFileId = (int)($settings['logoFileId'] ?? 0);
+```
 
 ---
 
-## 3) Готовый `settings.php` (целиком)
+## 2) CSS: добавляем переменные и контейнер
 
-Создай файл: **`/local/sitebuilder/settings.php`** и вставь:
+В `<style>` в `view.php` (в начале стилей) добавь:
 
-```php
-<?php
-define('NO_KEEP_STATISTIC', true);
-define('NO_AGENT_STATISTIC', true);
-define('DisableEventsCheck', true);
+```css
+:root{
+  --sb-accent: <?= h($accent) ?>;
+  --sb-container: <?= (int)$containerWidth ?>px;
+}
+```
 
-require $_SERVER['DOCUMENT_ROOT'].'/bitrix/modules/main/include/prolog_before.php';
+### Затем замени/добавь стили под контейнер и шапку
 
-global $USER, $APPLICATION;
+Найди `.top` и `.content` и **обнови/дополни** так:
 
-if (!$USER->IsAuthorized()) {
-    LocalRedirect('/auth/');
+```css
+.top {
+  background:#fff;
+  border-bottom:1px solid #e5e7ea;
+  padding:12px 16px;
+  display:flex;
+  gap:10px;
+  align-items:center;
+  flex-wrap:wrap;
 }
 
-header('Content-Type: text/html; charset=UTF-8');
+/* новый контейнер */
+.inner {
+  width: min(var(--sb-container), calc(100% - 32px));
+  margin: 0 auto;
+}
 
-\Bitrix\Main\UI\Extension::load([
-    'main.core',
-    'ui.buttons',
-    'ui.dialogs.messagebox',
-    'ui.notification',
-]);
+/* делаем top “двухслойным”: фон на всю ширину, контент по контейнеру */
+.topInner{
+  display:flex;
+  gap:10px;
+  align-items:center;
+  flex-wrap:wrap;
+}
 
-$siteId = (int)($_GET['siteId'] ?? 0);
-?>
-<!doctype html>
-<html lang="ru">
-<head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Настройки сайта</title>
-  <?php $APPLICATION->ShowHead(); ?>
-  <style>
-    body { font-family: Arial, sans-serif; margin:0; background:#f6f7f8; color:#111; }
-    .top { background:#fff; border-bottom:1px solid #e5e7ea; padding:12px 16px; display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
-    .content { padding: 18px; }
-    .card { background:#fff; border:1px solid #e5e7ea; border-radius:14px; padding:16px; }
-    .muted { color:#6a737f; }
-    a { color:#0b57d0; text-decoration:none; }
-    a:hover { text-decoration:underline; }
-    code { background:#f3f4f6; padding:2px 6px; border-radius:6px; }
+/* контент тоже в контейнер */
+.content { padding: 18px 0; }  /* было padding:18px; */
+```
 
-    .grid { display:grid; gap:12px; margin-top:12px; }
-    @media (min-width: 820px){ .grid { grid-template-columns: 1fr 1fr; } }
+### Accent применим к ссылкам/кнопкам/активным пунктам меню
 
-    .field { margin-top:10px; }
-    .field label { display:block; font-size:12px; color:#6a737f; margin-bottom:4px; }
-    .input, select { width:100%; padding:8px; border:1px solid #d0d7de; border-radius:10px; box-sizing:border-box; }
-    .row { display:flex; gap:10px; flex-wrap:wrap; align-items:center; justify-content:space-between; }
-    .preview { margin-top:12px; border:1px dashed #e5e7ea; border-radius:14px; padding:12px; background:#fafafa; }
-    .logoPrev { margin-top:10px; max-width:220px; border:1px solid #eee; border-radius:14px; overflow:hidden; background:#fff; }
-    .logoPrev img { display:block; width:100%; height:auto; }
-  </style>
-</head>
-<body>
-  <div class="top">
+Замени (или просто добавь ниже) эти правила:
+
+```css
+a { color: var(--sb-accent); text-decoration:none; }
+a:hover { text-decoration:underline; }
+
+.menu a.active { background: color-mix(in srgb, var(--sb-accent) 12%, #fff); font-weight:bold; }
+.sectionNavList a.active { background: color-mix(in srgb, var(--sb-accent) 12%, #fff); border-color: color-mix(in srgb, var(--sb-accent) 30%, #e5e7ea); font-weight:700; }
+
+.btn-primary { background: var(--sb-accent); color:#fff; border-color: var(--sb-accent); }
+```
+
+> `color-mix` работает в современных браузерах. Если хочешь 100% совместимость — скажи, сделаю без него.
+
+---
+
+## 3) HTML: оборачиваем шапку и контент в `.inner`
+
+### 3.1. Шапка
+
+Сейчас у тебя примерно так:
+
+```php
+<div class="top">
+  ...вся шапка...
+</div>
+```
+
+Сделай так (важно: добавили `inner` и `topInner`):
+
+```php
+<div class="top">
+  <div class="inner topInner">
+
+    <?php if ($logoFileId > 0): ?>
+      <a href="<?= h(viewUrl($siteId, (int)$pageId)) ?>" style="display:inline-flex;align-items:center;gap:10px;">
+        <img src="<?= h(downloadUrl($siteId, $logoFileId)) ?>" alt="logo"
+             style="height:28px;width:auto;display:block;border-radius:8px;border:1px solid #eee;background:#fff;">
+      </a>
+    <?php endif; ?>
+
     <a href="/local/sitebuilder/index.php">← Назад</a>
-    <div class="muted">Настройки сайта</div>
-    <div class="muted">|</div>
-    <div><b>siteId:</b> <code><?= (int)$siteId ?></code></div>
+    <div class="muted">/</div>
+    <div><b><?=h($site['name'])?></b></div>
+    <div class="muted">/</div>
+    <div><?=h($page['title'])?></div>
+
     <div style="flex:1;"></div>
-    <button class="ui-btn ui-btn-light" id="btnReload">Обновить</button>
-    <button class="ui-btn ui-btn-primary" id="btnSave">Сохранить</button>
+
+    <a href="/local/sitebuilder/editor.php?siteId=<?= (int)$siteId ?>&pageId=<?= (int)$pageId ?>" target="_blank">Редактор</a>
+    <a href="/local/sitebuilder/menu.php?siteId=<?= (int)$siteId ?>" target="_blank">Меню</a>
+
+    <div style="flex-basis:100%; height:0;"></div>
+
+    <?php if ($breadcrumbs && count($breadcrumbs) > 1): ?>
+      ... breadcrumbs ...
+    <?php endif; ?>
+
+    <div style="flex-basis:100%; height:0;"></div>
+
+    <?php if ($menuItems): ?>
+      ... menu ...
+    <?php else: ?>
+      ... fallback menu ...
+    <?php endif; ?>
+
   </div>
+</div>
+```
 
-  <div class="content">
+### 3.2. Контент
+
+Сейчас у тебя:
+
+```php
+<div class="content">
+  <div class="card"> ... </div>
+</div>
+```
+
+Сделай так:
+
+```php
+<div class="content">
+  <div class="inner">
     <div class="card">
-      <div class="muted">Здесь настраиваем внешний вид и базовые параметры сайта. Требуются права <b>EDITOR+</b>.</div>
-
-      <div class="grid">
-        <div>
-          <h3 style="margin:14px 0 0;">Основное</h3>
-
-          <div class="field">
-            <label>Название сайта</label>
-            <input id="f_name" class="input" placeholder="Название">
-          </div>
-
-          <div class="field">
-            <label>Slug</label>
-            <input id="f_slug" class="input" placeholder="slug (если пусто — пересчитаем)">
-          </div>
-
-          <div class="field">
-            <label>Верхнее меню</label>
-            <select id="f_topMenu" class="input">
-              <option value="0">— не выбрано —</option>
-            </select>
-            <div class="muted" style="margin-top:6px;font-size:12px;">Это то меню, которое показываем в view/public.</div>
-          </div>
-        </div>
-
-        <div>
-          <h3 style="margin:14px 0 0;">Визуал</h3>
-
-          <div class="field">
-            <label>Ширина контейнера (900..1600)</label>
-            <input id="f_container" class="input" type="number" min="900" max="1600" step="10" placeholder="1100">
-          </div>
-
-          <div class="field">
-            <label>Accent цвет (hex)</label>
-            <input id="f_accent" class="input" placeholder="#2563eb">
-          </div>
-
-          <div class="field">
-            <label>Логотип (файл из “Файлы” сайта)</label>
-            <select id="f_logo" class="input">
-              <option value="0">— без логотипа —</option>
-            </select>
-            <div id="logoPrev" class="logoPrev" style="display:none;">
-              <img id="logoPrevImg" src="" alt="">
-            </div>
-          </div>
-
-          <div class="preview" id="previewBox">
-            <div style="font-weight:800;">Превью</div>
-            <div class="muted" style="margin-top:6px;">Цвет и ширина применяются в будущем (в view/public), но мы уже проверяем визуально.</div>
-            <div style="margin-top:10px;">
-              <span style="display:inline-block;padding:8px 12px;border-radius:999px;border:1px solid #e5e7ea;background:#fff;">
-                Пример пилюли меню
-              </span>
-              <span id="accentDot" style="display:inline-block;width:10px;height:10px;border-radius:999px;margin-left:8px;vertical-align:middle;"></span>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <div style="margin-top:14px;" class="muted">
-        Подсказка: если хочешь, позже мы применим эти настройки в <code>view.php</code> и <code>public.php</code>.
-      </div>
+      ...
     </div>
   </div>
-
-<script>
-BX.ready(function(){
-  const siteId = <?= (int)$siteId ?>;
-
-  const fName = document.getElementById('f_name');
-  const fSlug = document.getElementById('f_slug');
-  const fTopMenu = document.getElementById('f_topMenu');
-
-  const fContainer = document.getElementById('f_container');
-  const fAccent = document.getElementById('f_accent');
-  const fLogo = document.getElementById('f_logo');
-
-  const btnReload = document.getElementById('btnReload');
-  const btnSave = document.getElementById('btnSave');
-
-  const logoPrev = document.getElementById('logoPrev');
-  const logoPrevImg = document.getElementById('logoPrevImg');
-  const accentDot = document.getElementById('accentDot');
-
-  function notify(msg){
-    BX.UI.Notification.Center.notify({ content: msg });
-  }
-
-  function api(action, data){
-    return new Promise((resolve, reject) => {
-      BX.ajax({
-        url: '/local/sitebuilder/api.php',
-        method: 'POST',
-        dataType: 'json',
-        data: Object.assign({ action, sessid: BX.bitrix_sessid() }, data || {}),
-        onsuccess: resolve,
-        onfailure: reject
-      });
-    });
-  }
-
-  function downloadUrl(fileId){
-    return `/local/sitebuilder/download.php?siteId=${siteId}&fileId=${fileId}`;
-  }
-
-  function applyPreview(){
-    const hex = (fAccent.value || '').trim();
-    accentDot.style.background = /^#[0-9a-fA-F]{6}$/.test(hex) ? hex : '#e5e7ea';
-  }
-
-  async function load(){
-    if (!siteId) { notify('siteId не задан'); return; }
-
-    let siteRes, menusRes, filesRes;
-    try {
-      [siteRes, menusRes, filesRes] = await Promise.all([
-        api('site.get', { siteId }),
-        api('menu.list', { siteId }),
-        api('file.list', { siteId })
-      ]);
-    } catch(e){
-      notify('Ошибка загрузки данных');
-      return;
-    }
-
-    if (!siteRes || siteRes.ok !== true) { notify('Не удалось получить site.get'); return; }
-    const site = siteRes.site || {};
-
-    const settings = (site.settings && typeof site.settings === 'object') ? site.settings : {};
-
-    fName.value = site.name || '';
-    fSlug.value = site.slug || '';
-
-    fContainer.value = settings.containerWidth || 1100;
-    fAccent.value = settings.accent || '#2563eb';
-
-    const topMenuId = parseInt(site.topMenuId || 0, 10) || 0;
-
-    // menus
-    const menus = (menusRes && menusRes.ok===true) ? (menusRes.menus||[]) : [];
-    fTopMenu.innerHTML = `<option value="0">— не выбрано —</option>` + menus.map(m => {
-      const id = parseInt(m.id||0,10);
-      const sel = id === topMenuId ? 'selected' : '';
-      return `<option value="${id}" ${sel}>${BX.util.htmlspecialchars(m.name || ('Меню #' + id))} (id ${id})</option>`;
-    }).join('');
-
-    // files for logo
-    const files = (filesRes && filesRes.ok===true) ? (filesRes.files||[]) : [];
-    const curLogoId = parseInt(settings.logoFileId || 0, 10) || 0;
-
-    fLogo.innerHTML = `<option value="0">— без логотипа —</option>` + files.map(f => {
-      const id = parseInt(f.id||0,10);
-      const sel = id === curLogoId ? 'selected' : '';
-      return `<option value="${id}" ${sel}>${BX.util.htmlspecialchars(f.name)} (id ${id})</option>`;
-    }).join('');
-
-    const setLogoPrev = () => {
-      const id = parseInt(fLogo.value||'0',10)||0;
-      if (!id) { logoPrev.style.display='none'; logoPrevImg.src=''; return; }
-      logoPrev.style.display='block';
-      logoPrevImg.src = downloadUrl(id);
-    };
-    setLogoPrev();
-
-    applyPreview();
-
-    fLogo.onchange = setLogoPrev;
-    fAccent.oninput = applyPreview;
-  }
-
-  async function save(){
-    const name = (fName.value || '').trim();
-    const slug = (fSlug.value || '').trim();
-    const topMenuId = parseInt(fTopMenu.value || '0', 10) || 0;
-
-    const containerWidth = parseInt(fContainer.value || '0', 10) || 0;
-    const accent = (fAccent.value || '').trim();
-    const logoFileId = parseInt(fLogo.value || '0', 10) || 0;
-
-    if (!name){ notify('Название не может быть пустым'); return; }
-
-    // 1) обновляем базу сайта + settings
-    let upd;
-    try{
-      upd = await api('site.update', { siteId, name, slug, containerWidth, accent, logoFileId });
-    }catch(e){
-      notify('Ошибка site.update');
-      return;
-    }
-    if (!upd || upd.ok !== true){
-      notify('Не удалось сохранить (возможно нет прав)');
-      return;
-    }
-
-    // 2) topMenuId — если у тебя уже есть отдельный menu.setTop — можно не трогать.
-    // Но мы сделаем напрямую через site.update, если ты это реализовал в нём позже.
-    // Сейчас topMenuId сохраняем отдельным action’ом, если он у тебя уже есть.
-    // Если нет — просто оставим на будущее.
-    // (Если хочешь — мы добавим в site.update поддержку topMenuId следующим шагом.)
-    if (topMenuId > 0) {
-      // у тебя уже есть menu.setTop -> он пишет в site.topMenuId.
-      try{
-        const r = await api('menu.setTop', { siteId, menuId: topMenuId });
-        if (r && r.ok === true) {
-          notify('Сохранено');
-          await load();
-          return;
-        }
-      }catch(e){
-        // не критично
-      }
-    }
-
-    notify('Сохранено');
-    await load();
-  }
-
-  btnReload.onclick = load;
-  btnSave.onclick = save;
-
-  load();
-});
-</script>
-
-</body>
-</html>
+</div>
 ```
-
-> Важно: `settings.php` использует **уже существующий** `menu.setTop`, который у тебя работает.
-> Если захочешь, мы позже расширим `site.update`, чтобы он тоже умел `topMenuId` напрямую (без второго вызова).
 
 ---
 
-## Что дальше после этого шага
+## 4) Проверка после правок (быстро)
 
-Ты сказал: “после этого переходим к settings.php + api.site.update” — мы это сделали.
+1. Открой `settings.php` → поменяй **Accent** на другой (например `#e11d48`) → сохрани
+2. Открой `view.php` страницы → активный пункт меню и кнопки должны стать новым цветом
+3. Поменяй **containerWidth** (например 1000/1400) → контент должен становиться уже/шире
+4. Выбери **logoFileId** → логотип появится слева в шапке
 
-Следующий логичный пункт (и он прям про визуал/возможности):
+---
 
-1. Применить `site.settings` в `view.php` (containerWidth + accent + logo)
-2. Потом то же в `public.php` (публичный рендер)
-
-Говори “ок”, и я дам точечные изменения в `view.php` (пару мест: CSS root + логотип в шапке), чтобы настройки реально влияли на внешний вид.
+Если ок — следующим шагом делаем то же самое в **`public.php`** (там самое важное: публичный доступ + применять `topMenuId`/settings без авторизации).
