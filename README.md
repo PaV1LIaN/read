@@ -1,347 +1,157 @@
-Отлично, `api.php` как раз то что нужно. Делаем “правильнее”: **`sites.json` хранит `topMenuId`**, и `view.php` показывает именно его (с fallback).
+Понял. Это классическая ситуация: **кнопки/селект “Вложить” рисуются внутри MessageBox динамически**, а обработчик либо **не навешан**, либо **навешан на элементы, которых ещё нет**, либо **не делается API-вызов `page.setParent`** (у тебя он есть в `api.php`, но UI в `index.php` из того что ты прислал — его вообще не вызывает).
 
-Ниже даю **готовые вставки/патчи** для трёх файлов: `api.php`, `menu.php`, `view.php`.
-(Старался минимально вмешиваться в твой код.)
+Сделаем правильно и “железобетонно”: **через делегирование событий `document.addEventListener('click', ...)`**, как у тебя уже сделано для удаления страницы.
 
----
-
-# 1) Правка `api.php`
-
-## 1.1. В `site.create` добавь поле `topMenuId`
-
-Найди блок:
-
-```php
-$site = [
-  'id' => $id,
-  'name' => $name,
-  'slug' => $slug,
-  'createdBy' => (int)$USER->GetID(),
-  'createdAt' => date('c'),
-  'diskFolderId' => 0,
-];
-```
-
-Замени на:
-
-```php
-$site = [
-    'id' => $id,
-    'name' => $name,
-    'slug' => $slug,
-    'createdBy' => (int)$USER->GetID(),
-    'createdAt' => date('c'),
-    'diskFolderId' => 0,
-
-    // NEW: какое меню считать верхним (0 = не задано)
-    'topMenuId' => 0,
-];
-```
+Ниже — готовый патч для `index.php` (JS-часть).
 
 ---
 
-## 1.2. Автовыбор “верхнего меню” при первом `menu.create` (не обязательно, но удобно)
+## 1) Добавь кнопки “Вложить” в список страниц
 
-В `menu.create` после того как ты сохранил `menus.json`:
-
-Сейчас у тебя конец `menu.create` такой:
-
-```php
-$rec['menus'][] = $menu;
-sb_menu_upsert_site_record($all, $siteId, $rec);
-sb_write_menus($all);
-
-echo json_encode(['ok' => true, 'menu' => $menu], JSON_UNESCAPED_UNICODE);
-exit;
-```
-
-Сделай так (добавим авто-проставление topMenuId, если ещё 0):
-
-```php
-$rec['menus'][] = $menu;
-sb_menu_upsert_site_record($all, $siteId, $rec);
-sb_write_menus($all);
-
-// NEW: если topMenuId еще не задан — сделать первое меню верхним
-$sites = sb_read_sites();
-$changedSite = false;
-foreach ($sites as &$s) {
-    if ((int)($s['id'] ?? 0) === $siteId) {
-        $top = (int)($s['topMenuId'] ?? 0);
-        if ($top <= 0) {
-            $s['topMenuId'] = (int)$menuId;
-            $s['updatedAt'] = date('c');
-            $s['updatedBy'] = (int)$USER->GetID();
-            $changedSite = true;
-        }
-        break;
-    }
-}
-unset($s);
-
-if ($changedSite) sb_write_sites($sites);
-
-echo json_encode(['ok' => true, 'menu' => $menu], JSON_UNESCAPED_UNICODE);
-exit;
-```
-
----
-
-## 1.3. Добавь новый action: `menu.setTop` (EDITOR+)
-
-Вставь этот блок **после `menu.update`** (или вообще внутри секции MENU — главное до финального UNKNOWN_ACTION):
-
-```php
-// menu.setTop (EDITOR+): назначить верхнее меню сайта
-if ($action === 'menu.setTop') {
-    $siteId = (int)($_POST['siteId'] ?? 0);
-    $menuId = (int)($_POST['menuId'] ?? 0);
-
-    if ($siteId <= 0) { http_response_code(422); echo json_encode(['ok'=>false,'error'=>'SITE_ID_REQUIRED'], JSON_UNESCAPED_UNICODE); exit; }
-    if ($menuId <= 0) { http_response_code(422); echo json_encode(['ok'=>false,'error'=>'MENU_ID_REQUIRED'], JSON_UNESCAPED_UNICODE); exit; }
-
-    sb_require_editor($siteId);
-
-    // убедимся, что меню существует у этого сайта
-    $all = sb_read_menus();
-    $rec = sb_menu_get_site_record($all, $siteId);
-    if (!$rec) { http_response_code(404); echo json_encode(['ok'=>false,'error'=>'MENU_NOT_FOUND'], JSON_UNESCAPED_UNICODE); exit; }
-
-    $menu = sb_menu_find_menu($rec, $menuId);
-    if (!$menu) { http_response_code(404); echo json_encode(['ok'=>false,'error'=>'MENU_NOT_FOUND'], JSON_UNESCAPED_UNICODE); exit; }
-
-    // пишем в sites.json
-    $sites = sb_read_sites();
-    $found = false;
-
-    foreach ($sites as &$s) {
-        if ((int)($s['id'] ?? 0) === $siteId) {
-            $s['topMenuId'] = $menuId;
-            $s['updatedAt'] = date('c');
-            $s['updatedBy'] = (int)$USER->GetID();
-            $found = true;
-            break;
-        }
-    }
-    unset($s);
-
-    if (!$found) { http_response_code(404); echo json_encode(['ok'=>false,'error'=>'SITE_NOT_FOUND'], JSON_UNESCAPED_UNICODE); exit; }
-
-    sb_write_sites($sites);
-
-    echo json_encode(['ok'=>true], JSON_UNESCAPED_UNICODE);
-    exit;
-}
-```
-
-✅ Всё. API готов.
-
----
-
-# 2) Правка `view.php` — брать меню по `topMenuId`
-
-Сейчас у тебя в `view.php` логика такая: “берём первое меню”.
-
-Нужно заменить на:
-
-* читаем `topMenuId` из `$site`
-* в `menus.json` ищем меню с этим id
-* если нет — fallback на первое меню как раньше
-
-## 2.1. Найди блок:
-
-```php
-// menu: take first menu for this site (if exists)
-$menuItems = [];
-foreach ($menusAll as $rec) {
-    if ((int)($rec['siteId'] ?? 0) === $siteId) {
-        $menus = $rec['menus'] ?? [];
-        if (is_array($menus) && count($menus) > 0) {
-            $first = $menus[0];
-            $menuItems = $first['items'] ?? [];
-            if (!is_array($menuItems)) $menuItems = [];
-            usort($menuItems, fn($a, $b) => (int)($a['sort'] ?? 0) <=> (int)($b['sort'] ?? 0));
-        }
-        break;
-    }
-}
-```
-
-## 2.2. Замени на:
-
-```php
-// menu: берем topMenuId из sites.json (fallback на первое меню)
-$menuItems = [];
-$topMenuId = (int)($site['topMenuId'] ?? 0);
-
-foreach ($menusAll as $rec) {
-    if ((int)($rec['siteId'] ?? 0) !== $siteId) continue;
-
-    $menus = $rec['menus'] ?? [];
-    if (!is_array($menus) || !count($menus)) break;
-
-    $picked = null;
-
-    // 1) пробуем найти по topMenuId
-    if ($topMenuId > 0) {
-        foreach ($menus as $m) {
-            if ((int)($m['id'] ?? 0) === $topMenuId) { $picked = $m; break; }
-        }
-    }
-
-    // 2) fallback на первое
-    if (!$picked) $picked = $menus[0];
-
-    $menuItems = $picked['items'] ?? [];
-    if (!is_array($menuItems)) $menuItems = [];
-    usort($menuItems, fn($a, $b) => (int)($a['sort'] ?? 0) <=> (int)($b['sort'] ?? 0));
-    break;
-}
-```
-
----
-
-# 3) Правка `menu.php` — кнопка “Сделать верхним”
-
-## 3.1. Перед `function render({menus, pages})` добавь переменную `topMenuId`
-
-Тебе нужно, чтобы `menu.php` знал текущий `topMenuId`.
-Проще всего: добавить API `site.get`… но у тебя его нет. Поэтому сделаем **лёгкий вариант**:
-
-* просто добавим в `menu.list` в `api.php` поле `topMenuId` (в ответе)
-* и `menu.php` будет показывать кнопку и подсветку
-
-### 3.1.1. Добавь в `api.php` в `menu.list` возврат topMenuId
-
-Найди `menu.list`:
-
-```php
-echo json_encode(['ok' => true, 'menus' => $menus], JSON_UNESCAPED_UNICODE);
-exit;
-```
-
-Замени на:
-
-```php
-$sites = sb_read_sites();
-$topMenuId = 0;
-foreach ($sites as $s) {
-    if ((int)($s['id'] ?? 0) === $siteId) { $topMenuId = (int)($s['topMenuId'] ?? 0); break; }
-}
-
-echo json_encode(['ok' => true, 'menus' => $menus, 'topMenuId' => $topMenuId], JSON_UNESCAPED_UNICODE);
-exit;
-```
-
----
-
-## 3.2. В `menu.php` обнови `loadAll()` чтобы возвращал `topMenuId`
-
-Найди:
+В функции `renderPages(container, pages)` найди где ты рисуешь действия:
 
 ```js
-async function loadAll() {
-  const [menusRes, pagesRes] = await Promise.all([
-    api('menu.list'),
-    api('page.list')
-  ]);
-  ...
-  return { menus: menusRes.menus || [], pages: pagesRes.pages || [] };
-}
+<td ...>
+  <a ...>Редактор</a>
+  <a ...>Открыть</a>
+  <button ... data-delete-page-id="...">Удалить</button>
+</td>
 ```
 
-Замени `return` на:
+Замени на вот так (добавим “Вложить” и “Сделать корневой”):
 
 ```js
-return {
-  menus: menusRes.menus || [],
-  pages: pagesRes.pages || [],
-  topMenuId: parseInt(menusRes.topMenuId || 0, 10) || 0
-};
+<td style="padding:8px;border-bottom:1px solid #eee; white-space:nowrap;">
+  <a class="ui-btn ui-btn-primary ui-btn-xs"
+     href="/local/sitebuilder/editor.php?siteId=${p.siteId}&pageId=${p.id}"
+     target="_blank">Редактор</a>
+
+  <a class="ui-btn ui-btn-light ui-btn-xs"
+     href="/local/sitebuilder/view.php?siteId=${p.siteId}&pageId=${p.id}"
+     target="_blank">Открыть</a>
+
+  <button class="ui-btn ui-btn-light ui-btn-xs"
+          data-page-nest-id="${p.id}"
+          data-page-nest-site-id="${p.siteId}">Вложить</button>
+
+  <button class="ui-btn ui-btn-light ui-btn-xs"
+          data-page-root-id="${p.id}"
+          data-page-root-site-id="${p.siteId}">Сделать корневой</button>
+
+  <button class="ui-btn ui-btn-danger ui-btn-xs"
+          data-delete-page-id="${p.id}"
+          data-delete-page-site-id="${p.siteId}">Удалить</button>
+</td>
 ```
+
+> Примечание: у тебя в `pages.json` есть `parentId`, но UI его не показывает. Позже добавим колонку “Родитель”, но сейчас главное — чтобы “вложить” заработало.
 
 ---
 
-## 3.3. В `render({menus, pages})` добавь `topMenuId` и кнопку
+## 2) Добавь обработчики кликов “Вложить” и “Сделать корневой”
 
-Найди сигнатуру:
+Внизу `index.php` у тебя уже есть:
 
 ```js
-function render({menus, pages}) {
+document.addEventListener('click', function (e) {
+  ... delete site ...
+  ... pages dialog ...
+  ... access dialog ...
+  ... delete page ...
+  ... delete access ...
+});
 ```
 
-Замени на:
+ВНУТРИ этого обработчика (лучше после блока удаления страницы, но до удаления access — не важно) вставь:
 
 ```js
-function render({menus, pages, topMenuId}) {
-```
+// ---------- PAGE NESTING (set parent) ----------
+const nestBtn = e.target.closest('[data-page-nest-id]');
+if (nestBtn) {
+  const pageId = parseInt(nestBtn.getAttribute('data-page-nest-id'), 10);
+  const siteId = parseInt(nestBtn.getAttribute('data-page-nest-site-id'), 10);
+  if (!pageId || !siteId) return;
 
-И внутри `menus.map(m => { ... })` в кнопки добавь:
-
-### было:
-
-```js
-<div class="btns">
-  <button class="ui-btn ui-btn-light ui-btn-xs" data-menu-rename="${m.id}">Переименовать</button>
-  <button class="ui-btn ui-btn-primary ui-btn-xs" data-item-add="${m.id}">+ Пункт</button>
-</div>
-```
-
-### сделай:
-
-```js
-<div class="btns">
-  ${parseInt(m.id,10) === (topMenuId||0)
-    ? `<span class="muted small" style="padding:6px 8px;">Верхнее меню</span>`
-    : `<button class="ui-btn ui-btn-success ui-btn-xs" data-menu-set-top="${m.id}">Сделать верхним</button>`
-  }
-  <button class="ui-btn ui-btn-light ui-btn-xs" data-menu-rename="${m.id}">Переименовать</button>
-  <button class="ui-btn ui-btn-primary ui-btn-xs" data-item-add="${m.id}">+ Пункт</button>
-</div>
-```
-
-(Если `ui-btn-success` у тебя не нравится — можно `ui-btn-primary`.)
-
----
-
-## 3.4. В обработчик кликов `document.addEventListener('click'...)` добавь обработку setTop
-
-В конце обработчика (рядом с rename/add/del/move) вставь:
-
-```js
-const st = e.target.closest('[data-menu-set-top]');
-if (st) {
-  const menuId = parseInt(st.getAttribute('data-menu-set-top'), 10);
-  api('menu.setTop', { menuId }).then(res => {
+  // возьмём список страниц, чтобы выбрать родителя
+  api('page.list', { siteId }).then(res => {
     if (!res || res.ok !== true) {
-      BX.UI.Notification.Center.notify({ content: 'Не удалось назначить верхнее меню (нужен EDITOR+)' });
+      BX.UI.Notification.Center.notify({ content: 'Не удалось загрузить страницы' });
       return;
     }
-    BX.UI.Notification.Center.notify({ content: 'Верхнее меню назначено' });
-    refresh();
-  }).catch(() => BX.UI.Notification.Center.notify({ content: 'Ошибка menu.setTop' }));
+    const pages = res.pages || [];
+    const options = pages
+      .filter(x => parseInt(x.id, 10) !== pageId) // нельзя вложить в саму себя
+      .map(x => `<option value="${x.id}">${BX.util.htmlspecialchars(x.title)} (id ${x.id})</option>`)
+      .join('');
+
+    BX.UI.Dialogs.MessageBox.show({
+      title: 'Вложить страницу #' + pageId,
+      message: `
+        <div class="muted" style="margin-bottom:8px;">Выбери родительскую страницу:</div>
+        <select id="sb_parent_id" style="width:100%; padding:8px; border:1px solid #d0d7de; border-radius:8px;">
+          <option value="0">— Корень —</option>
+          ${options}
+        </select>
+      `,
+      buttons: BX.UI.Dialogs.MessageBoxButtons.OK_CANCEL,
+      onOk: function(mb){
+        const parentId = parseInt(document.getElementById('sb_parent_id')?.value || '0', 10);
+
+        api('page.setParent', { id: pageId, parentId }).then(r => {
+          if (!r || r.ok !== true) {
+            BX.UI.Notification.Center.notify({ content: 'Не удалось изменить вложенность (нужен EDITOR+)' });
+            return;
+          }
+          BX.UI.Notification.Center.notify({ content: 'Вложенность сохранена' });
+          mb.close();
+
+          // если открыто окно страниц — перерисуем его
+          const pagesBox = document.getElementById('pagesBox');
+          if (pagesBox) loadPages(siteId, pagesBox);
+          loadSites();
+        }).catch(() => BX.UI.Notification.Center.notify({ content: 'Ошибка page.setParent' }));
+      }
+    });
+  });
+
+  return;
+}
+
+const rootBtn = e.target.closest('[data-page-root-id]');
+if (rootBtn) {
+  const pageId = parseInt(rootBtn.getAttribute('data-page-root-id'), 10);
+  const siteId = parseInt(rootBtn.getAttribute('data-page-root-site-id'), 10);
+  if (!pageId || !siteId) return;
+
+  api('page.setParent', { id: pageId, parentId: 0 }).then(r => {
+    if (!r || r.ok !== true) {
+      BX.UI.Notification.Center.notify({ content: 'Не удалось сделать корневой (нужен EDITOR+)' });
+      return;
+    }
+    BX.UI.Notification.Center.notify({ content: 'Страница стала корневой' });
+
+    const pagesBox = document.getElementById('pagesBox');
+    if (pagesBox) loadPages(siteId, pagesBox);
+    loadSites();
+  }).catch(() => BX.UI.Notification.Center.notify({ content: 'Ошибка page.setParent' }));
+
   return;
 }
 ```
 
 ---
 
-# Итого что получится
+## Почему “ничего не происходит” у тебя сейчас
 
-* При создании сайта: `topMenuId=0`
-* При создании первого меню: оно автоматически станет верхним (если ты вставил пункт 1.2)
-* В `menu.php` можно руками назначать “верхнее”
-* В `view.php` будет показываться именно оно
+Потому что:
+
+* либо кнопка “Вложить” есть, но **у неё нет обработчика**,
+* либо обработчик навешан напрямую на кнопку **до того как она появилась**,
+* либо обработчик есть, но **не делает `api('page.setParent', ...)`**,
+* либо `api('page.setParent')` вызывается, но **ты не обновляешь список страниц**, и кажется что “ничего не произошло”.
+
+Код выше закрывает все эти варианты.
 
 ---
 
-## Дальше
-
-Если хочешь — следующим шагом сделаем “красиво”:
-
-* выбор в `menu.php`: **где показывать меню** (top/footer/side)
-* возможность в `view.php` рендерить разные меню по позициям
-
-Но сначала проверь, что всё работает по патчу выше.
-
-Если после вставок что-то упадёт — просто пришли ошибку из консоли/ответ API, я точечно поправлю.
+Если после вставки всё равно “тишина” — в консоли будет ошибка (обычно `page.setParent UNKNOWN_ACTION` или 403). Скинь 1 строку из Network (ответ api.php) — и я точечно скажу, что именно блокирует (роль, параметры или action).
