@@ -87,6 +87,9 @@ function sb_write_access(array $access): void { sb_write_json_file('access.json'
 function sb_read_menus(): array { return sb_read_json_file('menus.json'); }
 function sb_write_menus(array $menus): void { sb_write_json_file('menus.json', $menus, 'Cannot open menus.json'); }
 
+function sb_read_templates(): array { return sb_read_json_file('templates.json'); }
+function sb_write_templates(array $templates): void { sb_write_json_file('templates.json', $templates, 'Cannot open templates.json'); }
+
 function sb_slugify(string $name): string {
     $slug = \CUtil::translit($name, 'ru', [
         'replace_space' => '-',
@@ -407,6 +410,119 @@ function sb_menu_update_menu(array &$siteRecord, int $menuId, callable $fn): boo
 
 $action = (string)($_POST['action'] ?? '');
 
+/** -------------------- TEMPLATE -------------------- */
+if ($action === 'template.list') {
+    $tpl = sb_read_templates();
+    usort($tpl, fn($a,$b) => strcmp((string)($b['createdAt'] ?? ''), (string)($a['createdAt'] ?? '')));
+    echo json_encode(['ok'=>true,'templates'=>$tpl], JSON_UNESCAPED_UNICODE);
+    exit;
+}
+
+if ($action === 'template.createFromPage') {
+    $siteId = (int)($_POST['siteId'] ?? 0);
+    $pageId = (int)($_POST['pageId'] ?? 0);
+    $name = trim((string)($_POST['name'] ?? ''));
+
+    if ($siteId<=0 || $pageId<=0) { http_response_code(422); echo json_encode(['ok'=>false,'error'=>'SITE_PAGE_REQUIRED'], JSON_UNESCAPED_UNICODE); exit; }
+    if ($name==='') { http_response_code(422); echo json_encode(['ok'=>false,'error'=>'NAME_REQUIRED'], JSON_UNESCAPED_UNICODE); exit; }
+
+    sb_require_editor($siteId);
+
+    $page = sb_find_page($pageId);
+    if (!$page || (int)($page['siteId'] ?? 0) !== $siteId) { http_response_code(404); echo json_encode(['ok'=>false,'error'=>'PAGE_NOT_FOUND'], JSON_UNESCAPED_UNICODE); exit; }
+
+    $blocks = sb_read_blocks();
+    $pageBlocks = array_values(array_filter($blocks, fn($b)=> (int)($b['pageId'] ?? 0) === $pageId));
+    usort($pageBlocks, fn($a,$b)=> (int)($a['sort'] ?? 500) <=> (int)($b['sort'] ?? 500));
+
+    $snapshot = [];
+    foreach ($pageBlocks as $b) {
+        $snapshot[] = [
+            'type' => (string)($b['type'] ?? 'text'),
+            'sort' => (int)($b['sort'] ?? 500),
+            'content' => is_array($b['content'] ?? null) ? $b['content'] : [],
+        ];
+    }
+
+    $tpl = sb_read_templates();
+    $maxId = 0; foreach ($tpl as $t) $maxId = max($maxId, (int)($t['id'] ?? 0));
+    $id = $maxId + 1;
+
+    $record = [
+        'id' => $id,
+        'name' => $name,
+        'createdAt' => date('c'),
+        'createdBy' => (int)$USER->GetID(),
+        'blocks' => $snapshot,
+    ];
+
+    $tpl[] = $record;
+    sb_write_templates($tpl);
+
+    echo json_encode(['ok'=>true,'template'=>$record], JSON_UNESCAPED_UNICODE);
+    exit;
+}
+
+if ($action === 'template.applyToPage') {
+    $siteId = (int)($_POST['siteId'] ?? 0);
+    $pageId = (int)($_POST['pageId'] ?? 0);
+    $tplId  = (int)($_POST['templateId'] ?? 0);
+    $mode   = (string)($_POST['mode'] ?? 'append');
+
+    if ($siteId<=0 || $pageId<=0 || $tplId<=0) { http_response_code(422); echo json_encode(['ok'=>false,'error'=>'PARAMS_REQUIRED'], JSON_UNESCAPED_UNICODE); exit; }
+    if ($mode !== 'append' && $mode !== 'replace') $mode = 'append';
+
+    sb_require_editor($siteId);
+
+    $page = sb_find_page($pageId);
+    if (!$page || (int)($page['siteId'] ?? 0) !== $siteId) { http_response_code(404); echo json_encode(['ok'=>false,'error'=>'PAGE_NOT_FOUND'], JSON_UNESCAPED_UNICODE); exit; }
+
+    $tplAll = sb_read_templates();
+    $tpl = null;
+    foreach ($tplAll as $t) if ((int)($t['id'] ?? 0) === $tplId) { $tpl = $t; break; }
+    if (!$tpl) { http_response_code(404); echo json_encode(['ok'=>false,'error'=>'TEMPLATE_NOT_FOUND'], JSON_UNESCAPED_UNICODE); exit; }
+
+    $blocks = sb_read_blocks();
+
+    // очистка старых блоков
+    if ($mode === 'replace') {
+        $blocks = array_values(array_filter($blocks, fn($b)=> (int)($b['pageId'] ?? 0) !== $pageId));
+    }
+
+    // вычислим новые id и sort
+    $maxId = 0; foreach ($blocks as $b) $maxId = max($maxId, (int)($b['id'] ?? 0));
+    $nextId = $maxId + 1;
+
+    $maxSort = 0;
+    foreach ($blocks as $b) if ((int)($b['pageId'] ?? 0) === $pageId) $maxSort = max($maxSort, (int)($b['sort'] ?? 0));
+    $baseSort = ($mode === 'append') ? ($maxSort + 10) : 10;
+
+    $tplBlocks = is_array($tpl['blocks'] ?? null) ? $tpl['blocks'] : [];
+    $i = 0;
+
+    foreach ($tplBlocks as $tb) {
+        if (!is_array($tb)) continue;
+        $type = (string)($tb['type'] ?? 'text');
+        $content = is_array($tb['content'] ?? null) ? $tb['content'] : [];
+
+        $blocks[] = [
+            'id' => $nextId++,
+            'pageId' => $pageId,
+            'type' => $type,
+            'sort' => $baseSort + ($i * 10),
+            'content' => $content,
+            'createdBy' => (int)$USER->GetID(),
+            'createdAt' => date('c'),
+            'updatedAt' => date('c'),
+        ];
+        $i++;
+    }
+
+    sb_write_blocks($blocks);
+    echo json_encode(['ok'=>true,'added'=>$i], JSON_UNESCAPED_UNICODE);
+    exit;
+}
+
 // ping
 if ($action === 'ping') {
     echo json_encode([
@@ -525,6 +641,44 @@ if ($action === 'site.delete') {
     exit;
 }
 
+// Домашняя страница
+if ($action === 'site.setHome') {
+    $siteId = (int)($_POST['siteId'] ?? 0);
+    $pageId = (int)($_POST['pageId'] ?? 0);
+
+    if ($siteId <= 0 || $pageId <= 0) { http_response_code(422); echo json_encode(['ok'=>false,'error'=>'SITE_PAGE_REQUIRED'], JSON_UNESCAPED_UNICODE); exit; }
+
+    // только editor+ (или owner, решишь сам)
+    sb_require_editor($siteId);
+
+    $page = sb_find_page($pageId);
+    if (!$page || (int)($page['siteId'] ?? 0) !== $siteId) {
+        http_response_code(422);
+        echo json_encode(['ok'=>false,'error'=>'PAGE_NOT_IN_SITE'], JSON_UNESCAPED_UNICODE);
+        exit;
+    }
+
+    $sites = sb_read_sites();
+    $found = false;
+
+    foreach ($sites as &$s) {
+        if ((int)($s['id'] ?? 0) === $siteId) {
+            $s['homePageId'] = $pageId;
+            $s['updatedAt'] = date('c');
+            $s['updatedBy'] = (int)$USER->GetID();
+            $found = true;
+            break;
+        }
+    }
+    unset($s);
+
+    if (!$found) { http_response_code(404); echo json_encode(['ok'=>false,'error'=>'SITE_NOT_FOUND'], JSON_UNESCAPED_UNICODE); exit; }
+
+    sb_write_sites($sites);
+    echo json_encode(['ok'=>true], JSON_UNESCAPED_UNICODE);
+    exit;
+}
+
 /** -------------------- PAGES -------------------- */
 
 if ($action === 'page.list') {
@@ -622,35 +776,262 @@ if ($action === 'block.create') {
     $pageId = (int)($_POST['pageId'] ?? 0);
     $type   = trim((string)($_POST['type'] ?? 'text'));
 
-    if ($pageId <= 0) { http_response_code(422); echo json_encode(['ok'=>false,'error'=>'PAGE_ID_REQUIRED'], JSON_UNESCAPED_UNICODE); exit; }
-    if (!in_array($type, ['text','image'], true)) { http_response_code(422); echo json_encode(['ok'=>false,'error'=>'TYPE_NOT_SUPPORTED'], JSON_UNESCAPED_UNICODE); exit; }
+    if ($pageId <= 0) {
+        http_response_code(422);
+        echo json_encode(['ok'=>false,'error'=>'PAGE_ID_REQUIRED'], JSON_UNESCAPED_UNICODE);
+        exit;
+    }
+
+    // ДОБАВИЛИ button
+    if (!in_array($type, ['text','image','button', 'heading', 'columns2', 'gallery', 'spacer', 'card', 'cards'], true)) {
+        http_response_code(422);
+        echo json_encode(['ok'=>false,'error'=>'TYPE_NOT_SUPPORTED'], JSON_UNESCAPED_UNICODE);
+        exit;
+    }
 
     $page = sb_find_page($pageId);
-    if (!$page) { http_response_code(404); echo json_encode(['ok'=>false,'error'=>'PAGE_NOT_FOUND'], JSON_UNESCAPED_UNICODE); exit; }
+    if (!$page) {
+        http_response_code(404);
+        echo json_encode(['ok'=>false,'error'=>'PAGE_NOT_FOUND'], JSON_UNESCAPED_UNICODE);
+        exit;
+    }
     $siteId = (int)($page['siteId'] ?? 0);
     sb_require_editor($siteId);
 
     $blocks = sb_read_blocks();
-    $maxId = 0; foreach ($blocks as $b) $maxId = max($maxId, (int)($b['id'] ?? 0));
+    $maxId = 0;
+    foreach ($blocks as $b) $maxId = max($maxId, (int)($b['id'] ?? 0));
     $id = $maxId + 1;
 
-    $maxSort = 0; foreach ($blocks as $b) if ((int)($b['pageId'] ?? 0) === $pageId) $maxSort = max($maxSort, (int)($b['sort'] ?? 0));
+    $maxSort = 0;
+    foreach ($blocks as $b) {
+        if ((int)($b['pageId'] ?? 0) === $pageId) {
+            $maxSort = max($maxSort, (int)($b['sort'] ?? 0));
+        }
+    }
     $sort = $maxSort + 10;
 
     $content = [];
+
     if ($type === 'text') {
         $content = ['text' => (string)($_POST['text'] ?? '')];
-    } else { // image
+
+    } elseif ($type === 'image') {
         $fileId = (int)($_POST['fileId'] ?? 0);
         $alt = (string)($_POST['alt'] ?? '');
-        if ($fileId <= 0) { http_response_code(422); echo json_encode(['ok'=>false,'error'=>'FILE_ID_REQUIRED'], JSON_UNESCAPED_UNICODE); exit; }
+
+        if ($fileId <= 0) {
+            http_response_code(422);
+            echo json_encode(['ok'=>false,'error'=>'FILE_ID_REQUIRED'], JSON_UNESCAPED_UNICODE);
+            exit;
+        }
         if (!sb_disk_file_belongs_to_site($siteId, $fileId)) {
             http_response_code(422);
             echo json_encode(['ok'=>false,'error'=>'FILE_NOT_IN_SITE_FOLDER'], JSON_UNESCAPED_UNICODE);
             exit;
         }
+
         $content = ['fileId' => $fileId, 'alt' => $alt];
-    }
+
+    } elseif ($type === 'heading') {
+        $text = trim((string)($_POST['text'] ?? ''));
+        $level = strtolower(trim((string)($_POST['level'] ?? 'h2')));
+        $align = strtolower(trim((string)($_POST['align'] ?? 'left')));
+
+        if ($text === '') {
+            http_response_code(422);
+            echo json_encode(['ok'=>false,'error'=>'TEXT_REQUIRED'], JSON_UNESCAPED_UNICODE);
+            exit;
+        }
+        if (!in_array($level, ['h1','h2','h3'], true)) $level = 'h2';
+        if (!in_array($align, ['left','center','right'], true)) $align = 'left';
+
+        $content = ['text' => $text, 'level' => $level, 'align' => $align];
+
+
+
+    } elseif ($type === 'columns2') {
+        $left  = (string)($_POST['left'] ?? '');
+        $right = (string)($_POST['right'] ?? '');
+        $ratio = (string)($_POST['ratio'] ?? '50-50');
+
+        $ratio = trim($ratio);
+        if (!in_array($ratio, ['50-50','33-67','67-33'], true)) $ratio = '50-50';
+
+        $content = [
+            'left' => $left,
+            'right' => $right,
+            'ratio' => $ratio,
+        ];
+
+
+
+    } elseif ($type === 'gallery') {
+        $columns = (int)($_POST['columns'] ?? 3);
+        if (!in_array($columns, [2,3,4], true)) $columns = 3;
+
+        $imagesJson = (string)($_POST['images'] ?? '[]');
+        $images = json_decode($imagesJson, true);
+        if (!is_array($images)) $images = [];
+
+        // нормализуем + проверяем, что файлы лежат в папке сайта
+        $clean = [];
+        foreach ($images as $it) {
+            if (!is_array($it)) continue;
+            $fid = (int)($it['fileId'] ?? 0);
+            if ($fid <= 0) continue;
+
+            if (!sb_disk_file_belongs_to_site($siteId, $fid)) {
+                http_response_code(422);
+                echo json_encode(['ok'=>false,'error'=>'FILE_NOT_IN_SITE_FOLDER','fileId'=>$fid], JSON_UNESCAPED_UNICODE);
+                exit;
+            }
+
+            $clean[] = [
+                'fileId' => $fid,
+                'alt' => (string)($it['alt'] ?? ''),
+            ];
+        }
+
+        if (count($clean) === 0) {
+            http_response_code(422);
+            echo json_encode(['ok'=>false,'error'=>'IMAGES_REQUIRED'], JSON_UNESCAPED_UNICODE);
+            exit;
+        }
+
+        $content = [
+            'columns' => $columns,
+            'images' => $clean,
+        ];
+
+    } elseif ($type === 'spacer') {
+        $height = (int)($_POST['height'] ?? 40);
+        if ($height < 10) $height = 10;
+        if ($height > 200) $height = 200;
+
+        $line = (string)($_POST['line'] ?? '0');
+        $line = ($line === '1' || $line === 'true');
+
+        $content = ['height' => $height, 'line' => $line];
+
+
+
+    } elseif ($type === 'card') {
+        $title = trim((string)($_POST['title'] ?? ''));
+        $text  = (string)($_POST['text'] ?? '');
+
+        $imageFileId = (int)($_POST['imageFileId'] ?? 0);
+
+        $buttonText = trim((string)($_POST['buttonText'] ?? ''));
+        $buttonUrl  = trim((string)($_POST['buttonUrl'] ?? ''));
+
+        if ($title === '') {
+            http_response_code(422);
+            echo json_encode(['ok'=>false,'error'=>'TITLE_REQUIRED'], JSON_UNESCAPED_UNICODE);
+            exit;
+        }
+
+        // картинка опционально, но если задана — должна быть в папке сайта
+        if ($imageFileId > 0 && !sb_disk_file_belongs_to_site($siteId, $imageFileId)) {
+            http_response_code(422);
+            echo json_encode(['ok'=>false,'error'=>'FILE_NOT_IN_SITE_FOLDER','fileId'=>$imageFileId], JSON_UNESCAPED_UNICODE);
+            exit;
+        }
+
+        // кнопка опционально, но если задан URL — проверим формат
+        if ($buttonUrl !== '' && !(preg_match('~^https?://~i', $buttonUrl) || str_starts_with($buttonUrl, '/'))) {
+            http_response_code(422);
+            echo json_encode(['ok'=>false,'error'=>'URL_BAD_FORMAT'], JSON_UNESCAPED_UNICODE);
+            exit;
+        }
+
+        $content = [
+            'title' => $title,
+            'text' => $text,
+            'imageFileId' => $imageFileId,
+            'buttonText' => $buttonText,
+            'buttonUrl' => $buttonUrl,
+        ];
+
+    } elseif ($type === 'cards') {
+        $columns = (int)($_POST['columns'] ?? 3);
+        if (!in_array($columns, [2,3,4], true)) $columns = 3;
+
+        $itemsJson = (string)($_POST['items'] ?? '[]');
+        $items = json_decode($itemsJson, true);
+        if (!is_array($items)) $items = [];
+
+        $clean = [];
+        foreach ($items as $it) {
+            if (!is_array($it)) continue;
+
+            $title = trim((string)($it['title'] ?? ''));
+            $text  = (string)($it['text'] ?? '');
+
+            if ($title === '') continue; // минимум — заголовок
+
+            $imageFileId = (int)($it['imageFileId'] ?? 0);
+            if ($imageFileId > 0 && !sb_disk_file_belongs_to_site($siteId, $imageFileId)) {
+                http_response_code(422);
+                echo json_encode(['ok'=>false,'error'=>'FILE_NOT_IN_SITE_FOLDER','fileId'=>$imageFileId], JSON_UNESCAPED_UNICODE);
+                exit;
+            }
+
+            $buttonText = trim((string)($it['buttonText'] ?? ''));
+            $buttonUrl  = trim((string)($it['buttonUrl'] ?? ''));
+
+            if ($buttonUrl !== '' && !(preg_match('~^https?://~i', $buttonUrl) || str_starts_with($buttonUrl, '/'))) {
+                http_response_code(422);
+                echo json_encode(['ok'=>false,'error'=>'URL_BAD_FORMAT'], JSON_UNESCAPED_UNICODE);
+                exit;
+            }
+
+            $clean[] = [
+                'title' => $title,
+                'text' => $text,
+                'imageFileId' => $imageFileId,
+                'buttonText' => $buttonText,
+                'buttonUrl' => $buttonUrl,
+            ];
+        }
+
+        if (count($clean) === 0) {
+            http_response_code(422);
+            echo json_encode(['ok'=>false,'error'=>'ITEMS_REQUIRED'], JSON_UNESCAPED_UNICODE);
+            exit;
+        }
+
+        $content = [
+            'columns' => $columns,
+            'items' => $clean,
+        ];
+
+    } else { // button
+        $text = trim((string)($_POST['text'] ?? ''));
+        $url  = trim((string)($_POST['url'] ?? ''));
+        $variant = strtolower(trim((string)($_POST['variant'] ?? 'primary')));
+
+        if ($text === '') {
+            http_response_code(422);
+            echo json_encode(['ok'=>false,'error'=>'TEXT_REQUIRED'], JSON_UNESCAPED_UNICODE);
+            exit;
+        }
+        if ($url === '') {
+            http_response_code(422);
+            echo json_encode(['ok'=>false,'error'=>'URL_REQUIRED'], JSON_UNESCAPED_UNICODE);
+            exit;
+        }
+        if (!in_array($variant, ['primary','secondary'], true)) $variant = 'primary';
+
+        // внешний http(s) или относительный /
+        if (!(preg_match('~^https?://~i', $url) || str_starts_with($url, '/'))) {
+            http_response_code(422);
+            echo json_encode(['ok'=>false,'error'=>'URL_BAD_FORMAT'], JSON_UNESCAPED_UNICODE);
+            exit;
+        }
+
+        $content = ['text' => $text, 'url' => $url, 'variant' => $variant];
+    } 
 
     $block = [
         'id' => $id,
@@ -670,15 +1051,29 @@ if ($action === 'block.create') {
     exit;
 }
 
+
 if ($action === 'block.update') {
     $id = (int)($_POST['id'] ?? 0);
-    if ($id <= 0) { http_response_code(422); echo json_encode(['ok'=>false,'error'=>'ID_REQUIRED'], JSON_UNESCAPED_UNICODE); exit; }
+    if ($id <= 0) {
+        http_response_code(422);
+        echo json_encode(['ok'=>false,'error'=>'ID_REQUIRED'], JSON_UNESCAPED_UNICODE);
+        exit;
+    }
 
     $blk = sb_find_block($id);
-    if (!$blk) { http_response_code(404); echo json_encode(['ok'=>false,'error'=>'NOT_FOUND'], JSON_UNESCAPED_UNICODE); exit; }
+    if (!$blk) {
+        http_response_code(404);
+        echo json_encode(['ok'=>false,'error'=>'NOT_FOUND'], JSON_UNESCAPED_UNICODE);
+        exit;
+    }
 
     $page = sb_find_page((int)($blk['pageId'] ?? 0));
-    if (!$page) { http_response_code(404); echo json_encode(['ok'=>false,'error'=>'PAGE_NOT_FOUND'], JSON_UNESCAPED_UNICODE); exit; }
+    if (!$page) {
+        http_response_code(404);
+        echo json_encode(['ok'=>false,'error'=>'PAGE_NOT_FOUND'], JSON_UNESCAPED_UNICODE);
+        exit;
+    }
+
     $siteId = (int)($page['siteId'] ?? 0);
     sb_require_editor($siteId);
 
@@ -689,19 +1084,221 @@ if ($action === 'block.update') {
         if ((int)($b['id'] ?? 0) !== $id) continue;
 
         $type = (string)($b['type'] ?? '');
+
         if ($type === 'text') {
             $b['content']['text'] = (string)($_POST['text'] ?? '');
+
         } elseif ($type === 'image') {
             $fileId = (int)($_POST['fileId'] ?? 0);
             $alt = (string)($_POST['alt'] ?? '');
-            if ($fileId <= 0) { http_response_code(422); echo json_encode(['ok'=>false,'error'=>'FILE_ID_REQUIRED'], JSON_UNESCAPED_UNICODE); exit; }
+
+            if ($fileId <= 0) {
+                http_response_code(422);
+                echo json_encode(['ok'=>false,'error'=>'FILE_ID_REQUIRED'], JSON_UNESCAPED_UNICODE);
+                exit;
+            }
             if (!sb_disk_file_belongs_to_site($siteId, $fileId)) {
                 http_response_code(422);
                 echo json_encode(['ok'=>false,'error'=>'FILE_NOT_IN_SITE_FOLDER'], JSON_UNESCAPED_UNICODE);
                 exit;
             }
+
             $b['content']['fileId'] = $fileId;
             $b['content']['alt'] = $alt;
+
+        } elseif ($type === 'button') {
+            $text = trim((string)($_POST['text'] ?? ''));
+            $url  = trim((string)($_POST['url'] ?? ''));
+            $variant = strtolower(trim((string)($_POST['variant'] ?? 'primary')));
+
+            if ($text === '') {
+                http_response_code(422);
+                echo json_encode(['ok'=>false,'error'=>'TEXT_REQUIRED'], JSON_UNESCAPED_UNICODE);
+                exit;
+            }
+            if ($url === '') {
+                http_response_code(422);
+                echo json_encode(['ok'=>false,'error'=>'URL_REQUIRED'], JSON_UNESCAPED_UNICODE);
+                exit;
+            }
+            if (!in_array($variant, ['primary','secondary'], true)) $variant = 'primary';
+
+            if (!(preg_match('~^https?://~i', $url) || str_starts_with($url, '/'))) {
+                http_response_code(422);
+                echo json_encode(['ok'=>false,'error'=>'URL_BAD_FORMAT'], JSON_UNESCAPED_UNICODE);
+                exit;
+            }
+
+            $b['content']['text'] = $text;
+            $b['content']['url'] = $url;
+            $b['content']['variant'] = $variant;
+
+
+
+        } elseif ($type === 'heading') {
+            $text = trim((string)($_POST['text'] ?? ''));
+            $level = strtolower(trim((string)($_POST['level'] ?? 'h2')));
+            $align = strtolower(trim((string)($_POST['align'] ?? 'left')));
+
+            if ($text === '') {
+                http_response_code(422);
+                echo json_encode(['ok'=>false,'error'=>'TEXT_REQUIRED'], JSON_UNESCAPED_UNICODE);
+                exit;
+            }
+            if (!in_array($level, ['h1','h2','h3'], true)) $level = 'h2';
+            if (!in_array($align, ['left','center','right'], true)) $align = 'left';
+
+            $b['content']['text'] = $text;
+            $b['content']['level'] = $level;
+            $b['content']['align'] = $align;
+
+
+
+        } elseif ($type === 'columns2') {
+            $left  = (string)($_POST['left'] ?? '');
+            $right = (string)($_POST['right'] ?? '');
+            $ratio = (string)($_POST['ratio'] ?? '50-50');
+
+            $ratio = trim($ratio);
+            if (!in_array($ratio, ['50-50','33-67','67-33'], true)) $ratio = '50-50';
+
+            $b['content']['left'] = $left;
+            $b['content']['right'] = $right;
+            $b['content']['ratio'] = $ratio;
+
+
+        } elseif ($type === 'gallery') {
+            $columns = (int)($_POST['columns'] ?? 3);
+            if (!in_array($columns, [2,3,4], true)) $columns = 3;
+
+            $imagesJson = (string)($_POST['images'] ?? '[]');
+            $images = json_decode($imagesJson, true);
+            if (!is_array($images)) $images = [];
+
+            $clean = [];
+            foreach ($images as $it) {
+                if (!is_array($it)) continue;
+                $fid = (int)($it['fileId'] ?? 0);
+                if ($fid <= 0) continue;
+
+                if (!sb_disk_file_belongs_to_site($siteId, $fid)) {
+                    http_response_code(422);
+                    echo json_encode(['ok'=>false,'error'=>'FILE_NOT_IN_SITE_FOLDER','fileId'=>$fid], JSON_UNESCAPED_UNICODE);
+                    exit;
+                }
+
+                $clean[] = [
+                    'fileId' => $fid,
+                    'alt' => (string)($it['alt'] ?? ''),
+                ];
+            }
+
+            if (count($clean) === 0) {
+                http_response_code(422);
+                echo json_encode(['ok'=>false,'error'=>'IMAGES_REQUIRED'], JSON_UNESCAPED_UNICODE);
+                exit;
+            }
+
+            $b['content']['columns'] = $columns;
+            $b['content']['images'] = $clean;
+
+        } elseif ($type === 'spacer') {
+            $height = (int)($_POST['height'] ?? 40);
+            if ($height < 10) $height = 10;
+            if ($height > 200) $height = 200;
+
+            $line = (string)($_POST['line'] ?? '0');
+            $line = ($line === '1' || $line === 'true');
+
+            $b['content']['height'] = $height;
+            $b['content']['line'] = $line;
+
+        } elseif ($type === 'card') {
+            $title = trim((string)($_POST['title'] ?? ''));
+            $text  = (string)($_POST['text'] ?? '');
+
+            $imageFileId = (int)($_POST['imageFileId'] ?? 0);
+
+            $buttonText = trim((string)($_POST['buttonText'] ?? ''));
+            $buttonUrl  = trim((string)($_POST['buttonUrl'] ?? ''));
+
+            if ($title === '') {
+                http_response_code(422);
+                echo json_encode(['ok'=>false,'error'=>'TITLE_REQUIRED'], JSON_UNESCAPED_UNICODE);
+                exit;
+            }
+
+            if ($imageFileId > 0 && !sb_disk_file_belongs_to_site($siteId, $imageFileId)) {
+                http_response_code(422);
+                echo json_encode(['ok'=>false,'error'=>'FILE_NOT_IN_SITE_FOLDER','fileId'=>$imageFileId], JSON_UNESCAPED_UNICODE);
+                exit;
+            }
+
+            if ($buttonUrl !== '' && !(preg_match('~^https?://~i', $buttonUrl) || str_starts_with($buttonUrl, '/'))) {
+                http_response_code(422);
+                echo json_encode(['ok'=>false,'error'=>'URL_BAD_FORMAT'], JSON_UNESCAPED_UNICODE);
+                exit;
+            }
+
+            $b['content']['title'] = $title;
+            $b['content']['text'] = $text;
+            $b['content']['imageFileId'] = $imageFileId;
+            $b['content']['buttonText'] = $buttonText;
+            $b['content']['buttonUrl'] = $buttonUrl;
+
+        } elseif ($type === 'cards') {
+            $columns = (int)($_POST['columns'] ?? 3);
+            if (!in_array($columns, [2,3,4], true)) $columns = 3;
+
+            $itemsJson = (string)($_POST['items'] ?? '[]');
+            $items = json_decode($itemsJson, true);
+            if (!is_array($items)) $items = [];
+
+            $clean = [];
+            foreach ($items as $it) {
+                if (!is_array($it)) continue;
+
+                $title = trim((string)($it['title'] ?? ''));
+                $text  = (string)($it['text'] ?? '');
+
+                if ($title === '') continue;
+
+                $imageFileId = (int)($it['imageFileId'] ?? 0);
+                if ($imageFileId > 0 && !sb_disk_file_belongs_to_site($siteId, $imageFileId)) {
+                    http_response_code(422);
+                    echo json_encode(['ok'=>false,'error'=>'FILE_NOT_IN_SITE_FOLDER','fileId'=>$imageFileId], JSON_UNESCAPED_UNICODE);
+                    exit;
+                }
+
+                $buttonText = trim((string)($it['buttonText'] ?? ''));
+                $buttonUrl  = trim((string)($it['buttonUrl'] ?? ''));
+
+                if ($buttonUrl !== '' && !(preg_match('~^https?://~i', $buttonUrl) || str_starts_with($buttonUrl, '/'))) {
+                    http_response_code(422);
+                    echo json_encode(['ok'=>false,'error'=>'URL_BAD_FORMAT'], JSON_UNESCAPED_UNICODE);
+                    exit;
+                }
+
+                $clean[] = [
+                    'title' => $title,
+                    'text' => $text,
+                    'imageFileId' => $imageFileId,
+                    'buttonText' => $buttonText,
+                    'buttonUrl' => $buttonUrl,
+                ];
+            }
+
+            if (count($clean) === 0) {
+                http_response_code(422);
+                echo json_encode(['ok'=>false,'error'=>'ITEMS_REQUIRED'], JSON_UNESCAPED_UNICODE);
+                exit;
+            }
+
+            $b['content']['columns'] = $columns;
+            $b['content']['items'] = $clean;
+
+
+
         } else {
             http_response_code(422);
             echo json_encode(['ok'=>false,'error'=>'TYPE_NOT_SUPPORTED'], JSON_UNESCAPED_UNICODE);
@@ -714,12 +1311,17 @@ if ($action === 'block.update') {
     }
     unset($b);
 
-    if (!$found) { http_response_code(404); echo json_encode(['ok'=>false,'error'=>'NOT_FOUND'], JSON_UNESCAPED_UNICODE); exit; }
+    if (!$found) {
+        http_response_code(404);
+        echo json_encode(['ok'=>false,'error'=>'NOT_FOUND'], JSON_UNESCAPED_UNICODE);
+        exit;
+    }
 
     sb_write_blocks($blocks);
     echo json_encode(['ok' => true], JSON_UNESCAPED_UNICODE);
     exit;
 }
+
 
 if ($action === 'block.delete') {
     $id = (int)($_POST['id'] ?? 0);
@@ -1325,6 +1927,189 @@ if ($action === 'menu.item.move') {
     sb_write_menus($all);
 
     echo json_encode(['ok' => true], JSON_UNESCAPED_UNICODE);
+    exit;
+}
+
+if ($action === 'template.rename') {
+    $id = (int)($_POST['id'] ?? 0);
+    $name = trim((string)($_POST['name'] ?? ''));
+
+    if ($id <= 0) { http_response_code(422); echo json_encode(['ok'=>false,'error'=>'ID_REQUIRED'], JSON_UNESCAPED_UNICODE); exit; }
+    if ($name === '') { http_response_code(422); echo json_encode(['ok'=>false,'error'=>'NAME_REQUIRED'], JSON_UNESCAPED_UNICODE); exit; }
+
+    $tpl = sb_read_templates();
+    $found = false;
+
+    foreach ($tpl as &$t) {
+        if ((int)($t['id'] ?? 0) === $id) {
+            $t['name'] = $name;
+            $t['updatedAt'] = date('c');
+            $t['updatedBy'] = (int)$USER->GetID();
+            $found = true;
+            break;
+        }
+    }
+    unset($t);
+
+    if (!$found) { http_response_code(404); echo json_encode(['ok'=>false,'error'=>'TEMPLATE_NOT_FOUND'], JSON_UNESCAPED_UNICODE); exit; }
+
+    sb_write_templates($tpl);
+    echo json_encode(['ok'=>true], JSON_UNESCAPED_UNICODE);
+    exit;
+}
+
+if ($action === 'template.delete') {
+    $id = (int)($_POST['id'] ?? 0);
+    if ($id <= 0) { http_response_code(422); echo json_encode(['ok'=>false,'error'=>'ID_REQUIRED'], JSON_UNESCAPED_UNICODE); exit; }
+
+    $tpl = sb_read_templates();
+    $before = count($tpl);
+    $tpl = array_values(array_filter($tpl, fn($t) => (int)($t['id'] ?? 0) !== $id));
+
+    if (count($tpl) === $before) { http_response_code(404); echo json_encode(['ok'=>false,'error'=>'TEMPLATE_NOT_FOUND'], JSON_UNESCAPED_UNICODE); exit; }
+
+    sb_write_templates($tpl);
+    echo json_encode(['ok'=>true], JSON_UNESCAPED_UNICODE);
+    exit;
+}
+
+if ($action === 'page.updateMeta') {
+    $id = (int)($_POST['id'] ?? 0);
+    if ($id <= 0) { http_response_code(422); echo json_encode(['ok'=>false,'error'=>'ID_REQUIRED'], JSON_UNESCAPED_UNICODE); exit; }
+
+    $page = sb_find_page($id);
+    if (!$page) { http_response_code(404); echo json_encode(['ok'=>false,'error'=>'PAGE_NOT_FOUND'], JSON_UNESCAPED_UNICODE); exit; }
+
+    $siteId = (int)($page['siteId'] ?? 0);
+    sb_require_editor($siteId);
+
+    $title = trim((string)($_POST['title'] ?? ''));
+    $slugIn = trim((string)($_POST['slug'] ?? ''));
+
+    $pages = sb_read_pages();
+    $found = false;
+
+    // slug (если дали)
+    $newSlug = $slugIn !== '' ? sb_slugify($slugIn) : (string)($page['slug'] ?? 'page-'.$id);
+    if ($title !== '' && $slugIn === '') {
+        // если slug не задан, но title изменили — можем пересчитать slug от title (аккуратно)
+        $newSlug = sb_slugify($title);
+    }
+
+    // уникальность slug в рамках siteId
+    $existing = array_map(fn($x) => (string)($x['slug'] ?? ''),
+        array_filter($pages, fn($p) => (int)($p['siteId'] ?? 0) === $siteId && (int)($p['id'] ?? 0) !== $id)
+    );
+    $base = $newSlug; $i = 2;
+    while (in_array($newSlug, $existing, true)) { $newSlug = $base.'-'.$i; $i++; }
+
+    foreach ($pages as &$p) {
+        if ((int)($p['id'] ?? 0) === $id) {
+            if ($title !== '') $p['title'] = $title;
+            $p['slug'] = $newSlug;
+            $p['updatedAt'] = date('c');
+            $p['updatedBy'] = (int)$USER->GetID();
+            $found = true;
+            break;
+        }
+    }
+    unset($p);
+
+    if (!$found) { http_response_code(404); echo json_encode(['ok'=>false,'error'=>'PAGE_NOT_FOUND'], JSON_UNESCAPED_UNICODE); exit; }
+
+    sb_write_pages($pages);
+    echo json_encode(['ok'=>true], JSON_UNESCAPED_UNICODE);
+    exit;
+}
+
+if ($action === 'page.setParent') {
+    $id = (int)($_POST['id'] ?? 0);
+    $parentId = (int)($_POST['parentId'] ?? 0); // 0 = корневая
+
+    if ($id <= 0) { http_response_code(422); echo json_encode(['ok'=>false,'error'=>'ID_REQUIRED'], JSON_UNESCAPED_UNICODE); exit; }
+
+    $page = sb_find_page($id);
+    if (!$page) { http_response_code(404); echo json_encode(['ok'=>false,'error'=>'PAGE_NOT_FOUND'], JSON_UNESCAPED_UNICODE); exit; }
+
+    $siteId = (int)($page['siteId'] ?? 0);
+    sb_require_editor($siteId);
+
+    if ($parentId > 0) {
+        $parent = sb_find_page($parentId);
+        if (!$parent || (int)($parent['siteId'] ?? 0) !== $siteId) {
+            http_response_code(422);
+            echo json_encode(['ok'=>false,'error'=>'PARENT_NOT_IN_SITE'], JSON_UNESCAPED_UNICODE);
+            exit;
+        }
+        if ($parentId === $id) {
+            http_response_code(422);
+            echo json_encode(['ok'=>false,'error'=>'PARENT_SELF'], JSON_UNESCAPED_UNICODE);
+            exit;
+        }
+    }
+
+    $pages = sb_read_pages();
+    foreach ($pages as &$p) {
+        if ((int)($p['id'] ?? 0) === $id) {
+            $p['parentId'] = $parentId;
+            $p['updatedAt'] = date('c');
+            $p['updatedBy'] = (int)$USER->GetID();
+            break;
+        }
+    }
+    unset($p);
+
+    sb_write_pages($pages);
+    echo json_encode(['ok'=>true], JSON_UNESCAPED_UNICODE);
+    exit;
+}
+
+if ($action === 'page.move') {
+    $id = (int)($_POST['id'] ?? 0);
+    $dir = (string)($_POST['dir'] ?? '');
+
+    if ($id <= 0) { http_response_code(422); echo json_encode(['ok'=>false,'error'=>'ID_REQUIRED'], JSON_UNESCAPED_UNICODE); exit; }
+    if ($dir !== 'up' && $dir !== 'down') { http_response_code(422); echo json_encode(['ok'=>false,'error'=>'DIR_REQUIRED'], JSON_UNESCAPED_UNICODE); exit; }
+
+    $page = sb_find_page($id);
+    if (!$page) { http_response_code(404); echo json_encode(['ok'=>false,'error'=>'PAGE_NOT_FOUND'], JSON_UNESCAPED_UNICODE); exit; }
+
+    $siteId = (int)($page['siteId'] ?? 0);
+    sb_require_editor($siteId);
+
+    $parentId = (int)($page['parentId'] ?? 0);
+
+    $pages = sb_read_pages();
+    $siblings = array_values(array_filter($pages, fn($p) =>
+        (int)($p['siteId'] ?? 0) === $siteId && (int)($p['parentId'] ?? 0) === $parentId
+    ));
+    usort($siblings, fn($a,$b) => (int)($a['sort'] ?? 500) <=> (int)($b['sort'] ?? 500));
+
+    $pos = null;
+    for ($i=0; $i<count($siblings); $i++) {
+        if ((int)($siblings[$i]['id'] ?? 0) === $id) { $pos = $i; break; }
+    }
+    if ($pos === null) { echo json_encode(['ok'=>true], JSON_UNESCAPED_UNICODE); exit; }
+
+    if ($dir === 'up' && $pos === 0) { echo json_encode(['ok'=>true], JSON_UNESCAPED_UNICODE); exit; }
+    if ($dir === 'down' && $pos === count($siblings)-1) { echo json_encode(['ok'=>true], JSON_UNESCAPED_UNICODE); exit; }
+
+    $swap = ($dir === 'up') ? $pos-1 : $pos+1;
+
+    $idA = (int)$siblings[$pos]['id'];
+    $idB = (int)$siblings[$swap]['id'];
+    $sortA = (int)($siblings[$pos]['sort'] ?? 500);
+    $sortB = (int)($siblings[$swap]['sort'] ?? 500);
+
+    foreach ($pages as &$p) {
+        $pid = (int)($p['id'] ?? 0);
+        if ($pid === $idA) { $p['sort'] = $sortB; $p['updatedAt']=date('c'); $p['updatedBy']=(int)$USER->GetID(); }
+        if ($pid === $idB) { $p['sort'] = $sortA; $p['updatedAt']=date('c'); $p['updatedBy']=(int)$USER->GetID(); }
+    }
+    unset($p);
+
+    sb_write_pages($pages);
+    echo json_encode(['ok'=>true], JSON_UNESCAPED_UNICODE);
     exit;
 }
 
