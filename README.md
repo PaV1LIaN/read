@@ -1,128 +1,78 @@
-Понял. В твоём `settings.php` **“Ошибка site.update” появляется именно из `catch`**, то есть запрос ушёл, но вернулся **не-200 статус** (403/404/422/500 и т.п.).
-А `BX.ajax` в таком случае вызывает `onfailure`, и промис **reject**, поэтому ты видишь только общую надпись без причины.
+`site.update:HTTP_ERROR` означает одно из двух:
 
-Для серьёзного проекта делаем правильно: **показываем точную ошибку сервера** и сразу понимаем, что чинить.
+1. **`api.php` вернул НЕ 200** (например 400/403/422/500) → `BX.ajax` уходит в `onfailure`, и ты видишь `HTTP_ERROR`
+2. **вернулся ответ, который не распарсился как JSON** (например PHP warning/notice до `json_encode`)
 
----
+Чтобы понять причину за 30 секунд — сделай так, чтобы `api()` **вытаскивал HTTP-код и тело ответа** даже при ошибке.
 
-## 1) Быстрый фикс: чтобы settings показывал реальную причину (а не “Ошибка site.update”)
+## 1) Быстрый фикс: замени `api()` в `settings.php` (и можно потом везде)
 
-В `settings.php` замени функцию `api()` на эту (она **пытается распарсить JSON даже при onfailure** и возвращает `{ok:false, error, ...}`):
+Найди в `settings.php` функцию `api(action, data)` и замени на эту:
 
 ```js
 function api(action, data) {
-  return new Promise((resolve, reject) => {
+  return new Promise((resolve) => {
     BX.ajax({
       url: '/local/sitebuilder/api.php',
       method: 'POST',
       dataType: 'json',
-      data: Object.assign({ action, siteId, sessid: BX.bitrix_sessid() }, data || {}),
-      onsuccess: resolve,
-      onfailure: function (xhr) {
-        // Важно: на ошибочных HTTP кодах Bitrix кидает сюда
-        try {
-          const txt =
-            (xhr && (xhr.responseText || xhr.response || xhr.data)) ? (xhr.responseText || xhr.response || xhr.data) : '';
-          const parsed = txt ? JSON.parse(txt) : null;
-          if (parsed && typeof parsed === 'object') {
-            resolve(parsed); // <-- возвращаем ошибку как обычный ответ
-            return;
-          }
-        } catch (e) {}
+      data: Object.assign({ action, sessid: BX.bitrix_sessid() }, data || {}),
+      onsuccess: (res) => resolve(res),
+      onfailure: (xhr) => {
+        // BX.ajax считает любой non-200 ошибкой и не даёт JSON в onsuccess
+        const status = xhr && xhr.status ? xhr.status : 0;
+        const raw = (xhr && xhr.responseText) ? String(xhr.responseText) : '';
 
-        // fallback если не удалось распарсить
-        resolve({ ok: false, error: 'HTTP_ERROR', status: xhr?.status || 0 });
+        // попробуем вытащить JSON из responseText
+        let parsed = null;
+        try { parsed = JSON.parse(raw); } catch (e) {}
+
+        resolve(Object.assign(
+          { ok: false, error: 'HTTP_ERROR', status, raw },
+          (parsed && typeof parsed === 'object') ? parsed : {}
+        ));
       }
     });
   });
 }
 ```
 
-И в обработчике сохранения (`btnSave.onclick`) измени на:
+## 2) И обработчик `btnSave.onclick` сделай таким
 
 ```js
-const r = await api('site.update', payload);
-if (!r || r.ok !== true) {
-  notify('site.update: ' + (r?.error || 'UNKNOWN') + (r?.message ? (' — ' + r.message) : ''));
-  return;
-}
-notify('Сохранено');
+btnSave.onclick = async () => {
+  const r = await api('site.update', payload);
+
+  if (!r || r.ok !== true) {
+    const msg =
+      'site.update failed' +
+      (r?.status ? ` (HTTP ${r.status})` : '') +
+      `: ${r?.error || 'UNKNOWN'}` +
+      (r?.message ? ` — ${r.message}` : '') +
+      (r?.raw ? `\n\n${String(r.raw).slice(0, 500)}` : '');
+
+    notify(msg.replace(/\n/g, '<br>')); // если notify умеет html, иначе убери replace
+    console.log('site.update debug:', r);
+    return;
+  }
+
+  notify('Сохранено');
+};
 ```
 
-✅ После этого при сохранении ты увидишь **точный `error`**, например: `UNKNOWN_ACTION`, `FORBIDDEN`, `ACCENT_BAD_FORMAT`, `LOGO_NOT_IN_SITE_FOLDER` и т.д.
+После этого ты увидишь **реальную** причину: например
+
+* `HTTP 400: UNKNOWN_ACTION` → в `api.php` нет `site.update` (или не туда вставлен)
+* `HTTP 403: BAD_SESSID / FORBIDDEN` → сессия/права
+* `HTTP 422: ...` → валидация данных
+* `HTTP 500: ...` → PHP ошибка (и в `raw` будет текст/trace)
+
+## 3) Самая частая причина именно у вас
+
+Если `site.update` у тебя заканчивается `http_response_code(400)` / `422` и JSONом — **BX.ajax всё равно считает это failure** → и ты видишь `HTTP_ERROR`.
+
+То есть проблема может быть даже не “сломано”, а просто **сервер вернул 4xx**, а фронт не умел его показать.
 
 ---
 
-## 2) Самые частые причины и что делать (по коду ошибки)
-
-### `UNKNOWN_ACTION`
-
-➡️ Ты не вставил `if ($action === 'site.update') ...` в `api.php` **или вставил после финального `UNKNOWN_ACTION`**.
-
-**Проверь:** блок `site.update` должен быть **выше** самого конца:
-
-```php
-http_response_code(400);
-echo json_encode(['ok'=>false,'error'=>'UNKNOWN_ACTION', ...]);
-```
-
----
-
-### `FORBIDDEN`
-
-➡️ `site.update` у тебя стоит на `sb_require_admin($siteId)` (ADMIN/OWNER), а у пользователя роль ниже.
-
-**Решение:**
-
-* либо выдай себе ADMIN/OWNER в доступах,
-* либо временно (на время отладки) поменяй в `site.update` на `sb_require_editor($siteId)`.
-
----
-
-### `ACCENT_BAD_FORMAT`
-
-➡️ В `accent` приходит не `#RRGGBB`.
-
-**Решение:** в UI вводи строго `#2563eb` и т.п. (6 hex). Цветовой input обычно ок, а руками можно сломать.
-
----
-
-### `LOGO_NOT_IN_SITE_FOLDER`
-
-➡️ Выбранный файл не лежит в папке сайта в Disk.
-
-**Решение:**
-
-* выбери логотип из списка, который загрузил в “Файлы” именно этого сайта,
-* либо поставь “— Без логотипа —”.
-
----
-
-### `TOP_MENU_NOT_FOUND`
-
-➡️ `topMenuId` пытаешься сохранить, но такого меню нет у сайта.
-
-**Решение:**
-
-* сначала создай меню в `menu.php`,
-* потом выбери его в settings.
-
----
-
-## 3) Ещё одна частая причина: забыли `sb_require_admin()`
-
-Если у тебя в `api.php` нет:
-
-```php
-function sb_require_admin(int $siteId): void { sb_require_site_role($siteId, 3); }
-```
-
-то будет **500** (фатал), и ты ловишь “Ошибка site.update”.
-
----
-
-## Что делаем прямо сейчас
-
-1. Вставь обновлённый `api()` в `settings.php` (пункт 1).
-2. Нажми “Сохранить” ещё раз.
-3. Скажи мне, **какой именно `site.update: ERROR_CODE` показало уведомление** — и я дам точечную правку в `api.php` (1–2 строки), без гаданий.
+Сделай замену `api()` + `btnSave.onclick` как выше и скинь сюда **новое сообщение ошибки**, которое появится (особенно `HTTP xxx` и `error/message/raw` кусок). Тогда я скажу точечно: это не хватает `site.update`, не те поля в payload, права, валидация или PHP фатал.
