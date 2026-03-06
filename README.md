@@ -5,2469 +5,951 @@ define('DisableEventsCheck', true);
 
 require $_SERVER['DOCUMENT_ROOT'].'/bitrix/modules/main/include/prolog_before.php';
 
-use Bitrix\Main\Loader;
-use Bitrix\Disk\Storage;
-use Bitrix\Disk\Folder;
-use Bitrix\Disk\File;
-use Bitrix\Disk\Driver;
-
-global $USER;
-
-header('Content-Type: application/json; charset=UTF-8');
+global $USER, $APPLICATION;
 
 if (!$USER->IsAuthorized()) {
-    http_response_code(401);
-    echo json_encode(['ok' => false, 'error' => 'NOT_AUTHORIZED'], JSON_UNESCAPED_UNICODE);
-    exit;
+    LocalRedirect('/auth/');
 }
 
-if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
-    http_response_code(405);
-    echo json_encode(['ok' => false, 'error' => 'METHOD_NOT_ALLOWED'], JSON_UNESCAPED_UNICODE);
-    exit;
-}
+header('Content-Type: text/html; charset=UTF-8');
 
-if (!check_bitrix_sessid()) {
-    http_response_code(403);
-    echo json_encode(['ok' => false, 'error' => 'BAD_SESSID'], JSON_UNESCAPED_UNICODE);
-    exit;
-}
+\Bitrix\Main\UI\Extension::load([
+    'main.core',
+    'ui.buttons',
+    'ui.dialogs.messagebox',
+    'ui.notification',
+]);
+?>
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>SiteBuilder</title>
 
-/** ====================== JSON STORAGE ====================== */
+  <?php $APPLICATION->ShowHead(); ?>
 
-function sb_data_path(string $file): string {
-    return $_SERVER['DOCUMENT_ROOT'] . '/upload/sitebuilder/' . $file;
-}
+  <style>
+    html, body { height: 100%; margin: 0; }
+    body { font-family: Arial, sans-serif; background:#f6f7f8; color:#111; }
+    a { color:#0b57d0; text-decoration:none; }
+    a:hover { text-decoration:underline; }
 
-function sb_read_json_file(string $file): array {
-    $path = sb_data_path($file);
-    if (!file_exists($path)) return [];
-
-    $fp = fopen($path, 'rb');
-    if (!$fp) return [];
-
-    $raw = '';
-    if (flock($fp, LOCK_SH)) {
-        $raw = stream_get_contents($fp);
-        flock($fp, LOCK_UN);
-    } else {
-        $raw = stream_get_contents($fp);
+    .wrap { max-width: 1200px; margin: 0 auto; padding: 22px; }
+    .header {
+      background:#fff; border:1px solid #e5e7ea; border-radius:16px;
+      padding:16px; display:flex; gap:12px; align-items:center; flex-wrap:wrap;
+      box-shadow: 0 1px 0 rgba(0,0,0,0.02);
     }
-    fclose($fp);
+    .titleBox { display:flex; flex-direction:column; gap:4px; min-width: 220px; }
+    .title { font-size:20px; font-weight:800; margin:0; line-height:1.2; }
+    .sub { font-size:12px; color:#6a737f; }
+    code { background:#f3f4f6; padding:2px 6px; border-radius:6px; }
 
-    // remove UTF-8 BOM (just in case)
-    if (strncmp($raw, "\xEF\xBB\xBF", 3) === 0) {
-        $raw = substr($raw, 3);
-    }
+    .spacer { flex:1; }
 
-    $data = json_decode((string)$raw, true);
-    return is_array($data) ? $data : [];
-}
-
-function sb_write_json_file(string $file, array $data, string $errMsg): void {
-    $dir = dirname(sb_data_path($file));
-    if (!is_dir($dir)) {
-        mkdir($dir, 0775, true);
+    .toolbar { display:flex; gap:10px; align-items:flex-end; flex-wrap:wrap; width:100%; }
+    .field { display:flex; flex-direction:column; gap:4px; }
+    .field label { font-size:12px; color:#6a737f; }
+    .input {
+      width: 320px; max-width: 100%;
+      padding:8px 10px; border:1px solid #d0d7de; border-radius:10px;
+      box-sizing:border-box; background:#fff;
     }
 
-    $path = sb_data_path($file);
-    $fp = fopen($path, 'c+');
-    if (!$fp) {
-        throw new \RuntimeException($errMsg);
+    .content {
+      margin-top:14px;
+      background:#fff; border:1px solid #e5e7ea; border-radius:16px;
+      padding:16px;
     }
 
-    if (!flock($fp, LOCK_EX)) {
-        fclose($fp);
-        throw new \RuntimeException('Cannot lock ' . $file);
+    .muted { color:#6a737f; }
+    .hint { font-size:12px; color:#6a737f; margin-top:6px; }
+
+    /* ---- cards grid ---- */
+    .grid {
+      margin-top:12px;
+      display:grid;
+      gap:12px;
+      grid-template-columns: 1fr;
+    }
+    @media (min-width: 720px){ .grid { grid-template-columns: 1fr 1fr; } }
+    @media (min-width: 1080px){ .grid { grid-template-columns: 1fr 1fr 1fr; } }
+
+    .siteCard {
+      border:1px solid #e5e7ea;
+      border-radius:16px;
+      padding:14px;
+      background:#fff;
+      display:flex;
+      flex-direction:column;
+      gap:10px;
+      transition: box-shadow .15s ease, transform .15s ease;
+    }
+    .siteCard:hover { box-shadow: 0 10px 24px rgba(0,0,0,.06); transform: translateY(-1px); }
+
+    .siteTop { display:flex; gap:10px; align-items:flex-start; justify-content:space-between; }
+    .siteName { font-weight:800; font-size:16px; line-height:1.25; }
+    .siteMeta { margin-top:6px; display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
+    .pill {
+      font-size:12px;
+      background:#f3f4f6;
+      border:1px solid #eef0f2;
+      color:#374151;
+      padding:3px 8px;
+      border-radius:999px;
+    }
+    .pillStrong { background:#eef2ff; border-color:#c7d2fe; color:#1e3a8a; }
+
+    .siteInfo { font-size:12px; color:#6a737f; display:flex; gap:10px; flex-wrap:wrap; }
+    .siteInfo b { color:#111; font-weight:700; }
+
+    .siteBtns { display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-top:2px; }
+    .btnRow { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
+
+    /* ---- dialogs helpers ---- */
+    .dField { margin-top:10px; }
+    .dField label { display:block; font-size:12px; color:#6a737f; margin-bottom:4px; }
+    .dInput, select, textarea { width:100%; padding:8px; border:1px solid #d0d7de; border-radius:10px; box-sizing:border-box; }
+
+    .searchRow{display:flex; gap:10px; align-items:flex-end; flex-wrap:wrap; margin-bottom:10px;}
+    .hint2 { font-size:12px; color:#6a737f; margin-top:8px; }
+
+    /* ---- pages tree (your existing styles, kept) ---- */
+    .tree { margin-top: 12px; }
+    .node { border:1px solid #eef0f2; border-radius:14px; padding:12px; background:#fff; margin-top:10px; }
+    .nodeHead { display:flex; gap:12px; align-items:flex-start; justify-content:space-between; flex-wrap:wrap; }
+    .nodeLeft { display:flex; gap:10px; align-items:flex-start; }
+    .nodeIcon {
+      width:22px; height:22px; border-radius:8px; background:#f3f4f6;
+      display:flex; align-items:center; justify-content:center; color:#6a737f; font-weight:700;
+      flex:0 0 auto;
+    }
+    .nodeMain { min-width: 240px; }
+    .nodeTitleLine { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+    .nodeTitleLine b { font-size:14px; }
+    .nodeSlug { font-size:12px; background:#f3f4f6; padding:2px 8px; border-radius:999px; color:#374151; }
+
+    .nodeBadge{
+      font-size:11px;
+      background:#f3f4f6;
+      border:1px solid #eef0f2;
+      color:#374151;
+      padding:2px 8px;
+      border-radius:999px;
+    }
+    .nodeBadgeDraft{ background:#fff7ed; border-color:#fed7aa; color:#9a3412; }
+    .nodeBadgePub{ background:#ecfdf3; border-color:#abefc6; color:#067647; }
+    .nodeMeta { margin-top:4px; font-size:12px; color:#6a737f; display:flex; gap:10px; flex-wrap:wrap; }
+    .nodeBtns { display:flex; gap:6px; flex-wrap:wrap; align-items:center; }
+    .children { margin-left:18px; border-left:2px dashed #e5e7ea; padding-left:12px; margin-top:10px; }
+    .btnTiny { padding:0 8px; height:26px; line-height:26px; }
+
+    /* ---- picker cards (parent picker) ---- */
+    .secGrid{display:grid;gap:12px;margin-top:12px;}
+    @media (min-width: 820px){ .secGrid{grid-template-columns: 1fr 1fr;} }
+    .secCard{border:1px solid #e5e7ea;border-radius:14px;background:#fff;padding:12px;}
+    .secTitle{font-weight:800;}
+    .secMeta{color:#6a737f;font-size:12px;margin-top:4px;}
+    .secSearch{margin-top:10px;}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+
+    <div class="header">
+      <div class="titleBox">
+        <div class="title">SiteBuilder</div>
+        <div class="sub">
+          Ты авторизован как: <b><?=htmlspecialcharsbx($USER->GetLogin())?></b> ·
+          <span class="muted">путь:</span> <code>/local/sitebuilder/index.php</code>
+        </div>
+      </div>
+
+      <div class="spacer"></div>
+
+      <div class="btnRow">
+        <button class="ui-btn ui-btn-primary" id="btnCreateSite">Создать сайт</button>
+      </div>
+
+      <div class="toolbar">
+        <div class="field" style="flex:1; min-width:240px;">
+          <label>Поиск по сайтам</label>
+          <input class="input" id="qSites" placeholder="название / slug / id..." />
+        </div>
+        <div class="field" style="min-width:220px;">
+          <label>Сортировка</label>
+          <select class="input" id="sortSites">
+            <option value="id_asc">ID ↑</option>
+            <option value="id_desc">ID ↓</option>
+            <option value="name_asc">Название A→Z</option>
+            <option value="name_desc">Название Z→A</option>
+            <option value="created_desc">Создано (новые)</option>
+            <option value="created_asc">Создано (старые)</option>
+          </select>
+        </div>
+      </div>
+    </div>
+
+    <div class="content">
+      <div class="muted">Сайты, доступные тебе. Открой “Страницы”, чтобы управлять деревом и редактировать контент.</div>
+      <div id="sitesBox" style="margin-top:12px;"></div>
+    </div>
+
+  </div>
+
+<script>
+BX.ready(function () {
+  const sitesBox = document.getElementById('sitesBox');
+  const btnCreate = document.getElementById('btnCreateSite');
+  const qSites = document.getElementById('qSites');
+  const sortSites = document.getElementById('sortSites');
+
+  function notify(msg) {
+    BX.UI.Notification.Center.notify({ content: msg });
+  }
+
+  function api(action, data) {
+    return new Promise((resolve, reject) => {
+      BX.ajax({
+        url: '/local/sitebuilder/api.php',
+        method: 'POST',
+        dataType: 'json',
+        data: Object.assign({ action, sessid: BX.bitrix_sessid() }, data || {}),
+        onsuccess: resolve,
+        onfailure: reject
+      });
+    });
+  }
+
+  // ------- utils -------
+  function safeStr(v){ return (v === null || v === undefined) ? '' : String(v); }
+
+  function sitePills(s){
+    const pills = [];
+    if (parseInt(s.topMenuId || 0, 10) > 0) pills.push('<span class="pill pillStrong">TOP MENU</span>');
+    if (parseInt(s.homePageId || 0, 10) > 0) pills.push('<span class="pill pillStrong">HOME</span>');
+
+    const st = (s.settings && typeof s.settings === 'object') ? s.settings : null;
+    if (st && (st.containerWidth || st.accent || st.logoFileId)) pills.push('<span class="pill pillStrong">SETTINGS</span>');
+    
+    pills.push('<span class="pill">ID ' + parseInt(s.id||0,10) + '</span>');
+    pills.push('<span class="pill"><code>' + BX.util.htmlspecialchars(safeStr(s.slug)) + '</code></span>');
+    return pills.join('');
+  }
+
+  function sortSitesArr(arr, mode){
+    const a = arr.slice();
+    const name = (x) => (safeStr(x.name)).toLowerCase();
+    const created = (x) => safeStr(x.createdAt);
+    switch(mode){
+      case 'id_desc': a.sort((x,y)=> (parseInt(y.id,10)||0) - (parseInt(x.id,10)||0)); break;
+      case 'name_asc': a.sort((x,y)=> name(x).localeCompare(name(y))); break;
+      case 'name_desc': a.sort((x,y)=> name(y).localeCompare(name(x))); break;
+      case 'created_asc': a.sort((x,y)=> created(x).localeCompare(created(y))); break;
+      case 'created_desc': a.sort((x,y)=> created(y).localeCompare(created(x))); break;
+      case 'id_asc':
+      default: a.sort((x,y)=> (parseInt(x.id,10)||0) - (parseInt(y.id,10)||0)); break;
+    }
+    return a;
+  }
+
+  // ---------- SITES (CARDS) ----------
+  let sitesCache = [];
+
+  function renderSitesCards(sites) {
+    if (!sites || !sites.length) {
+      sitesBox.innerHTML = '<div class="muted">Сайтов, доступных тебе, пока нет. Создай первый.</div>';
+      return;
     }
 
-    ftruncate($fp, 0);
-    rewind($fp);
-    fwrite($fp, json_encode(array_values($data), JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT));
-    fflush($fp);
-    flock($fp, LOCK_UN);
-    fclose($fp);
-}
+    sitesBox.innerHTML = `
+      <div class="grid">
+        ${sites.map(s => `
+          <div class="siteCard" data-site-card="${s.id}">
+            <div class="siteTop">
+              <div style="flex:1; min-width: 200px;">
+                <div class="siteName">${BX.util.htmlspecialchars(safeStr(s.name))}</div>
+                <div class="siteMeta">${sitePills(s)}</div>
+                <div class="siteInfo" style="margin-top:8px;">
+                  <span><b>Создан:</b> ${BX.util.htmlspecialchars(safeStr(s.createdAt))}</span>
+                  <span><b>Создал:</b> ${parseInt(s.createdBy||0,10) ? ('U' + parseInt(s.createdBy||0,10)) : '—'}</span>
+                </div>
+              </div>
+            </div>
 
-function sb_read_sites(): array { return sb_read_json_file('sites.json'); }
-function sb_write_sites(array $sites): void { sb_write_json_file('sites.json', $sites, 'Cannot open sites.json'); }
+            <div class="siteBtns">
+              <button class="ui-btn ui-btn-light ui-btn-xs" data-open-pages-site-id="${s.id}" data-open-pages-site-name="${BX.util.htmlspecialchars(safeStr(s.name))}">
+                Страницы
+              </button>
 
-function sb_read_pages(): array { return sb_read_json_file('pages.json'); }
-function sb_write_pages(array $pages): void { sb_write_json_file('pages.json', $pages, 'Cannot open pages.json'); }
+              <a class="ui-btn ui-btn-light ui-btn-xs"
+                href="/local/sitebuilder/settings.php?siteId=${s.id}">
+                Настройки
+              </a>
 
-function sb_read_blocks(): array { return sb_read_json_file('blocks.json'); }
-function sb_write_blocks(array $blocks): void { sb_write_json_file('blocks.json', $blocks, 'Cannot open blocks.json'); }
+              <a class="ui-btn ui-btn-light ui-btn-xs" href="/local/sitebuilder/menu.php?siteId=${s.id}">
+                Меню
+              </a>
 
-function sb_read_access(): array { return sb_read_json_file('access.json'); }
-function sb_write_access(array $access): void { sb_write_json_file('access.json', $access, 'Cannot open access.json'); }
+              <a class="ui-btn ui-btn-light ui-btn-xs" href="/local/sitebuilder/files.php?siteId=${s.id}" target="_blank">
+                Файлы
+              </a>
 
-function sb_read_menus(): array { return sb_read_json_file('menus.json'); }
-function sb_write_menus(array $menus): void { sb_write_json_file('menus.json', $menus, 'Cannot open menus.json'); }
+              <a class="ui-btn ui-btn-light ui-btn-xs" href="/local/sitebuilder/settings.php?siteId=${s.id}">
+                Настройки
+              </a>
 
-function sb_read_templates(): array { return sb_read_json_file('templates.json'); }
-function sb_write_templates(array $templates): void { sb_write_json_file('templates.json', $templates, 'Cannot open templates.json'); }
+              <button class="ui-btn ui-btn-light ui-btn-xs" data-open-access-site-id="${s.id}" data-open-access-site-name="${BX.util.htmlspecialchars(safeStr(s.name))}">
+                Доступы
+              </button>
 
-function sb_slugify(string $name): string {
-    $slug = \CUtil::translit($name, 'ru', [
-        'replace_space' => '-',
-        'replace_other' => '-',
-        'change_case' => 'L',
-        'delete_repeat_replace' => true,
-        'use_google' => false,
-    ]);
-    $slug = trim($slug, '-');
-    return $slug !== '' ? $slug : 'item';
-}
+              <button class="ui-btn ui-btn-danger ui-btn-xs" data-delete-site-id="${s.id}">
+                Удалить
+              </button>
+            </div>
+          </div>
+        `).join('')}
+      </div>
+    `;
+  }
 
-/** ====================== ACCESS MODEL ====================== */
+  function applySitesView() {
+    const q = (qSites?.value || '').trim().toLowerCase();
+    const mode = (sortSites?.value || 'id_asc');
 
-function sb_user_access_code(): string {
-    return 'U' . (int)$GLOBALS['USER']->GetID();
-}
+    let list = sitesCache.slice();
 
-function sb_get_role(int $siteId, string $accessCode): ?string {
-    $access = sb_read_access();
-    foreach ($access as $r) {
-        if ((int)($r['siteId'] ?? 0) === $siteId && (string)($r['accessCode'] ?? '') === $accessCode) {
-            $role = strtoupper((string)($r['role'] ?? ''));
-            return $role !== '' ? $role : null;
-        }
-    }
-    return null;
-}
-
-function sb_role_rank(?string $role): int {
-    $role = strtoupper((string)$role);
-    return match ($role) {
-        'OWNER'  => 4,
-        'ADMIN'  => 3,
-        'EDITOR' => 2,
-        'VIEWER' => 1,
-        default  => 0,
-    };
-}
-
-function sb_require_site_role(int $siteId, int $minRank): void {
-    $role = sb_get_role($siteId, sb_user_access_code());
-    if (sb_role_rank($role) < $minRank) {
-        http_response_code(403);
-        echo json_encode([
-            'ok' => false,
-            'error' => 'FORBIDDEN',
-            'siteId' => $siteId,
-            'role' => $role,
-        ], JSON_UNESCAPED_UNICODE);
-        exit;
-    }
-}
-
-function sb_require_owner(int $siteId): void { sb_require_site_role($siteId, 4); }
-function sb_require_admin(int $siteId): void { sb_require_site_role($siteId, 3); }
-function sb_require_editor(int $siteId): void { sb_require_site_role($siteId, 2); }
-function sb_require_viewer(int $siteId): void { sb_require_site_role($siteId, 1); }
-
-function sb_site_exists(int $siteId): bool {
-    foreach (sb_read_sites() as $s) {
-        if ((int)($s['id'] ?? 0) === $siteId) return true;
-    }
-    return false;
-}
-
-function sb_find_site(int $siteId): ?array {
-    foreach (sb_read_sites() as $s) {
-        if ((int)($s['id'] ?? 0) === $siteId) return $s;
-    }
-    return null;
-}
-
-function sb_find_page(int $pageId): ?array {
-    foreach (sb_read_pages() as $p) {
-        if ((int)($p['id'] ?? 0) === $pageId) return $p;
-    }
-    return null;
-}
-
-function sb_find_block(int $blockId): ?array {
-    foreach (sb_read_blocks() as $b) {
-        if ((int)($b['id'] ?? 0) === $blockId) return $b;
-    }
-    return null;
-}
-
-/** ====================== DISK (FILES) ====================== */
-
-function sb_disk_add_subfolder(Folder $parent, array $fields, Storage $storage): Folder {
-    // NEW: addSubFolder($fields, array $rights)
-    try {
-        $folder = $parent->addSubFolder($fields, []);
-        if ($folder instanceof Folder) return $folder;
-    } catch (\Throwable $e) {}
-
-    // OLD: addSubFolder($fields, SecurityContext)
-    $ctx = $storage->getSecurityContext($GLOBALS['USER']);
-    $folder = $parent->addSubFolder($fields, $ctx);
-    if ($folder instanceof Folder) return $folder;
-
-    throw new \RuntimeException('CANNOT_CREATE_FOLDER');
-}
-
-function sb_disk_upload_file(Folder $folder, array $fileArray, array $fields, Storage $storage): File {
-    // NEW: uploadFile($fileArray, $fields, array $rights)
-    try {
-        $obj = $folder->uploadFile($fileArray, $fields, []);
-        if ($obj instanceof File) return $obj;
-    } catch (\Throwable $e) {}
-
-    // OLD: uploadFile($fileArray, $fields, SecurityContext)
-    $ctx = $storage->getSecurityContext($GLOBALS['USER']);
-    $obj = $folder->uploadFile($fileArray, $fields, $ctx);
-    if ($obj instanceof File) return $obj;
-
-    throw new \RuntimeException('UPLOAD_FAILED');
-}
-
-function sb_disk_get_children(Folder $folder, Storage $storage): array {
-    // NEW: getChildren(SecurityContext $context, array $params = [])
-    try {
-        $ctx = $storage->getSecurityContext($GLOBALS['USER']);
-        return $folder->getChildren($ctx);
-    } catch (\Throwable $e) {}
-    // OLD: getChildren()
-    return $folder->getChildren();
-}
-
-function sb_disk_common_storage(): Storage {
-    if (!Loader::includeModule('disk')) {
-        throw new \RuntimeException('DISK_NOT_INSTALLED');
+    if (q) {
+      list = list.filter(s => {
+        const id = String(parseInt(s.id||0,10));
+        const nm = safeStr(s.name).toLowerCase();
+        const sl = safeStr(s.slug).toLowerCase();
+        return id.includes(q) || nm.includes(q) || sl.includes(q);
+      });
     }
 
-    // Newer Bitrix
-    if (method_exists(\Bitrix\Disk\Storage::class, 'loadByEntity')) {
-        $storage = \Bitrix\Disk\Storage::loadByEntity('common', 0);
-        if ($storage) return $storage;
-    }
+    list = sortSitesArr(list, mode);
+    renderSitesCards(list);
+  }
 
-    // Older/alternative
-    $driver = \Bitrix\Disk\Driver::getInstance();
-    if (method_exists($driver, 'getStorageByCommonId')) {
-        $storage = $driver->getStorageByCommonId('shared_files_' . SITE_ID);
-        if ($storage) return $storage;
-    }
-
-    throw new \RuntimeException('COMMON_STORAGE_NOT_FOUND');
-}
-
-function sb_disk_get_or_create_root(Storage $storage, string $name): Folder {
-    $root = $storage->getRootObject();
-
-    $child = $root->getChild([
-        '=NAME' => $name,
-        '=TYPE' => \Bitrix\Disk\Internals\ObjectTable::TYPE_FOLDER,
-    ]);
-    if ($child instanceof Folder) {
-        return $child;
-    }
-
-    return sb_disk_add_subfolder($root, [
-        'NAME' => $name,
-        'CREATED_BY' => (int)$GLOBALS['USER']->GetID(),
-    ], $storage);
-}
-
-function sb_disk_ensure_site_folder(int $siteId): Folder {
-    $sites = sb_read_sites();
-    $site = null; $siteIndex = null;
-
-    foreach ($sites as $i => $s) {
-        if ((int)($s['id'] ?? 0) === $siteId) {
-            $site = $s; $siteIndex = $i; break;
-        }
-    }
-    if (!$site) throw new \RuntimeException('SITE_NOT_FOUND');
-
-    $storage = sb_disk_common_storage();
-
-    $diskFolderId = (int)($site['diskFolderId'] ?? 0);
-    if ($diskFolderId > 0) {
-        $folder = Folder::loadById($diskFolderId);
-        if ($folder) return $folder;
-    }
-
-    $root = sb_disk_get_or_create_root($storage, 'SiteBuilder');
-
-    $slug = (string)($site['slug'] ?? ('site-' . $siteId));
-    $slug = $slug !== '' ? $slug : ('site-' . $siteId);
-
-    $existing = $root->getChild([
-        '=NAME' => $slug,
-        '=TYPE' => \Bitrix\Disk\Internals\ObjectTable::TYPE_FOLDER,
-    ]);
-
-    if ($existing instanceof Folder) {
-        $folder = $existing;
-    } else {
-        $folder = sb_disk_add_subfolder($root, [
-            'NAME' => $slug,
-            'CREATED_BY' => (int)$GLOBALS['USER']->GetID(),
-        ], $storage);
-    }
-
-    $sites[$siteIndex]['diskFolderId'] = (int)$folder->getId();
-    sb_write_sites($sites);
-
-    return $folder;
-}
-
-/**
- * Best-effort: не падаем, если в конкретной версии нет setRights()
- */
-function sb_disk_sync_folder_rights(int $siteId, Folder $folder): void {
-    $rm = Driver::getInstance()->getRightsManager();
-    if (!method_exists($rm, 'setRights')) {
+  function loadSites() {
+    api('site.list').then(res => {
+      if (!res || res.ok !== true) {
+        notify('Не удалось загрузить список сайтов');
         return;
+      }
+      sitesCache = res.sites || [];
+      applySitesView();
+    }).catch(() => notify('Ошибка запроса site.list'));
+  }
+
+  function openCreateSiteDialog() {
+    const formHtml = `
+      <div style="display:flex; flex-direction:column; gap:10px;">
+        <div class="dField">
+          <label>Название сайта</label>
+          <input type="text" id="sb_name" class="dInput" placeholder="Например: Лаборатория" />
+        </div>
+        <div class="dField">
+          <label>Slug (необязательно)</label>
+          <input type="text" id="sb_slug" class="dInput" placeholder="lab (если пусто — сделаем автоматически)" />
+        </div>
+      </div>
+    `;
+
+    BX.UI.Dialogs.MessageBox.show({
+      title: 'Создать сайт',
+      message: formHtml,
+      buttons: BX.UI.Dialogs.MessageBoxButtons.OK_CANCEL,
+      onOk: function (mb) {
+        const name = document.getElementById('sb_name')?.value?.trim() || '';
+        const slug = document.getElementById('sb_slug')?.value?.trim() || '';
+        if (!name) { notify('Введите название сайта'); return; }
+
+        api('site.create', { name, slug }).then(res => {
+          if (!res || res.ok !== true) { notify('Не удалось создать сайт'); return; }
+          notify(`Сайт создан: ${BX.util.htmlspecialchars(res.site.name)} (${BX.util.htmlspecialchars(res.site.slug)})`);
+          mb.close();
+          loadSites();
+        }).catch(() => notify('Ошибка запроса site.create'));
+      }
+    });
+  }
+
+  // ---------- ACCESS UI (unchanged) ----------
+  function renderAccess(container, access, siteId) {
+    if (!access || !access.length) {
+      container.innerHTML = '<div class="muted">Правил доступа пока нет (кроме владельца).</div>';
+      return;
     }
 
-    $taskRead = (method_exists($rm, 'getTaskIdByName') && defined(get_class($rm).'::TASK_READ'))
-        ? $rm->getTaskIdByName($rm::TASK_READ) : null;
-    $taskEdit = (method_exists($rm, 'getTaskIdByName') && defined(get_class($rm).'::TASK_EDIT'))
-        ? $rm->getTaskIdByName($rm::TASK_EDIT) : null;
-    $taskFull = (method_exists($rm, 'getTaskIdByName') && defined(get_class($rm).'::TASK_FULL'))
-        ? $rm->getTaskIdByName($rm::TASK_FULL) : null;
-
-    if (!$taskRead || !$taskEdit || !$taskFull) return;
-
-    $acc = sb_read_access();
-    $acc = array_values(array_filter($acc, fn($r) => (int)($r['siteId'] ?? 0) === $siteId));
-
-    $rights = [];
-    foreach ($acc as $r) {
-        $code = (string)($r['accessCode'] ?? '');
-        if ($code === '') continue;
-
-        $role = strtoupper((string)($r['role'] ?? 'VIEWER'));
-        $taskId = $taskRead;
-        if ($role === 'EDITOR') $taskId = $taskEdit;
-        if ($role === 'ADMIN' || $role === 'OWNER') $taskId = $taskFull;
-
-        $rights[] = ['ACCESS_CODE' => $code, 'TASK_ID' => $taskId];
-    }
-
-    $rm->setRights($folder, $rights);
-}
-
-/** ===== File belongs check for image blocks ===== */
-
-function sb_disk_file_belongs_to_site(int $siteId, int $fileId): bool {
-    if ($fileId <= 0) return false;
-    $folder = sb_disk_ensure_site_folder($siteId);
-    $file = \Bitrix\Disk\File::loadById($fileId);
-    if (!$file) return false;
-    return ((int)$file->getParentId() === (int)$folder->getId());
-}
-
-/** ====================== MENU HELPERS ====================== */
-
-function sb_menu_get_site_record(array $all, int $siteId): ?array {
-    foreach ($all as $r) {
-        if ((int)($r['siteId'] ?? 0) === $siteId) return $r;
-    }
-    return null;
-}
-
-function sb_menu_upsert_site_record(array &$all, int $siteId, array $record): void {
-    $found = false;
-    foreach ($all as $i => $r) {
-        if ((int)($r['siteId'] ?? 0) === $siteId) {
-            $all[$i] = $record;
-            $found = true;
-            break;
-        }
-    }
-    if (!$found) $all[] = $record;
-}
-
-function sb_menu_next_menu_id(array $siteRecord): int {
-    $max = 0;
-    foreach (($siteRecord['menus'] ?? []) as $m) {
-        $max = max($max, (int)($m['id'] ?? 0));
-    }
-    return $max + 1;
-}
-
-function sb_menu_next_item_id(array $menu): int {
-    $max = 0;
-    foreach (($menu['items'] ?? []) as $it) {
-        $max = max($max, (int)($it['id'] ?? 0));
-    }
-    return $max + 1;
-}
-
-function sb_menu_next_sort(array $items): int {
-    $max = 0;
-    foreach ($items as $it) $max = max($max, (int)($it['sort'] ?? 0));
-    return $max + 10;
-}
-
-function sb_menu_find_menu(array $siteRecord, int $menuId): ?array {
-    foreach (($siteRecord['menus'] ?? []) as $m) {
-        if ((int)($m['id'] ?? 0) === $menuId) return $m;
-    }
-    return null;
-}
-
-function sb_menu_update_menu(array &$siteRecord, int $menuId, callable $fn): bool {
-    $menus = $siteRecord['menus'] ?? [];
-    $changed = false;
-
-    foreach ($menus as $i => $m) {
-        if ((int)($m['id'] ?? 0) === $menuId) {
-            $menus[$i] = $fn($m);
-            $changed = true;
-            break;
-        }
-    }
-
-    if ($changed) $siteRecord['menus'] = $menus;
-    return $changed;
-}
-
-/** ====================== ACTIONS ====================== */
-
-$action = (string)($_POST['action'] ?? '');
-
-/** -------------------- TEMPLATE -------------------- */
-if ($action === 'template.list') {
-    $tpl = sb_read_templates();
-    usort($tpl, fn($a,$b) => strcmp((string)($b['createdAt'] ?? ''), (string)($a['createdAt'] ?? '')));
-    echo json_encode(['ok'=>true,'templates'=>$tpl], JSON_UNESCAPED_UNICODE);
-    exit;
-}
-
-if ($action === 'template.createFromPage') {
-    $siteId = (int)($_POST['siteId'] ?? 0);
-    $pageId = (int)($_POST['pageId'] ?? 0);
-    $name = trim((string)($_POST['name'] ?? ''));
-
-    if ($siteId<=0 || $pageId<=0) { http_response_code(422); echo json_encode(['ok'=>false,'error'=>'SITE_PAGE_REQUIRED'], JSON_UNESCAPED_UNICODE); exit; }
-    if ($name==='') { http_response_code(422); echo json_encode(['ok'=>false,'error'=>'NAME_REQUIRED'], JSON_UNESCAPED_UNICODE); exit; }
-
-    sb_require_editor($siteId);
-
-    $page = sb_find_page($pageId);
-    if (!$page || (int)($page['siteId'] ?? 0) !== $siteId) { http_response_code(404); echo json_encode(['ok'=>false,'error'=>'PAGE_NOT_FOUND'], JSON_UNESCAPED_UNICODE); exit; }
-
-    $blocks = sb_read_blocks();
-    $pageBlocks = array_values(array_filter($blocks, fn($b)=> (int)($b['pageId'] ?? 0) === $pageId));
-    usort($pageBlocks, fn($a,$b)=> (int)($a['sort'] ?? 500) <=> (int)($b['sort'] ?? 500));
-
-    $snapshot = [];
-    foreach ($pageBlocks as $b) {
-        $snapshot[] = [
-            'type' => (string)($b['type'] ?? 'text'),
-            'sort' => (int)($b['sort'] ?? 500),
-            'content' => is_array($b['content'] ?? null) ? $b['content'] : [],
-        ];
-    }
-
-    $tpl = sb_read_templates();
-    $maxId = 0; foreach ($tpl as $t) $maxId = max($maxId, (int)($t['id'] ?? 0));
-    $id = $maxId + 1;
-
-    $record = [
-        'id' => $id,
-        'name' => $name,
-        'createdAt' => date('c'),
-        'createdBy' => (int)$USER->GetID(),
-        'blocks' => $snapshot,
-    ];
-
-    $tpl[] = $record;
-    sb_write_templates($tpl);
-
-    echo json_encode(['ok'=>true,'template'=>$record], JSON_UNESCAPED_UNICODE);
-    exit;
-}
-
-if ($action === 'template.applyToPage') {
-    $siteId = (int)($_POST['siteId'] ?? 0);
-    $pageId = (int)($_POST['pageId'] ?? 0);
-    $tplId  = (int)($_POST['templateId'] ?? 0);
-    $mode   = (string)($_POST['mode'] ?? 'append');
-
-    if ($siteId<=0 || $pageId<=0 || $tplId<=0) { http_response_code(422); echo json_encode(['ok'=>false,'error'=>'PARAMS_REQUIRED'], JSON_UNESCAPED_UNICODE); exit; }
-    if ($mode !== 'append' && $mode !== 'replace') $mode = 'append';
-
-    sb_require_editor($siteId);
-
-    $page = sb_find_page($pageId);
-    if (!$page || (int)($page['siteId'] ?? 0) !== $siteId) { http_response_code(404); echo json_encode(['ok'=>false,'error'=>'PAGE_NOT_FOUND'], JSON_UNESCAPED_UNICODE); exit; }
-
-    $tplAll = sb_read_templates();
-    $tpl = null;
-    foreach ($tplAll as $t) if ((int)($t['id'] ?? 0) === $tplId) { $tpl = $t; break; }
-    if (!$tpl) { http_response_code(404); echo json_encode(['ok'=>false,'error'=>'TEMPLATE_NOT_FOUND'], JSON_UNESCAPED_UNICODE); exit; }
-
-    $blocks = sb_read_blocks();
-
-    // очистка старых блоков
-    if ($mode === 'replace') {
-        $blocks = array_values(array_filter($blocks, fn($b)=> (int)($b['pageId'] ?? 0) !== $pageId));
-    }
-
-    // вычислим новые id и sort
-    $maxId = 0; foreach ($blocks as $b) $maxId = max($maxId, (int)($b['id'] ?? 0));
-    $nextId = $maxId + 1;
-
-    $maxSort = 0;
-    foreach ($blocks as $b) if ((int)($b['pageId'] ?? 0) === $pageId) $maxSort = max($maxSort, (int)($b['sort'] ?? 0));
-    $baseSort = ($mode === 'append') ? ($maxSort + 10) : 10;
-
-    $tplBlocks = is_array($tpl['blocks'] ?? null) ? $tpl['blocks'] : [];
-    $i = 0;
-
-    foreach ($tplBlocks as $tb) {
-        if (!is_array($tb)) continue;
-        $type = (string)($tb['type'] ?? 'text');
-        $content = is_array($tb['content'] ?? null) ? $tb['content'] : [];
-
-        $blocks[] = [
-            'id' => $nextId++,
-            'pageId' => $pageId,
-            'type' => $type,
-            'sort' => $baseSort + ($i * 10),
-            'content' => $content,
-            'createdBy' => (int)$USER->GetID(),
-            'createdAt' => date('c'),
-            'updatedAt' => date('c'),
-        ];
-        $i++;
-    }
-
-    sb_write_blocks($blocks);
-    echo json_encode(['ok'=>true,'added'=>$i], JSON_UNESCAPED_UNICODE);
-    exit;
-}
-
-// ping
-if ($action === 'ping') {
-    echo json_encode([
-        'ok' => true,
-        'time' => date('c'),
-        'userId' => (int)$USER->GetID(),
-        'login' => (string)$USER->GetLogin(),
-    ], JSON_UNESCAPED_UNICODE);
-    exit;
-}
-
-/** -------------------- SITES -------------------- */
-
-if ($action === 'site.list') {
-    $sites = sb_read_sites();
-    $myCode = sb_user_access_code();
-
-    $access = sb_read_access();
-    $allowedSiteIds = [];
-    foreach ($access as $r) {
-        if ((string)($r['accessCode'] ?? '') === $myCode) {
-            $sid = (int)($r['siteId'] ?? 0);
-            if ($sid > 0) $allowedSiteIds[$sid] = true;
-        }
-    }
-
-    $sites = array_values(array_filter($sites, fn($s) => isset($allowedSiteIds[(int)($s['id'] ?? 0)])));
-    usort($sites, fn($a, $b) => (int)($a['id'] ?? 0) <=> (int)($b['id'] ?? 0));
-
-    echo json_encode(['ok' => true, 'sites' => $sites], JSON_UNESCAPED_UNICODE);
-    exit;
-}
-
-if ($action === 'site.update') {
-    $siteId = (int)($_POST['siteId'] ?? 0);
-    if ($siteId <= 0) { http_response_code(422); echo json_encode(['ok'=>false,'error'=>'SITE_ID_REQUIRED'], JSON_UNESCAPED_UNICODE); exit; }
-
-    // для серьёзного проекта: только ADMIN/OWNER
-    sb_require_admin($siteId);
-
-    $sites = sb_read_sites();
-    $idx = null;
-    foreach ($sites as $i => $s) {
-        if ((int)($s['id'] ?? 0) === $siteId) { $idx = $i; break; }
-    }
-    if ($idx === null) { http_response_code(404); echo json_encode(['ok'=>false,'error'=>'SITE_NOT_FOUND'], JSON_UNESCAPED_UNICODE); exit; }
-
-    $site = $sites[$idx];
-
-    // --- name ---
-    if (array_key_exists('name', $_POST)) {
-        $name = trim((string)$_POST['name']);
-        if ($name === '') { http_response_code(422); echo json_encode(['ok'=>false,'error'=>'NAME_REQUIRED'], JSON_UNESCAPED_UNICODE); exit; }
-        $site['name'] = $name;
-    }
-
-    // --- slug ---
-    if (array_key_exists('slug', $_POST)) {
-        $slugIn = trim((string)$_POST['slug']);
-        $baseName = (string)($site['name'] ?? ('site-'.$siteId));
-        $newSlug = ($slugIn === '') ? sb_slugify($baseName) : sb_slugify($slugIn);
-
-        // уникальность slug среди сайтов
-        $existing = [];
-        foreach ($sites as $s) {
-            if ((int)($s['id'] ?? 0) === $siteId) continue;
-            $existing[] = (string)($s['slug'] ?? '');
-        }
-        $base = $newSlug; $k = 2;
-        while (in_array($newSlug, $existing, true)) { $newSlug = $base.'-'.$k; $k++; }
-
-        $site['slug'] = $newSlug;
-    }
-
-    // --- settings ---
-    $settings = (isset($site['settings']) && is_array($site['settings'])) ? $site['settings'] : [];
-
-    if (array_key_exists('containerWidth', $_POST)) {
-        $w = (int)$_POST['containerWidth'];
-        if ($w < 900) $w = 900;
-        if ($w > 1600) $w = 1600;
-        $settings['containerWidth'] = $w;
-    }
-
-    if (array_key_exists('accent', $_POST)) {
-        $accent = trim((string)$_POST['accent']);
-        if (!preg_match('~^#[0-9a-fA-F]{6}$~', $accent)) {
-            http_response_code(422);
-            echo json_encode(['ok'=>false,'error'=>'ACCENT_BAD_FORMAT'], JSON_UNESCAPED_UNICODE);
-            exit;
-        }
-        $settings['accent'] = strtoupper($accent);
-    }
-
-    if (array_key_exists('logoFileId', $_POST)) {
-        $logoFileId = (int)$_POST['logoFileId'];
-        if ($logoFileId <= 0) {
-            $settings['logoFileId'] = 0;
-        } else {
-            // файл должен лежать в папке сайта на диске
-            if (!sb_disk_file_belongs_to_site($siteId, $logoFileId)) {
-                http_response_code(422);
-                echo json_encode(['ok'=>false,'error'=>'LOGO_NOT_IN_SITE_FOLDER','fileId'=>$logoFileId], JSON_UNESCAPED_UNICODE);
-                exit;
-            }
-            $settings['logoFileId'] = $logoFileId;
-        }
-    }
-
-    $site['settings'] = $settings;
-
-    // --- homePageId (optional) ---
-    if (array_key_exists('homePageId', $_POST)) {
-        $homePageId = (int)$_POST['homePageId'];
-        if ($homePageId <= 0) {
-            $site['homePageId'] = 0;
-        } else {
-            $p = sb_find_page($homePageId);
-            if (!$p || (int)($p['siteId'] ?? 0) !== $siteId) {
-                http_response_code(422);
-                echo json_encode(['ok'=>false,'error'=>'HOME_PAGE_NOT_IN_SITE'], JSON_UNESCAPED_UNICODE);
-                exit;
-            }
-            $site['homePageId'] = $homePageId;
-        }
-    }
-
-    // --- topMenuId (optional) ---
-    if (array_key_exists('topMenuId', $_POST)) {
-        $topMenuId = (int)$_POST['topMenuId'];
-        if ($topMenuId <= 0) {
-            $site['topMenuId'] = 0;
-        } else {
-            // проверим, что такое меню есть у сайта
-            $menusAll = sb_read_menus();
-            $exists = false;
-            foreach ($menusAll as $rec) {
-                if ((int)($rec['siteId'] ?? 0) !== $siteId) continue;
-                $menus = $rec['menus'] ?? [];
-                if (!is_array($menus)) break;
-                foreach ($menus as $m) {
-                    if ((int)($m['id'] ?? 0) === $topMenuId) { $exists = true; break; }
-                }
-                break;
-            }
-            if (!$exists) {
-                http_response_code(422);
-                echo json_encode(['ok'=>false,'error'=>'TOP_MENU_NOT_FOUND'], JSON_UNESCAPED_UNICODE);
-                exit;
-            }
-            $site['topMenuId'] = $topMenuId;
-        }
-    }
-
-    $site['updatedAt'] = date('c');
-    $site['updatedBy'] = (int)$USER->GetID();
-
-    $sites[$idx] = $site;
-    sb_write_sites($sites);
-
-    echo json_encode(['ok'=>true,'site'=>$site], JSON_UNESCAPED_UNICODE);
-    exit;
-}
-
-if ($action === 'site.get') {
-    $siteId = (int)($_POST['siteId'] ?? 0);
-    if ($siteId <= 0) {
-        http_response_code(422);
-        echo json_encode(['ok'=>false,'error'=>'SITE_ID_REQUIRED'], JSON_UNESCAPED_UNICODE);
-        exit;
-    }
-
-    sb_require_viewer($siteId);
-
-    $sites = sb_read_sites();
-    foreach ($sites as $s) {
-        if ((int)($s['id'] ?? 0) === $siteId) {
-            echo json_encode(['ok'=>true,'site'=>$s], JSON_UNESCAPED_UNICODE);
-            exit;
-        }
-    }
-
-    http_response_code(404);
-    echo json_encode(['ok'=>false,'error'=>'SITE_NOT_FOUND'], JSON_UNESCAPED_UNICODE);
-    exit;
-}
-
-if ($action === 'site.create') {
-    $name = trim((string)($_POST['name'] ?? ''));
-    if ($name === '') {
-        http_response_code(422);
-        echo json_encode(['ok' => false, 'error' => 'NAME_REQUIRED'], JSON_UNESCAPED_UNICODE);
-        exit;
-    }
-
-    $sites = sb_read_sites();
-    $maxId = 0;
-    foreach ($sites as $s) $maxId = max($maxId, (int)($s['id'] ?? 0));
-    $id = $maxId + 1;
-
-    $slug = trim((string)($_POST['slug'] ?? ''));
-    $slug = $slug === '' ? sb_slugify($name) : sb_slugify($slug);
-
-    $existing = array_map(fn($x) => (string)($x['slug'] ?? ''), $sites);
-    $base = $slug; $i = 2;
-    while (in_array($slug, $existing, true)) { $slug = $base.'-'.$i; $i++; }
-
-    $site = [
-        'id' => $id,
-        'name' => $name,
-        'slug' => $slug,
-        'createdBy' => (int)$USER->GetID(),
-        'createdAt' => date('c'),
-        'diskFolderId' => 0,
-
-        // NEW: какое меню считать верхним (0 = не задано)
-        'topMenuId' => 0,
-        'settings' => [
-            'containerWidth' => 1100,
-            'accent' => '#2563eb',
-            'logoFileId' => 0,
-        ],
-    ];
-
-    $sites[] = $site;
-    sb_write_sites($sites);
-
-    $access = sb_read_access();
-    $access[] = [
-        'siteId' => $id,
-        'accessCode' => 'U' . (int)$USER->GetID(),
-        'role' => 'OWNER',
-        'createdBy' => (int)$USER->GetID(),
-        'createdAt' => date('c'),
-    ];
-    sb_write_access($access);
-
-    echo json_encode(['ok' => true, 'site' => $site], JSON_UNESCAPED_UNICODE);
-    exit;
-}
-
-if ($action === 'site.delete') {
-    $id = (int)($_POST['id'] ?? 0);
-    if ($id <= 0) {
-        http_response_code(422);
-        echo json_encode(['ok' => false, 'error' => 'ID_REQUIRED'], JSON_UNESCAPED_UNICODE);
-        exit;
-    }
-
-    sb_require_owner($id);
-
-    $sites = sb_read_sites();
-    $before = count($sites);
-    $sites = array_values(array_filter($sites, fn($s) => (int)($s['id'] ?? 0) !== $id));
-    if (count($sites) === $before) {
-        http_response_code(404);
-        echo json_encode(['ok' => false, 'error' => 'NOT_FOUND'], JSON_UNESCAPED_UNICODE);
-        exit;
-    }
-    sb_write_sites($sites);
-
-    $pages = sb_read_pages();
-    $pages = array_values(array_filter($pages, fn($p) => (int)($p['siteId'] ?? 0) !== $id));
-    sb_write_pages($pages);
-
-    $blocks = sb_read_blocks();
-    $pagesNow = sb_read_pages();
-    $pageIdsNow = [];
-    foreach ($pagesNow as $p) $pageIdsNow[(int)($p['id'] ?? 0)] = true;
-    $blocks = array_values(array_filter($blocks, fn($b) => isset($pageIdsNow[(int)($b['pageId'] ?? 0)])));
-    sb_write_blocks($blocks);
-
-    $acc = sb_read_access();
-    $acc = array_values(array_filter($acc, fn($r) => (int)($r['siteId'] ?? 0) !== $id));
-    sb_write_access($acc);
-
-    echo json_encode(['ok' => true], JSON_UNESCAPED_UNICODE);
-    exit;
-}
-
-// Домашняя страница
-if ($action === 'site.setHome') {
-    $siteId = (int)($_POST['siteId'] ?? 0);
-    $pageId = (int)($_POST['pageId'] ?? 0);
-
-    if ($siteId <= 0 || $pageId <= 0) { http_response_code(422); echo json_encode(['ok'=>false,'error'=>'SITE_PAGE_REQUIRED'], JSON_UNESCAPED_UNICODE); exit; }
-
-    // только editor+ (или owner, решишь сам)
-    sb_require_editor($siteId);
-
-    $page = sb_find_page($pageId);
-    if (!$page || (int)($page['siteId'] ?? 0) !== $siteId) {
-        http_response_code(422);
-        echo json_encode(['ok'=>false,'error'=>'PAGE_NOT_IN_SITE'], JSON_UNESCAPED_UNICODE);
-        exit;
-    }
-
-    $sites = sb_read_sites();
-    $found = false;
-
-    foreach ($sites as &$s) {
-        if ((int)($s['id'] ?? 0) === $siteId) {
-            $s['homePageId'] = $pageId;
-            $s['updatedAt'] = date('c');
-            $s['updatedBy'] = (int)$USER->GetID();
-            $found = true;
-            break;
-        }
-    }
-    unset($s);
-
-    if (!$found) { http_response_code(404); echo json_encode(['ok'=>false,'error'=>'SITE_NOT_FOUND'], JSON_UNESCAPED_UNICODE); exit; }
-
-    sb_write_sites($sites);
-    echo json_encode(['ok'=>true], JSON_UNESCAPED_UNICODE);
-    exit;
-}
-
-/** -------------------- PAGES -------------------- */
-
-if ($action === 'page.list') {
-    $siteId = (int)($_POST['siteId'] ?? 0);
-    if ($siteId <= 0) { http_response_code(422); echo json_encode(['ok'=>false,'error'=>'SITE_ID_REQUIRED'], JSON_UNESCAPED_UNICODE); exit; }
-    sb_require_viewer($siteId);
-
-    $pages = sb_read_pages();
-    $pages = array_values(array_filter($pages, fn($p) => (int)($p['siteId'] ?? 0) === $siteId));
-    // back-compat: если поле status отсутствует у старых страниц — считаем их опубликованными
-    foreach ($pages as &$p) {
-        if (!isset($p['status']) || !in_array((string)$p['status'], ['draft','published'], true)) {
-            $p['status'] = 'published';
-        }
-        if (!isset($p['publishedAt'])) $p['publishedAt'] = '';
-    }
-    unset($p);
-
-    usort($pages, fn($a, $b) => (int)($a['id'] ?? 0) <=> (int)($b['id'] ?? 0));
-
-    echo json_encode(['ok' => true, 'pages' => $pages], JSON_UNESCAPED_UNICODE);
-    exit;
-}
-
-if ($action === 'page.create') {
-    $siteId = (int)($_POST['siteId'] ?? 0);
-    $title  = trim((string)($_POST['title'] ?? ''));
-    $slugIn = trim((string)($_POST['slug'] ?? ''));
-
-    if ($siteId <= 0) { http_response_code(422); echo json_encode(['ok'=>false,'error'=>'SITE_ID_REQUIRED'], JSON_UNESCAPED_UNICODE); exit; }
-    if ($title === '') { http_response_code(422); echo json_encode(['ok'=>false,'error'=>'TITLE_REQUIRED'], JSON_UNESCAPED_UNICODE); exit; }
-
-    sb_require_editor($siteId);
-
-    $slug = $slugIn !== '' ? sb_slugify($slugIn) : sb_slugify($title);
-
-    $pages = sb_read_pages();
-    $maxId = 0; foreach ($pages as $p) $maxId = max($maxId, (int)($p['id'] ?? 0));
-    $id = $maxId + 1;
-
-    $existing = array_map(fn($x) => (string)($x['slug'] ?? ''), array_filter($pages, fn($p) => (int)($p['siteId'] ?? 0) === $siteId));
-    $base = $slug; $i = 2;
-    while (in_array($slug, $existing, true)) { $slug = $base.'-'.$i; $i++; }
-
-    $page = [
-        'id' => $id,
-        'siteId' => $siteId,
-        'title' => $title,
-        'slug' => $slug,
-        'parentId' => 0,
-        'sort' => 500,
-        'createdBy' => (int)$USER->GetID(),
-        'createdAt' => date('c'),
-        'status' => 'draft',
-        'publishedAt' => '',
-    ];
-
-    $pages[] = $page;
-    sb_write_pages($pages);
-
-    echo json_encode(['ok' => true, 'page' => $page], JSON_UNESCAPED_UNICODE);
-    exit;
-}
-
-if ($action === 'page.delete') {
-    $id = (int)($_POST['id'] ?? 0);
-    if ($id <= 0) { http_response_code(422); echo json_encode(['ok'=>false,'error'=>'ID_REQUIRED'], JSON_UNESCAPED_UNICODE); exit; }
-
-    $page = sb_find_page($id);
-    if (!$page) { http_response_code(404); echo json_encode(['ok'=>false,'error'=>'NOT_FOUND'], JSON_UNESCAPED_UNICODE); exit; }
-
-    $siteId = (int)($page['siteId'] ?? 0);
-    sb_require_editor($siteId);
-
-    $pages = sb_read_pages();
-    $pages = array_values(array_filter($pages, fn($p) => (int)($p['id'] ?? 0) !== $id));
-    sb_write_pages($pages);
-
-    $blocks = sb_read_blocks();
-    $blocks = array_values(array_filter($blocks, fn($b) => (int)($b['pageId'] ?? 0) !== $id));
-    sb_write_blocks($blocks);
-
-    echo json_encode(['ok' => true], JSON_UNESCAPED_UNICODE);
-    exit;
-}
-
-/** -------------------- BLOCKS -------------------- */
-
-if ($action === 'block.list') {
-    $pageId = (int)($_POST['pageId'] ?? 0);
-    if ($pageId <= 0) { http_response_code(422); echo json_encode(['ok'=>false,'error'=>'PAGE_ID_REQUIRED'], JSON_UNESCAPED_UNICODE); exit; }
-
-    $page = sb_find_page($pageId);
-    if (!$page) { http_response_code(404); echo json_encode(['ok'=>false,'error'=>'PAGE_NOT_FOUND'], JSON_UNESCAPED_UNICODE); exit; }
-    sb_require_viewer((int)($page['siteId'] ?? 0));
-
-    $blocks = sb_read_blocks();
-    $blocks = array_values(array_filter($blocks, fn($b) => (int)($b['pageId'] ?? 0) === $pageId));
-    usort($blocks, fn($a,$b) => (int)($a['sort'] ?? 500) <=> (int)($b['sort'] ?? 500));
-
-    echo json_encode(['ok' => true, 'blocks' => $blocks], JSON_UNESCAPED_UNICODE);
-    exit;
-}
-
-if ($action === 'block.create') {
-    $pageId = (int)($_POST['pageId'] ?? 0);
-    $type   = trim((string)($_POST['type'] ?? 'text'));
-
-    if ($pageId <= 0) {
-        http_response_code(422);
-        echo json_encode(['ok'=>false,'error'=>'PAGE_ID_REQUIRED'], JSON_UNESCAPED_UNICODE);
-        exit;
-    }
-
-    // ДОБАВИЛИ button
-    if (!in_array($type, ['text','image','button', 'heading', 'columns2', 'gallery', 'spacer', 'card', 'cards'], true)) {
-        http_response_code(422);
-        echo json_encode(['ok'=>false,'error'=>'TYPE_NOT_SUPPORTED'], JSON_UNESCAPED_UNICODE);
-        exit;
-    }
-
-    $page = sb_find_page($pageId);
-    if (!$page) {
-        http_response_code(404);
-        echo json_encode(['ok'=>false,'error'=>'PAGE_NOT_FOUND'], JSON_UNESCAPED_UNICODE);
-        exit;
-    }
-    $siteId = (int)($page['siteId'] ?? 0);
-    sb_require_editor($siteId);
-
-    $blocks = sb_read_blocks();
-    $maxId = 0;
-    foreach ($blocks as $b) $maxId = max($maxId, (int)($b['id'] ?? 0));
-    $id = $maxId + 1;
-
-    $maxSort = 0;
-    foreach ($blocks as $b) {
-        if ((int)($b['pageId'] ?? 0) === $pageId) {
-            $maxSort = max($maxSort, (int)($b['sort'] ?? 0));
-        }
-    }
-    $sort = $maxSort + 10;
-
-    $content = [];
-
-    if ($type === 'text') {
-        $content = ['text' => (string)($_POST['text'] ?? '')];
-
-    } elseif ($type === 'image') {
-        $fileId = (int)($_POST['fileId'] ?? 0);
-        $alt = (string)($_POST['alt'] ?? '');
-
-        if ($fileId <= 0) {
-            http_response_code(422);
-            echo json_encode(['ok'=>false,'error'=>'FILE_ID_REQUIRED'], JSON_UNESCAPED_UNICODE);
-            exit;
-        }
-        if (!sb_disk_file_belongs_to_site($siteId, $fileId)) {
-            http_response_code(422);
-            echo json_encode(['ok'=>false,'error'=>'FILE_NOT_IN_SITE_FOLDER'], JSON_UNESCAPED_UNICODE);
-            exit;
-        }
-
-        $content = ['fileId' => $fileId, 'alt' => $alt];
-
-    } elseif ($type === 'heading') {
-        $text = trim((string)($_POST['text'] ?? ''));
-        $level = strtolower(trim((string)($_POST['level'] ?? 'h2')));
-        $align = strtolower(trim((string)($_POST['align'] ?? 'left')));
-
-        if ($text === '') {
-            http_response_code(422);
-            echo json_encode(['ok'=>false,'error'=>'TEXT_REQUIRED'], JSON_UNESCAPED_UNICODE);
-            exit;
-        }
-        if (!in_array($level, ['h1','h2','h3'], true)) $level = 'h2';
-        if (!in_array($align, ['left','center','right'], true)) $align = 'left';
-
-        $content = ['text' => $text, 'level' => $level, 'align' => $align];
-
-
-
-    } elseif ($type === 'columns2') {
-        $left  = (string)($_POST['left'] ?? '');
-        $right = (string)($_POST['right'] ?? '');
-        $ratio = (string)($_POST['ratio'] ?? '50-50');
-
-        $ratio = trim($ratio);
-        if (!in_array($ratio, ['50-50','33-67','67-33'], true)) $ratio = '50-50';
-
-        $content = [
-            'left' => $left,
-            'right' => $right,
-            'ratio' => $ratio,
-        ];
-
-
-
-    } elseif ($type === 'gallery') {
-        $columns = (int)($_POST['columns'] ?? 3);
-        if (!in_array($columns, [2,3,4], true)) $columns = 3;
-
-        $imagesJson = (string)($_POST['images'] ?? '[]');
-        $images = json_decode($imagesJson, true);
-        if (!is_array($images)) $images = [];
-
-        // нормализуем + проверяем, что файлы лежат в папке сайта
-        $clean = [];
-        foreach ($images as $it) {
-            if (!is_array($it)) continue;
-            $fid = (int)($it['fileId'] ?? 0);
-            if ($fid <= 0) continue;
-
-            if (!sb_disk_file_belongs_to_site($siteId, $fid)) {
-                http_response_code(422);
-                echo json_encode(['ok'=>false,'error'=>'FILE_NOT_IN_SITE_FOLDER','fileId'=>$fid], JSON_UNESCAPED_UNICODE);
-                exit;
-            }
-
-            $clean[] = [
-                'fileId' => $fid,
-                'alt' => (string)($it['alt'] ?? ''),
-            ];
-        }
-
-        if (count($clean) === 0) {
-            http_response_code(422);
-            echo json_encode(['ok'=>false,'error'=>'IMAGES_REQUIRED'], JSON_UNESCAPED_UNICODE);
-            exit;
-        }
-
-        $content = [
-            'columns' => $columns,
-            'images' => $clean,
-        ];
-
-    } elseif ($type === 'spacer') {
-        $height = (int)($_POST['height'] ?? 40);
-        if ($height < 10) $height = 10;
-        if ($height > 200) $height = 200;
-
-        $line = (string)($_POST['line'] ?? '0');
-        $line = ($line === '1' || $line === 'true');
-
-        $content = ['height' => $height, 'line' => $line];
-
-
-
-    } elseif ($type === 'card') {
-        $title = trim((string)($_POST['title'] ?? ''));
-        $text  = (string)($_POST['text'] ?? '');
-
-        $imageFileId = (int)($_POST['imageFileId'] ?? 0);
-
-        $buttonText = trim((string)($_POST['buttonText'] ?? ''));
-        $buttonUrl  = trim((string)($_POST['buttonUrl'] ?? ''));
-
-        if ($title === '') {
-            http_response_code(422);
-            echo json_encode(['ok'=>false,'error'=>'TITLE_REQUIRED'], JSON_UNESCAPED_UNICODE);
-            exit;
-        }
-
-        // картинка опционально, но если задана — должна быть в папке сайта
-        if ($imageFileId > 0 && !sb_disk_file_belongs_to_site($siteId, $imageFileId)) {
-            http_response_code(422);
-            echo json_encode(['ok'=>false,'error'=>'FILE_NOT_IN_SITE_FOLDER','fileId'=>$imageFileId], JSON_UNESCAPED_UNICODE);
-            exit;
-        }
-
-        // кнопка опционально, но если задан URL — проверим формат
-        if ($buttonUrl !== '' && !(preg_match('~^https?://~i', $buttonUrl) || str_starts_with($buttonUrl, '/'))) {
-            http_response_code(422);
-            echo json_encode(['ok'=>false,'error'=>'URL_BAD_FORMAT'], JSON_UNESCAPED_UNICODE);
-            exit;
-        }
-
-        $content = [
-            'title' => $title,
-            'text' => $text,
-            'imageFileId' => $imageFileId,
-            'buttonText' => $buttonText,
-            'buttonUrl' => $buttonUrl,
-        ];
-
-    } elseif ($type === 'cards') {
-        $columns = (int)($_POST['columns'] ?? 3);
-        if (!in_array($columns, [2,3,4], true)) $columns = 3;
-
-        $itemsJson = (string)($_POST['items'] ?? '[]');
-        $items = json_decode($itemsJson, true);
-        if (!is_array($items)) $items = [];
-
-        $clean = [];
-        foreach ($items as $it) {
-            if (!is_array($it)) continue;
-
-            $title = trim((string)($it['title'] ?? ''));
-            $text  = (string)($it['text'] ?? '');
-
-            if ($title === '') continue; // минимум — заголовок
-
-            $imageFileId = (int)($it['imageFileId'] ?? 0);
-            if ($imageFileId > 0 && !sb_disk_file_belongs_to_site($siteId, $imageFileId)) {
-                http_response_code(422);
-                echo json_encode(['ok'=>false,'error'=>'FILE_NOT_IN_SITE_FOLDER','fileId'=>$imageFileId], JSON_UNESCAPED_UNICODE);
-                exit;
-            }
-
-            $buttonText = trim((string)($it['buttonText'] ?? ''));
-            $buttonUrl  = trim((string)($it['buttonUrl'] ?? ''));
-
-            if ($buttonUrl !== '' && !(preg_match('~^https?://~i', $buttonUrl) || str_starts_with($buttonUrl, '/'))) {
-                http_response_code(422);
-                echo json_encode(['ok'=>false,'error'=>'URL_BAD_FORMAT'], JSON_UNESCAPED_UNICODE);
-                exit;
-            }
-
-            $clean[] = [
-                'title' => $title,
-                'text' => $text,
-                'imageFileId' => $imageFileId,
-                'buttonText' => $buttonText,
-                'buttonUrl' => $buttonUrl,
-            ];
-        }
-
-        if (count($clean) === 0) {
-            http_response_code(422);
-            echo json_encode(['ok'=>false,'error'=>'ITEMS_REQUIRED'], JSON_UNESCAPED_UNICODE);
-            exit;
-        }
-
-        $content = [
-            'columns' => $columns,
-            'items' => $clean,
-        ];
-
-    } else { // button
-        $text = trim((string)($_POST['text'] ?? ''));
-        $url  = trim((string)($_POST['url'] ?? ''));
-        $variant = strtolower(trim((string)($_POST['variant'] ?? 'primary')));
-
-        if ($text === '') {
-            http_response_code(422);
-            echo json_encode(['ok'=>false,'error'=>'TEXT_REQUIRED'], JSON_UNESCAPED_UNICODE);
-            exit;
-        }
-        if ($url === '') {
-            http_response_code(422);
-            echo json_encode(['ok'=>false,'error'=>'URL_REQUIRED'], JSON_UNESCAPED_UNICODE);
-            exit;
-        }
-        if (!in_array($variant, ['primary','secondary'], true)) $variant = 'primary';
-
-        // внешний http(s) или относительный /
-        if (!(preg_match('~^https?://~i', $url) || str_starts_with($url, '/'))) {
-            http_response_code(422);
-            echo json_encode(['ok'=>false,'error'=>'URL_BAD_FORMAT'], JSON_UNESCAPED_UNICODE);
-            exit;
-        }
-
-        $content = ['text' => $text, 'url' => $url, 'variant' => $variant];
-    } 
-
-    $block = [
-        'id' => $id,
-        'pageId' => $pageId,
-        'type' => $type,
-        'sort' => $sort,
-        'content' => $content,
-        'createdBy' => (int)$USER->GetID(),
-        'createdAt' => date('c'),
-        'updatedAt' => date('c'),
-    ];
-
-    $blocks[] = $block;
-    sb_write_blocks($blocks);
-
-    echo json_encode(['ok' => true, 'block' => $block], JSON_UNESCAPED_UNICODE);
-    exit;
-}
-
-
-if ($action === 'block.update') {
-    $id = (int)($_POST['id'] ?? 0);
-    if ($id <= 0) {
-        http_response_code(422);
-        echo json_encode(['ok'=>false,'error'=>'ID_REQUIRED'], JSON_UNESCAPED_UNICODE);
-        exit;
-    }
-
-    $blk = sb_find_block($id);
-    if (!$blk) {
-        http_response_code(404);
-        echo json_encode(['ok'=>false,'error'=>'NOT_FOUND'], JSON_UNESCAPED_UNICODE);
-        exit;
-    }
-
-    $page = sb_find_page((int)($blk['pageId'] ?? 0));
-    if (!$page) {
-        http_response_code(404);
-        echo json_encode(['ok'=>false,'error'=>'PAGE_NOT_FOUND'], JSON_UNESCAPED_UNICODE);
-        exit;
-    }
-
-    $siteId = (int)($page['siteId'] ?? 0);
-    sb_require_editor($siteId);
-
-    $blocks = sb_read_blocks();
-    $found = false;
-
-    foreach ($blocks as &$b) {
-        if ((int)($b['id'] ?? 0) !== $id) continue;
-
-        $type = (string)($b['type'] ?? '');
-
-        if ($type === 'text') {
-            $b['content']['text'] = (string)($_POST['text'] ?? '');
-
-        } elseif ($type === 'image') {
-            $fileId = (int)($_POST['fileId'] ?? 0);
-            $alt = (string)($_POST['alt'] ?? '');
-
-            if ($fileId <= 0) {
-                http_response_code(422);
-                echo json_encode(['ok'=>false,'error'=>'FILE_ID_REQUIRED'], JSON_UNESCAPED_UNICODE);
-                exit;
-            }
-            if (!sb_disk_file_belongs_to_site($siteId, $fileId)) {
-                http_response_code(422);
-                echo json_encode(['ok'=>false,'error'=>'FILE_NOT_IN_SITE_FOLDER'], JSON_UNESCAPED_UNICODE);
-                exit;
-            }
-
-            $b['content']['fileId'] = $fileId;
-            $b['content']['alt'] = $alt;
-
-        } elseif ($type === 'button') {
-            $text = trim((string)($_POST['text'] ?? ''));
-            $url  = trim((string)($_POST['url'] ?? ''));
-            $variant = strtolower(trim((string)($_POST['variant'] ?? 'primary')));
-
-            if ($text === '') {
-                http_response_code(422);
-                echo json_encode(['ok'=>false,'error'=>'TEXT_REQUIRED'], JSON_UNESCAPED_UNICODE);
-                exit;
-            }
-            if ($url === '') {
-                http_response_code(422);
-                echo json_encode(['ok'=>false,'error'=>'URL_REQUIRED'], JSON_UNESCAPED_UNICODE);
-                exit;
-            }
-            if (!in_array($variant, ['primary','secondary'], true)) $variant = 'primary';
-
-            if (!(preg_match('~^https?://~i', $url) || str_starts_with($url, '/'))) {
-                http_response_code(422);
-                echo json_encode(['ok'=>false,'error'=>'URL_BAD_FORMAT'], JSON_UNESCAPED_UNICODE);
-                exit;
-            }
-
-            $b['content']['text'] = $text;
-            $b['content']['url'] = $url;
-            $b['content']['variant'] = $variant;
-
-
-
-        } elseif ($type === 'heading') {
-            $text = trim((string)($_POST['text'] ?? ''));
-            $level = strtolower(trim((string)($_POST['level'] ?? 'h2')));
-            $align = strtolower(trim((string)($_POST['align'] ?? 'left')));
-
-            if ($text === '') {
-                http_response_code(422);
-                echo json_encode(['ok'=>false,'error'=>'TEXT_REQUIRED'], JSON_UNESCAPED_UNICODE);
-                exit;
-            }
-            if (!in_array($level, ['h1','h2','h3'], true)) $level = 'h2';
-            if (!in_array($align, ['left','center','right'], true)) $align = 'left';
-
-            $b['content']['text'] = $text;
-            $b['content']['level'] = $level;
-            $b['content']['align'] = $align;
-
-
-
-        } elseif ($type === 'columns2') {
-            $left  = (string)($_POST['left'] ?? '');
-            $right = (string)($_POST['right'] ?? '');
-            $ratio = (string)($_POST['ratio'] ?? '50-50');
-
-            $ratio = trim($ratio);
-            if (!in_array($ratio, ['50-50','33-67','67-33'], true)) $ratio = '50-50';
-
-            $b['content']['left'] = $left;
-            $b['content']['right'] = $right;
-            $b['content']['ratio'] = $ratio;
-
-
-        } elseif ($type === 'gallery') {
-            $columns = (int)($_POST['columns'] ?? 3);
-            if (!in_array($columns, [2,3,4], true)) $columns = 3;
-
-            $imagesJson = (string)($_POST['images'] ?? '[]');
-            $images = json_decode($imagesJson, true);
-            if (!is_array($images)) $images = [];
-
-            $clean = [];
-            foreach ($images as $it) {
-                if (!is_array($it)) continue;
-                $fid = (int)($it['fileId'] ?? 0);
-                if ($fid <= 0) continue;
-
-                if (!sb_disk_file_belongs_to_site($siteId, $fid)) {
-                    http_response_code(422);
-                    echo json_encode(['ok'=>false,'error'=>'FILE_NOT_IN_SITE_FOLDER','fileId'=>$fid], JSON_UNESCAPED_UNICODE);
-                    exit;
-                }
-
-                $clean[] = [
-                    'fileId' => $fid,
-                    'alt' => (string)($it['alt'] ?? ''),
-                ];
-            }
-
-            if (count($clean) === 0) {
-                http_response_code(422);
-                echo json_encode(['ok'=>false,'error'=>'IMAGES_REQUIRED'], JSON_UNESCAPED_UNICODE);
-                exit;
-            }
-
-            $b['content']['columns'] = $columns;
-            $b['content']['images'] = $clean;
-
-        } elseif ($type === 'spacer') {
-            $height = (int)($_POST['height'] ?? 40);
-            if ($height < 10) $height = 10;
-            if ($height > 200) $height = 200;
-
-            $line = (string)($_POST['line'] ?? '0');
-            $line = ($line === '1' || $line === 'true');
-
-            $b['content']['height'] = $height;
-            $b['content']['line'] = $line;
-
-        } elseif ($type === 'card') {
-            $title = trim((string)($_POST['title'] ?? ''));
-            $text  = (string)($_POST['text'] ?? '');
-
-            $imageFileId = (int)($_POST['imageFileId'] ?? 0);
-
-            $buttonText = trim((string)($_POST['buttonText'] ?? ''));
-            $buttonUrl  = trim((string)($_POST['buttonUrl'] ?? ''));
-
-            if ($title === '') {
-                http_response_code(422);
-                echo json_encode(['ok'=>false,'error'=>'TITLE_REQUIRED'], JSON_UNESCAPED_UNICODE);
-                exit;
-            }
-
-            if ($imageFileId > 0 && !sb_disk_file_belongs_to_site($siteId, $imageFileId)) {
-                http_response_code(422);
-                echo json_encode(['ok'=>false,'error'=>'FILE_NOT_IN_SITE_FOLDER','fileId'=>$imageFileId], JSON_UNESCAPED_UNICODE);
-                exit;
-            }
-
-            if ($buttonUrl !== '' && !(preg_match('~^https?://~i', $buttonUrl) || str_starts_with($buttonUrl, '/'))) {
-                http_response_code(422);
-                echo json_encode(['ok'=>false,'error'=>'URL_BAD_FORMAT'], JSON_UNESCAPED_UNICODE);
-                exit;
-            }
-
-            $b['content']['title'] = $title;
-            $b['content']['text'] = $text;
-            $b['content']['imageFileId'] = $imageFileId;
-            $b['content']['buttonText'] = $buttonText;
-            $b['content']['buttonUrl'] = $buttonUrl;
-
-        } elseif ($type === 'cards') {
-            $columns = (int)($_POST['columns'] ?? 3);
-            if (!in_array($columns, [2,3,4], true)) $columns = 3;
-
-            $itemsJson = (string)($_POST['items'] ?? '[]');
-            $items = json_decode($itemsJson, true);
-            if (!is_array($items)) $items = [];
-
-            $clean = [];
-            foreach ($items as $it) {
-                if (!is_array($it)) continue;
-
-                $title = trim((string)($it['title'] ?? ''));
-                $text  = (string)($it['text'] ?? '');
-
-                if ($title === '') continue;
-
-                $imageFileId = (int)($it['imageFileId'] ?? 0);
-                if ($imageFileId > 0 && !sb_disk_file_belongs_to_site($siteId, $imageFileId)) {
-                    http_response_code(422);
-                    echo json_encode(['ok'=>false,'error'=>'FILE_NOT_IN_SITE_FOLDER','fileId'=>$imageFileId], JSON_UNESCAPED_UNICODE);
-                    exit;
-                }
-
-                $buttonText = trim((string)($it['buttonText'] ?? ''));
-                $buttonUrl  = trim((string)($it['buttonUrl'] ?? ''));
-
-                if ($buttonUrl !== '' && !(preg_match('~^https?://~i', $buttonUrl) || str_starts_with($buttonUrl, '/'))) {
-                    http_response_code(422);
-                    echo json_encode(['ok'=>false,'error'=>'URL_BAD_FORMAT'], JSON_UNESCAPED_UNICODE);
-                    exit;
-                }
-
-                $clean[] = [
-                    'title' => $title,
-                    'text' => $text,
-                    'imageFileId' => $imageFileId,
-                    'buttonText' => $buttonText,
-                    'buttonUrl' => $buttonUrl,
-                ];
-            }
-
-            if (count($clean) === 0) {
-                http_response_code(422);
-                echo json_encode(['ok'=>false,'error'=>'ITEMS_REQUIRED'], JSON_UNESCAPED_UNICODE);
-                exit;
-            }
-
-            $b['content']['columns'] = $columns;
-            $b['content']['items'] = $clean;
-
-
-
-        } else {
-            http_response_code(422);
-            echo json_encode(['ok'=>false,'error'=>'TYPE_NOT_SUPPORTED'], JSON_UNESCAPED_UNICODE);
-            exit;
-        }
-
-        $b['updatedAt'] = date('c');
-        $found = true;
-        break;
-    }
-    unset($b);
-
-    if (!$found) {
-        http_response_code(404);
-        echo json_encode(['ok'=>false,'error'=>'NOT_FOUND'], JSON_UNESCAPED_UNICODE);
-        exit;
-    }
-
-    sb_write_blocks($blocks);
-    echo json_encode(['ok' => true], JSON_UNESCAPED_UNICODE);
-    exit;
-}
-
-
-if ($action === 'block.delete') {
-    $id = (int)($_POST['id'] ?? 0);
-    if ($id <= 0) { http_response_code(422); echo json_encode(['ok'=>false,'error'=>'ID_REQUIRED'], JSON_UNESCAPED_UNICODE); exit; }
-
-    $blk = sb_find_block($id);
-    if (!$blk) { http_response_code(404); echo json_encode(['ok'=>false,'error'=>'NOT_FOUND'], JSON_UNESCAPED_UNICODE); exit; }
-
-    $page = sb_find_page((int)($blk['pageId'] ?? 0));
-    if (!$page) { http_response_code(404); echo json_encode(['ok'=>false,'error'=>'PAGE_NOT_FOUND'], JSON_UNESCAPED_UNICODE); exit; }
-    sb_require_editor((int)($page['siteId'] ?? 0));
-
-    $blocks = sb_read_blocks();
-    $blocks = array_values(array_filter($blocks, fn($b) => (int)($b['id'] ?? 0) !== $id));
-    sb_write_blocks($blocks);
-
-    echo json_encode(['ok' => true], JSON_UNESCAPED_UNICODE);
-    exit;
-}
-
-if ($action === 'block.move') {
-    $id  = (int)($_POST['id'] ?? 0);
-    $dir = (string)($_POST['dir'] ?? '');
-
-    if ($id <= 0) { http_response_code(422); echo json_encode(['ok'=>false,'error'=>'ID_REQUIRED'], JSON_UNESCAPED_UNICODE); exit; }
-    if ($dir !== 'up' && $dir !== 'down') { http_response_code(422); echo json_encode(['ok'=>false,'error'=>'DIR_REQUIRED'], JSON_UNESCAPED_UNICODE); exit; }
-
-    $blk = sb_find_block($id);
-    if (!$blk) { http_response_code(404); echo json_encode(['ok'=>false,'error'=>'NOT_FOUND'], JSON_UNESCAPED_UNICODE); exit; }
-
-    $page = sb_find_page((int)($blk['pageId'] ?? 0));
-    if (!$page) { http_response_code(404); echo json_encode(['ok'=>false,'error'=>'PAGE_NOT_FOUND'], JSON_UNESCAPED_UNICODE); exit; }
-    sb_require_editor((int)($page['siteId'] ?? 0));
-
-    $blocks = sb_read_blocks();
-    $pageId = (int)($blk['pageId'] ?? 0);
-
-    $pageBlocks = array_values(array_filter($blocks, fn($b) => (int)($b['pageId'] ?? 0) === $pageId));
-    usort($pageBlocks, fn($a,$b) => (int)($a['sort'] ?? 500) <=> (int)($b['sort'] ?? 500));
-
-    $pos = null;
-    for ($i=0; $i<count($pageBlocks); $i++) {
-        if ((int)($pageBlocks[$i]['id'] ?? 0) === $id) { $pos = $i; break; }
-    }
-    if ($pos === null) { http_response_code(500); echo json_encode(['ok'=>false,'error'=>'INTERNAL'], JSON_UNESCAPED_UNICODE); exit; }
-
-    if ($dir === 'up' && $pos === 0) { echo json_encode(['ok'=>true], JSON_UNESCAPED_UNICODE); exit; }
-    if ($dir === 'down' && $pos === count($pageBlocks)-1) { echo json_encode(['ok'=>true], JSON_UNESCAPED_UNICODE); exit; }
-
-    $swapWith = ($dir === 'up') ? $pos - 1 : $pos + 1;
-
-    $idA = (int)$pageBlocks[$pos]['id'];
-    $idB = (int)$pageBlocks[$swapWith]['id'];
-    $sortA = (int)($pageBlocks[$pos]['sort'] ?? 500);
-    $sortB = (int)($pageBlocks[$swapWith]['sort'] ?? 500);
-
-    foreach ($blocks as &$b) {
-        $bid = (int)($b['id'] ?? 0);
-        if ($bid === $idA) { $b['sort'] = $sortB; $b['updatedAt'] = date('c'); }
-        if ($bid === $idB) { $b['sort'] = $sortA; $b['updatedAt'] = date('c'); }
-    }
-    unset($b);
-
-    sb_write_blocks($blocks);
-    echo json_encode(['ok' => true], JSON_UNESCAPED_UNICODE);
-    exit;
-}
-
-/** -------------------- ACCESS -------------------- */
-
-if ($action === 'access.list') {
-    $siteId = (int)($_POST['siteId'] ?? 0);
-    if ($siteId <= 0) { http_response_code(422); echo json_encode(['ok'=>false,'error'=>'SITE_ID_REQUIRED'], JSON_UNESCAPED_UNICODE); exit; }
-    sb_require_owner($siteId);
-
-    $acc = sb_read_access();
-    $acc = array_values(array_filter($acc, fn($r) => (int)($r['siteId'] ?? 0) === $siteId));
-    usort($acc, fn($a,$b) => sb_role_rank((string)($b['role'] ?? '')) <=> sb_role_rank((string)($a['role'] ?? '')));
-
-    echo json_encode(['ok' => true, 'access' => $acc], JSON_UNESCAPED_UNICODE);
-    exit;
-}
-
-if ($action === 'access.set') {
-    $siteId = (int)($_POST['siteId'] ?? 0);
-    $userId = (int)($_POST['userId'] ?? 0);
-    $role   = strtoupper(trim((string)($_POST['role'] ?? '')));
-
-    if ($siteId <= 0) { http_response_code(422); echo json_encode(['ok'=>false,'error'=>'SITE_ID_REQUIRED'], JSON_UNESCAPED_UNICODE); exit; }
-    if ($userId <= 0) { http_response_code(422); echo json_encode(['ok'=>false,'error'=>'USER_ID_REQUIRED'], JSON_UNESCAPED_UNICODE); exit; }
-    if (!in_array($role, ['OWNER','ADMIN','EDITOR','VIEWER'], true)) { http_response_code(422); echo json_encode(['ok'=>false,'error'=>'ROLE_REQUIRED'], JSON_UNESCAPED_UNICODE); exit; }
-
-    sb_require_owner($siteId);
-    if (!sb_site_exists($siteId)) { http_response_code(404); echo json_encode(['ok'=>false,'error'=>'SITE_NOT_FOUND'], JSON_UNESCAPED_UNICODE); exit; }
-
-    if ($role === 'OWNER') {
-        $acc = sb_read_access();
-        foreach ($acc as $r) {
-            if ((int)($r['siteId'] ?? 0) === $siteId && strtoupper((string)($r['role'] ?? '')) === 'OWNER') {
-                if ((string)($r['accessCode'] ?? '') !== ('U'.$userId)) {
-                    http_response_code(409);
-                    echo json_encode(['ok'=>false,'error'=>'OWNER_ALREADY_EXISTS'], JSON_UNESCAPED_UNICODE);
-                    exit;
-                }
-            }
-        }
-    }
-
-    $acc = sb_read_access();
-    $code = 'U' . $userId;
-    $updated = false;
-
-    foreach ($acc as &$r) {
-        if ((int)($r['siteId'] ?? 0) === $siteId && (string)($r['accessCode'] ?? '') === $code) {
-            $r['role'] = $role;
-            $r['updatedBy'] = (int)$USER->GetID();
-            $r['updatedAt'] = date('c');
-            $updated = true;
-            break;
-        }
-    }
-    unset($r);
-
-    if (!$updated) {
-        $acc[] = [
-            'siteId' => $siteId,
-            'accessCode' => $code,
-            'role' => $role,
-            'createdBy' => (int)$USER->GetID(),
-            'createdAt' => date('c'),
-        ];
-    }
-
-    sb_write_access($acc);
-
-    // best effort: ensure folder exists
-    try { sb_disk_ensure_site_folder($siteId); } catch (\Throwable $e) {}
-
-    echo json_encode(['ok' => true], JSON_UNESCAPED_UNICODE);
-    exit;
-}
-
-if ($action === 'access.delete') {
-    $siteId = (int)($_POST['siteId'] ?? 0);
-    $userId = (int)($_POST['userId'] ?? 0);
-
-    if ($siteId <= 0) { http_response_code(422); echo json_encode(['ok'=>false,'error'=>'SITE_ID_REQUIRED'], JSON_UNESCAPED_UNICODE); exit; }
-    if ($userId <= 0) { http_response_code(422); echo json_encode(['ok'=>false,'error'=>'USER_ID_REQUIRED'], JSON_UNESCAPED_UNICODE); exit; }
-
-    sb_require_owner($siteId);
-
-    $code = 'U' . $userId;
-    $myId = (int)$USER->GetID();
-
-    $acc = sb_read_access();
-    foreach ($acc as $r) {
-        if ((int)($r['siteId'] ?? 0) === $siteId
-            && (string)($r['accessCode'] ?? '') === ('U'.$myId)
-            && strtoupper((string)($r['role'] ?? '')) === 'OWNER'
-            && $userId === $myId
-        ) {
-            http_response_code(409);
-            echo json_encode(['ok' => false, 'error' => 'CANNOT_REMOVE_SELF_OWNER'], JSON_UNESCAPED_UNICODE);
-            exit;
-        }
-    }
-
-    $before = count($acc);
-    $acc = array_values(array_filter($acc, fn($r) => !((int)($r['siteId'] ?? 0) === $siteId && (string)($r['accessCode'] ?? '') === $code)));
-    if (count($acc) === $before) {
-        http_response_code(404);
-        echo json_encode(['ok' => false, 'error' => 'NOT_FOUND'], JSON_UNESCAPED_UNICODE);
-        exit;
-    }
-
-    sb_write_access($acc);
-    echo json_encode(['ok' => true], JSON_UNESCAPED_UNICODE);
-    exit;
-}
-
-/** -------------------- FILES -------------------- */
-
-if ($action === 'file.list') {
-    $siteId = (int)($_POST['siteId'] ?? 0);
-    if ($siteId <= 0) { http_response_code(422); echo json_encode(['ok'=>false,'error'=>'SITE_ID_REQUIRED'], JSON_UNESCAPED_UNICODE); exit; }
-
-    sb_require_viewer($siteId);
-
-    try {
-        $folder = sb_disk_ensure_site_folder($siteId);
-        sb_disk_sync_folder_rights($siteId, $folder);
-
-        $storage = $folder->getStorage();
-        $children = sb_disk_get_children($folder, $storage);
-
-        $files = [];
-        $urlManager = Driver::getInstance()->getUrlManager();
-
-        foreach ($children as $obj) {
-            if ($obj instanceof File) {
-                $downloadUrl = (method_exists($urlManager, 'getUrlForDownloadFile'))
-                    ? (string)$urlManager->getUrlForDownloadFile($obj)
-                    : '';
-
-                $files[] = [
-                    'id' => (int)$obj->getId(),
-                    'name' => (string)$obj->getName(),
-                    'size' => (int)$obj->getSize(),
-                    'createdAt' => $obj->getCreateTime() ? $obj->getCreateTime()->toString() : '',
-                    'downloadUrl' => $downloadUrl,
-                ];
-            }
-        }
-
-        $myRole = sb_get_role($siteId, sb_user_access_code());
-
-        echo json_encode([
-            'ok' => true,
-            'myRole' => $myRole,
-            'folder' => ['id' => (int)$folder->getId(), 'name' => (string)$folder->getName()],
-            'files' => $files,
-        ], JSON_UNESCAPED_UNICODE);
-        exit;
-
-    } catch (\Throwable $e) {
-        http_response_code(500);
-        echo json_encode(['ok' => false, 'error' => 'DISK_ERROR', 'message' => $e->getMessage()], JSON_UNESCAPED_UNICODE);
-        exit;
-    }
-}
-
-if ($action === 'file.upload') {
-    $siteId = (int)($_POST['siteId'] ?? 0);
-    if ($siteId <= 0) { http_response_code(422); echo json_encode(['ok'=>false,'error'=>'SITE_ID_REQUIRED'], JSON_UNESCAPED_UNICODE); exit; }
-    sb_require_editor($siteId);
-
-    if (empty($_FILES['file']) || !is_array($_FILES['file'])) {
-        http_response_code(422);
-        echo json_encode(['ok' => false, 'error' => 'FILE_REQUIRED'], JSON_UNESCAPED_UNICODE);
-        exit;
-    }
-
-    try {
-        $folder = sb_disk_ensure_site_folder($siteId);
-        sb_disk_sync_folder_rights($siteId, $folder);
-
-        $storage = $folder->getStorage();
-        $fileArray = $_FILES['file'];
-        $name = (string)($fileArray['name'] ?? 'file');
-
-        $uploaded = sb_disk_upload_file($folder, $fileArray, [
-            'NAME' => $name,
-            'CREATED_BY' => (int)$USER->GetID(),
-        ], $storage);
-
-        echo json_encode([
-            'ok' => true,
-            'file' => [
-                'id' => (int)$uploaded->getId(),
-                'name' => (string)$uploaded->getName(),
-                'size' => (int)$uploaded->getSize(),
-            ]
-        ], JSON_UNESCAPED_UNICODE);
-        exit;
-
-    } catch (\Throwable $e) {
-        http_response_code(500);
-        echo json_encode(['ok' => false, 'error' => 'DISK_ERROR', 'message' => $e->getMessage()], JSON_UNESCAPED_UNICODE);
-        exit;
-    }
-}
-
-if ($action === 'file.delete') {
-    $siteId = (int)($_POST['siteId'] ?? 0);
-    $fileId = (int)($_POST['fileId'] ?? 0);
-
-    if ($siteId <= 0) { http_response_code(422); echo json_encode(['ok'=>false,'error'=>'SITE_ID_REQUIRED'], JSON_UNESCAPED_UNICODE); exit; }
-    if ($fileId <= 0) { http_response_code(422); echo json_encode(['ok'=>false,'error'=>'FILE_ID_REQUIRED'], JSON_UNESCAPED_UNICODE); exit; }
-    sb_require_editor($siteId);
-
-    try {
-        $folder = sb_disk_ensure_site_folder($siteId);
-        sb_disk_sync_folder_rights($siteId, $folder);
-
-        $file = File::loadById($fileId);
-        if (!$file) { http_response_code(404); echo json_encode(['ok'=>false,'error'=>'FILE_NOT_FOUND'], JSON_UNESCAPED_UNICODE); exit; }
-
-        if ((int)$file->getParentId() !== (int)$folder->getId()) {
-            http_response_code(403);
-            echo json_encode(['ok' => false, 'error' => 'FOREIGN_FILE'], JSON_UNESCAPED_UNICODE);
-            exit;
-        }
-
-        $deleted = $file->delete((int)$USER->GetID());
-        if (!$deleted) { http_response_code(500); echo json_encode(['ok'=>false,'error'=>'DELETE_FAILED'], JSON_UNESCAPED_UNICODE); exit; }
-
-        echo json_encode(['ok' => true], JSON_UNESCAPED_UNICODE);
-        exit;
-
-    } catch (\Throwable $e) {
-        http_response_code(500);
-        echo json_encode(['ok' => false, 'error' => 'DISK_ERROR', 'message' => $e->getMessage()], JSON_UNESCAPED_UNICODE);
-        exit;
-    }
-}
-
-/** -------------------- MENU -------------------- */
-
-// menu.list (VIEWER+)
-if ($action === 'menu.list') {
-    $siteId = (int)($_POST['siteId'] ?? 0);
-    if ($siteId <= 0) { http_response_code(422); echo json_encode(['ok'=>false,'error'=>'SITE_ID_REQUIRED'], JSON_UNESCAPED_UNICODE); exit; }
-    sb_require_viewer($siteId);
-
-    $all = sb_read_menus();
-    $rec = sb_menu_get_site_record($all, $siteId);
-    $menus = $rec ? ($rec['menus'] ?? []) : [];
-
-    foreach ($menus as &$m) {
-        $items = $m['items'] ?? [];
-        usort($items, fn($a,$b) => (int)($a['sort'] ?? 0) <=> (int)($b['sort'] ?? 0));
-        $m['items'] = $items;
-    }
-    unset($m);
-
-    $sites = sb_read_sites();
-    $topMenuId = 0;
-    foreach ($sites as $s) {
-        if ((int)($s['id'] ?? 0) === $siteId) { $topMenuId = (int)($s['topMenuId'] ?? 0); break; }
-    }
-
-    echo json_encode(['ok' => true, 'menus' => $menus, 'topMenuId' => $topMenuId], JSON_UNESCAPED_UNICODE);
-    exit;
-}
-
-// menu.create (EDITOR+)
-if ($action === 'menu.create') {
-    $siteId = (int)($_POST['siteId'] ?? 0);
-    $name = trim((string)($_POST['name'] ?? ''));
-    if ($siteId <= 0) { http_response_code(422); echo json_encode(['ok'=>false,'error'=>'SITE_ID_REQUIRED'], JSON_UNESCAPED_UNICODE); exit; }
-    if ($name === '') { http_response_code(422); echo json_encode(['ok'=>false,'error'=>'NAME_REQUIRED'], JSON_UNESCAPED_UNICODE); exit; }
-    sb_require_editor($siteId);
-
-    $all = sb_read_menus();
-    $rec = sb_menu_get_site_record($all, $siteId);
-    if (!$rec) $rec = ['siteId' => $siteId, 'menus' => []];
-
-    $menuId = sb_menu_next_menu_id($rec);
-    $menu = [
-        'id' => $menuId,
-        'name' => $name,
-        'items' => [],
-        'createdBy' => (int)$USER->GetID(),
-        'createdAt' => date('c'),
-        'updatedAt' => date('c'),
-    ];
-
-    $rec['menus'][] = $menu;
-    sb_menu_upsert_site_record($all, $siteId, $rec);
-    sb_write_menus($all);
-
-    // NEW: если topMenuId еще не задан — сделать первое меню верхним
-    $sites = sb_read_sites();
-    $changedSite = false;
-    foreach ($sites as &$s) {
-        if ((int)($s['id'] ?? 0) === $siteId) {
-            $top = (int)($s['topMenuId'] ?? 0);
-            if ($top <= 0) {
-                $s['topMenuId'] = (int)$menuId;
-                $s['updatedAt'] = date('c');
-                $s['updatedBy'] = (int)$USER->GetID();
-                $changedSite = true;
-            }
-            break;
-        }
-    }
-    unset($s);
-
-    if ($changedSite) sb_write_sites($sites);
-
-    echo json_encode(['ok' => true, 'menu' => $menu], JSON_UNESCAPED_UNICODE);
-    exit;
-}
-
-// menu.update (EDITOR+) rename
-if ($action === 'menu.update') {
-    $siteId = (int)($_POST['siteId'] ?? 0);
-    $menuId = (int)($_POST['menuId'] ?? 0);
-    $name = trim((string)($_POST['name'] ?? ''));
-    if ($siteId <= 0) { http_response_code(422); echo json_encode(['ok'=>false,'error'=>'SITE_ID_REQUIRED'], JSON_UNESCAPED_UNICODE); exit; }
-    if ($menuId <= 0) { http_response_code(422); echo json_encode(['ok'=>false,'error'=>'MENU_ID_REQUIRED'], JSON_UNESCAPED_UNICODE); exit; }
-    if ($name === '') { http_response_code(422); echo json_encode(['ok'=>false,'error'=>'NAME_REQUIRED'], JSON_UNESCAPED_UNICODE); exit; }
-    sb_require_editor($siteId);
-
-    $all = sb_read_menus();
-    $rec = sb_menu_get_site_record($all, $siteId);
-    if (!$rec) { http_response_code(404); echo json_encode(['ok'=>false,'error'=>'MENU_NOT_FOUND'], JSON_UNESCAPED_UNICODE); exit; }
-
-    $ok = sb_menu_update_menu($rec, $menuId, function($m) use ($name) {
-        $m['name'] = $name;
-        $m['updatedAt'] = date('c');
-        return $m;
+    const rows = access.map(r => {
+      const code = r.accessCode || '';
+      const role = r.role || '';
+      const userId = (code.startsWith('U') ? parseInt(code.slice(1), 10) : 0);
+
+      return `
+        <tr>
+          <td style="padding:8px;border-bottom:1px solid #eee;"><code>${BX.util.htmlspecialchars(code)}</code></td>
+          <td style="padding:8px;border-bottom:1px solid #eee;">${BX.util.htmlspecialchars(role)}</td>
+          <td style="padding:8px;border-bottom:1px solid #eee; white-space:nowrap;">
+            <button class="ui-btn ui-btn-danger ui-btn-xs"
+                    data-access-del-site-id="${siteId}"
+                    data-access-del-user-id="${userId}">Удалить</button>
+          </td>
+        </tr>
+      `;
+    }).join('');
+
+    container.innerHTML = `
+      <table style="width:100%; border-collapse:collapse; margin-top:6px;">
+        <thead>
+          <tr>
+            <th style="text-align:left;padding:8px;border-bottom:1px solid #eee;">AccessCode</th>
+            <th style="text-align:left;padding:8px;border-bottom:1px solid #eee;">Role</th>
+            <th style="text-align:left;padding:8px;border-bottom:1px solid #eee;">Действия</th>
+          </tr>
+        </thead>
+        <tbody>${rows}</tbody>
+      </table>
+    `;
+  }
+
+  function loadAccess(siteId, container) {
+    api('access.list', { siteId }).then(res => {
+      if (!res || res.ok !== true) { notify('Нет прав на просмотр/изменение доступов (нужен OWNER)'); return; }
+      renderAccess(container, res.access, siteId);
+    }).catch(() => notify('Ошибка access.list'));
+  }
+
+  function openAccessDialog(siteId, siteName) {
+    const html = `
+      <div>
+        <div class="muted" style="margin-bottom:10px;">
+          Управление доступами (только OWNER). Пока добавляем по <b>UserID</b>.
+        </div>
+
+        <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:flex-end; margin-bottom:10px;">
+          <div style="flex:1; min-width:160px;">
+            <div style="font-size:12px;color:#6a737f;margin-bottom:4px;">UserID</div>
+            <input type="number" id="acc_user_id" class="dInput" placeholder="Например: 15" />
+          </div>
+          <div style="min-width:160px;">
+            <div style="font-size:12px;color:#6a737f;margin-bottom:4px;">Role</div>
+            <select id="acc_role" class="dInput">
+              <option value="VIEWER">VIEWER</option>
+              <option value="EDITOR">EDITOR</option>
+              <option value="ADMIN">ADMIN</option>
+              <option value="OWNER">OWNER</option>
+            </select>
+          </div>
+          <div>
+            <button class="ui-btn ui-btn-primary" id="btnAccSet">Назначить</button>
+          </div>
+        </div>
+
+        <div id="accessBox"></div>
+      </div>
+    `;
+
+    BX.UI.Dialogs.MessageBox.show({
+      title: 'Доступы сайта: ' + BX.util.htmlspecialchars(siteName),
+      message: html,
+      buttons: BX.UI.Dialogs.MessageBoxButtons.CLOSE
     });
 
-    if (!$ok) { http_response_code(404); echo json_encode(['ok'=>false,'error'=>'MENU_NOT_FOUND'], JSON_UNESCAPED_UNICODE); exit; }
+    setTimeout(function () {
+      const box = document.getElementById('accessBox');
+      if (!box) return;
 
-    sb_menu_upsert_site_record($all, $siteId, $rec);
-    sb_write_menus($all);
+      loadAccess(siteId, box);
 
-    echo json_encode(['ok' => true], JSON_UNESCAPED_UNICODE);
-    exit;
-}
+      document.getElementById('btnAccSet')?.addEventListener('click', function () {
+        const userId = parseInt(document.getElementById('acc_user_id')?.value || '0', 10);
+        const role = document.getElementById('acc_role')?.value || 'VIEWER';
+        if (!userId) { notify('Введите UserID'); return; }
 
-// menu.delete (EDITOR+): удалить меню целиком
-if ($action === 'menu.delete') {
-    $siteId = (int)($_POST['siteId'] ?? 0);
-    $menuId = (int)($_POST['menuId'] ?? 0);
+        api('access.set', { siteId, userId, role }).then(res => {
+          if (!res || res.ok !== true) { notify('Не удалось назначить доступ (нужен OWNER)'); return; }
+          notify('Доступ назначен');
+          loadAccess(siteId, box);
+          loadSites();
+        }).catch(() => notify('Ошибка access.set'));
+      });
+    }, 0);
+  }
 
-    if ($siteId <= 0) { http_response_code(422); echo json_encode(['ok'=>false,'error'=>'SITE_ID_REQUIRED'], JSON_UNESCAPED_UNICODE); exit; }
-    if ($menuId <= 0) { http_response_code(422); echo json_encode(['ok'=>false,'error'=>'MENU_ID_REQUIRED'], JSON_UNESCAPED_UNICODE); exit; }
+  // ---------- PAGES (your UI, kept) ----------
+  function buildTree(pages) {
+    const byId = {};
+    pages.forEach(p => { byId[p.id] = Object.assign({ children: [] }, p); });
 
-    sb_require_editor($siteId);
-
-    // удаляем меню из menus.json
-    $all = sb_read_menus();
-    $rec = sb_menu_get_site_record($all, $siteId);
-    if (!$rec) { http_response_code(404); echo json_encode(['ok'=>false,'error'=>'MENU_NOT_FOUND'], JSON_UNESCAPED_UNICODE); exit; }
-
-    $menus = $rec['menus'] ?? [];
-    $before = count($menus);
-    $menus = array_values(array_filter($menus, fn($m) => (int)($m['id'] ?? 0) !== $menuId));
-    if (count($menus) === $before) {
-        http_response_code(404);
-        echo json_encode(['ok'=>false,'error'=>'MENU_NOT_FOUND'], JSON_UNESCAPED_UNICODE);
-        exit;
-    }
-
-    $rec['menus'] = $menus;
-    sb_menu_upsert_site_record($all, $siteId, $rec);
-    sb_write_menus($all);
-
-    // если это меню было верхним — сбрасываем topMenuId
-    $sites = sb_read_sites();
-    foreach ($sites as &$s) {
-        if ((int)($s['id'] ?? 0) === $siteId) {
-            $top = (int)($s['topMenuId'] ?? 0);
-            if ($top === $menuId) {
-                $s['topMenuId'] = 0;
-                $s['updatedAt'] = date('c');
-                $s['updatedBy'] = (int)$USER->GetID();
-            }
-            break;
-        }
-    }
-    unset($s);
-    sb_write_sites($sites);
-
-    echo json_encode(['ok'=>true], JSON_UNESCAPED_UNICODE);
-    exit;
-}
-
-// menu.setTop (EDITOR+): назначить меню верхним
-if ($action === 'menu.setTop') {
-    $siteId = (int)($_POST['siteId'] ?? 0);
-    $menuId = (int)($_POST['menuId'] ?? 0);
-
-    if ($siteId <= 0) { http_response_code(422); echo json_encode(['ok'=>false,'error'=>'SITE_ID_REQUIRED'], JSON_UNESCAPED_UNICODE); exit; }
-    if ($menuId <= 0) { http_response_code(422); echo json_encode(['ok'=>false,'error'=>'MENU_ID_REQUIRED'], JSON_UNESCAPED_UNICODE); exit; }
-
-    sb_require_editor($siteId);
-
-    // проверим, что такое меню вообще существует у сайта
-    $all = sb_read_menus();
-    $rec = sb_menu_get_site_record($all, $siteId);
-    if (!$rec) { http_response_code(404); echo json_encode(['ok'=>false,'error'=>'MENU_NOT_FOUND'], JSON_UNESCAPED_UNICODE); exit; }
-
-    $exists = false;
-    foreach (($rec['menus'] ?? []) as $m) {
-        if ((int)($m['id'] ?? 0) === $menuId) { $exists = true; break; }
-    }
-    if (!$exists) { http_response_code(404); echo json_encode(['ok'=>false,'error'=>'MENU_NOT_FOUND'], JSON_UNESCAPED_UNICODE); exit; }
-
-    // записываем topMenuId в sites.json
-    $sites = sb_read_sites();
-    $found = false;
-    foreach ($sites as &$s) {
-        if ((int)($s['id'] ?? 0) === $siteId) {
-            $s['topMenuId'] = $menuId;
-            $s['updatedAt'] = date('c');
-            $s['updatedBy'] = (int)$USER->GetID();
-            $found = true;
-            break;
-        }
-    }
-    unset($s);
-
-    if (!$found) { http_response_code(404); echo json_encode(['ok'=>false,'error'=>'SITE_NOT_FOUND'], JSON_UNESCAPED_UNICODE); exit; }
-
-    sb_write_sites($sites);
-
-    echo json_encode(['ok'=>true,'topMenuId'=>$menuId], JSON_UNESCAPED_UNICODE);
-    exit;
-}
-
-// menu.item.add (EDITOR+)
-if ($action === 'menu.item.add') {
-    $siteId = (int)($_POST['siteId'] ?? 0);
-    $menuId = (int)($_POST['menuId'] ?? 0);
-    $type = strtolower(trim((string)($_POST['type'] ?? 'page')));
-    $title = trim((string)($_POST['title'] ?? ''));
-
-    if ($siteId <= 0) { http_response_code(422); echo json_encode(['ok'=>false,'error'=>'SITE_ID_REQUIRED'], JSON_UNESCAPED_UNICODE); exit; }
-    if ($menuId <= 0) { http_response_code(422); echo json_encode(['ok'=>false,'error'=>'MENU_ID_REQUIRED'], JSON_UNESCAPED_UNICODE); exit; }
-    if (!in_array($type, ['page','url'], true)) { http_response_code(422); echo json_encode(['ok'=>false,'error'=>'TYPE_REQUIRED'], JSON_UNESCAPED_UNICODE); exit; }
-    sb_require_editor($siteId);
-
-    $all = sb_read_menus();
-    $rec = sb_menu_get_site_record($all, $siteId);
-    if (!$rec) $rec = ['siteId' => $siteId, 'menus' => []];
-
-    $menu = sb_menu_find_menu($rec, $menuId);
-    if (!$menu) { http_response_code(404); echo json_encode(['ok'=>false,'error'=>'MENU_NOT_FOUND'], JSON_UNESCAPED_UNICODE); exit; }
-
-    $items = $menu['items'] ?? [];
-    $itemId = sb_menu_next_item_id($menu);
-    $sort = sb_menu_next_sort($items);
-
-    $item = [
-        'id' => $itemId,
-        'type' => $type,
-        'title' => $title,
-        'sort' => $sort,
-    ];
-
-    if ($type === 'page') {
-        $pageId = (int)($_POST['pageId'] ?? 0);
-        if ($pageId <= 0) { http_response_code(422); echo json_encode(['ok'=>false,'error'=>'PAGE_ID_REQUIRED'], JSON_UNESCAPED_UNICODE); exit; }
-        $p = sb_find_page($pageId);
-        if (!$p || (int)($p['siteId'] ?? 0) !== $siteId) {
-            http_response_code(422);
-            echo json_encode(['ok'=>false,'error'=>'PAGE_NOT_IN_SITE'], JSON_UNESCAPED_UNICODE);
-            exit;
-        }
-        $item['pageId'] = $pageId;
-        if ($item['title'] === '') $item['title'] = (string)($p['title'] ?? ('page#'.$pageId));
-    } else {
-        $url = trim((string)($_POST['url'] ?? ''));
-        if ($url === '') { http_response_code(422); echo json_encode(['ok'=>false,'error'=>'URL_REQUIRED'], JSON_UNESCAPED_UNICODE); exit; }
-        if (!(preg_match('~^https?://~i', $url) || str_starts_with($url, '/'))) {
-            http_response_code(422);
-            echo json_encode(['ok'=>false,'error'=>'URL_BAD_FORMAT'], JSON_UNESCAPED_UNICODE);
-            exit;
-        }
-        $item['url'] = $url;
-        if ($item['title'] === '') $item['title'] = $url;
-    }
-
-    $items[] = $item;
-    $menu['items'] = $items;
-    $menu['updatedAt'] = date('c');
-
-    sb_menu_update_menu($rec, $menuId, fn($_) => $menu);
-    sb_menu_upsert_site_record($all, $siteId, $rec);
-    sb_write_menus($all);
-
-    echo json_encode(['ok' => true, 'item' => $item], JSON_UNESCAPED_UNICODE);
-    exit;
-}
-
-// menu.item.update (EDITOR+)
-if ($action === 'menu.item.update') {
-    $siteId = (int)($_POST['siteId'] ?? 0);
-    $menuId = (int)($_POST['menuId'] ?? 0);
-    $itemId = (int)($_POST['itemId'] ?? 0);
-
-    if ($siteId <= 0) { http_response_code(422); echo json_encode(['ok'=>false,'error'=>'SITE_ID_REQUIRED'], JSON_UNESCAPED_UNICODE); exit; }
-    if ($menuId <= 0) { http_response_code(422); echo json_encode(['ok'=>false,'error'=>'MENU_ID_REQUIRED'], JSON_UNESCAPED_UNICODE); exit; }
-    if ($itemId <= 0) { http_response_code(422); echo json_encode(['ok'=>false,'error'=>'ITEM_ID_REQUIRED'], JSON_UNESCAPED_UNICODE); exit; }
-    sb_require_editor($siteId);
-
-    $all = sb_read_menus();
-    $rec = sb_menu_get_site_record($all, $siteId);
-    if (!$rec) { http_response_code(404); echo json_encode(['ok'=>false,'error'=>'MENU_NOT_FOUND'], JSON_UNESCAPED_UNICODE); exit; }
-
-    $ok = sb_menu_update_menu($rec, $menuId, function($m) use ($siteId, $itemId) {
-        $items = $m['items'] ?? [];
-        $found = false;
-
-        foreach ($items as &$it) {
-            if ((int)($it['id'] ?? 0) !== $itemId) continue;
-
-            $title = trim((string)($_POST['title'] ?? ''));
-            if ($title !== '') $it['title'] = $title;
-
-            if (($it['type'] ?? '') === 'page') {
-                $pageId = (int)($_POST['pageId'] ?? 0);
-                if ($pageId > 0) {
-                    $p = sb_find_page($pageId);
-                    if (!$p || (int)($p['siteId'] ?? 0) !== $siteId) {
-                        http_response_code(422);
-                        echo json_encode(['ok'=>false,'error'=>'PAGE_NOT_IN_SITE'], JSON_UNESCAPED_UNICODE);
-                        exit;
-                    }
-                    $it['pageId'] = $pageId;
-                }
-            } else {
-                $url = trim((string)($_POST['url'] ?? ''));
-                if ($url !== '') {
-                    if (!(preg_match('~^https?://~i', $url) || str_starts_with($url, '/'))) {
-                        http_response_code(422);
-                        echo json_encode(['ok'=>false,'error'=>'URL_BAD_FORMAT'], JSON_UNESCAPED_UNICODE);
-                        exit;
-                    }
-                    $it['url'] = $url;
-                }
-            }
-
-            $found = true;
-            break;
-        }
-        unset($it);
-
-        if (!$found) return $m;
-
-        $m['items'] = $items;
-        $m['updatedAt'] = date('c');
-        return $m;
+    const roots = [];
+    pages.forEach(p => {
+      const pid = parseInt(p.parentId || 0, 10) || 0;
+      if (pid && byId[pid]) byId[pid].children.push(byId[p.id]);
+      else roots.push(byId[p.id]);
     });
 
-    if (!$ok) { http_response_code(404); echo json_encode(['ok'=>false,'error'=>'MENU_NOT_FOUND'], JSON_UNESCAPED_UNICODE); exit; }
+    const sortFn = (a,b) => (parseInt(a.sort||500,10) - parseInt(b.sort||500,10)) || (a.id - b.id);
+    const sortRec = (arr) => { arr.sort(sortFn); arr.forEach(x => sortRec(x.children)); };
+    sortRec(roots);
 
-    sb_menu_upsert_site_record($all, $siteId, $rec);
-    sb_write_menus($all);
+    return { roots, byId };
+  }
 
-    echo json_encode(['ok' => true], JSON_UNESCAPED_UNICODE);
-    exit;
-}
+  function renderPagesTree(container, siteId, pages, q) {
+    const query = (q || '').trim().toLowerCase();
+    const matches = (p) => {
+      if (!query) return true;
+      const t = (p.title||'').toLowerCase();
+      const s = (p.slug||'').toLowerCase();
+      return t.includes(query) || s.includes(query) || String(p.id).includes(query);
+    };
 
-// menu.item.delete (EDITOR+)
-if ($action === 'menu.item.delete') {
-    $siteId = (int)($_POST['siteId'] ?? 0);
-    $menuId = (int)($_POST['menuId'] ?? 0);
-    $itemId = (int)($_POST['itemId'] ?? 0);
+    const { roots } = buildTree(pages);
 
-    if ($siteId <= 0) { http_response_code(422); echo json_encode(['ok'=>false,'error'=>'SITE_ID_REQUIRED'], JSON_UNESCAPED_UNICODE); exit; }
-    if ($menuId <= 0) { http_response_code(422); echo json_encode(['ok'=>false,'error'=>'MENU_ID_REQUIRED'], JSON_UNESCAPED_UNICODE); exit; }
-    if ($itemId <= 0) { http_response_code(422); echo json_encode(['ok'=>false,'error'=>'ITEM_ID_REQUIRED'], JSON_UNESCAPED_UNICODE); exit; }
-    sb_require_editor($siteId);
+    const renderNode = (node) => {
+      const kidsHtml = (node.children || [])
+        .map(renderNode)
+        .filter(Boolean)
+        .join('');
 
-    $all = sb_read_menus();
-    $rec = sb_menu_get_site_record($all, $siteId);
-    if (!$rec) { http_response_code(404); echo json_encode(['ok'=>false,'error'=>'MENU_NOT_FOUND'], JSON_UNESCAPED_UNICODE); exit; }
+      const selfMatch = matches(node);
+      const hasVisibleKids = kidsHtml !== '';
+      if (!selfMatch && !hasVisibleKids) return '';
 
-    $changed = sb_menu_update_menu($rec, $menuId, function($m) use ($itemId) {
-        $items = $m['items'] ?? [];
-        $before = count($items);
-        $items = array_values(array_filter($items, fn($it) => (int)($it['id'] ?? 0) !== $itemId));
-        if (count($items) === $before) return $m;
-        $m['items'] = $items;
-        $m['updatedAt'] = date('c');
-        return $m;
+      const pid = parseInt(node.parentId||0,10)||0;
+      const parentLabel = pid ? `parent: #${pid}` : 'root';
+
+      const status = (node.status || 'published');
+      const statusBadge = (status === 'published')
+        ? '<span class="nodeBadge nodeBadgePub">PUBLISHED</span>'
+        : '<span class="nodeBadge nodeBadgeDraft">DRAFT</span>';
+
+      return `
+        <div class="node">
+          <div class="nodeHead">
+            <div class="nodeLeft">
+              <div class="nodeIcon">≡</div>
+              <div class="nodeMain">
+                <div class="nodeTitleLine">
+                  <b>#${node.id} ${BX.util.htmlspecialchars(node.title || '')}</b>
+                  <span class="nodeSlug">${BX.util.htmlspecialchars(node.slug || '')}</span>
+                  ${statusBadge}
+                </div>
+                <div class="nodeMeta">
+                  <span>sort: ${parseInt(node.sort||500,10)}</span>
+                  <span>${parentLabel}</span>
+                </div>
+              </div>
+            </div>
+
+            <div class="nodeBtns">
+              <button class="ui-btn ui-btn-light ui-btn-xs btnTiny" data-page-move="${node.id}" data-dir="up">↑</button>
+              <button class="ui-btn ui-btn-light ui-btn-xs btnTiny" data-page-move="${node.id}" data-dir="down">↓</button>
+
+              <button class="ui-btn ui-btn-light ui-btn-xs btnTiny" data-page-parent="${node.id}">Вложить…</button>
+              <button class="ui-btn ui-btn-light ui-btn-xs btnTiny" data-page-root="${node.id}">В корень</button>
+
+              ${(status === 'published')
+                ? `<button class="ui-btn ui-btn-light ui-btn-xs btnTiny" data-page-status="${node.id}" data-status="draft">В черновик</button>`
+                : `<button class="ui-btn ui-btn-success ui-btn-xs btnTiny" data-page-status="${node.id}" data-status="published">Опубликовать</button>`}
+
+              <button class="ui-btn ui-btn-light ui-btn-xs btnTiny" data-page-rename="${node.id}">Имя/slug</button>
+
+              <a class="ui-btn ui-btn-primary ui-btn-xs btnTiny"
+                 href="/local/sitebuilder/editor.php?siteId=${siteId}&pageId=${node.id}"
+                 target="_blank">Редактор</a>
+
+              <a class="ui-btn ui-btn-light ui-btn-xs btnTiny"
+                 href="/local/sitebuilder/view.php?siteId=${siteId}&pageId=${node.id}"
+                 target="_blank">Открыть</a>
+
+              <button class="ui-btn ui-btn-danger ui-btn-xs btnTiny" data-page-delete="${node.id}">Удалить</button>
+            </div>
+          </div>
+
+          ${hasVisibleKids ? `<div class="children">${kidsHtml}</div>` : ''}
+        </div>
+      `;
+    };
+
+    const html = roots.map(renderNode).filter(Boolean).join('');
+    container.innerHTML = html || '<div class="muted">Страниц пока нет.</div>';
+  }
+
+  function openCreatePageDialog(siteId, onDone) {
+    const formHtml = `
+      <div style="display:flex; flex-direction:column; gap:10px;">
+        <div class="dField">
+          <label>Заголовок страницы</label>
+          <input type="text" id="pg_title" class="dInput" placeholder="Например: Главная" />
+        </div>
+        <div class="dField">
+          <label>Slug (необязательно)</label>
+          <input type="text" id="pg_slug" class="dInput" placeholder="home (если пусто — сделаем автоматически)" />
+        </div>
+      </div>
+    `;
+
+    BX.UI.Dialogs.MessageBox.show({
+      title: 'Создать страницу',
+      message: formHtml,
+      buttons: BX.UI.Dialogs.MessageBoxButtons.OK_CANCEL,
+      onOk: function (mb) {
+        const title = document.getElementById('pg_title')?.value?.trim() || '';
+        const slug  = document.getElementById('pg_slug')?.value?.trim() || '';
+        if (!title) { notify('Введите заголовок страницы'); return; }
+
+        api('page.create', { siteId, title, slug }).then(res => {
+          if (!res || res.ok !== true) { notify('Не удалось создать страницу (возможно нет прав)'); return; }
+          notify(`Страница создана: ${BX.util.htmlspecialchars(res.page.title)} (${BX.util.htmlspecialchars(res.page.slug)})`);
+          mb.close();
+          if (typeof onDone === 'function') onDone();
+        }).catch(() => notify('Ошибка page.create'));
+      }
+    });
+  }
+
+  function openRenamePageDialog(siteId, pageId, pagesCache, reload) {
+    const cur = (pagesCache || []).find(x => parseInt(x.id,10) === parseInt(pageId,10));
+    const curTitle = cur?.title || '';
+    const curSlug  = cur?.slug || '';
+
+    BX.UI.Dialogs.MessageBox.show({
+      title: 'Имя / slug для #' + pageId,
+      message: `
+        <div style="display:flex; flex-direction:column; gap:10px;">
+          <div class="dField">
+            <label>Заголовок</label>
+            <input id="rn_title" class="dInput" value="${BX.util.htmlspecialchars(curTitle)}" />
+          </div>
+          <div class="dField">
+            <label>Slug (можно пусто — пересчитаем)</label>
+            <input id="rn_slug" class="dInput" value="${BX.util.htmlspecialchars(curSlug)}" />
+          </div>
+          <div class="hint2">Slug должен быть уникален в пределах сайта — если совпадёт, добавим суффикс.</div>
+        </div>
+      `,
+      buttons: BX.UI.Dialogs.MessageBoxButtons.OK_CANCEL,
+      onOk: function(mb){
+        const title = (document.getElementById('rn_title')?.value || '').trim();
+        const slug = (document.getElementById('rn_slug')?.value || '').trim();
+        if (!title) { notify('Заголовок не может быть пустым'); return; }
+
+        api('page.updateMeta', { id: pageId, title, slug }).then(r => {
+          if (!r || r.ok !== true) { notify('Не удалось сохранить'); return; }
+          notify('Сохранено');
+          mb.close();
+          reload();
+        }).catch(()=>notify('Ошибка page.updateMeta'));
+      }
+    });
+  }
+
+  function openSetParentDialog(siteId, pageId, pagesCache, reload) {
+    const pages = Array.isArray(pagesCache) ? pagesCache : [];
+    const current = pages.find(x => parseInt(x.id,10) === parseInt(pageId,10));
+    const currentParentId = parseInt(current?.parentId || 0, 10) || 0;
+
+    let selectedParentId = currentParentId;
+
+    const { roots } = buildTree(pages);
+    const flat = [];
+    const walk = (arr, depth) => {
+      arr.forEach(n => {
+        flat.push({ id: n.id, title: n.title||'', slug:n.slug||'', depth });
+        walk(n.children||[], depth+1);
+      });
+    };
+    walk(roots, 0);
+
+    const renderListInner = (q) => {
+      const query = (q||'').trim().toLowerCase();
+
+      const items = flat.filter(x => {
+        if (parseInt(x.id,10) === parseInt(pageId,10)) return false;
+        if (!query) return true;
+        return (x.title||'').toLowerCase().includes(query)
+          || (x.slug||'').toLowerCase().includes(query)
+          || String(x.id).includes(query);
+      });
+
+      const rows = items.map(x => {
+        const pad = 12 + x.depth * 16;
+        const active = (parseInt(x.id,10) === selectedParentId)
+          ? 'background:#eff6ff;border-color:#bfdbfe;'
+          : '';
+        return `
+          <div class="secCard" data-parent-pick="${x.id}" style="cursor:pointer; padding-left:${pad}px; ${active}">
+            <div class="secTitle">#${x.id} ${BX.util.htmlspecialchars(x.title)}</div>
+            <div class="secMeta">${BX.util.htmlspecialchars(x.slug)}</div>
+          </div>
+        `;
+      }).join('');
+
+      const activeRoot = selectedParentId === 0 ? 'background:#eff6ff;border-color:#bfdbfe;' : '';
+
+      return `
+        <div class="secSearch">
+          <input id="par_q" class="dInput" placeholder="Поиск родителя..." value="${BX.util.htmlspecialchars(q||'')}">
+        </div>
+        <div class="secGrid" style="grid-template-columns: 1fr; margin-top:10px;">
+          <div class="secCard" data-parent-pick="0" style="cursor:pointer; ${activeRoot}">
+            <div class="secTitle">— Корень —</div>
+            <div class="secMeta">Сделать страницу верхнего уровня</div>
+          </div>
+          ${rows || '<div class="muted">Ничего не найдено</div>'}
+        </div>
+        <div class="hint2" style="margin-top:10px;">Кликни по карточке родителя. Потом нажми OK.</div>
+      `;
+    };
+
+    BX.UI.Dialogs.MessageBox.show({
+      title: 'Вложить страницу #' + pageId,
+      message: `<div id="sb_parent_picker_root">${renderListInner('')}</div>`,
+      buttons: BX.UI.Dialogs.MessageBoxButtons.OK_CANCEL,
+      onOk: function(mb){
+        const parentId = parseInt(selectedParentId || 0, 10) || 0;
+
+        api('page.setParent', { id: pageId, parentId }).then(r=>{
+          if (!r || r.ok !== true) { notify('Не удалось изменить parent'); return; }
+          notify('Готово');
+          mb.close();
+          reload();
+        }).catch(()=>notify('Ошибка page.setParent'));
+      }
     });
 
-    if (!$changed) { http_response_code(404); echo json_encode(['ok'=>false,'error'=>'MENU_NOT_FOUND'], JSON_UNESCAPED_UNICODE); exit; }
+    setTimeout(() => {
+      const root = document.getElementById('sb_parent_picker_root');
+      if (!root) return;
 
-    sb_menu_upsert_site_record($all, $siteId, $rec);
-    sb_write_menus($all);
-
-    echo json_encode(['ok' => true], JSON_UNESCAPED_UNICODE);
-    exit;
-}
-
-// menu.item.move (EDITOR+)
-if ($action === 'menu.item.move') {
-    $siteId = (int)($_POST['siteId'] ?? 0);
-    $menuId = (int)($_POST['menuId'] ?? 0);
-    $itemId = (int)($_POST['itemId'] ?? 0);
-    $dir = (string)($_POST['dir'] ?? '');
-
-    if ($siteId <= 0) { http_response_code(422); echo json_encode(['ok'=>false,'error'=>'SITE_ID_REQUIRED'], JSON_UNESCAPED_UNICODE); exit; }
-    if ($menuId <= 0) { http_response_code(422); echo json_encode(['ok'=>false,'error'=>'MENU_ID_REQUIRED'], JSON_UNESCAPED_UNICODE); exit; }
-    if ($itemId <= 0) { http_response_code(422); echo json_encode(['ok'=>false,'error'=>'ITEM_ID_REQUIRED'], JSON_UNESCAPED_UNICODE); exit; }
-    if ($dir !== 'up' && $dir !== 'down') { http_response_code(422); echo json_encode(['ok'=>false,'error'=>'DIR_REQUIRED'], JSON_UNESCAPED_UNICODE); exit; }
-    sb_require_editor($siteId);
-
-    $all = sb_read_menus();
-    $rec = sb_menu_get_site_record($all, $siteId);
-    if (!$rec) { http_response_code(404); echo json_encode(['ok'=>false,'error'=>'MENU_NOT_FOUND'], JSON_UNESCAPED_UNICODE); exit; }
-
-    $changed = sb_menu_update_menu($rec, $menuId, function($m) use ($itemId, $dir) {
-        $items = $m['items'] ?? [];
-        usort($items, fn($a,$b) => (int)($a['sort'] ?? 0) <=> (int)($b['sort'] ?? 0));
-
-        $pos = null;
-        for ($i=0; $i<count($items); $i++) {
-            if ((int)($items[$i]['id'] ?? 0) === $itemId) { $pos = $i; break; }
+      const bind = () => {
+        const q = document.getElementById('par_q');
+        if (q) {
+          q.oninput = () => {
+            root.innerHTML = renderListInner(q.value);
+            bind();
+          };
         }
-        if ($pos === null) return $m;
+        root.querySelectorAll('[data-parent-pick]').forEach(el => {
+          el.onclick = () => {
+            const id = parseInt(el.getAttribute('data-parent-pick')||'0',10) || 0;
+            selectedParentId = id;
+            const curQ = document.getElementById('par_q')?.value || '';
+            root.innerHTML = renderListInner(curQ);
+            bind();
+          };
+        });
+      };
 
-        if ($dir === 'up' && $pos === 0) return $m;
-        if ($dir === 'down' && $pos === count($items)-1) return $m;
+      bind();
+    }, 0);
+  }
 
-        $swap = ($dir === 'up') ? $pos-1 : $pos+1;
+  async function openPagesDialog(siteId, siteName) {
+    let pagesCache = [];
 
-        $sortA = (int)($items[$pos]['sort'] ?? 0);
-        $sortB = (int)($items[$swap]['sort'] ?? 0);
+    const html = `
+      <div>
+        <div class="searchRow">
+          <div>
+            <button class="ui-btn ui-btn-primary ui-btn-xs" id="btnCreatePage">Создать страницу</button>
+          </div>
+          <div class="dField" style="flex:1; min-width:220px;">
+            <label>Поиск</label>
+            <input id="pg_q" class="dInput" placeholder="title / slug / id..." />
+          </div>
+        </div>
 
-        $items[$pos]['sort'] = $sortB;
-        $items[$swap]['sort'] = $sortA;
+        <div class="hint2">
+          Дерево: <code>parentId</code>. Порядок: <code>sort</code> (стрелки ↑/↓ меняют порядок среди “соседей”).
+        </div>
 
-        $m['items'] = $items;
-        $m['updatedAt'] = date('c');
-        return $m;
+        <div id="pagesBox" class="tree"></div>
+      </div>
+    `;
+
+    BX.UI.Dialogs.MessageBox.show({
+      title: 'Страницы сайта: ' + BX.util.htmlspecialchars(siteName),
+      message: html,
+      buttons: BX.UI.Dialogs.MessageBoxButtons.CLOSE
     });
 
-    if (!$changed) { http_response_code(404); echo json_encode(['ok'=>false,'error'=>'MENU_NOT_FOUND'], JSON_UNESCAPED_UNICODE); exit; }
+    const loadAndRender = async () => {
+      const container = document.getElementById('pagesBox');
+      const q = document.getElementById('pg_q')?.value || '';
+      if (!container) return;
 
-    sb_menu_upsert_site_record($all, $siteId, $rec);
-    sb_write_menus($all);
+      try {
+        const res = await api('page.list', { siteId });
+        if (!res || res.ok !== true) { notify('Не удалось загрузить страницы (возможно нет прав)'); return; }
+        pagesCache = res.pages || [];
+        renderPagesTree(container, siteId, pagesCache, q);
+      } catch (e) {
+        notify('Ошибка page.list');
+      }
+    };
 
-    echo json_encode(['ok' => true], JSON_UNESCAPED_UNICODE);
-    exit;
-}
+    setTimeout(() => {
+      const container = document.getElementById('pagesBox');
+      const q = document.getElementById('pg_q');
+      const btn = document.getElementById('btnCreatePage');
 
-if ($action === 'template.rename') {
-    $id = (int)($_POST['id'] ?? 0);
-    $name = trim((string)($_POST['name'] ?? ''));
+      if (btn) btn.onclick = () => openCreatePageDialog(siteId, loadAndRender);
+      if (q) q.oninput = () => loadAndRender();
 
-    if ($id <= 0) { http_response_code(422); echo json_encode(['ok'=>false,'error'=>'ID_REQUIRED'], JSON_UNESCAPED_UNICODE); exit; }
-    if ($name === '') { http_response_code(422); echo json_encode(['ok'=>false,'error'=>'NAME_REQUIRED'], JSON_UNESCAPED_UNICODE); exit; }
+      if (container) {
+        container.addEventListener('click', function(e){
+          const mv = e.target.closest('[data-page-move]');
+          if (mv) {
+            const id = parseInt(mv.getAttribute('data-page-move'),10);
+            const dir = mv.getAttribute('data-dir');
+            api('page.move', { id, dir }).then(r=>{
+              if(!r || r.ok!==true){ notify('Не удалось переместить'); return; }
+              loadAndRender();
+            }).catch(()=>notify('Ошибка page.move'));
+            return;
+          }
+          const st = e.target.closest('[data-page-status]');
+          if (st) {
+            const id = parseInt(st.getAttribute('data-page-status'), 10);
+            const status = st.getAttribute('data-status') || 'draft';
+            api('page.setStatus', { id, status }).then(r => {
+              if(!r || r.ok !== true){ notify('Не удалось изменить статус (нужен EDITOR+)'); return; }
+              notify('Статус обновлён');
+              loadAndRender();
+            }).catch(()=>notify('Ошибка page.setStatus'));
+            return;
+          }
 
-    $tpl = sb_read_templates();
-    $found = false;
 
-    foreach ($tpl as &$t) {
-        if ((int)($t['id'] ?? 0) === $id) {
-            $t['name'] = $name;
-            $t['updatedAt'] = date('c');
-            $t['updatedBy'] = (int)$USER->GetID();
-            $found = true;
-            break;
+
+          const rn = e.target.closest('[data-page-rename]');
+          if (rn) {
+            const id = parseInt(rn.getAttribute('data-page-rename'),10);
+            openRenamePageDialog(siteId, id, pagesCache, loadAndRender);
+            return;
+          }
+
+          const pr = e.target.closest('[data-page-parent]');
+          if (pr) {
+            const id = parseInt(pr.getAttribute('data-page-parent'),10);
+            openSetParentDialog(siteId, id, pagesCache, loadAndRender);
+            return;
+          }
+
+          const rt = e.target.closest('[data-page-root]');
+          if (rt) {
+            const id = parseInt(rt.getAttribute('data-page-root'),10);
+            api('page.setParent', { id, parentId: 0 }).then(r=>{
+              if(!r || r.ok!==true){ notify('Не удалось'); return; }
+              loadAndRender();
+            }).catch(()=>notify('Ошибка page.setParent'));
+            return;
+          }
+
+          const del = e.target.closest('[data-page-delete]');
+          if (del) {
+            const id = parseInt(del.getAttribute('data-page-delete'),10);
+            BX.UI.Dialogs.MessageBox.show({
+              title: 'Удалить страницу #' + id + '?',
+              message: 'Нужны права EDITOR/ADMIN/OWNER. Продолжить?',
+              buttons: BX.UI.Dialogs.MessageBoxButtons.OK_CANCEL,
+              onOk: function(mb){
+                api('page.delete', { id }).then(r=>{
+                  if(!r || r.ok!==true){ notify('Не удалось удалить (возможно нет прав)'); return; }
+                  notify('Страница удалена');
+                  mb.close();
+                  loadAndRender();
+                }).catch(()=>notify('Ошибка page.delete'));
+              }
+            });
+            return;
+          }
+        });
+      }
+
+      loadAndRender();
+    }, 0);
+  }
+
+  // ---------- EVENTS ----------
+  document.addEventListener('click', function (e) {
+    const delSiteBtn = e.target.closest('[data-delete-site-id]');
+    if (delSiteBtn) {
+      const id = parseInt(delSiteBtn.getAttribute('data-delete-site-id'), 10);
+      if (!id) return;
+
+      BX.UI.Dialogs.MessageBox.show({
+        title: 'Удалить сайт?',
+        message: 'Удаление доступно только владельцу (OWNER). Продолжить?',
+        buttons: BX.UI.Dialogs.MessageBoxButtons.OK_CANCEL,
+        onOk: function (mb) {
+          api('site.delete', { id }).then(res => {
+            if (!res || res.ok !== true) { notify('Не удалось удалить сайт (нужен OWNER)'); return; }
+            notify('Сайт удалён');
+            mb.close();
+            loadSites();
+          }).catch(() => notify('Ошибка site.delete'));
         }
-    }
-    unset($t);
-
-    if (!$found) { http_response_code(404); echo json_encode(['ok'=>false,'error'=>'TEMPLATE_NOT_FOUND'], JSON_UNESCAPED_UNICODE); exit; }
-
-    sb_write_templates($tpl);
-    echo json_encode(['ok'=>true], JSON_UNESCAPED_UNICODE);
-    exit;
-}
-
-if ($action === 'template.delete') {
-    $id = (int)($_POST['id'] ?? 0);
-    if ($id <= 0) { http_response_code(422); echo json_encode(['ok'=>false,'error'=>'ID_REQUIRED'], JSON_UNESCAPED_UNICODE); exit; }
-
-    $tpl = sb_read_templates();
-    $before = count($tpl);
-    $tpl = array_values(array_filter($tpl, fn($t) => (int)($t['id'] ?? 0) !== $id));
-
-    if (count($tpl) === $before) { http_response_code(404); echo json_encode(['ok'=>false,'error'=>'TEMPLATE_NOT_FOUND'], JSON_UNESCAPED_UNICODE); exit; }
-
-    sb_write_templates($tpl);
-    echo json_encode(['ok'=>true], JSON_UNESCAPED_UNICODE);
-    exit;
-}
-
-if ($action === 'page.updateMeta') {
-    $id = (int)($_POST['id'] ?? 0);
-    if ($id <= 0) { http_response_code(422); echo json_encode(['ok'=>false,'error'=>'ID_REQUIRED'], JSON_UNESCAPED_UNICODE); exit; }
-
-    $page = sb_find_page($id);
-    if (!$page) { http_response_code(404); echo json_encode(['ok'=>false,'error'=>'PAGE_NOT_FOUND'], JSON_UNESCAPED_UNICODE); exit; }
-
-    $siteId = (int)($page['siteId'] ?? 0);
-    sb_require_editor($siteId);
-
-    $title = trim((string)($_POST['title'] ?? ''));
-    $slugIn = trim((string)($_POST['slug'] ?? ''));
-
-    $pages = sb_read_pages();
-    $found = false;
-
-    // slug (если дали)
-    $newSlug = $slugIn !== '' ? sb_slugify($slugIn) : (string)($page['slug'] ?? 'page-'.$id);
-    if ($title !== '' && $slugIn === '') {
-        // если slug не задан, но title изменили — можем пересчитать slug от title (аккуратно)
-        $newSlug = sb_slugify($title);
+      });
+      return;
     }
 
-    // уникальность slug в рамках siteId
-    $existing = array_map(fn($x) => (string)($x['slug'] ?? ''),
-        array_filter($pages, fn($p) => (int)($p['siteId'] ?? 0) === $siteId && (int)($p['id'] ?? 0) !== $id)
-    );
-    $base = $newSlug; $i = 2;
-    while (in_array($newSlug, $existing, true)) { $newSlug = $base.'-'.$i; $i++; }
+    const openPagesBtn = e.target.closest('[data-open-pages-site-id]');
+    if (openPagesBtn) {
+      const siteId = parseInt(openPagesBtn.getAttribute('data-open-pages-site-id'), 10);
+      const siteName = openPagesBtn.getAttribute('data-open-pages-site-name') || ('ID ' + siteId);
+      if (!siteId) return;
+      openPagesDialog(siteId, siteName);
+      return;
+    }
 
-    foreach ($pages as &$p) {
-        if ((int)($p['id'] ?? 0) === $id) {
-            if ($title !== '') $p['title'] = $title;
-            $p['slug'] = $newSlug;
-            $p['updatedAt'] = date('c');
-            $p['updatedBy'] = (int)$USER->GetID();
-            $found = true;
-            break;
+    const openAccBtn = e.target.closest('[data-open-access-site-id]');
+    if (openAccBtn) {
+      const siteId = parseInt(openAccBtn.getAttribute('data-open-access-site-id'), 10);
+      const siteName = openAccBtn.getAttribute('data-open-access-site-name') || ('ID ' + siteId);
+      if (!siteId) return;
+      openAccessDialog(siteId, siteName);
+      return;
+    }
+
+    const delAccBtn = e.target.closest('[data-access-del-site-id]');
+    if (delAccBtn) {
+      const siteId = parseInt(delAccBtn.getAttribute('data-access-del-site-id'), 10);
+      const userId = parseInt(delAccBtn.getAttribute('data-access-del-user-id'), 10);
+      if (!siteId || !userId) return;
+
+      BX.UI.Dialogs.MessageBox.show({
+        title: 'Удалить правило доступа?',
+        message: 'Продолжить? (только OWNER)',
+        buttons: BX.UI.Dialogs.MessageBoxButtons.OK_CANCEL,
+        onOk: function (mb) {
+          api('access.delete', { siteId, userId }).then(res => {
+            if (!res || res.ok !== true) { notify('Не удалось удалить правило (нужен OWNER)'); return; }
+            notify('Удалено');
+            mb.close();
+
+            const accessBox = document.getElementById('accessBox');
+            if (accessBox) loadAccess(siteId, accessBox);
+            loadSites();
+          }).catch(() => notify('Ошибка access.delete'));
         }
+      });
+      return;
     }
-    unset($p);
+  });
 
-    if (!$found) { http_response_code(404); echo json_encode(['ok'=>false,'error'=>'PAGE_NOT_FOUND'], JSON_UNESCAPED_UNICODE); exit; }
+  if (btnCreate) btnCreate.addEventListener('click', openCreateSiteDialog);
+  if (qSites) qSites.addEventListener('input', applySitesView);
+  if (sortSites) sortSites.addEventListener('change', applySitesView);
 
-    sb_write_pages($pages);
-    echo json_encode(['ok'=>true], JSON_UNESCAPED_UNICODE);
-    exit;
-}
-
-
-if ($action === 'page.setStatus') {
-    $id = (int)($_POST['id'] ?? 0);
-    $status = strtolower(trim((string)($_POST['status'] ?? '')));
-    if ($id <= 0) { http_response_code(422); echo json_encode(['ok'=>false,'error'=>'ID_REQUIRED'], JSON_UNESCAPED_UNICODE); exit; }
-    if (!in_array($status, ['draft','published'], true)) { http_response_code(422); echo json_encode(['ok'=>false,'error'=>'STATUS_REQUIRED'], JSON_UNESCAPED_UNICODE); exit; }
-
-    $page = sb_find_page($id);
-    if (!$page) { http_response_code(404); echo json_encode(['ok'=>false,'error'=>'PAGE_NOT_FOUND'], JSON_UNESCAPED_UNICODE); exit; }
-
-    $siteId = (int)($page['siteId'] ?? 0);
-    sb_require_editor($siteId);
-
-    $pages = sb_read_pages();
-    $found = false;
-
-    foreach ($pages as &$p) {
-        if ((int)($p['id'] ?? 0) === $id) {
-            $p['status'] = $status;
-            if ($status === 'published') {
-                if (!isset($p['publishedAt']) || (string)$p['publishedAt'] === '') {
-                    $p['publishedAt'] = date('c');
-                }
-            } else {
-                $p['publishedAt'] = '';
-            }
-
-            $p['updatedAt'] = date('c');
-            $p['updatedBy'] = (int)$USER->GetID();
-            $found = true;
-            break;
-        }
-    }
-    unset($p);
-
-    if (!$found) { http_response_code(404); echo json_encode(['ok'=>false,'error'=>'PAGE_NOT_FOUND'], JSON_UNESCAPED_UNICODE); exit; }
-
-    sb_write_pages($pages);
-    echo json_encode(['ok'=>true,'id'=>$id,'status'=>$status], JSON_UNESCAPED_UNICODE);
-    exit;
-}
-
-if ($action === 'page.setParent') {
-    $id = (int)($_POST['id'] ?? 0);
-    $parentId = (int)($_POST['parentId'] ?? 0); // 0 = корневая
-
-    if ($id <= 0) { http_response_code(422); echo json_encode(['ok'=>false,'error'=>'ID_REQUIRED'], JSON_UNESCAPED_UNICODE); exit; }
-
-    $page = sb_find_page($id);
-    if (!$page) { http_response_code(404); echo json_encode(['ok'=>false,'error'=>'PAGE_NOT_FOUND'], JSON_UNESCAPED_UNICODE); exit; }
-
-    $siteId = (int)($page['siteId'] ?? 0);
-    sb_require_editor($siteId);
-
-    if ($parentId > 0) {
-        $parent = sb_find_page($parentId);
-        if (!$parent || (int)($parent['siteId'] ?? 0) !== $siteId) {
-            http_response_code(422);
-            echo json_encode(['ok'=>false,'error'=>'PARENT_NOT_IN_SITE'], JSON_UNESCAPED_UNICODE);
-            exit;
-        }
-        if ($parentId === $id) {
-            http_response_code(422);
-            echo json_encode(['ok'=>false,'error'=>'PARENT_SELF'], JSON_UNESCAPED_UNICODE);
-            exit;
-        }
-    }
-
-    $pages = sb_read_pages();
-    foreach ($pages as &$p) {
-        if ((int)($p['id'] ?? 0) === $id) {
-            $p['parentId'] = $parentId;
-            $p['updatedAt'] = date('c');
-            $p['updatedBy'] = (int)$USER->GetID();
-            break;
-        }
-    }
-    unset($p);
-
-    sb_write_pages($pages);
-    echo json_encode(['ok'=>true], JSON_UNESCAPED_UNICODE);
-    exit;
-}
-
-if ($action === 'page.move') {
-    $id = (int)($_POST['id'] ?? 0);
-    $dir = (string)($_POST['dir'] ?? '');
-
-    if ($id <= 0) { http_response_code(422); echo json_encode(['ok'=>false,'error'=>'ID_REQUIRED'], JSON_UNESCAPED_UNICODE); exit; }
-    if ($dir !== 'up' && $dir !== 'down') { http_response_code(422); echo json_encode(['ok'=>false,'error'=>'DIR_REQUIRED'], JSON_UNESCAPED_UNICODE); exit; }
-
-    $page = sb_find_page($id);
-    if (!$page) { http_response_code(404); echo json_encode(['ok'=>false,'error'=>'PAGE_NOT_FOUND'], JSON_UNESCAPED_UNICODE); exit; }
-
-    $siteId = (int)($page['siteId'] ?? 0);
-    sb_require_editor($siteId);
-
-    $parentId = (int)($page['parentId'] ?? 0);
-
-    $pages = sb_read_pages();
-    $siblings = array_values(array_filter($pages, fn($p) =>
-        (int)($p['siteId'] ?? 0) === $siteId && (int)($p['parentId'] ?? 0) === $parentId
-    ));
-    usort($siblings, fn($a,$b) => (int)($a['sort'] ?? 500) <=> (int)($b['sort'] ?? 500));
-
-    $pos = null;
-    for ($i=0; $i<count($siblings); $i++) {
-        if ((int)($siblings[$i]['id'] ?? 0) === $id) { $pos = $i; break; }
-    }
-    if ($pos === null) { echo json_encode(['ok'=>true], JSON_UNESCAPED_UNICODE); exit; }
-
-    if ($dir === 'up' && $pos === 0) { echo json_encode(['ok'=>true], JSON_UNESCAPED_UNICODE); exit; }
-    if ($dir === 'down' && $pos === count($siblings)-1) { echo json_encode(['ok'=>true], JSON_UNESCAPED_UNICODE); exit; }
-
-    $swap = ($dir === 'up') ? $pos-1 : $pos+1;
-
-    $idA = (int)$siblings[$pos]['id'];
-    $idB = (int)$siblings[$swap]['id'];
-    $sortA = (int)($siblings[$pos]['sort'] ?? 500);
-    $sortB = (int)($siblings[$swap]['sort'] ?? 500);
-
-    foreach ($pages as &$p) {
-        $pid = (int)($p['id'] ?? 0);
-        if ($pid === $idA) { $p['sort'] = $sortB; $p['updatedAt']=date('c'); $p['updatedBy']=(int)$USER->GetID(); }
-        if ($pid === $idB) { $p['sort'] = $sortA; $p['updatedAt']=date('c'); $p['updatedBy']=(int)$USER->GetID(); }
-    }
-    unset($p);
-
-    sb_write_pages($pages);
-    echo json_encode(['ok'=>true], JSON_UNESCAPED_UNICODE);
-    exit;
-}
-
-http_response_code(400);
-echo json_encode(['ok' => false, 'error' => 'UNKNOWN_ACTION', 'action' => $action], JSON_UNESCAPED_UNICODE);
+  loadSites();
+});
+</script>
+</body>
+</html>
