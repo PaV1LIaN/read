@@ -1,32 +1,64 @@
-Отлично.
+Теперь уже точно по твоему файлу.
 
-Теперь делаем статус draft/published прямо в списке страниц и быстрое переключение без захода в настройки страницы.
+У тебя сейчас в `index.php` **одновременно включены два варианта управления статусом**, поэтому ты и видишь странный набор кнопок.
 
-Что добавим
+## Что именно у тебя лишнее
 
-В дереве страниц:
+В `renderPagesTree()` → `renderNode()` сейчас есть:
 
-бейдж статуса,
+### 1. Нормальная кнопка-переключатель
 
-кнопку Draft,
+Она правильная, её **оставляем**:
 
-кнопку Published.
+```js
+${(status === 'published')
+  ? `<button class="ui-btn ui-btn-light ui-btn-xs btnTiny" data-page-status="${node.id}" data-status="draft">В черновик</button>`
+  : `<button class="ui-btn ui-btn-success ui-btn-xs btnTiny" data-page-status="${node.id}" data-status="published">Опубликовать</button>`}
+```
 
+### 2. Лишние кнопки
 
+Вот эти **нужно удалить**:
+
+```js
+<button class="ui-btn ui-btn-light ui-btn-xs btnTiny" data-page-status="${node.id}" data-status="draft">Draft</button>
+<button class="ui-btn ui-btn-light ui-btn-xs btnTiny" data-page-status="${node.id}" data-status="published">Published</button>
+```
 
 ---
 
-1. В index.php в renderPagesTree() покажи статус страницы
+## Ещё у тебя дублируется сам статус в UI
 
-Найди кусок:
+Сейчас статус показывается:
 
-<div class="nodeMeta">
-  <span>sort: ${parseInt(node.sort||500,10)}</span>
-  <span>${parentLabel}</span>
-</div>
+* как `statusBadge` рядом со slug,
+* и ещё раз как `.nodeStatus` внутри `.nodeMeta`.
 
-И замени на:
+### Оставить лучше только один вариант
 
+Самый красивый у тебя уже есть — это `statusBadge`:
+
+```js
+const statusBadge = (status === 'published')
+  ? '<span class="nodeBadge nodeBadgePub">PUBLISHED</span>'
+  : '<span class="nodeBadge nodeBadgeDraft">DRAFT</span>';
+```
+
+### А вот этот второй дубль лучше удалить:
+
+```js
+<span class="nodeStatus ${String(node.status || 'published') === 'draft' ? 'isDraft' : 'isPublished'}">
+  ${BX.util.htmlspecialchars(String(node.status || 'published').toUpperCase())}
+</span>
+```
+
+---
+
+# Что сделать прямо сейчас
+
+## Было
+
+```js
 <div class="nodeMeta">
   <span>sort: ${parseInt(node.sort||500,10)}</span>
   <span>${parentLabel}</span>
@@ -34,114 +66,56 @@
     ${BX.util.htmlspecialchars(String(node.status || 'published').toUpperCase())}
   </span>
 </div>
+```
 
+## Должно стать
 
----
-
-2. В CSS index.php добавь стили статуса
-
-В <style> добавь:
-
-.nodeStatus {
-  display:inline-flex;
-  align-items:center;
-  padding:2px 8px;
-  border-radius:999px;
-  font-size:11px;
-  font-weight:700;
-  border:1px solid #e5e7ea;
-}
-
-.nodeStatus.isDraft {
-  background:#fff7ed;
-  border-color:#fdba74;
-  color:#9a3412;
-}
-
-.nodeStatus.isPublished {
-  background:#ecfdf3;
-  border-color:#86efac;
-  color:#166534;
-}
-
+```js
+<div class="nodeMeta">
+  <span>sort: ${parseInt(node.sort||500,10)}</span>
+  <span>${parentLabel}</span>
+</div>
+```
 
 ---
 
-3. В кнопки страницы добавь Draft / Published
+## Было
 
-Внутри .nodeBtns добавь две кнопки:
+```js
+${(status === 'published')
+  ? `<button class="ui-btn ui-btn-light ui-btn-xs btnTiny" data-page-status="${node.id}" data-status="draft">В черновик</button>`
+  : `<button class="ui-btn ui-btn-success ui-btn-xs btnTiny" data-page-status="${node.id}" data-status="published">Опубликовать</button>`}
+
+<button class="ui-btn ui-btn-light ui-btn-xs btnTiny" data-page-rename="${node.id}">Имя/slug</button>
+<button class="ui-btn ui-btn-light ui-btn-xs btnTiny" data-page-duplicate="${node.id}">Дублировать</button>
 
 <button class="ui-btn ui-btn-light ui-btn-xs btnTiny" data-page-status="${node.id}" data-status="draft">Draft</button>
 <button class="ui-btn ui-btn-light ui-btn-xs btnTiny" data-page-status="${node.id}" data-status="published">Published</button>
+```
 
-Полный фрагмент будет примерно таким:
+## Должно стать
 
-<div class="nodeBtns">
-  <button class="ui-btn ui-btn-light ui-btn-xs btnTiny" data-page-move="${node.id}" data-dir="up">↑</button>
-  <button class="ui-btn ui-btn-light ui-btn-xs btnTiny" data-page-move="${node.id}" data-dir="down">↓</button>
+```js
+${(status === 'published')
+  ? `<button class="ui-btn ui-btn-light ui-btn-xs btnTiny" data-page-status="${node.id}" data-status="draft">В черновик</button>`
+  : `<button class="ui-btn ui-btn-success ui-btn-xs btnTiny" data-page-status="${node.id}" data-status="published">Опубликовать</button>`}
 
-  <button class="ui-btn ui-btn-light ui-btn-xs btnTiny" data-page-parent="${node.id}">Вложить…</button>
-  <button class="ui-btn ui-btn-light ui-btn-xs btnTiny" data-page-root="${node.id}">В корень</button>
-
-  <button class="ui-btn ui-btn-light ui-btn-xs btnTiny" data-page-rename="${node.id}">Имя/slug</button>
-  <button class="ui-btn ui-btn-light ui-btn-xs btnTiny" data-page-duplicate="${node.id}">Дублировать</button>
-
-  <button class="ui-btn ui-btn-light ui-btn-xs btnTiny" data-page-status="${node.id}" data-status="draft">Draft</button>
-  <button class="ui-btn ui-btn-light ui-btn-xs btnTiny" data-page-status="${node.id}" data-status="published">Published</button>
-
-  <a class="ui-btn ui-btn-primary ui-btn-xs btnTiny"
-     href="/local/sitebuilder/editor.php?siteId=${siteId}&pageId=${node.id}"
-     target="_blank">Редактор</a>
-
-  <a class="ui-btn ui-btn-light ui-btn-xs btnTiny"
-     href="/local/sitebuilder/view.php?siteId=${siteId}&pageId=${node.id}"
-     target="_blank">Открыть</a>
-
-  <button class="ui-btn ui-btn-danger ui-btn-xs btnTiny" data-page-delete="${node.id}">Удалить</button>
-</div>
-
+<button class="ui-btn ui-btn-light ui-btn-xs btnTiny" data-page-rename="${node.id}">Имя/slug</button>
+<button class="ui-btn ui-btn-light ui-btn-xs btnTiny" data-page-duplicate="${node.id}">Дублировать</button>
+```
 
 ---
 
-4. Добавь обработчик клика в index.php
+## Итог после правки
 
-Внутри container.addEventListener('click', function(e){ ... }) добавь:
+У страницы будет:
 
-const st = e.target.closest('[data-page-status]');
-if (st) {
-  const id = parseInt(st.getAttribute('data-page-status'), 10);
-  const status = st.getAttribute('data-status') || 'draft';
+* один бейдж `DRAFT` / `PUBLISHED`,
+* одна кнопка действия:
 
-  api('page.setStatus', { id, status }).then(r => {
-    if (!r || r.ok !== true) {
-      notify('Не удалось изменить статус');
-      return;
-    }
-    notify('Статус изменён: ' + status);
-    loadAndRender();
-  }).catch(() => notify('Ошибка page.setStatus'));
-  return;
-}
+  * `Опубликовать`, если draft
+  * `В черновик`, если published
 
+И это уже будет правильно.
 
----
-
-Как проверить
-
-1. Открой Страницы.
-
-
-2. У страницы должен отображаться бейдж DRAFT или PUBLISHED.
-
-
-3. Нажми Draft — статус должен стать DRAFT.
-
-
-4. Нажми Published — статус должен стать PUBLISHED.
-
-
-5. Обнови окно ещё раз и проверь, что статус сохранился.
-
-
-
-Если это ок, следующим шагом я бы сделал скрытие draft-страниц из public.php, чтобы наружу никогда не уходили черновики.
+Если хочешь, следующим сообщением я могу прислать тебе **готовый цельный кусок `renderNode()`**, который ты просто вставишь вместо текущего.
