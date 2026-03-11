@@ -1,121 +1,218 @@
-Теперь уже точно по твоему файлу.
+Начинаем с самого важного для публичной части:
 
-У тебя сейчас в `index.php` **одновременно включены два варианта управления статусом**, поэтому ты и видишь странный набор кнопок.
+## Что сейчас делаем
 
-## Что именно у тебя лишнее
+Доводим `public.php` до правильной логики публикации:
 
-В `renderPagesTree()` → `renderNode()` сейчас есть:
+* `draft` страницы не открываются снаружи,
+* если запрошен `slug` черновика — отдаём 404,
+* home page берётся только если она `published`,
+* fallback на первую страницу — тоже только среди `published`,
+* меню не должно вести на `draft` страницы.
 
-### 1. Нормальная кнопка-переключатель
+---
 
-Она правильная, её **оставляем**:
+# Что нужно изменить в `public.php`
 
-```js
-${(status === 'published')
-  ? `<button class="ui-btn ui-btn-light ui-btn-xs btnTiny" data-page-status="${node.id}" data-status="draft">В черновик</button>`
-  : `<button class="ui-btn ui-btn-success ui-btn-xs btnTiny" data-page-status="${node.id}" data-status="published">Опубликовать</button>`}
-```
+## 1. Добавить функцию проверки опубликованности страницы
 
-### 2. Лишние кнопки
+Рядом с `find_page()` и `find_page_by_slug()` добавь:
 
-Вот эти **нужно удалить**:
-
-```js
-<button class="ui-btn ui-btn-light ui-btn-xs btnTiny" data-page-status="${node.id}" data-status="draft">Draft</button>
-<button class="ui-btn ui-btn-light ui-btn-xs btnTiny" data-page-status="${node.id}" data-status="published">Published</button>
+```php
+function is_page_published(array $page): bool {
+    $status = strtolower((string)($page['status'] ?? 'published'));
+    return $status === 'published';
+}
 ```
 
 ---
 
-## Ещё у тебя дублируется сам статус в UI
+## 2. Исправить `find_page_by_slug()`
 
-Сейчас статус показывается:
+Сейчас публичка может находить любую страницу по slug.
+Нужно, чтобы находила только опубликованную.
 
-* как `statusBadge` рядом со slug,
-* и ещё раз как `.nodeStatus` внутри `.nodeMeta`.
+### Было:
 
-### Оставить лучше только один вариант
-
-Самый красивый у тебя уже есть — это `statusBadge`:
-
-```js
-const statusBadge = (status === 'published')
-  ? '<span class="nodeBadge nodeBadgePub">PUBLISHED</span>'
-  : '<span class="nodeBadge nodeBadgeDraft">DRAFT</span>';
+```php
+function find_page_by_slug(int $siteId, string $slug): ?array {
+    foreach (sb_read_pages() as $p) {
+        if ((int)($p['siteId'] ?? 0) === $siteId && (string)($p['slug'] ?? '') === $slug) return $p;
+    }
+    return null;
+}
 ```
 
-### А вот этот второй дубль лучше удалить:
+### Должно стать:
 
-```js
-<span class="nodeStatus ${String(node.status || 'published') === 'draft' ? 'isDraft' : 'isPublished'}">
-  ${BX.util.htmlspecialchars(String(node.status || 'published').toUpperCase())}
-</span>
-```
-
----
-
-# Что сделать прямо сейчас
-
-## Было
-
-```js
-<div class="nodeMeta">
-  <span>sort: ${parseInt(node.sort||500,10)}</span>
-  <span>${parentLabel}</span>
-  <span class="nodeStatus ${String(node.status || 'published') === 'draft' ? 'isDraft' : 'isPublished'}">
-    ${BX.util.htmlspecialchars(String(node.status || 'published').toUpperCase())}
-  </span>
-</div>
-```
-
-## Должно стать
-
-```js
-<div class="nodeMeta">
-  <span>sort: ${parseInt(node.sort||500,10)}</span>
-  <span>${parentLabel}</span>
-</div>
+```php
+function find_page_by_slug(int $siteId, string $slug): ?array {
+    foreach (sb_read_pages() as $p) {
+        if ((int)($p['siteId'] ?? 0) !== $siteId) continue;
+        if ((string)($p['slug'] ?? '') !== $slug) continue;
+        if (!is_page_published($p)) continue;
+        return $p;
+    }
+    return null;
+}
 ```
 
 ---
 
-## Было
+## 3. Исправить `find_page()`
 
-```js
-${(status === 'published')
-  ? `<button class="ui-btn ui-btn-light ui-btn-xs btnTiny" data-page-status="${node.id}" data-status="draft">В черновик</button>`
-  : `<button class="ui-btn ui-btn-success ui-btn-xs btnTiny" data-page-status="${node.id}" data-status="published">Опубликовать</button>`}
+Чтобы через `homePageId` случайно не открывался draft.
 
-<button class="ui-btn ui-btn-light ui-btn-xs btnTiny" data-page-rename="${node.id}">Имя/slug</button>
-<button class="ui-btn ui-btn-light ui-btn-xs btnTiny" data-page-duplicate="${node.id}">Дублировать</button>
+### Было:
 
-<button class="ui-btn ui-btn-light ui-btn-xs btnTiny" data-page-status="${node.id}" data-status="draft">Draft</button>
-<button class="ui-btn ui-btn-light ui-btn-xs btnTiny" data-page-status="${node.id}" data-status="published">Published</button>
+```php
+function find_page(int $pageId): ?array {
+    foreach (sb_read_pages() as $p) if ((int)($p['id'] ?? 0) === $pageId) return $p;
+    return null;
+}
 ```
 
-## Должно стать
+### Должно стать:
 
-```js
-${(status === 'published')
-  ? `<button class="ui-btn ui-btn-light ui-btn-xs btnTiny" data-page-status="${node.id}" data-status="draft">В черновик</button>`
-  : `<button class="ui-btn ui-btn-success ui-btn-xs btnTiny" data-page-status="${node.id}" data-status="published">Опубликовать</button>`}
+```php
+function find_page(int $pageId): ?array {
+    foreach (sb_read_pages() as $p) {
+        if ((int)($p['id'] ?? 0) === $pageId) return $p;
+    }
+    return null;
+}
+```
 
-<button class="ui-btn ui-btn-light ui-btn-xs btnTiny" data-page-rename="${node.id}">Имя/slug</button>
-<button class="ui-btn ui-btn-light ui-btn-xs btnTiny" data-page-duplicate="${node.id}">Дублировать</button>
+Оставляем так, но ниже в логике выбора страницы будем отдельно проверять `is_page_published()`.
+
+---
+
+## 4. Исправить выбор текущей страницы
+
+Вот этот блок:
+
+```php
+$page = null;
+if ($slug !== '') $page = find_page_by_slug($siteId, $slug);
+
+if (!$page) {
+    $homeId = (int)($site['homePageId'] ?? 0);
+    if ($homeId > 0) $page = find_page($homeId);
+}
+if (!$page) {
+    // если home не задан — берём первую страницу
+    foreach (sb_read_pages() as $p) {
+        if ((int)($p['siteId'] ?? 0) === $siteId) { $page = $p; break; }
+    }
+}
+if (!$page) { http_response_code(404); echo 'Page not found'; exit; }
+```
+
+### Замени на:
+
+```php
+$page = null;
+
+// 1. Явный slug — только published
+if ($slug !== '') {
+    $page = find_page_by_slug($siteId, $slug);
+    if (!$page) {
+        http_response_code(404);
+        echo 'Page not found';
+        exit;
+    }
+}
+
+// 2. Home page — только published
+if (!$page) {
+    $homeId = (int)($site['homePageId'] ?? 0);
+    if ($homeId > 0) {
+        $candidate = find_page($homeId);
+        if ($candidate && (int)($candidate['siteId'] ?? 0) === $siteId && is_page_published($candidate)) {
+            $page = $candidate;
+        }
+    }
+}
+
+// 3. Fallback — первая опубликованная страница сайта
+if (!$page) {
+    $publishedPages = array_values(array_filter(sb_read_pages(), function($p) use ($siteId) {
+        return (int)($p['siteId'] ?? 0) === $siteId && is_page_published($p);
+    }));
+
+    usort($publishedPages, fn($a, $b) =>
+        ((int)($a['sort'] ?? 500) <=> (int)($b['sort'] ?? 500))
+        ?: ((int)($a['id'] ?? 0) <=> (int)($b['id'] ?? 0))
+    );
+
+    if ($publishedPages) {
+        $page = $publishedPages[0];
+    }
+}
+
+if (!$page) {
+    http_response_code(404);
+    echo 'Page not found';
+    exit;
+}
 ```
 
 ---
 
-## Итог после правки
+## 5. Исправить формирование меню
 
-У страницы будет:
+Сейчас в меню могут попадать ссылки на draft-страницы.
+Нужно фильтровать их.
 
-* один бейдж `DRAFT` / `PUBLISHED`,
-* одна кнопка действия:
+Найди блок внутри:
 
-  * `Опубликовать`, если draft
-  * `В черновик`, если published
+```php
+if ($type === 'page') {
+    $pid = (int)($it['pageId'] ?? 0);
+    $p = $pid > 0 ? find_page($pid) : null;
+    ...
+}
+```
 
-И это уже будет правильно.
+### Замени на:
 
-Если хочешь, следующим сообщением я могу прислать тебе **готовый цельный кусок `renderNode()`**, который ты просто вставишь вместо текущего.
+```php
+if ($type === 'page') {
+    $pid = (int)($it['pageId'] ?? 0);
+    $p = $pid > 0 ? find_page($pid) : null;
+
+    if ($p && (int)($p['siteId'] ?? 0) === $siteId && is_page_published($p)) {
+        $href = public_page_url($siteId, $p);
+        if ($title === 'Link') $title = (string)($p['title'] ?? 'Page');
+    } else {
+        continue;
+    }
+}
+```
+
+---
+
+# Что получится после этого
+
+После правки:
+
+* если страница `draft`, она не откроется по `public.php?...&p=slug`
+* если `homePageId` указывает на черновик, он будет проигнорирован
+* если опубликованных страниц нет вообще — будет 404
+* меню не покажет ссылки на черновики
+
+---
+
+# Как проверить
+
+1. Сделай одну страницу `published`, вторую `draft`
+2. Открой:
+
+   * опубликованную через `public.php?siteId=...&p=...`
+   * черновик через `public.php?siteId=...&p=...`
+3. У опубликованной страница должна открыться
+4. У черновика должен быть `404 Page not found`
+5. Если `homePageId` указывает на draft, публичка должна открыть первую опубликованную страницу
+6. В меню draft-страница не должна отображаться
+
+Следующим шагом после этого я бы сделал, чтобы `public.php` использовал не “первое меню”, а именно `topMenuId`, как уже сделано в `view.php`.
