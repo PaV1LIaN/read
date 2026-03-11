@@ -4,6 +4,10 @@ ErrorDocument 404 /404.php
 <IfModule mod_rewrite.c>
   Options +FollowSymLinks
   RewriteEngine On
+
+  RewriteRule ^sb/([^/]+)/?$ /local/sitebuilder/public.php?site=$1 [L,QSA]
+  RewriteRule ^sb/([^/]+)/([^/]+)/?$ /local/sitebuilder/public.php?site=$1&page=$2 [L,QSA]
+
   RewriteCond %{REQUEST_FILENAME} !-f
   RewriteCond %{REQUEST_FILENAME} !-l
   RewriteCond %{REQUEST_FILENAME} !-d
