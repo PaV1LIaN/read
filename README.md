@@ -1,50 +1,279 @@
-Отлично. Тогда следующий шаг — нормальный layout.php для редактирования:
+Отлично. Тогда сначала добавляем layout.block.update в api.php.
 
-Header
+Вставь этот блок рядом с остальными layout.block.* action'ами, лучше всего после layout.block.create и до layout.block.delete.
 
-Footer
+if ($action === 'layout.block.update') {
+    $siteId = (int)($_POST['siteId'] ?? 0);
+    $zone = trim((string)($_POST['zone'] ?? ''));
+    $id = (int)($_POST['id'] ?? 0);
 
-Left
+    if ($siteId <= 0) {
+        http_response_code(422);
+        echo json_encode(['ok'=>false,'error'=>'SITE_ID_REQUIRED'], JSON_UNESCAPED_UNICODE);
+        exit;
+    }
+    if (!sb_layout_valid_zone($zone)) {
+        http_response_code(422);
+        echo json_encode(['ok'=>false,'error'=>'ZONE_REQUIRED'], JSON_UNESCAPED_UNICODE);
+        exit;
+    }
+    if ($id <= 0) {
+        http_response_code(422);
+        echo json_encode(['ok'=>false,'error'=>'ID_REQUIRED'], JSON_UNESCAPED_UNICODE);
+        exit;
+    }
 
-Right
+    sb_require_editor($siteId);
 
+    $all = sb_read_layouts();
+    $record = sb_layout_find_record($all, $siteId);
+    if (!$record) {
+        http_response_code(404);
+        echo json_encode(['ok'=>false,'error'=>'LAYOUT_NOT_FOUND'], JSON_UNESCAPED_UNICODE);
+        exit;
+    }
 
-Сначала я бы сделал рабочую версию для:
+    $blocks = sb_layout_zone_blocks($record, $zone);
+    $found = false;
 
-просмотра layout settings,
+    foreach ($blocks as &$b) {
+        if ((int)($b['id'] ?? 0) !== $id) continue;
 
-переключения зоны,
+        $type = (string)($b['type'] ?? '');
 
-списка блоков зоны,
+        if ($type === 'text') {
+            $b['content']['text'] = (string)($_POST['text'] ?? '');
 
-добавления/удаления/движения блоков.
+        } elseif ($type === 'image') {
+            $fileId = (int)($_POST['fileId'] ?? 0);
+            $alt = (string)($_POST['alt'] ?? '');
 
+            if ($fileId <= 0) {
+                http_response_code(422);
+                echo json_encode(['ok'=>false,'error'=>'FILE_ID_REQUIRED'], JSON_UNESCAPED_UNICODE);
+                exit;
+            }
+            if (!sb_disk_file_belongs_to_site($siteId, $fileId)) {
+                http_response_code(422);
+                echo json_encode(['ok'=>false,'error'=>'FILE_NOT_IN_SITE_FOLDER'], JSON_UNESCAPED_UNICODE);
+                exit;
+            }
 
-А layout.block.update можно добить сразу следом.
+            $b['content']['fileId'] = $fileId;
+            $b['content']['alt'] = $alt;
 
-Самый правильный порядок теперь такой:
+        } elseif ($type === 'button') {
+            $text = trim((string)($_POST['text'] ?? ''));
+            $url  = trim((string)($_POST['url'] ?? ''));
+            $variant = strtolower(trim((string)($_POST['variant'] ?? 'primary')));
 
-Сейчас
+            if ($text === '') {
+                http_response_code(422);
+                echo json_encode(['ok'=>false,'error'=>'TEXT_REQUIRED'], JSON_UNESCAPED_UNICODE);
+                exit;
+            }
+            if ($url === '') {
+                http_response_code(422);
+                echo json_encode(['ok'=>false,'error'=>'URL_REQUIRED'], JSON_UNESCAPED_UNICODE);
+                exit;
+            }
+            if (!in_array($variant, ['primary','secondary'], true)) $variant = 'primary';
 
-Сделать layout.php с базовым UI.
+            if (!(preg_match('~^https?://~i', $url) || str_starts_with($url, '/'))) {
+                http_response_code(422);
+                echo json_encode(['ok'=>false,'error'=>'URL_BAD_FORMAT'], JSON_UNESCAPED_UNICODE);
+                exit;
+            }
 
-Сразу после
+            $b['content']['text'] = $text;
+            $b['content']['url'] = $url;
+            $b['content']['variant'] = $variant;
 
-Добавить layout.block.update, чтобы можно было полноценно редактировать блоки в layout так же, как в editor.php.
+        } elseif ($type === 'heading') {
+            $text = trim((string)($_POST['text'] ?? ''));
+            $level = strtolower(trim((string)($_POST['level'] ?? 'h2')));
+            $align = strtolower(trim((string)($_POST['align'] ?? 'left')));
 
-Потом
+            if ($text === '') {
+                http_response_code(422);
+                echo json_encode(['ok'=>false,'error'=>'TEXT_REQUIRED'], JSON_UNESCAPED_UNICODE);
+                exit;
+            }
+            if (!in_array($level, ['h1','h2','h3'], true)) $level = 'h2';
+            if (!in_array($align, ['left','center','right'], true)) $align = 'left';
 
-Подключить header/footer в public.php.
+            $b['content']['text'] = $text;
+            $b['content']['level'] = $level;
+            $b['content']['align'] = $align;
 
-Я предлагаю сейчас идти так:
+        } elseif ($type === 'columns2') {
+            $left  = (string)($_POST['left'] ?? '');
+            $right = (string)($_POST['right'] ?? '');
+            $ratio = trim((string)($_POST['ratio'] ?? '50-50'));
 
-1. добавить layout.block.update в api.php,
+            if (!in_array($ratio, ['50-50','33-67','67-33'], true)) $ratio = '50-50';
 
+            $b['content']['left'] = $left;
+            $b['content']['right'] = $right;
+            $b['content']['ratio'] = $ratio;
 
-2. после этого сразу сделать полный layout.php.
+        } elseif ($type === 'gallery') {
+            $columns = (int)($_POST['columns'] ?? 3);
+            if (!in_array($columns, [2,3,4], true)) $columns = 3;
 
+            $imagesJson = (string)($_POST['images'] ?? '[]');
+            $images = json_decode($imagesJson, true);
+            if (!is_array($images)) $images = [];
 
+            $clean = [];
+            foreach ($images as $it) {
+                if (!is_array($it)) continue;
+                $fid = (int)($it['fileId'] ?? 0);
+                if ($fid <= 0) continue;
 
-Так будет быстрее и без временных костылей.
+                if (!sb_disk_file_belongs_to_site($siteId, $fid)) {
+                    http_response_code(422);
+                    echo json_encode(['ok'=>false,'error'=>'FILE_NOT_IN_SITE_FOLDER','fileId'=>$fid], JSON_UNESCAPED_UNICODE);
+                    exit;
+                }
 
-Если хочешь, следующим сообщением я пришлю готовый блок для api.php с layout.block.update, а потом сразу полный layout.php.
+                $clean[] = [
+                    'fileId' => $fid,
+                    'alt' => (string)($it['alt'] ?? ''),
+                ];
+            }
+
+            if (count($clean) === 0) {
+                http_response_code(422);
+                echo json_encode(['ok'=>false,'error'=>'IMAGES_REQUIRED'], JSON_UNESCAPED_UNICODE);
+                exit;
+            }
+
+            $b['content']['columns'] = $columns;
+            $b['content']['images'] = $clean;
+
+        } elseif ($type === 'spacer') {
+            $height = (int)($_POST['height'] ?? 40);
+            if ($height < 10) $height = 10;
+            if ($height > 200) $height = 200;
+
+            $line = (string)($_POST['line'] ?? '0');
+            $line = ($line === '1' || $line === 'true');
+
+            $b['content']['height'] = $height;
+            $b['content']['line'] = $line;
+
+        } elseif ($type === 'card') {
+            $title = trim((string)($_POST['title'] ?? ''));
+            $text  = (string)($_POST['text'] ?? '');
+            $imageFileId = (int)($_POST['imageFileId'] ?? 0);
+            $buttonText = trim((string)($_POST['buttonText'] ?? ''));
+            $buttonUrl  = trim((string)($_POST['buttonUrl'] ?? ''));
+
+            if ($title === '') {
+                http_response_code(422);
+                echo json_encode(['ok'=>false,'error'=>'TITLE_REQUIRED'], JSON_UNESCAPED_UNICODE);
+                exit;
+            }
+
+            if ($imageFileId > 0 && !sb_disk_file_belongs_to_site($siteId, $imageFileId)) {
+                http_response_code(422);
+                echo json_encode(['ok'=>false,'error'=>'FILE_NOT_IN_SITE_FOLDER','fileId'=>$imageFileId], JSON_UNESCAPED_UNICODE);
+                exit;
+            }
+
+            if ($buttonUrl !== '' && !(preg_match('~^https?://~i', $buttonUrl) || str_starts_with($buttonUrl, '/'))) {
+                http_response_code(422);
+                echo json_encode(['ok'=>false,'error'=>'URL_BAD_FORMAT'], JSON_UNESCAPED_UNICODE);
+                exit;
+            }
+
+            $b['content']['title'] = $title;
+            $b['content']['text'] = $text;
+            $b['content']['imageFileId'] = $imageFileId;
+            $b['content']['buttonText'] = $buttonText;
+            $b['content']['buttonUrl'] = $buttonUrl;
+
+        } elseif ($type === 'cards') {
+            $columns = (int)($_POST['columns'] ?? 3);
+            if (!in_array($columns, [2,3,4], true)) $columns = 3;
+
+            $itemsJson = (string)($_POST['items'] ?? '[]');
+            $items = json_decode($itemsJson, true);
+            if (!is_array($items)) $items = [];
+
+            $clean = [];
+            foreach ($items as $it) {
+                if (!is_array($it)) continue;
+
+                $title = trim((string)($it['title'] ?? ''));
+                $text  = (string)($it['text'] ?? '');
+
+                if ($title === '') continue;
+
+                $imageFileId = (int)($it['imageFileId'] ?? 0);
+                if ($imageFileId > 0 && !sb_disk_file_belongs_to_site($siteId, $imageFileId)) {
+                    http_response_code(422);
+                    echo json_encode(['ok'=>false,'error'=>'FILE_NOT_IN_SITE_FOLDER','fileId'=>$imageFileId], JSON_UNESCAPED_UNICODE);
+                    exit;
+                }
+
+                $buttonText = trim((string)($it['buttonText'] ?? ''));
+                $buttonUrl  = trim((string)($it['buttonUrl'] ?? ''));
+
+                if ($buttonUrl !== '' && !(preg_match('~^https?://~i', $buttonUrl) || str_starts_with($buttonUrl, '/'))) {
+                    http_response_code(422);
+                    echo json_encode(['ok'=>false,'error'=>'URL_BAD_FORMAT'], JSON_UNESCAPED_UNICODE);
+                    exit;
+                }
+
+                $clean[] = [
+                    'title' => $title,
+                    'text' => $text,
+                    'imageFileId' => $imageFileId,
+                    'buttonText' => $buttonText,
+                    'buttonUrl' => $buttonUrl,
+                ];
+            }
+
+            if (count($clean) === 0) {
+                http_response_code(422);
+                echo json_encode(['ok'=>false,'error'=>'ITEMS_REQUIRED'], JSON_UNESCAPED_UNICODE);
+                exit;
+            }
+
+            $b['content']['columns'] = $columns;
+            $b['content']['items'] = $clean;
+
+        } else {
+            http_response_code(422);
+            echo json_encode(['ok'=>false,'error'=>'TYPE_NOT_SUPPORTED'], JSON_UNESCAPED_UNICODE);
+            exit;
+        }
+
+        $b['updatedAt'] = date('c');
+        $b['updatedBy'] = (int)$USER->GetID();
+        $found = true;
+        break;
+    }
+    unset($b);
+
+    if (!$found) {
+        http_response_code(404);
+        echo json_encode(['ok'=>false,'error'=>'BLOCK_NOT_FOUND'], JSON_UNESCAPED_UNICODE);
+        exit;
+    }
+
+    sb_layout_zone_set($record, $zone, $blocks);
+    sb_layout_upsert_record($all, $siteId, $record);
+    sb_write_layouts($all);
+
+    echo json_encode(['ok'=>true], JSON_UNESCAPED_UNICODE);
+    exit;
+}
+
+Как быстро проверить
+
+Через твой временный layout_test.php можно потом добавить вызов layout.block.update, но сейчас достаточно убедиться, что api.php сохраняется без PHP-ошибок.
+
+Следующим сообщением пришлю полный готовый layout.php.
