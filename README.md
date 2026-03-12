@@ -1,169 +1,121 @@
-Да, теперь понятно, в чём логика бага.
+Да, вижу проблему: на глубоких уровнях текст уезжает слишком вправо и начинает ломаться в узкой колонке.
 
-Сейчас ветка открывается, потому что она active path, но это состояние не сохраняется в localStorage, если ты её не открывал кнопкой-стрелкой вручную.
-
-Из-за этого происходит так:
-
-зашёл в Вложенная 5 → ветка Вложенная 3 открылась автоматически
-
-потом кликнул в Вложенная 3 → ветка Вложенная 5 уже не active path и, так как её открытие не было сохранено, она схлопнулась
-
-то же самое выше по дереву
-
-
-Как исправить
-
-Нужно, чтобы:
-
-если ветка открылась как defaultOpen,
-
-это сразу записывалось в localStorage.
-
-
-Тогда открытые ветки не будут закрываться просто из-за перехода на соседнюю страницу.
-
-
----
+Нужно сделать вложенность визуально читаемой, но с минимальным сдвигом.
 
 Что поменять
 
-Найди внизу public.php блок <script>
+1. Уменьши отступ дочерних веток
 
-И в нём найди этот кусок:
+Найди стиль:
 
-let isOpen;
-
-// Активная ветка всегда открыта
-if (defaultOpen) {
-  isOpen = true;
-} else if (Object.prototype.hasOwnProperty.call(state, id)) {
-  isOpen = !!state[id];
-} else {
-  isOpen = false;
+.sideTreeChildren{
+  margin-top:2px;
+  margin-left:12px;
+  padding-left:12px;
+  border-left:1px solid #f1f5f9;
 }
 
-Замени его на это:
+И замени на:
 
-let isOpen;
-
-if (Object.prototype.hasOwnProperty.call(state, id)) {
-  isOpen = !!state[id];
-} else if (defaultOpen) {
-  isOpen = true;
-  state[id] = true;
-  writeState(state);
-} else {
-  isOpen = false;
+.sideTreeChildren{
+  margin-top:2px;
+  margin-left:6px;
+  padding-left:6px;
+  border-left:1px solid #f1f5f9;
 }
 
 
 ---
 
-Полный правильный JS блок
+2. Уменьши ширину зоны стрелки
 
-Чтобы не искать по кускам, вот весь скрипт целиком — можешь просто заменить весь <script> внизу на него:
+Найди:
 
-<script>
-(function(){
-  const siteKey = document.body.getAttribute('data-site-key') || location.pathname;
-  const storageKey = 'sb-left-tree:' + siteKey;
+.sideToggle{
+  width:18px;
+  height:18px;
+  flex:0 0 18px;
 
-  function readState() {
-    try {
-      const raw = localStorage.getItem(storageKey);
-      const parsed = raw ? JSON.parse(raw) : {};
-      return parsed && typeof parsed === 'object' ? parsed : {};
-    } catch (e) {
-      return {};
-    }
-  }
+И замени на:
 
-  function writeState(state) {
-    try {
-      localStorage.setItem(storageKey, JSON.stringify(state));
-    } catch (e) {}
-  }
-
-  const state = readState();
-
-  document.querySelectorAll('.sideTreeNode[data-node-id]').forEach(node => {
-    const id = String(node.getAttribute('data-node-id') || '');
-    const defaultOpen = node.getAttribute('data-open-default') === '1';
-
-    const btn = node.querySelector(':scope > .sideMenuRow .sideToggle');
-    const icon = node.querySelector(':scope > .sideMenuRow .sideToggle .sideToggleIcon');
-    const children = node.querySelector(':scope > .sideTreeChildren');
-
-    if (!id || !btn || !icon || !children) return;
-
-    let isOpen;
-
-    if (Object.prototype.hasOwnProperty.call(state, id)) {
-      isOpen = !!state[id];
-    } else if (defaultOpen) {
-      isOpen = true;
-      state[id] = true;
-      writeState(state);
-    } else {
-      isOpen = false;
-    }
-
-    function render() {
-      children.style.display = isOpen ? 'block' : 'none';
-      btn.setAttribute('aria-expanded', isOpen ? 'true' : 'false');
-      icon.textContent = isOpen ? '▾' : '▸';
-    }
-
-    btn.addEventListener('click', function(e){
-      e.preventDefault();
-      e.stopPropagation();
-
-      isOpen = !isOpen;
-      state[id] = isOpen;
-      writeState(state);
-      render();
-    });
-
-    render();
-  });
-})();
-</script>
+.sideToggle{
+  width:14px;
+  height:18px;
+  flex:0 0 14px;
 
 
 ---
 
-Почему это решает проблему
+3. Так же уменьши заглушку
 
-Теперь:
+Найди:
 
-как только ты открыл страницу глубоко во вложенности,
+.sideToggleStub{
+  width:18px;
+  height:18px;
+  flex:0 0 18px;
 
-все родительские ветки, которые открылись автоматически,
+И замени на:
 
-сразу сохраняются как open=true.
-
-
-Значит при переходе:
-
-Вложенная 5 → Вложенная 3
-
-Вложенная 3 → Вложенная первая
-
-
-ветки уже не будут схлопываться сами по себе.
+.sideToggleStub{
+  width:14px;
+  height:18px;
+  flex:0 0 14px;
 
 
 ---
 
-Если после этого всё ещё будет странно
+4. Сделай расстояние между стрелкой и текстом меньше
 
-Тогда следующий шаг — сделать режим:
+Найди:
 
-active path всегда open
+.sideMenuRow{
+  display:flex;
+  align-items:flex-start;
+  gap:6px;
+  min-width:0;
+}
 
-вручную открытые ветки тоже open
+И замени на:
 
-вручную закрытые ветки можно закрывать даже если они были открыты раньше
+.sideMenuRow{
+  display:flex;
+  align-items:flex-start;
+  gap:4px;
+  min-width:0;
+}
 
 
-Но обычно правки выше уже хватает.
+---
+
+Если хочешь ещё аккуратнее
+
+Можно ещё слегка уменьшить внутренние отступы ссылки:
+
+Было:
+
+.sideMenuLink{
+  padding:6px 8px;
+}
+
+Сделай:
+
+.sideMenuLink{
+  padding:6px 6px;
+}
+
+
+---
+
+Что получится
+
+После этого:
+
+каждый следующий уровень будет смещаться совсем немного
+
+текст перестанет так быстро ломаться в столбик
+
+дерево останется читаемым
+
+
+Если хочешь, следующим сообщением я дам тебе уже готовый финальный CSS-блок для всего левого меню, чтобы ты просто заменил его целиком.
