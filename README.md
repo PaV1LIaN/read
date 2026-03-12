@@ -1,21 +1,14 @@
-Да, по этим кускам видно, что layout.php и api.php у тебя уже ок.
-Значит проблема была именно в public.php.
+Да, сделал полный public.php, где:
 
-Ниже даю полностью собранный и правильный public.php, где уже есть:
+left вынесен максимально влево,
 
-header
+right вынесен максимально вправо,
 
-footer
+центральный контент остаётся в контейнере,
 
-left
+leftMode = menu | blocks работает,
 
-right
-
-leftMode = blocks | menu
-
-левое меню сайта в вертикальном виде
-
-sidebar box для left/right
+header/footer сохраняются.
 
 
 Замени файл целиком на этот:
@@ -591,7 +584,8 @@ $headerHtml = sb_render_blocks($headerBlocks, $siteId);
 $footerHtml = sb_render_blocks($footerBlocks, $siteId);
 $leftHtml = ($leftMode === 'menu') ? $leftMenuHtml : sb_render_blocks($leftBlocks, $siteId);
 $rightHtml = sb_render_blocks($rightBlocks, $siteId);
-?><!doctype html>
+?>
+<!doctype html>
 <html lang="ru">
 <head>
   <meta charset="utf-8" />
@@ -618,6 +612,7 @@ $rightHtml = sb_render_blocks($rightBlocks, $siteId);
       margin:0;
       background:var(--bg);
       color:var(--text);
+      overflow-x:hidden;
     }
 
     a{
@@ -849,18 +844,31 @@ $rightHtml = sb_render_blocks($rightBlocks, $siteId);
       margin:0 auto;
     }
 
+    .pageShell{
+      display:grid;
+      grid-template-columns: <?= $leftHtml !== '' ? ((int)$leftWidth . 'px ') : '' ?>minmax(0, <?= (int)$containerWidth ?>px)<?= $rightHtml !== '' ? (' ' . (int)$rightWidth . 'px') : '' ?>;
+      justify-content:center;
+      align-items:start;
+      gap:24px;
+      width:100%;
+      padding:0 16px 40px;
+    }
+
+    .pageLeft,
+    .pageRight{
+      min-width:0;
+    }
+
+    .pageCenter{
+      min-width:0;
+      width:100%;
+    }
+
     .layoutMainGrid{
       display:grid;
+      grid-template-columns:1fr;
       gap:20px;
       align-items:start;
-    }
-
-    .layoutSidebar{
-      min-width:0;
-    }
-
-    .layoutContent{
-      min-width:0;
     }
 
     .layoutSidebarBox{
@@ -907,12 +915,6 @@ $rightHtml = sb_render_blocks($rightBlocks, $siteId);
       font-weight:700;
     }
 
-    @media (max-width: 980px){
-      .layoutMainGrid{
-        grid-template-columns:1fr !important;
-      }
-    }
-
     .meta{
       margin-top:28px;
       padding-top:14px;
@@ -930,6 +932,21 @@ $rightHtml = sb_render_blocks($rightBlocks, $siteId);
       padding:2px 6px;
       border-radius:8px;
       border:1px solid #eef0f2;
+    }
+
+    @media (max-width: 1200px){
+      .pageShell{
+        grid-template-columns:1fr;
+      }
+
+      .pageLeft,
+      .pageRight{
+        width:100%;
+      }
+
+      .layoutSidebarBox{
+        position:static;
+      }
     }
   </style>
 </head>
@@ -979,39 +996,35 @@ $rightHtml = sb_render_blocks($rightBlocks, $siteId);
       </div>
     </div>
   <?php endif; ?>
+</div>
 
-  <?php
-    $gridCols = '1fr';
-    if ($leftHtml !== '' && $rightHtml !== '') {
-        $gridCols = $leftWidth . 'px 1fr ' . $rightWidth . 'px';
-    } elseif ($leftHtml !== '') {
-        $gridCols = $leftWidth . 'px 1fr';
-    } elseif ($rightHtml !== '') {
-        $gridCols = '1fr ' . $rightWidth . 'px';
-    }
-  ?>
-  <div class="layoutMainGrid" style="grid-template-columns: <?=h($gridCols)?>;">
-    <?php if ($leftHtml !== ''): ?>
-      <aside class="layoutSidebar layoutSidebarLeft">
-        <div class="layoutSidebarBox">
-          <?= $leftHtml ?>
-        </div>
-      </aside>
-    <?php endif; ?>
+<div class="pageShell">
+  <?php if ($leftHtml !== ''): ?>
+    <aside class="pageLeft">
+      <div class="layoutSidebarBox">
+        <?= $leftHtml ?>
+      </div>
+    </aside>
+  <?php endif; ?>
 
-    <main class="layoutContent">
-      <?= $pageHtml ?>
-    </main>
-
-    <?php if ($rightHtml !== ''): ?>
-      <aside class="layoutSidebar layoutSidebarRight">
-        <div class="layoutSidebarBox">
-          <?= $rightHtml ?>
-        </div>
-      </aside>
-    <?php endif; ?>
+  <div class="pageCenter">
+    <div class="layoutMainGrid">
+      <main class="layoutContent">
+        <?= $pageHtml ?>
+      </main>
+    </div>
   </div>
 
+  <?php if ($rightHtml !== ''): ?>
+    <aside class="pageRight">
+      <div class="layoutSidebarBox">
+        <?= $rightHtml ?>
+      </div>
+    </aside>
+  <?php endif; ?>
+</div>
+
+<div class="wrap">
   <?php if ($footerHtml !== ''): ?>
     <div class="layoutFooter">
       <div class="layoutInner">
@@ -1029,50 +1042,22 @@ $rightHtml = sb_render_blocks($rightBlocks, $siteId);
 </body>
 </html>
 
-Как проверить
+Проверь теперь так:
 
-Сейчас проверь строго так:
-
-1. Открой layout.php?siteId=...
+1. showLeft = on
 
 
-2. Поставь:
-
-showLeft = включено
-
-leftMode = menu
+2. leftMode = menu
 
 
-
-3. Нажми Сохранить настройки
-
-
-4. Убедись, что у сайта есть пункты меню
+3. showRight = on
 
 
-5. Открой публичную страницу
+4. в right добавь любой Text или Card
+
+
+5. открой публичную страницу
 
 
 
-Ожидаемый результат
-
-Слева должна появиться вертикальная навигация по меню сайта, а не LEFT TEXT.
-
-Если слева всё ещё старый текст
-
-Это значит:
-
-либо leftMode реально не сохранился в sites.json
-
-либо showLeft включён, но у сайта нет нормального mainMenu
-
-либо в left зоне остались старые блоки, а режим всё ещё blocks
-
-
-Тогда пришли мне:
-
-кусок записи сайта из sites.json
-
-именно поле layout
-
-и я сразу скажу, где остаточная проблема.
+Теперь левый блок должен быть максимально слева, правый — максимально справа, а центр оставаться по середине.
