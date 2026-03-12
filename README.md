@@ -1,141 +1,87 @@
-Да, причина уже не в сдвиге, а в том, что тексту разрешён слишком агрессивный перенос в узком sidebar.
+Да, это легко.
 
-У тебя сейчас слова режутся из-за этого стиля:
+В public.php уменьши размер шрифта у левого меню.
 
-word-break: break-word;
+Что поменять
 
-или похожего поведения в слишком узкой колонке.
+1. Найди стиль .sideMenuLink
 
-Что исправить
+Сейчас там, скорее всего, нет явного font-size или он наследуется.
 
-1. Замени стиль .sideMenuText
+Сделай так:
+
+.sideMenuLink{
+  display:flex;
+  align-items:flex-start;
+  gap:8px;
+  width:100%;
+  padding:6px 6px;
+  border-radius:8px;
+  border:1px solid transparent;
+  background:transparent;
+  color:var(--text);
+  text-decoration:none;
+  line-height:1.3;
+  font-size:13px;
+  transition:background .15s ease, color .15s ease, border-color .15s ease;
+}
+
+
+---
+
+2. Для верхнего уровня тоже чуть уменьшить
 
 Найди:
 
-.sideMenuText{
-  min-width:0;
-  flex:1 1 auto;
-  word-break:break-word;
+.sideTree.level-0 > .sideTreeNode > .sideMenuLink{
+  font-weight:700;
+}
+
+Замени на:
+
+.sideTree.level-0 > .sideTreeNode > .sideMenuLink{
+  font-weight:700;
+  font-size:13px;
+}
+
+
+---
+
+3. Для вложенных уровней ещё компактнее
+
+Найди блок:
+
+.sideTree.level-1 > .sideTreeNode > .sideMenuLink,
+.sideTree.level-2 > .sideTreeNode > .sideMenuLink,
+.sideTree.level-3 > .sideTreeNode > .sideMenuLink,
+.sideTree.level-4 > .sideTreeNode > .sideMenuLink{
+  font-weight:400;
+  font-size:14px;
 }
 
 И замени на:
 
-.sideMenuText{
-  min-width:0;
-  flex:1 1 auto;
-  word-break:normal;
-  overflow-wrap:anywhere;
-}
-
-Это уже сильно улучшит перенос.
-
-
----
-
-2. Сделай дочерние уровни ещё компактнее
-
-Найди:
-
-.sideTreeChildren{
-  margin-top:2px;
-  margin-left:6px;
-  padding-left:6px;
-  border-left:1px solid #f1f5f9;
-}
-
-И замени на:
-
-.sideTreeChildren{
-  margin-top:2px;
-  margin-left:2px;
-  padding-left:6px;
-  border-left:1px solid #f1f5f9;
+.sideTree.level-1 > .sideTreeNode > .sideMenuLink,
+.sideTree.level-2 > .sideTreeNode > .sideMenuLink,
+.sideTree.level-3 > .sideTreeNode > .sideMenuLink,
+.sideTree.level-4 > .sideTreeNode > .sideMenuLink,
+.sideTree.level-5 > .sideTreeNode > .sideMenuLink{
+  font-weight:400;
+  font-size:12px;
 }
 
 
 ---
 
-3. Убери лишнюю ширину у стрелки/заглушки почти в ноль
+Если хочешь совсем аккуратно
 
-Найди:
+Можно сделать единый вариант:
 
-.sideToggle{
-  width:14px;
-  height:18px;
-  flex:0 0 14px;
+верхний уровень 13px
 
-Замени на:
-
-.sideToggle{
-  width:12px;
-  height:18px;
-  flex:0 0 12px;
-
-И так же:
-
-.sideToggleStub{
-  width:14px;
-  height:18px;
-  flex:0 0 14px;
-
-Замени на:
-
-.sideToggleStub{
-  width:12px;
-  height:18px;
-  flex:0 0 12px;
+все вложенные 12px
 
 
----
+Это обычно хорошо смотрится в sidebar.
 
-4. Самое важное: увеличь leftWidth
-
-По скрину видно, что глубина уже 4–5 уровней, а колонка слишком узкая.
-Для такого дерева leftWidth в 220–230 уже мало.
-
-Поставь в настройках layout:
-
-leftWidth = 280
-
-или даже
-
-leftWidth = 300
-
-Именно это добьёт проблему.
-При 5 уровнях вложенности узкий sidebar почти неизбежно начнёт ломать текст.
-
-
----
-
-Если хочешь прямо оптимальный вариант
-
-Для текущей структуры я бы поставил:
-
-leftWidth: 300
-
-минимальные отступы как выше
-
-word-break: normal
-
-overflow-wrap: anywhere
-
-
-
----
-
-Почему сейчас всё ещё ломается
-
-Потому что даже при уменьшенном сдвиге у тебя:
-
-много уровней вложенности
-
-слева остаются линии и отступы
-
-ширина колонки ограничена
-
-браузер вынужден переносить слово буквально по буквам
-
-
-То есть тут уже нужен не только “меньший сдвиг”, но и чуть более широкая левая колонка.
-
-Если хочешь, я следующим сообщением дам тебе готовый финальный CSS-блок для left menu целиком, чтобы ты просто заменил всё сразу.
+Если после этого захочешь, следующим шагом можно ещё немного уменьшить line-height, чтобы меню стало компактнее по высоте.
