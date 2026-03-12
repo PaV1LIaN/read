@@ -1,27 +1,13 @@
-Да, теперь видно точное место.
-Список страниц действительно нужно привести в порядок именно через renderPagesTree(...) и CSS.
+Да, давай попробуем правильно: убираем карточки и делаем компактное дерево строк, чтобы большая вложенность не ломала вёрстку.
 
-Я бы сделал так:
-
-карточка страницы в 3 строки
-
-слева информация, справа действия
-
-мету упростить
-
-кнопки сгруппировать
-
-дерево оставить, но сделать аккуратнее
-
-
-Ниже даю готовые правки.
+Это для списка страниц подходит намного лучше.
 
 
 ---
 
-1. Замени CSS для дерева страниц
+1. Замени CSS дерева страниц
 
-В <style> найди старые стили блока страниц:
+Найди текущие стили:
 
 .tree
 
@@ -37,9 +23,17 @@
 
 .nodeTitleLine
 
+.nodeTitle
+
 .nodeSlug
 
+.nodeBadges
+
+.pageBadge...
+
 .nodeMeta
+
+.nodeMetaItem
 
 .nodeBtns
 
@@ -47,40 +41,33 @@
 
 .btnTiny
 
-.nodeBadges
-
-.pageBadge...
-
-.node.isDraft
-
-.nodeMeta code
+.pageActionsGroup
 
 
-И замени их целиком на этот блок:
+И замени их целиком на это:
 
 .tree{
   margin-top:12px;
 }
 
 .node{
-  border:1px solid #e7ebf0;
-  border-radius:14px;
-  padding:12px;
-  background:#fff;
-  margin-top:10px;
-  box-shadow:0 1px 2px rgba(0,0,0,.03);
+  margin-top:8px;
 }
 
-.node.isDraft{
+.nodeRow{
+  display:flex;
+  align-items:flex-start;
+  justify-content:space-between;
+  gap:12px;
+  padding:10px 12px;
+  border:1px solid #e7ebf0;
+  border-radius:12px;
+  background:#fff;
+}
+
+.node.isDraft .nodeRow{
   background:#fffaf5;
   border-color:#f2d4b3;
-}
-
-.nodeHead{
-  display:grid;
-  grid-template-columns:minmax(0,1fr) auto;
-  gap:12px;
-  align-items:start;
 }
 
 .nodeLeft{
@@ -88,11 +75,12 @@
   gap:10px;
   align-items:flex-start;
   min-width:0;
+  flex:1 1 auto;
 }
 
 .nodeIcon{
-  width:24px;
-  height:24px;
+  width:22px;
+  height:22px;
   border-radius:8px;
   background:#f3f4f6;
   color:#6b7280;
@@ -100,15 +88,16 @@
   align-items:center;
   justify-content:center;
   flex:0 0 auto;
-  font-size:12px;
+  font-size:11px;
   font-weight:700;
 }
 
 .nodeMain{
   min-width:0;
+  flex:1 1 auto;
   display:flex;
   flex-direction:column;
-  gap:6px;
+  gap:4px;
 }
 
 .nodeTitleLine{
@@ -116,13 +105,15 @@
   align-items:center;
   gap:8px;
   flex-wrap:wrap;
+  min-width:0;
 }
 
 .nodeTitle{
-  font-size:15px;
+  font-size:14px;
   font-weight:700;
   line-height:1.25;
   color:#111827;
+  word-break:break-word;
 }
 
 .nodeSlug{
@@ -185,10 +176,6 @@
   display:inline-flex;
   align-items:center;
   gap:4px;
-  padding:2px 8px;
-  border-radius:999px;
-  background:#f8fafc;
-  border:1px solid #eef2f6;
 }
 
 .nodeMeta code{
@@ -204,14 +191,7 @@
   gap:6px;
   align-items:center;
   justify-content:flex-end;
-  max-width:380px;
-}
-
-.children{
-  margin-left:16px;
-  border-left:2px solid #eef2f6;
-  padding-left:12px;
-  margin-top:10px;
+  flex:0 0 360px;
 }
 
 .btnTiny{
@@ -221,42 +201,35 @@
   border-radius:8px;
 }
 
-.pageActionsGroup{
-  display:flex;
-  gap:6px;
-  flex-wrap:wrap;
-  align-items:center;
+.children{
+  margin-left:14px;
+  padding-left:10px;
+  border-left:1px solid #eef2f6;
+  margin-top:6px;
 }
 
-@media (max-width: 900px){
-  .nodeHead{
-    grid-template-columns:1fr;
+@media (max-width: 1100px){
+  .nodeRow{
+    flex-direction:column;
+    align-items:stretch;
   }
 
   .nodeBtns{
+    flex:1 1 auto;
     justify-content:flex-start;
-    max-width:none;
   }
 }
 
 
 ---
 
-2. Замени HTML карточки страницы в renderPagesTree
+2. Замени HTML в renderPagesTree
 
-Найди внутри renderNode вот этот кусок:
-
-return `
-  <div class="node ${isDraft ? 'isDraft' : ''}">
-      ...
-  </div>
-`;
-
-И замени целиком весь return на это:
+Найди внутри renderNode(node) текущий return и замени целиком на это:
 
 return `
   <div class="node ${isDraft ? 'isDraft' : ''}">
-    <div class="nodeHead">
+    <div class="nodeRow">
       <div class="nodeLeft">
         <div class="nodeIcon">≡</div>
 
@@ -274,37 +247,29 @@ return `
           <div class="nodeMeta">
             <span class="nodeMetaItem">sort <code>${sort}</code></span>
             <span class="nodeMetaItem">${parentLabel}</span>
-            <span class="nodeMetaItem">slug <code>${slug}</code></span>
           </div>
         </div>
       </div>
 
       <div class="nodeBtns">
-        <div class="pageActionsGroup">
-          <button class="ui-btn ui-btn-light ui-btn-xs btnTiny" data-page-move="${node.id}" data-dir="up">↑</button>
-          <button class="ui-btn ui-btn-light ui-btn-xs btnTiny" data-page-move="${node.id}" data-dir="down">↓</button>
-          <button class="ui-btn ui-btn-light ui-btn-xs btnTiny" data-page-parent="${node.id}">Вложить…</button>
-          <button class="ui-btn ui-btn-light ui-btn-xs btnTiny" data-page-root="${node.id}">В корень</button>
-        </div>
+        <button class="ui-btn ui-btn-light ui-btn-xs btnTiny" data-page-move="${node.id}" data-dir="up">↑</button>
+        <button class="ui-btn ui-btn-light ui-btn-xs btnTiny" data-page-move="${node.id}" data-dir="down">↓</button>
+        <button class="ui-btn ui-btn-light ui-btn-xs btnTiny" data-page-parent="${node.id}">Вложить…</button>
+        <button class="ui-btn ui-btn-light ui-btn-xs btnTiny" data-page-root="${node.id}">В корень</button>
+        <button class="ui-btn ui-btn-light ui-btn-xs btnTiny" data-page-rename="${node.id}">Имя/slug</button>
 
-        <div class="pageActionsGroup">
-          <button class="ui-btn ui-btn-light ui-btn-xs btnTiny" data-page-rename="${node.id}">Имя/slug</button>
+        <button class="ui-btn ${draftBtnClass} ui-btn-xs btnTiny" data-page-status="${node.id}" data-status="draft">Draft</button>
+        <button class="ui-btn ${pubBtnClass} ui-btn-xs btnTiny" data-page-status="${node.id}" data-status="published">Published</button>
 
-          <button class="ui-btn ${draftBtnClass} ui-btn-xs btnTiny" data-page-status="${node.id}" data-status="draft">Draft</button>
-          <button class="ui-btn ${pubBtnClass} ui-btn-xs btnTiny" data-page-status="${node.id}" data-status="published">Published</button>
-        </div>
+        <a class="ui-btn ui-btn-primary ui-btn-xs btnTiny"
+           href="/local/sitebuilder/editor.php?siteId=${siteId}&pageId=${node.id}"
+           target="_blank">Редактор</a>
 
-        <div class="pageActionsGroup">
-          <a class="ui-btn ui-btn-primary ui-btn-xs btnTiny"
-             href="/local/sitebuilder/editor.php?siteId=${siteId}&pageId=${node.id}"
-             target="_blank">Редактор</a>
+        <a class="ui-btn ui-btn-light ui-btn-xs btnTiny"
+           href="/local/sitebuilder/view.php?siteId=${siteId}&pageId=${node.id}"
+           target="_blank">Открыть</a>
 
-          <a class="ui-btn ui-btn-light ui-btn-xs btnTiny"
-             href="/local/sitebuilder/view.php?siteId=${siteId}&pageId=${node.id}"
-             target="_blank">Открыть</a>
-
-          <button class="ui-btn ui-btn-danger ui-btn-xs btnTiny" data-page-delete="${node.id}">Удалить</button>
-        </div>
+        <button class="ui-btn ui-btn-danger ui-btn-xs btnTiny" data-page-delete="${node.id}">Удалить</button>
       </div>
     </div>
 
@@ -317,55 +282,36 @@ return `
 
 3. Упрости parentLabel
 
-Сейчас у тебя:
-
-const parentLabel = pid ? `parent: #${pid}` : 'root';
-
-Замени на:
+Если у тебя сейчас не так, сделай:
 
 const parentLabel = pid ? `parent #${pid}` : 'root';
-
-Так будет визуально чище.
-
-
----
-
-4. Небольшая правка заголовка дерева
-
-Сейчас сверху в диалоге есть строка:
-
-<div class="hint2">
-  Дерево: <code>parentId</code>. Порядок: <code>sort</code> (стрелки ↑/↓ меняют порядок среди “соседей”).
-</div>
-
-Я бы заменил на более человеческую:
-
-<div class="hint2">
-  Страницы выводятся деревом по <code>parentId</code>. Стрелки ↑/↓ меняют порядок среди соседних страниц одного уровня.
-</div>
 
 
 ---
 
 Что получится
 
-После этого:
+Теперь вместо:
 
-каждая страница будет выглядеть как нормальная карточка
+карточка внутри карточки
 
-дерево останется
+текст и кнопки налезают
 
-статус и HOME будут читаться лучше
+глубокие уровни ломаются
 
-кнопки не будут выглядеть как хаос
 
-карточки станут удобнее для дальнейшего расширения
+будет:
+
+компактная строка
+
+дерево остаётся
+
+вложенность читается
+
+большая глубина переносится намного лучше
 
 
 
 ---
 
-Что я бы делал сразу после этого
-
-После нормализации списка страниц уже можно спокойно идти к section / content areas.
-Потому что админка страниц и навигация будут уже не стыдными.
+После того как проверишь, следующим шагом уже можно спокойно идти к content sections / section block.
