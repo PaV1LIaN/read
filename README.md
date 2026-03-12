@@ -1,228 +1,50 @@
-Проверять руками через код пока неудобно. Проще так:
+Отлично. Тогда следующий шаг — нормальный layout.php для редактирования:
 
-Что уже должно быть сделано
+Header
 
-У тебя сейчас должно быть:
+Footer
 
-в api.php добавлены layout.* action'ы,
+Left
 
-создан файл
-/upload/sitebuilder/layouts.json
+Right
 
-в нём лежит:
 
+Сначала я бы сделал рабочую версию для:
 
-[]
+просмотра layout settings,
 
+переключения зоны,
 
----
+списка блоков зоны,
 
-Самая простая проверка
+добавления/удаления/движения блоков.
 
-Открыть браузер, зайти в проект, открыть DevTools → Network и отправить запросы через уже существующий JS или временную тестовую страницу.
-
-Но ещё проще — сделать временный тестовый php-файл.
-
-
----
 
-Вариант проверки через тестовый файл
+А layout.block.update можно добить сразу следом.
 
-Создай файл:
+Самый правильный порядок теперь такой:
 
-/local/sitebuilder/layout_test.php
+Сейчас
 
-И вставь туда это:
+Сделать layout.php с базовым UI.
 
-<?php
-define('NO_KEEP_STATISTIC', true);
-define('NO_AGENT_STATISTIC', true);
-define('DisableEventsCheck', true);
+Сразу после
 
-require $_SERVER['DOCUMENT_ROOT'].'/bitrix/modules/main/include/prolog_before.php';
+Добавить layout.block.update, чтобы можно было полноценно редактировать блоки в layout так же, как в editor.php.
 
-global $USER, $APPLICATION;
+Потом
 
-if (!$USER->IsAuthorized()) {
-    LocalRedirect('/auth/');
-}
+Подключить header/footer в public.php.
 
-$siteId = (int)($_GET['siteId'] ?? 0);
-?>
-<!doctype html>
-<html lang="ru">
-<head>
-  <meta charset="utf-8">
-  <title>Layout test</title>
-  <?php $APPLICATION->ShowHead(); ?>
-  <script src="/bitrix/js/main/core/core.js"></script>
-</head>
-<body>
-  <h2>Layout test</h2>
-  <div>siteId: <?= (int)$siteId ?></div>
+Я предлагаю сейчас идти так:
 
-  <button onclick="testGet()">layout.get</button>
-  <button onclick="testCreate()">layout.block.create(header text)</button>
-  <button onclick="testList()">layout.block.list(header)</button>
+1. добавить layout.block.update в api.php,
 
-  <pre id="out" style="margin-top:20px;background:#f5f5f5;padding:12px;border:1px solid #ddd;"></pre>
 
-<script>
-function out(x){
-  document.getElementById('out').textContent =
-    typeof x === 'string' ? x : JSON.stringify(x, null, 2);
-}
+2. после этого сразу сделать полный layout.php.
 
-function api(action, data) {
-  return new Promise((resolve, reject) => {
-    BX.ajax({
-      url: '/local/sitebuilder/api.php',
-      method: 'POST',
-      dataType: 'json',
-      data: Object.assign({ action, sessid: BX.bitrix_sessid() }, data || {}),
-      onsuccess: resolve,
-      onfailure: reject
-    });
-  });
-}
 
-async function testGet() {
-  try {
-    const r = await api('layout.get', { siteId: <?= (int)$siteId ?> });
-    out(r);
-  } catch (e) {
-    out('layout.get error');
-  }
-}
 
-async function testCreate() {
-  try {
-    const r = await api('layout.block.create', {
-      siteId: <?= (int)$siteId ?>,
-      zone: 'header',
-      type: 'text',
-      text: 'Тестовый header блок'
-    });
-    out(r);
-  } catch (e) {
-    out('layout.block.create error');
-  }
-}
+Так будет быстрее и без временных костылей.
 
-async function testList() {
-  try {
-    const r = await api('layout.block.list', {
-      siteId: <?= (int)$siteId ?>,
-      zone: 'header'
-    });
-    out(r);
-  } catch (e) {
-    out('layout.block.list error');
-  }
-}
-</script>
-</body>
-</html>
-
-
----
-
-Как тестировать
-
-Открой:
-
-/local/sitebuilder/layout_test.php?siteId=1
-
-Где 1 — это id существующего сайта.
-
-Потом по порядку:
-
-1. Нажми layout.get
-
-Должно вернуть примерно:
-
-{
-  "ok": true,
-  "layout": {
-    "showHeader": true,
-    "showFooter": true,
-    "showLeft": false,
-    "showRight": false,
-    "leftWidth": 260,
-    "rightWidth": 260
-  },
-  "zones": {
-    "header": [],
-    "footer": [],
-    "left": [],
-    "right": []
-  }
-}
-
-
----
-
-2. Нажми layout.block.create(header text)
-
-Должно вернуть что-то вроде:
-
-{
-  "ok": true,
-  "block": {
-    "id": 1,
-    "type": "text",
-    "sort": 10,
-    "content": {
-      "text": "Тестовый header блок"
-    }
-  }
-}
-
-
----
-
-3. Нажми layout.block.list(header)
-
-Должен вернуться массив с этим блоком.
-
-
----
-
-Если что-то не работает
-
-Тогда смотри, что именно вернулось в pre.
-
-Например:
-
-SITE_ID_REQUIRED
-
-FORBIDDEN
-
-UNKNOWN_ACTION
-
-Cannot open layouts.json
-
-
-И уже по этой ошибке можно точно понять, где проблема.
-
-
----
-
-Самые частые причины
-
-UNKNOWN_ACTION
-
-Значит блок layout.* вставлен не туда или не сохранился в api.php.
-
-Cannot open layouts.json
-
-Значит файл /upload/sitebuilder/layouts.json не создан или нет прав.
-
-FORBIDDEN
-
-Значит у пользователя нет прав на этот siteId.
-
-
----
-
-Если хочешь, следующим сообщением я дам уже готовый layout.php, и тогда ты будешь тестировать не кнопками-заглушками, а сразу нормальный интерфейс.
+Если хочешь, следующим сообщением я пришлю готовый блок для api.php с layout.block.update, а потом сразу полный layout.php.
