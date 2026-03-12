@@ -1,17 +1,17 @@
-Да, сделал полный public.php, где:
+Вот финальный public.php, где:
 
-left вынесен максимально влево,
+left и right вынесены по краям,
 
-right вынесен максимально вправо,
+центр остаётся в середине,
 
-центральный контент остаётся в контейнере,
+все 3 зоны стартуют с одной высоты,
 
-leftMode = menu | blocks работает,
+leftMode = menu работает,
 
-header/footer сохраняются.
+header/footer выводятся в центре страницы, а не ломают сетку.
 
 
-Замени файл целиком на этот:
+Замени файл целиком:
 
 <?php
 define('NO_KEEP_STATISTIC', true);
@@ -174,22 +174,9 @@ function public_not_found(string $title = 'Страница не найдена'
           padding:28px;
           box-shadow:0 10px 30px rgba(0,0,0,.05);
         }
-        h1{
-          margin:0 0 10px;
-          font-size:28px;
-          line-height:1.2;
-        }
-        p{
-          margin:0;
-          color:#6b7280;
-          line-height:1.7;
-        }
-        .actions{
-          margin-top:18px;
-          display:flex;
-          gap:10px;
-          flex-wrap:wrap;
-        }
+        h1{ margin:0 0 10px; font-size:28px; line-height:1.2; }
+        p{ margin:0; color:#6b7280; line-height:1.7; }
+        .actions{ margin-top:18px; display:flex; gap:10px; flex-wrap:wrap; }
         a{
           display:inline-flex;
           align-items:center;
@@ -201,11 +188,7 @@ function public_not_found(string $title = 'Страница не найдена'
           color:#111827;
           background:#fff;
         }
-        a.primary{
-          background:#2563eb;
-          border-color:#2563eb;
-          color:#fff;
-        }
+        a.primary{ background:#2563eb; border-color:#2563eb; color:#fff; }
       </style>
     </head>
     <body>
@@ -584,6 +567,9 @@ $headerHtml = sb_render_blocks($headerBlocks, $siteId);
 $footerHtml = sb_render_blocks($footerBlocks, $siteId);
 $leftHtml = ($leftMode === 'menu') ? $leftMenuHtml : sb_render_blocks($leftBlocks, $siteId);
 $rightHtml = sb_render_blocks($rightBlocks, $siteId);
+
+$leftCol = ($leftHtml !== '') ? $leftWidth . 'px' : '0px';
+$rightCol = ($rightHtml !== '') ? $rightWidth . 'px' : '0px';
 ?>
 <!doctype html>
 <html lang="ru">
@@ -714,10 +700,9 @@ $rightHtml = sb_render_blocks($rightBlocks, $siteId);
       font-weight:700;
     }
 
-    .wrap{
+    .centerWrap{
       width:min(var(--sb-container), calc(100% - 32px));
       margin:0 auto;
-      padding:24px 0 40px;
     }
 
     .hero{
@@ -825,51 +810,21 @@ $rightHtml = sb_render_blocks($rightBlocks, $siteId);
       line-height:1.7;
     }
 
-    .layoutHeader,
-    .layoutFooter{
-      width:100%;
-    }
-
-    .layoutHeader{
-      margin-top:18px;
-      margin-bottom:8px;
-    }
-
-    .layoutFooter{
-      margin-top:24px;
-    }
-
-    .layoutInner{
-      width:100%;
-      margin:0 auto;
-    }
+    .layoutHeader{ margin-top:18px; margin-bottom:8px; }
+    .layoutFooter{ margin-top:24px; }
 
     .pageShell{
       display:grid;
-      grid-template-columns: <?= $leftHtml !== '' ? ((int)$leftWidth . 'px ') : '' ?>minmax(0, <?= (int)$containerWidth ?>px)<?= $rightHtml !== '' ? (' ' . (int)$rightWidth . 'px') : '' ?>;
-      justify-content:center;
+      grid-template-columns: var(--left-col) minmax(0,1fr) minmax(0,var(--sb-container)) minmax(0,1fr) var(--right-col);
       align-items:start;
-      gap:24px;
+      gap:24px 16px;
       width:100%;
-      padding:0 16px 40px;
+      padding:24px 16px 40px;
     }
 
-    .pageLeft,
-    .pageRight{
-      min-width:0;
-    }
-
-    .pageCenter{
-      min-width:0;
-      width:100%;
-    }
-
-    .layoutMainGrid{
-      display:grid;
-      grid-template-columns:1fr;
-      gap:20px;
-      align-items:start;
-    }
+    .pageLeft{ grid-column:1; min-width:0; }
+    .pageCenter{ grid-column:3; min-width:0; }
+    .pageRight{ grid-column:5; min-width:0; }
 
     .layoutSidebarBox{
       background:#fff;
@@ -937,20 +892,18 @@ $rightHtml = sb_render_blocks($rightBlocks, $siteId);
     @media (max-width: 1200px){
       .pageShell{
         grid-template-columns:1fr;
+        padding:24px 16px 40px;
       }
-
-      .pageLeft,
-      .pageRight{
-        width:100%;
+      .pageLeft, .pageCenter, .pageRight{
+        grid-column:1;
       }
-
       .layoutSidebarBox{
         position:static;
       }
     }
   </style>
 </head>
-<body>
+<body style="--left-col: <?=h($leftCol)?>; --right-col: <?=h($rightCol)?>;">
 
 <div class="header">
   <div class="in">
@@ -983,21 +936,6 @@ $rightHtml = sb_render_blocks($rightBlocks, $siteId);
   </div>
 </div>
 
-<div class="wrap">
-  <div class="hero">
-    <h1><?=h($page['title'] ?? '')?></h1>
-    <div class="muted"><?=h($site['name'] ?? 'Site')?></div>
-  </div>
-
-  <?php if ($headerHtml !== ''): ?>
-    <div class="layoutHeader">
-      <div class="layoutInner">
-        <?= $headerHtml ?>
-      </div>
-    </div>
-  <?php endif; ?>
-</div>
-
 <div class="pageShell">
   <?php if ($leftHtml !== ''): ?>
     <aside class="pageLeft">
@@ -1008,10 +946,30 @@ $rightHtml = sb_render_blocks($rightBlocks, $siteId);
   <?php endif; ?>
 
   <div class="pageCenter">
-    <div class="layoutMainGrid">
-      <main class="layoutContent">
-        <?= $pageHtml ?>
-      </main>
+    <div class="centerWrap">
+      <div class="hero">
+        <h1><?=h($page['title'] ?? '')?></h1>
+        <div class="muted"><?=h($site['name'] ?? 'Site')?></div>
+      </div>
+
+      <?php if ($headerHtml !== ''): ?>
+        <div class="layoutHeader">
+          <?= $headerHtml ?>
+        </div>
+      <?php endif; ?>
+
+      <?= $pageHtml ?>
+
+      <?php if ($footerHtml !== ''): ?>
+        <div class="layoutFooter">
+          <?= $footerHtml ?>
+        </div>
+      <?php endif; ?>
+
+      <div class="meta">
+        <div>site: <code><?=h((string)($site['slug'] ?? ''))?></code></div>
+        <div>page: <code><?=h((string)($page['slug'] ?? ''))?></code></div>
+      </div>
     </div>
   </div>
 
@@ -1024,40 +982,7 @@ $rightHtml = sb_render_blocks($rightBlocks, $siteId);
   <?php endif; ?>
 </div>
 
-<div class="wrap">
-  <?php if ($footerHtml !== ''): ?>
-    <div class="layoutFooter">
-      <div class="layoutInner">
-        <?= $footerHtml ?>
-      </div>
-    </div>
-  <?php endif; ?>
-
-  <div class="meta">
-    <div>site: <code><?=h((string)($site['slug'] ?? ''))?></code></div>
-    <div>page: <code><?=h((string)($page['slug'] ?? ''))?></code></div>
-  </div>
-</div>
-
 </body>
 </html>
 
-Проверь теперь так:
-
-1. showLeft = on
-
-
-2. leftMode = menu
-
-
-3. showRight = on
-
-
-4. в right добавь любой Text или Card
-
-
-5. открой публичную страницу
-
-
-
-Теперь левый блок должен быть максимально слева, правый — максимально справа, а центр оставаться по середине.
+Если после этого захочешь, следующим шагом я бы уже сделал, чтобы right тоже имел режимы, например blocks / info / contacts.
