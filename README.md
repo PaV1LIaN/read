@@ -1,43 +1,40 @@
-Давай. Сначала сделаем 2 вещи сразу:
+Уже лучше, но по скрину видно 3 вещи, которые я бы сразу поправил:
 
-хлебные крошки над h1
+Что сейчас не очень
 
-более аккуратный стиль левого меню
+1. breadcrumbs слиплись: Главная/Вложенная первая
 
 
-Новый файл не нужен — достаточно внести правки в текущий public.php.
+2. левое меню стало слишком “лесенкой” — много рамок, линий и вложенных отступов
+
+
+3. дочерняя активная страница выглядит как отдельная карточка внутри карточки, из-за этого меню кажется перегруженным
+
+
 
 
 ---
 
-1. Добавить функции для breadcrumbs
+Что я предлагаю сейчас
 
-Куда вставить
+Сделать маленькую косметическую доработку:
 
-В public.php после функции:
+breadcrumbs сделать аккуратными с пробелами и разделителями
 
-function sb_page_ancestor_ids(...)
+левое меню упростить визуально
 
-Вставь это:
+для детей убрать лишние рамки
 
-function sb_page_breadcrumbs(array $pages, int $pageId): array {
-    $byId = [];
-    foreach ($pages as $p) {
-        $byId[(int)($p['id'] ?? 0)] = $p;
-    }
+оставить акцент только на активной странице
 
-    $chain = [];
-    $current = $pageId;
-    $guard = 0;
 
-    while ($current > 0 && isset($byId[$current]) && $guard < 100) {
-        array_unshift($chain, $byId[$current]);
-        $current = (int)($byId[$current]['parentId'] ?? 0);
-        $guard++;
-    }
 
-    return $chain;
-}
+---
+
+1. Исправить breadcrumbs
+
+Сейчас у тебя, скорее всего, разделитель вставляется без нормального отступа.
+Замени функцию sb_render_breadcrumbs(...) на эту:
 
 function sb_render_breadcrumbs(array $items, array $site): string {
     if (!$items) return '';
@@ -55,71 +52,21 @@ function sb_render_breadcrumbs(array $items, array $site): string {
         }
     }
 
-    return '<nav class="breadcrumbs">' . implode('<span class="crumbSep">/</span>', $parts) . '</nav>';
+    return '<nav class="breadcrumbs">' . implode('<span class="crumbSep">›</span>', $parts) . '</nav>';
 }
 
 
 ---
 
-2. Собрать breadcrumbs
+2. Замени стили breadcrumbs
 
-Куда вставить
-
-Найди этот блок:
-
-$leftMenuHtml = '';
-if (!empty($layout['showLeft']) && $leftMode === 'menu') {
-    $publishedPages = sb_site_published_pages($siteId);
-    $tree = sb_pages_build_tree($publishedPages);
-    $activePathIds = sb_page_ancestor_ids($publishedPages, $pageId);
-    $leftMenuHtml = sb_render_left_menu_tree($tree, $site, $pageId, $activePathIds);
-}
-
-И сразу после него вставь:
-
-$publishedPagesForNav = sb_site_published_pages($siteId);
-$breadcrumbsItems = sb_page_breadcrumbs($publishedPagesForNav, $pageId);
-$breadcrumbsHtml = sb_render_breadcrumbs($breadcrumbsItems, $site);
-
-
----
-
-3. Вывести breadcrumbs над h1
-
-Куда вставить
-
-Найди в центре страницы этот блок:
-
-<div class="hero">
-  <h1><?=h($page['title'] ?? '')?></h1>
-  <div class="muted"><?=h($site['name'] ?? 'Site')?></div>
-</div>
-
-Замени на:
-
-<div class="hero">
-  <?php if ($breadcrumbsHtml !== ''): ?>
-    <?= $breadcrumbsHtml ?>
-  <?php endif; ?>
-
-  <h1><?=h($page['title'] ?? '')?></h1>
-  <div class="muted"><?=h($site['name'] ?? 'Site')?></div>
-</div>
-
-
----
-
-4. Улучшить стили breadcrumbs
-
-Куда вставить
-
-В <style> добавь:
+Найди текущие стили .breadcrumbs, .crumb, .crumbSep и замени на это:
 
 .breadcrumbs{
   display:flex;
   flex-wrap:wrap;
   align-items:center;
-  gap:8px;
+  gap:6px;
   margin-bottom:10px;
   font-size:13px;
   color:var(--muted);
@@ -142,95 +89,50 @@ $breadcrumbsHtml = sb_render_breadcrumbs($breadcrumbsItems, $site);
 
 .crumbSep{
   color:#c0c7d1;
+  margin:0 2px;
 }
 
 
 ---
 
-5. Улучшить стиль левого меню
+3. Упростить левое меню
 
-Найди в <style> текущие стили:
+Найди все текущие стили:
 
-.sideTree{
-  display:flex;
-  flex-direction:column;
-  gap:6px;
-}
+.sideTree
 
-.sideTreeChildren{
-  margin-top:6px;
-  margin-left:14px;
-  padding-left:10px;
-  border-left:1px dashed #dbe1e7;
-}
+.sideTreeChildren
 
-.sideTreeNode{
-  min-width:0;
-}
+.sideTreeNode
 
-.sideMenuLink{
-  display:flex;
-  align-items:flex-start;
-  gap:8px;
-  width:100%;
-  padding:10px 12px;
-  border-radius:12px;
-  border:1px solid var(--line);
-  background:#fff;
-  color:var(--text);
-  text-decoration:none;
-  line-height:1.35;
-}
+.sideMenuLink
 
-.sideMenuLink:hover{
-  text-decoration:none;
-  border-color:#d1d5db;
-  background:#f9fafb;
-}
+.sideMenuLink:hover
 
-.sideMenuLink.active{
-  background: color-mix(in srgb, var(--sb-accent) 12%, #fff);
-  border-color: color-mix(in srgb, var(--sb-accent) 28%, #e5e7eb);
-  color: var(--sb-accent);
-  font-weight:700;
-}
+.sideMenuLink.active
 
-.sideMenuLink.open{
-  border-color:#d6dbe1;
-}
+.sideMenuLink.open
 
-.sideMenuCaret{
-  width:14px;
-  flex:0 0 14px;
-  color:#64748b;
-  text-align:center;
-  line-height:1.3;
-  margin-top:1px;
-}
+.sideMenuCaret
 
-.sideMenuCaretEmpty{
-  visibility:hidden;
-}
+.sideMenuCaretEmpty
 
-.sideMenuText{
-  min-width:0;
-  flex:1 1 auto;
-  word-break:break-word;
-}
+.sideMenuText
 
-И замени на это:
+
+и замени целиком на это:
 
 .sideTree{
   display:flex;
   flex-direction:column;
-  gap:4px;
+  gap:2px;
 }
 
 .sideTreeChildren{
   margin-top:4px;
-  margin-left:12px;
+  margin-left:14px;
   padding-left:10px;
-  border-left:1px dashed #dbe1e7;
+  border-left:1px solid #e8edf3;
 }
 
 .sideTreeNode{
@@ -242,7 +144,7 @@ $breadcrumbsHtml = sb_render_breadcrumbs($breadcrumbsItems, $site);
   align-items:center;
   gap:8px;
   width:100%;
-  padding:9px 10px;
+  padding:8px 10px;
   border-radius:10px;
   border:1px solid transparent;
   background:transparent;
@@ -255,18 +157,17 @@ $breadcrumbsHtml = sb_render_breadcrumbs($breadcrumbsItems, $site);
 .sideMenuLink:hover{
   text-decoration:none;
   background:#f8fafc;
-  border-color:#e5e7eb;
 }
 
 .sideMenuLink.active{
   background: color-mix(in srgb, var(--sb-accent) 10%, #fff);
-  border-color: color-mix(in srgb, var(--sb-accent) 20%, #e5e7eb);
+  border-color: color-mix(in srgb, var(--sb-accent) 18%, #e5e7eb);
   color: var(--sb-accent);
   font-weight:700;
 }
 
 .sideMenuLink.open{
-  background:#fcfcfd;
+  background:transparent;
 }
 
 .sideMenuCaret{
@@ -302,22 +203,22 @@ $breadcrumbsHtml = sb_render_breadcrumbs($breadcrumbsItems, $site);
 
 ---
 
-Что получится
+Что это даст
 
 После этого:
 
-над заголовком будет путь страницы
+путь сверху станет читабельным
 
-левое меню станет визуально чище
+левое меню станет менее “коробочным”
 
-вложенность будет читаться лучше
+активный пункт останется заметным
 
-активная страница будет смотреться аккуратнее
+вложенность будет видна за счёт линии и отступа, а не за счёт лишних рамок
 
 
 
 ---
 
-Если захочешь следующий шаг
+Что бы я делал следующим шагом
 
-После этого я бы сделал раскрытие/сворачивание веток левого меню по клику на стрелку, чтобы меню было уже совсем живым.
+После этой правки я бы сделал клик по стрелке для сворачивания/раскрытия веток, потому что структура уже просится быть интерактивной.
