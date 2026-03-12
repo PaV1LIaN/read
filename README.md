@@ -1,213 +1,224 @@
-Идём к left/right.
+Да, сейчас left/right у тебя работают как обычные боковые колонки с любыми блоками, поэтому текст просто лежит сбоку.
+Для твоей задачи логичнее сделать так:
 
-Сейчас сделаем следующий этап в public.php:
+left — это левая навигационная колонка
 
-если showLeft включён, выводить блоки зоны left
+right — это правая служебная колонка
 
-если showRight включён, выводить блоки зоны right
-
-основную страницу ставить между ними
-
-ширины брать из layout.leftWidth и layout.rightWidth
+основной контент — в центре
 
 
-Что меняем
+То есть не просто “ещё одна зона с блоками”, а специальные сайдбары.
 
-1. Загрузи блоки left/right
+Что лучше сделать
 
-В public.php найди этот кусок:
+Left
 
-$headerBlocks = !empty($layout['showHeader']) ? sb_layout_zone_blocks($siteId, 'header') : [];
-$footerBlocks = !empty($layout['showFooter']) ? sb_layout_zone_blocks($siteId, 'footer') : [];
+Использовать как:
 
-И замени на:
+меню разделов
 
-$headerBlocks = !empty($layout['showHeader']) ? sb_layout_zone_blocks($siteId, 'header') : [];
-$footerBlocks = !empty($layout['showFooter']) ? sb_layout_zone_blocks($siteId, 'footer') : [];
-$leftBlocks   = !empty($layout['showLeft'])   ? sb_layout_zone_blocks($siteId, 'left')   : [];
-$rightBlocks  = !empty($layout['showRight'])  ? sb_layout_zone_blocks($siteId, 'right')  : [];
+дерево страниц
 
-$leftWidth = (int)($layout['leftWidth'] ?? 260);
-$rightWidth = (int)($layout['rightWidth'] ?? 260);
+быстрые ссылки
 
-if ($leftWidth < 160) $leftWidth = 160;
-if ($leftWidth > 500) $leftWidth = 500;
-if ($rightWidth < 160) $rightWidth = 160;
-if ($rightWidth > 500) $rightWidth = 500;
+навигацию по сайту
 
 
----
+Right
 
-2. Подготовь HTML для боковых зон
+Использовать как:
 
-Найди этот кусок:
+контакты
 
-$pageHtml = sb_render_blocks($blocks, $siteId);
-$headerHtml = sb_render_blocks($headerBlocks, $siteId);
-$footerHtml = sb_render_blocks($footerBlocks, $siteId);
+кнопки
 
-И замени на:
+доп. информация
 
-$pageHtml = sb_render_blocks($blocks, $siteId);
-$headerHtml = sb_render_blocks($headerBlocks, $siteId);
-$footerHtml = sb_render_blocks($footerBlocks, $siteId);
-$leftHtml = sb_render_blocks($leftBlocks, $siteId);
-$rightHtml = sb_render_blocks($rightBlocks, $siteId);
+баннер / карточка / CTA
+
 
 
 ---
 
-3. Добавь стили для трёхколоночного layout
+Самая правильная доработка
 
-В <style> перед .meta или после .layoutInner добавь:
+Сделать у left и right свои визуальные контейнеры, а для left ещё и добавить специальный режим меню.
 
-.layoutMainGrid{
-  display:grid;
-  gap:20px;
-  align-items:start;
+То есть:
+
+Вариант 1 — быстрый
+
+Оставляем layout-блоки как есть, но визуально делаем:
+
+left и right в карточках
+
+с липким position sticky
+
+с фоном, рамкой, внутренними отступами
+
+
+Это уже будет выглядеть как настоящий sidebar.
+
+Вариант 2 — правильный
+
+Для left делаем специальный рендер:
+
+показывать список страниц сайта
+
+или меню сайта
+
+или отдельное layout-меню
+
+
+Это уже будет похоже на настоящее левое меню.
+
+
+---
+
+Что я советую сейчас
+
+Не ломать текущую архитектуру, а сделать поэтапно:
+
+Этап 1
+
+Сделать left/right визуально как сайдбары:
+
+отдельный фон
+
+border
+
+sticky
+
+внутренние отступы
+
+
+Этап 2
+
+Добавить для left специальный режим:
+
+leftMode = blocks | menu | pages
+
+
+Где:
+
+blocks — текущее поведение
+
+menu — рендер меню сайта
+
+pages — дерево страниц сайта
+
+
+Это будет уже очень мощно.
+
+
+---
+
+Что можно сделать прямо сейчас быстро
+
+Чтобы уже выглядело нормально, в public.php заменить рендер sidebar на карточки.
+
+Добавь стили
+
+В <style> добавь:
+
+.layoutSidebarBox{
+  background:#fff;
+  border:1px solid var(--line);
+  border-radius:16px;
+  padding:14px;
+  box-shadow: var(--shadow);
+  position: sticky;
+  top: 88px;
 }
 
-.layoutSidebar{
-  min-width:0;
-}
-
-.layoutContent{
-  min-width:0;
-}
-
-@media (max-width: 980px){
-  .layoutMainGrid{
-    grid-template-columns:1fr !important;
-  }
+.layoutSidebarBox .block:first-child{
+  margin-top:0;
 }
 
 
 ---
 
-4. Замени центральный вывод страницы
+И замени вывод left/right
 
-Сейчас у тебя внутри <div class="wrap"> есть такой кусок:
+Сейчас у тебя:
 
-<?php if ($headerHtml !== ''): ?>
-  <div class="layoutHeader">
-    <div class="layoutInner">
-      <?= $headerHtml ?>
-    </div>
-  </div>
+<?php if ($leftHtml !== ''): ?>
+  <aside class="layoutSidebar layoutSidebarLeft">
+    <?= $leftHtml ?>
+  </aside>
 <?php endif; ?>
 
-<?= $pageHtml ?>
+Заменить на:
 
-<?php if ($footerHtml !== ''): ?>
-  <div class="layoutFooter">
-    <div class="layoutInner">
-      <?= $footerHtml ?>
-    </div>
-  </div>
-<?php endif; ?>
-
-Его нужно заменить на это:
-
-<?php if ($headerHtml !== ''): ?>
-  <div class="layoutHeader">
-    <div class="layoutInner">
-      <?= $headerHtml ?>
-    </div>
-  </div>
-<?php endif; ?>
-
-<?php
-  $gridCols = '1fr';
-  if ($leftHtml !== '' && $rightHtml !== '') {
-      $gridCols = $leftWidth . 'px 1fr ' . $rightWidth . 'px';
-  } elseif ($leftHtml !== '') {
-      $gridCols = $leftWidth . 'px 1fr';
-  } elseif ($rightHtml !== '') {
-      $gridCols = '1fr ' . $rightWidth . 'px';
-  }
-?>
-<div class="layoutMainGrid" style="grid-template-columns: <?=h($gridCols)?>;">
-  <?php if ($leftHtml !== ''): ?>
-    <aside class="layoutSidebar layoutSidebarLeft">
+<?php if ($leftHtml !== ''): ?>
+  <aside class="layoutSidebar layoutSidebarLeft">
+    <div class="layoutSidebarBox">
       <?= $leftHtml ?>
-    </aside>
-  <?php endif; ?>
-
-  <main class="layoutContent">
-    <?= $pageHtml ?>
-  </main>
-
-  <?php if ($rightHtml !== ''): ?>
-    <aside class="layoutSidebar layoutSidebarRight">
-      <?= $rightHtml ?>
-    </aside>
-  <?php endif; ?>
-</div>
-
-<?php if ($footerHtml !== ''): ?>
-  <div class="layoutFooter">
-    <div class="layoutInner">
-      <?= $footerHtml ?>
     </div>
-  </div>
+  </aside>
 <?php endif; ?>
+
+И правую так же:
+
+<?php if ($rightHtml !== ''): ?>
+  <aside class="layoutSidebar layoutSidebarRight">
+    <div class="layoutSidebarBox">
+      <?= $rightHtml ?>
+    </div>
+  </aside>
+<?php endif; ?>
+
+
+---
+
+Но главное
+
+Ты прав: left должен быть именно левым меню.
+
+Поэтому следующим шагом я бы сделал не косметику, а вот это:
+
+Следующий важный шаг
+
+Добавить в сайт layout-настройку:
+
+'leftMode' => 'blocks'
+
+С вариантами:
+
+blocks
+
+menu
+
+pages
+
+
+И если leftMode = menu, то слева выводить main menu сайта, вертикально.
 
 
 ---
 
 Что получится
 
-Теперь public.php будет собираться так:
+Тогда:
 
-hero
+header — верх сайта
 
-header zone
+left — левое меню
 
-grid:
+main — контент страницы
 
-left
+right — дополнительная колонка
 
-page content
-
-right
+footer — низ сайта
 
 
-footer zone
-
+Это уже будет нормальная CMS-структура.
 
 
 ---
 
-Как проверить
+Что я предлагаю дальше
 
-1. Открой layout.php?siteId=...
-
-
-2. Включи showLeft
-
-
-3. В зоне Left создай Text, например LEFT TEST
-
-
-4. Включи showRight
-
-
-5. В зоне Right создай Text, например RIGHT TEST
-
-
-6. Открой публичную страницу
-
-
-
-Ожидаемо:
-
-слева появится LEFT TEST
-
-справа RIGHT TEST
-
-в центре останется страница
-
-на узком экране всё уйдёт в одну колонку
-
-
-Следующим шагом я бы сделал так, чтобы header/footer/left/right можно было открывать из index.php одной кнопкой Layout.
+Сейчас лучший следующий шаг — сделать left как вертикальное меню сайта.
+Это уже реально влияет на удобство и сразу делает систему похожей на настоящий конструктор сайтов.
