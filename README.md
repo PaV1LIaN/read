@@ -1,243 +1,146 @@
-Начинаем с index.php, в блоке списка страниц.
+Дальше я бы добавил быстрые переключатели статуса прямо в списке страниц:
 
-Что улучшим
+кнопка Draft
 
-В дереве страниц сделаем:
+кнопка Published
 
-яркий бейдж DRAFT / PUBLISHED
-
-бейдж HOME
-
-более читаемую мета-строку: sort, parent, slug
-
-визуально выделим draft-страницы
+без захода внутрь страницы
 
 
-Ниже готовые правки.
+Это как раз логичное продолжение после улучшения списка страниц.
+
+Что получится
+
+В дереве страниц у каждой строки будут:
+
+Draft
+
+Published
+
+текущий статус будет сразу виден
+
+переключение в один клик
 
 
----
+Для этого нужно сделать 2 вещи
 
-1. Добавь стили в <style>
+1. В index.php добавить кнопки в renderPagesTree()
 
-Вставь рядом со стилями .node, .nodeMeta, .nodeSlug вот это:
+В блоке nodeBtns рядом с Имя/slug вставь:
 
-.pageBadge{
-  display:inline-flex;
-  align-items:center;
-  gap:6px;
-  padding:3px 8px;
-  border-radius:999px;
-  font-size:11px;
-  font-weight:700;
-  line-height:1;
-  border:1px solid transparent;
-}
+const draftBtnClass = isDraft ? 'ui-btn-warning' : 'ui-btn-light';
+const pubBtnClass = !isDraft ? 'ui-btn-success' : 'ui-btn-light';
 
-.pageBadgePublished{
-  background:#ecfdf3;
-  border-color:#b7ebc6;
-  color:#027a48;
-}
+И внутри кнопок:
 
-.pageBadgeDraft{
-  background:#fff4ed;
-  border-color:#ffd6ae;
-  color:#b54708;
-}
+<button class="ui-btn ${draftBtnClass} ui-btn-xs btnTiny" data-page-status="${node.id}" data-status="draft">Draft</button>
+<button class="ui-btn ${pubBtnClass} ui-btn-xs btnTiny" data-page-status="${node.id}" data-status="published">Published</button>
 
-.pageBadgeHome{
-  background:#eef2ff;
-  border-color:#c7d2fe;
-  color:#3730a3;
-}
+То есть кусок nodeBtns станет таким:
 
-.node.isDraft{
-  background:#fffaf5;
-  border-color:#f5d7b2;
-}
+<div class="nodeBtns">
+  <button class="ui-btn ui-btn-light ui-btn-xs btnTiny" data-page-move="${node.id}" data-dir="up">↑</button>
+  <button class="ui-btn ui-btn-light ui-btn-xs btnTiny" data-page-move="${node.id}" data-dir="down">↓</button>
 
-.nodeBadges{
-  display:flex;
-  gap:6px;
-  flex-wrap:wrap;
-  align-items:center;
-}
+  <button class="ui-btn ui-btn-light ui-btn-xs btnTiny" data-page-parent="${node.id}">Вложить…</button>
+  <button class="ui-btn ui-btn-light ui-btn-xs btnTiny" data-page-root="${node.id}">В корень</button>
 
-.nodeMeta code{
-  background:#f3f4f6;
-  padding:2px 6px;
-  border-radius:999px;
-  font-size:11px;
-}
+  <button class="ui-btn ui-btn-light ui-btn-xs btnTiny" data-page-rename="${node.id}">Имя/slug</button>
+
+  <button class="ui-btn ${draftBtnClass} ui-btn-xs btnTiny" data-page-status="${node.id}" data-status="draft">Draft</button>
+  <button class="ui-btn ${pubBtnClass} ui-btn-xs btnTiny" data-page-status="${node.id}" data-status="published">Published</button>
+
+  <a class="ui-btn ui-btn-primary ui-btn-xs btnTiny"
+     href="/local/sitebuilder/editor.php?siteId=${siteId}&pageId=${node.id}"
+     target="_blank">Редактор</a>
+
+  <a class="ui-btn ui-btn-light ui-btn-xs btnTiny"
+     href="/local/sitebuilder/view.php?siteId=${siteId}&pageId=${node.id}"
+     target="_blank">Открыть</a>
+
+  <button class="ui-btn ui-btn-danger ui-btn-xs btnTiny" data-page-delete="${node.id}">Удалить</button>
+</div>
 
 
 ---
 
-2. Обнови renderPagesTree(container, siteId, pages, q)
+2. В обработчик кликов внутри openPagesDialog() добавить смену статуса
 
-Полностью замени функцию renderPagesTree на эту:
+В container.addEventListener('click', function(e){ ... }) добавь такой блок до удаления страницы:
 
-function renderPagesTree(container, siteId, pages, q) {
-  const query = (q || '').trim().toLowerCase();
+const st = e.target.closest('[data-page-status]');
+if (st) {
+  const id = parseInt(st.getAttribute('data-page-status'), 10);
+  const status = st.getAttribute('data-status') || 'draft';
 
-  const homePageId = pages.reduce((acc, p) => {
-    if (parseInt(p.isHome || 0, 10) === 1) return parseInt(p.id, 10);
-    return acc;
-  }, 0);
-
-  const matches = (p) => {
-    if (!query) return true;
-    const t = (p.title || '').toLowerCase();
-    const s = (p.slug || '').toLowerCase();
-    const status = (p.status || '').toLowerCase();
-    return t.includes(query) || s.includes(query) || status.includes(query) || String(p.id).includes(query);
-  };
-
-  const { roots } = buildTree(pages);
-
-  const renderNode = (node) => {
-    const kidsHtml = (node.children || [])
-      .map(renderNode)
-      .filter(Boolean)
-      .join('');
-
-    const selfMatch = matches(node);
-    const hasVisibleKids = kidsHtml !== '';
-    if (!selfMatch && !hasVisibleKids) return '';
-
-    const pid = parseInt(node.parentId || 0, 10) || 0;
-    const parentLabel = pid ? `parent: #${pid}` : 'root';
-
-    const status = String(node.status || 'published').toLowerCase() === 'draft' ? 'draft' : 'published';
-    const isDraft = status === 'draft';
-    const isHome = parseInt(node.id, 10) === homePageId || parseInt(node.homePageId || 0, 10) === parseInt(node.id, 10);
-
-    const statusBadge = isDraft
-      ? '<span class="pageBadge pageBadgeDraft">DRAFT</span>'
-      : '<span class="pageBadge pageBadgePublished">PUBLISHED</span>';
-
-    const homeBadge = isHome
-      ? '<span class="pageBadge pageBadgeHome">HOME</span>'
-      : '';
-
-    const title = BX.util.htmlspecialchars(node.title || '');
-    const slug = BX.util.htmlspecialchars(node.slug || '');
-    const sort = parseInt(node.sort || 500, 10);
-
-    return `
-      <div class="node ${isDraft ? 'isDraft' : ''}">
-        <div class="nodeHead">
-          <div class="nodeLeft">
-            <div class="nodeIcon">≡</div>
-            <div class="nodeMain">
-              <div class="nodeTitleLine">
-                <b>#${node.id} ${title}</b>
-                <span class="nodeSlug">${slug}</span>
-              </div>
-
-              <div class="nodeBadges" style="margin-top:6px;">
-                ${statusBadge}
-                ${homeBadge}
-              </div>
-
-              <div class="nodeMeta">
-                <span>sort: <code>${sort}</code></span>
-                <span>${parentLabel}</span>
-                <span>slug: <code>${slug}</code></span>
-              </div>
-            </div>
-          </div>
-
-          <div class="nodeBtns">
-            <button class="ui-btn ui-btn-light ui-btn-xs btnTiny" data-page-move="${node.id}" data-dir="up">↑</button>
-            <button class="ui-btn ui-btn-light ui-btn-xs btnTiny" data-page-move="${node.id}" data-dir="down">↓</button>
-
-            <button class="ui-btn ui-btn-light ui-btn-xs btnTiny" data-page-parent="${node.id}">Вложить…</button>
-            <button class="ui-btn ui-btn-light ui-btn-xs btnTiny" data-page-root="${node.id}">В корень</button>
-
-            <button class="ui-btn ui-btn-light ui-btn-xs btnTiny" data-page-rename="${node.id}">Имя/slug</button>
-
-            <a class="ui-btn ui-btn-primary ui-btn-xs btnTiny"
-               href="/local/sitebuilder/editor.php?siteId=${siteId}&pageId=${node.id}"
-               target="_blank">Редактор</a>
-
-            <a class="ui-btn ui-btn-light ui-btn-xs btnTiny"
-               href="/local/sitebuilder/view.php?siteId=${siteId}&pageId=${node.id}"
-               target="_blank">Открыть</a>
-
-            <button class="ui-btn ui-btn-danger ui-btn-xs btnTiny" data-page-delete="${node.id}">Удалить</button>
-          </div>
-        </div>
-
-        ${hasVisibleKids ? `<div class="children">${kidsHtml}</div>` : ''}
-      </div>
-    `;
-  };
-
-  const html = roots.map(renderNode).filter(Boolean).join('');
-  container.innerHTML = html || '<div class="muted">Страниц пока нет.</div>';
+  api('page.setStatus', { id, status }).then(r => {
+    if (!r || r.ok !== true) { notify('Не удалось сменить статус'); return; }
+    loadAndRender();
+  }).catch(() => notify('Ошибка page.setStatus'));
+  return;
 }
 
 
 ---
 
-3. Небольшая доработка loadAndRender
+3. В api.php нужен action page.setStatus
 
-Сейчас page.list должен отдавать статус страницы. Если уже отдаёт status, всё ок.
+Если его ещё нет, добавь:
 
-Но для бейджа HOME удобнее явно пробросить homePageId в массив страниц после загрузки.
-Внутри openPagesDialog, в функции loadAndRender, замени этот кусок:
+if ($action === 'page.setStatus') {
+    $id = (int)($_POST['id'] ?? 0);
+    $status = strtolower(trim((string)($_POST['status'] ?? 'draft')));
 
-pagesCache = res.pages || [];
-renderPagesTree(container, siteId, pagesCache, q);
+    if ($id <= 0) {
+        http_response_code(422);
+        echo json_encode(['ok'=>false,'error'=>'ID_REQUIRED'], JSON_UNESCAPED_UNICODE);
+        exit;
+    }
 
-на:
+    if (!in_array($status, ['draft', 'published'], true)) {
+        http_response_code(422);
+        echo json_encode(['ok'=>false,'error'=>'BAD_STATUS'], JSON_UNESCAPED_UNICODE);
+        exit;
+    }
 
-pagesCache = (res.pages || []).map(p => Object.assign({}, p, {
-  isHome: parseInt(res.homePageId || 0, 10) === parseInt(p.id || 0, 10) ? 1 : 0
-}));
-renderPagesTree(container, siteId, pagesCache, q);
+    $page = sb_find_page($id);
+    if (!$page) {
+        http_response_code(404);
+        echo json_encode(['ok'=>false,'error'=>'PAGE_NOT_FOUND'], JSON_UNESCAPED_UNICODE);
+        exit;
+    }
 
+    $siteId = (int)($page['siteId'] ?? 0);
+    sb_require_editor($siteId);
 
----
+    $pages = sb_read_pages();
+    $found = false;
 
-4. Если page.list ещё не возвращает homePageId
+    foreach ($pages as &$p) {
+        if ((int)($p['id'] ?? 0) === $id) {
+            $p['status'] = $status;
+            $p['updatedAt'] = date('c');
+            $p['updatedBy'] = (int)$USER->GetID();
+            $found = true;
+            break;
+        }
+    }
+    unset($p);
 
-Тогда в api.php в экшене page.list надо вернуть его.
+    if (!$found) {
+        http_response_code(404);
+        echo json_encode(['ok'=>false,'error'=>'PAGE_NOT_FOUND'], JSON_UNESCAPED_UNICODE);
+        exit;
+    }
 
-Найди:
-
-echo json_encode(['ok' => true, 'pages' => $pages], JSON_UNESCAPED_UNICODE);
-
-и замени на:
-
-$homePageId = 0;
-$site = sb_find_site($siteId);
-if ($site) {
-    $homePageId = (int)($site['homePageId'] ?? 0);
+    sb_write_pages($pages);
+    echo json_encode(['ok'=>true], JSON_UNESCAPED_UNICODE);
+    exit;
 }
 
-echo json_encode([
-    'ok' => true,
-    'pages' => $pages,
-    'homePageId' => $homePageId,
-], JSON_UNESCAPED_UNICODE);
-
 
 ---
 
-Что увидишь после правки
+После этого в списке страниц можно будет щёлкать Draft / Published прямо на месте.
 
-у опубликованных страниц зелёный PUBLISHED
-
-у черновиков оранжевый DRAFT
-
-у домашней страницы бейдж HOME
-
-draft-страницы будут слегка подсвечены фоном
-
-дерево станет заметно читаемее
-
-
-Следующим шагом я бы добавил туда же быстрые кнопки Draft / Published прямо в списке страниц.
+Если хочешь, следующим сообщением я могу сразу собрать тебе готовый кусок renderPagesTree() целиком с уже встроенными этими кнопками.
