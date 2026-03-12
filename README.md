@@ -1,67 +1,119 @@
-Да, доведём.
+Давай.
 
-Сейчас цель — сделать левое меню более похожим на нормальное дерево навигации, а не на набор вложенных карточек.
+Сделаем так:
 
-Что меняем
+по умолчанию открыта активная ветка
 
-Сделаем:
+у пунктов с детьми будет кнопка-стрелка
 
-меньше рамок
+по клику ветка сворачивается/раскрывается
 
-спокойнее active
+состояние запоминается в localStorage
 
-чище вложенность
 
-компактнее уровни
+1. Замени рендер левого дерева
 
-визуальный акцент не на “капсуле”, а на текущей ветке
+Найди функцию:
 
+function sb_render_left_menu_tree(array $nodes, array $site, int $currentPageId, array $activePathIds, int $level = 0): string
+
+И замени её целиком на это:
+
+function sb_render_left_menu_tree(array $nodes, array $site, int $currentPageId, array $activePathIds, int $level = 0): string {
+    if (!$nodes) return '';
+
+    $html = '<div class="sideTree level-' . $level . '">';
+    foreach ($nodes as $node) {
+        $id = (int)($node['id'] ?? 0);
+        $title = (string)($node['title'] ?? 'Page');
+        $isActive = ($id === $currentPageId);
+        $isInPath = in_array($id, $activePathIds, true);
+        $children = is_array($node['children'] ?? null) ? $node['children'] : [];
+        $hasChildren = count($children) > 0;
+
+        $classes = ['sideMenuLink'];
+        if ($isActive) $classes[] = 'active';
+        if ($hasChildren) $classes[] = 'hasChildren';
+        if ($isInPath) $classes[] = 'open';
+
+        $url = public_page_url($site, $node);
+
+        $html .= '<div class="sideTreeNode level-' . $level . '" data-node-id="' . $id . '" data-open-default="' . ($isInPath ? '1' : '0') . '">';
+
+        if ($hasChildren) {
+            $html .= '<div class="sideMenuRow">';
+            $html .= '<button type="button" class="sideToggle" aria-expanded="' . ($isInPath ? 'true' : 'false') . '" aria-label="Переключить ветку">';
+            $html .= '<span class="sideToggleIcon">' . ($isInPath ? '▾' : '▸') . '</span>';
+            $html .= '</button>';
+            $html .= '<a class="' . h(implode(' ', $classes)) . '" href="' . h($url) . '">';
+            $html .= '<span class="sideMenuText">' . h($title) . '</span>';
+            $html .= '</a>';
+            $html .= '</div>';
+
+            $html .= '<div class="sideTreeChildren" style="display:' . ($isInPath ? 'block' : 'none') . ';">';
+            $html .= sb_render_left_menu_tree($children, $site, $currentPageId, $activePathIds, $level + 1);
+            $html .= '</div>';
+        } else {
+            $html .= '<div class="sideMenuRow">';
+            $html .= '<span class="sideToggleStub"></span>';
+            $html .= '<a class="' . h(implode(' ', $classes)) . '" href="' . h($url) . '">';
+            $html .= '<span class="sideMenuText">' . h($title) . '</span>';
+            $html .= '</a>';
+            $html .= '</div>';
+        }
+
+        $html .= '</div>';
+    }
+    $html .= '</div>';
+
+    return $html;
+}
 
 
 ---
 
-1. Замени стили левого меню
+2. Добавь стили для toggle
 
-В public.php найди текущие стили:
+В <style> добавь или обнови эти стили:
 
-.sideTree
-
-.sideTreeChildren
-
-.sideTreeNode
-
-.sideMenuLink
-
-.sideMenuLink:hover
-
-.sideMenuLink.active
-
-.sideMenuLink.open
-
-.sideMenuCaret
-
-.sideMenuCaretEmpty
-
-.sideMenuText
-
-
-И полностью замени их на это:
-
-.sideTree{
+.sideMenuRow{
   display:flex;
-  flex-direction:column;
-  gap:2px;
-}
-
-.sideTreeNode{
+  align-items:flex-start;
+  gap:6px;
   min-width:0;
 }
 
-.sideTreeChildren{
-  margin-top:2px;
-  margin-left:12px;
-  padding-left:12px;
-  border-left:1px solid #eceff3;
+.sideToggle{
+  width:18px;
+  height:18px;
+  flex:0 0 18px;
+  margin-top:6px;
+  border:0;
+  background:transparent;
+  color:#94a3b8;
+  cursor:pointer;
+  padding:0;
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  border-radius:6px;
+}
+
+.sideToggle:hover{
+  background:#f1f5f9;
+  color:#64748b;
+}
+
+.sideToggleIcon{
+  font-size:10px;
+  line-height:1;
+}
+
+.sideToggleStub{
+  width:18px;
+  height:18px;
+  flex:0 0 18px;
+  margin-top:6px;
 }
 
 .sideMenuLink{
@@ -79,137 +131,89 @@
   transition:background .15s ease, color .15s ease, border-color .15s ease;
 }
 
-.sideMenuLink:hover{
-  text-decoration:none;
-  background:#f8fafc;
-  color:var(--text);
-}
-
-.sideMenuLink.open{
-  background:transparent;
-}
-
-.sideMenuLink.active{
-  background:#f5f9ff;
-  border-color:#dbeafe;
-  color:#1d4ed8;
-  font-weight:600;
-}
-
-.sideMenuCaret{
-  width:12px;
-  flex:0 0 12px;
-  color:#94a3b8;
-  text-align:center;
-  line-height:1.2;
-  font-size:10px;
-  margin-top:2px;
-}
-
-.sideMenuCaretEmpty{
-  visibility:hidden;
-}
-
-.sideMenuText{
-  min-width:0;
-  flex:1 1 auto;
-  word-break:break-word;
-}
-
-.sideTree.level-0 > .sideTreeNode > .sideMenuLink{
-  font-weight:600;
-  padding-top:7px;
-  padding-bottom:7px;
-}
-
-.sideTree.level-1 > .sideTreeNode > .sideMenuLink,
-.sideTree.level-2 > .sideTreeNode > .sideMenuLink,
-.sideTree.level-3 > .sideTreeNode > .sideMenuLink,
-.sideTree.level-4 > .sideTreeNode > .sideMenuLink{
-  font-weight:400;
-  font-size:14px;
-}
+Если у тебя уже есть .sideMenuLink, оставь только одну версию — новую.
 
 
 ---
 
-2. Сделай сам sidebar чуть аккуратнее
+3. Добавь JS перед </body>
 
-Найди стиль:
+В самый низ public.php, прямо перед:
 
-.layoutSidebarBox
+</body>
 
-И замени на:
+вставь:
 
-.layoutSidebarBox{
-  background:#fff;
-  border:1px solid #eef2f6;
-  border-radius:14px;
-  padding:12px;
-  box-shadow: 0 1px 2px rgba(0,0,0,.03);
-  position: sticky;
-  top: 88px;
-}
+<script>
+(function(){
+  const storageKey = 'sb-left-tree:' + location.pathname + location.search;
+
+  function readState() {
+    try {
+      return JSON.parse(localStorage.getItem(storageKey) || '{}') || {};
+    } catch (e) {
+      return {};
+    }
+  }
+
+  function writeState(state) {
+    try {
+      localStorage.setItem(storageKey, JSON.stringify(state));
+    } catch (e) {}
+  }
+
+  const state = readState();
+
+  document.querySelectorAll('.sideTreeNode[data-node-id]').forEach(node => {
+    const id = node.getAttribute('data-node-id');
+    const defaultOpen = node.getAttribute('data-open-default') === '1';
+    const btn = node.querySelector(':scope > .sideMenuRow .sideToggle');
+    const icon = node.querySelector(':scope > .sideMenuRow .sideToggle .sideToggleIcon');
+    const children = node.querySelector(':scope > .sideTreeChildren');
+
+    if (!btn || !children || !icon) return;
+
+    let isOpen = Object.prototype.hasOwnProperty.call(state, id) ? !!state[id] : defaultOpen;
+
+    function render() {
+      children.style.display = isOpen ? 'block' : 'none';
+      btn.setAttribute('aria-expanded', isOpen ? 'true' : 'false');
+      icon.textContent = isOpen ? '▾' : '▸';
+    }
+
+    btn.addEventListener('click', function(e){
+      e.preventDefault();
+      e.stopPropagation();
+      isOpen = !isOpen;
+      state[id] = isOpen;
+      writeState(state);
+      render();
+    });
+
+    render();
+  });
+})();
+</script>
 
 
 ---
 
-3. Если хочешь ещё спокойнее — уменьши ширину left
+4. Что получится
 
-Сейчас у тебя, скорее всего, leftWidth = 260.
-Для такого дерева я бы попробовал:
+Теперь:
 
-220
+активная ветка открывается автоматически
 
-или
+любую ветку можно свернуть
 
-230
-
-Это обычно выглядит аккуратнее.
-
-
----
-
-4. Небольшое улучшение breadcrumbs
-
-Чтобы они не спорили с заголовком, можешь сделать их чуть мягче.
-
-Найди стиль .breadcrumbs и замени на:
-
-.breadcrumbs{
-  display:flex;
-  flex-wrap:wrap;
-  align-items:center;
-  gap:6px;
-  margin-bottom:8px;
-  font-size:12px;
-  color:#94a3b8;
-}
-
-И .crumb.current:
-
-.crumb.current{
-  color:#64748b;
-  font-weight:500;
-}
-
-
----
-
-Что получится
-
-После этого:
-
-меню станет менее “пузырчатым”
-
-активная страница останется заметной, но не будет выглядеть как кнопка внутри кнопки
-
-дерево станет ближе к нормальному сайдбару CMS
+состояние сохраняется после перехода
 
 
 
 ---
 
-Что я бы делал следующим шагом
+5. Что проверить
 
-После этой косметики уже логично сделать раскрытие/сворачивание веток по клику на стрелку.
+Открой страницу с вложенностью и нажимай на стрелки слева от пунктов, у которых есть дети.
+
+Если хочешь, следующим сообщением я дам ещё мини-доработку: чтобы клик по названию родителя только переходил на страницу, а клик по стрелке только раскрывал ветку — сейчас это уже так, и это лучший вариант.
