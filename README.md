@@ -1,33 +1,112 @@
-Да, это из-за ключа в localStorage.
+Да, понял проблему.
 
-Сейчас у тебя, скорее всего, состояние хранится по ключу:
+Это значит, что сейчас логика открытия веток работает по одному общему набору id, и при переходе/клике одна ветка перерисовывает состояние другой.
+Обычно это происходит, когда:
 
-const storageKey = 'sb-left-tree:' + location.pathname + location.search;
+id узлов недостаточно уникально обрабатывается в JS,
 
-А location.search меняется на каждой странице, потому что меняется page=....
-Из-за этого при переходе на вложенный пункт берётся новый пустой ключ, и ветка снова схлопывается.
+или при новой странице defaultOpen снова вмешивается,
 
-Что исправить
+или состояние веток хранится, но потом частично перезаписывается.
 
-Найди внизу public.php этот код:
 
-const storageKey = 'sb-left-tree:' + location.pathname + location.search;
+Как исправить правильно
 
-И замени на это:
+Нужно сделать так:
 
-const siteKey = document.body.getAttribute('data-site-key') || location.pathname;
-const storageKey = 'sb-left-tree:' + siteKey;
+состояние хранить по id конкретного узла
+
+активную ветку открывать всегда
+
+остальные ветки брать только из localStorage
+
+при клике на один пункт не трогать другие
+
 
 
 ---
 
-Теперь нужно передать data-site-key в <body>
+Замени JS внизу public.php целиком
 
-Найди:
+Найди весь блок:
 
-<body style="--left-col: <?=h($leftCol)?>; --right-col: <?=h($rightCol)?>;">
+<script>
+...
+</script>
 
-Замени на:
+который отвечает за sideTreeNode, и замени полностью на это:
+
+<script>
+(function(){
+  const siteKey = document.body.getAttribute('data-site-key') || location.pathname;
+  const storageKey = 'sb-left-tree:' + siteKey;
+
+  function readState() {
+    try {
+      const raw = localStorage.getItem(storageKey);
+      const parsed = raw ? JSON.parse(raw) : {};
+      return parsed && typeof parsed === 'object' ? parsed : {};
+    } catch (e) {
+      return {};
+    }
+  }
+
+  function writeState(state) {
+    try {
+      localStorage.setItem(storageKey, JSON.stringify(state));
+    } catch (e) {}
+  }
+
+  const state = readState();
+
+  document.querySelectorAll('.sideTreeNode[data-node-id]').forEach(node => {
+    const id = String(node.getAttribute('data-node-id') || '');
+    const defaultOpen = node.getAttribute('data-open-default') === '1';
+
+    const btn = node.querySelector(':scope > .sideMenuRow .sideToggle');
+    const icon = node.querySelector(':scope > .sideMenuRow .sideToggle .sideToggleIcon');
+    const children = node.querySelector(':scope > .sideTreeChildren');
+
+    if (!id || !btn || !icon || !children) return;
+
+    let isOpen;
+
+    // Активная ветка всегда открыта
+    if (defaultOpen) {
+      isOpen = true;
+    } else if (Object.prototype.hasOwnProperty.call(state, id)) {
+      isOpen = !!state[id];
+    } else {
+      isOpen = false;
+    }
+
+    function render() {
+      children.style.display = isOpen ? 'block' : 'none';
+      btn.setAttribute('aria-expanded', isOpen ? 'true' : 'false');
+      icon.textContent = isOpen ? '▾' : '▸';
+    }
+
+    btn.addEventListener('click', function(e){
+      e.preventDefault();
+      e.stopPropagation();
+
+      isOpen = !isOpen;
+      state[id] = isOpen;
+      writeState(state);
+      render();
+    });
+
+    render();
+  });
+})();
+</script>
+
+
+---
+
+И проверь body
+
+Должно быть так:
 
 <body
   data-site-key="<?=h((string)($site['slug'] ?? ('site-'.$siteId)))?>"
@@ -37,34 +116,25 @@ const storageKey = 'sb-left-tree:' + siteKey;
 
 ---
 
-Почему это решает проблему
+Почему это исправляет баг
 
-Теперь состояние веток будет храниться:
+Теперь логика такая:
 
-не для каждой отдельной страницы,
+если пункт находится в активной цепочке страницы, он всегда открыт
 
-а для всего сайта целиком.
+если не в активной цепочке, его состояние берётся только из localStorage
 
+клик по одному узлу меняет только его id
 
-То есть:
-
-открыл ветку на одной странице,
-
-перешёл на дочернюю,
-
-ветка останется открытой.
+соседние ветки не должны схлопываться
 
 
 
 ---
 
-Если хочешь ещё лучше
+Если после этого всё равно будет схлопываться
 
-Можно сделать так, чтобы:
+Тогда проблема уже не в JS, а в том, что в PHP дереве у разных узлов могут оказаться пересекающиеся data-node-id или структура рендерится не так, как ожидается.
+Тогда я попрошу у тебя кусок HTML одного sidebar из браузера и сразу укажу точку.
 
-все предки активной страницы всегда принудительно были открыты,
-
-даже если пользователь их раньше закрыл.
-
-
-Но сначала внеси правку выше — скорее всего, этого уже хватит.
+Сейчас сначала поставь этот JS.
