@@ -1,103 +1,28 @@
-Уже лучше, но по скрину видно 3 вещи, которые я бы сразу поправил:
+Да, доведём.
 
-Что сейчас не очень
+Сейчас цель — сделать левое меню более похожим на нормальное дерево навигации, а не на набор вложенных карточек.
 
-1. breadcrumbs слиплись: Главная/Вложенная первая
+Что меняем
 
+Сделаем:
 
-2. левое меню стало слишком “лесенкой” — много рамок, линий и вложенных отступов
+меньше рамок
 
+спокойнее active
 
-3. дочерняя активная страница выглядит как отдельная карточка внутри карточки, из-за этого меню кажется перегруженным
+чище вложенность
 
+компактнее уровни
 
-
-
----
-
-Что я предлагаю сейчас
-
-Сделать маленькую косметическую доработку:
-
-breadcrumbs сделать аккуратными с пробелами и разделителями
-
-левое меню упростить визуально
-
-для детей убрать лишние рамки
-
-оставить акцент только на активной странице
+визуальный акцент не на “капсуле”, а на текущей ветке
 
 
 
 ---
 
-1. Исправить breadcrumbs
+1. Замени стили левого меню
 
-Сейчас у тебя, скорее всего, разделитель вставляется без нормального отступа.
-Замени функцию sb_render_breadcrumbs(...) на эту:
-
-function sb_render_breadcrumbs(array $items, array $site): string {
-    if (!$items) return '';
-
-    $parts = [];
-    $lastIndex = count($items) - 1;
-
-    foreach ($items as $i => $p) {
-        $title = (string)($p['title'] ?? 'Page');
-
-        if ($i === $lastIndex) {
-            $parts[] = '<span class="crumb current">' . h($title) . '</span>';
-        } else {
-            $parts[] = '<a class="crumb" href="' . h(public_page_url($site, $p)) . '">' . h($title) . '</a>';
-        }
-    }
-
-    return '<nav class="breadcrumbs">' . implode('<span class="crumbSep">›</span>', $parts) . '</nav>';
-}
-
-
----
-
-2. Замени стили breadcrumbs
-
-Найди текущие стили .breadcrumbs, .crumb, .crumbSep и замени на это:
-
-.breadcrumbs{
-  display:flex;
-  flex-wrap:wrap;
-  align-items:center;
-  gap:6px;
-  margin-bottom:10px;
-  font-size:13px;
-  color:var(--muted);
-}
-
-.crumb{
-  color:var(--muted);
-  text-decoration:none;
-}
-
-.crumb:hover{
-  color:var(--sb-accent);
-  text-decoration:none;
-}
-
-.crumb.current{
-  color:var(--text);
-  font-weight:600;
-}
-
-.crumbSep{
-  color:#c0c7d1;
-  margin:0 2px;
-}
-
-
----
-
-3. Упростить левое меню
-
-Найди все текущие стили:
+В public.php найди текущие стили:
 
 .sideTree
 
@@ -120,7 +45,7 @@ function sb_render_breadcrumbs(array $items, array $site): string {
 .sideMenuText
 
 
-и замени целиком на это:
+И полностью замени их на это:
 
 .sideTree{
   display:flex;
@@ -128,55 +53,57 @@ function sb_render_breadcrumbs(array $items, array $site): string {
   gap:2px;
 }
 
-.sideTreeChildren{
-  margin-top:4px;
-  margin-left:14px;
-  padding-left:10px;
-  border-left:1px solid #e8edf3;
-}
-
 .sideTreeNode{
   min-width:0;
 }
 
+.sideTreeChildren{
+  margin-top:2px;
+  margin-left:12px;
+  padding-left:12px;
+  border-left:1px solid #eceff3;
+}
+
 .sideMenuLink{
   display:flex;
-  align-items:center;
+  align-items:flex-start;
   gap:8px;
   width:100%;
-  padding:8px 10px;
-  border-radius:10px;
+  padding:6px 8px;
+  border-radius:8px;
   border:1px solid transparent;
   background:transparent;
   color:var(--text);
   text-decoration:none;
-  line-height:1.3;
-  transition:background .15s ease, border-color .15s ease, color .15s ease;
+  line-height:1.35;
+  transition:background .15s ease, color .15s ease, border-color .15s ease;
 }
 
 .sideMenuLink:hover{
   text-decoration:none;
   background:#f8fafc;
-}
-
-.sideMenuLink.active{
-  background: color-mix(in srgb, var(--sb-accent) 10%, #fff);
-  border-color: color-mix(in srgb, var(--sb-accent) 18%, #e5e7eb);
-  color: var(--sb-accent);
-  font-weight:700;
+  color:var(--text);
 }
 
 .sideMenuLink.open{
   background:transparent;
 }
 
+.sideMenuLink.active{
+  background:#f5f9ff;
+  border-color:#dbeafe;
+  color:#1d4ed8;
+  font-weight:600;
+}
+
 .sideMenuCaret{
-  width:14px;
-  flex:0 0 14px;
-  color:#64748b;
+  width:12px;
+  flex:0 0 12px;
+  color:#94a3b8;
   text-align:center;
-  line-height:1;
-  font-size:11px;
+  line-height:1.2;
+  font-size:10px;
+  margin-top:2px;
 }
 
 .sideMenuCaretEmpty{
@@ -191,11 +118,14 @@ function sb_render_breadcrumbs(array $items, array $site): string {
 
 .sideTree.level-0 > .sideTreeNode > .sideMenuLink{
   font-weight:600;
+  padding-top:7px;
+  padding-bottom:7px;
 }
 
 .sideTree.level-1 > .sideTreeNode > .sideMenuLink,
 .sideTree.level-2 > .sideTreeNode > .sideMenuLink,
-.sideTree.level-3 > .sideTreeNode > .sideMenuLink{
+.sideTree.level-3 > .sideTreeNode > .sideMenuLink,
+.sideTree.level-4 > .sideTreeNode > .sideMenuLink{
   font-weight:400;
   font-size:14px;
 }
@@ -203,22 +133,83 @@ function sb_render_breadcrumbs(array $items, array $site): string {
 
 ---
 
-Что это даст
+2. Сделай сам sidebar чуть аккуратнее
+
+Найди стиль:
+
+.layoutSidebarBox
+
+И замени на:
+
+.layoutSidebarBox{
+  background:#fff;
+  border:1px solid #eef2f6;
+  border-radius:14px;
+  padding:12px;
+  box-shadow: 0 1px 2px rgba(0,0,0,.03);
+  position: sticky;
+  top: 88px;
+}
+
+
+---
+
+3. Если хочешь ещё спокойнее — уменьши ширину left
+
+Сейчас у тебя, скорее всего, leftWidth = 260.
+Для такого дерева я бы попробовал:
+
+220
+
+или
+
+230
+
+Это обычно выглядит аккуратнее.
+
+
+---
+
+4. Небольшое улучшение breadcrumbs
+
+Чтобы они не спорили с заголовком, можешь сделать их чуть мягче.
+
+Найди стиль .breadcrumbs и замени на:
+
+.breadcrumbs{
+  display:flex;
+  flex-wrap:wrap;
+  align-items:center;
+  gap:6px;
+  margin-bottom:8px;
+  font-size:12px;
+  color:#94a3b8;
+}
+
+И .crumb.current:
+
+.crumb.current{
+  color:#64748b;
+  font-weight:500;
+}
+
+
+---
+
+Что получится
 
 После этого:
 
-путь сверху станет читабельным
+меню станет менее “пузырчатым”
 
-левое меню станет менее “коробочным”
+активная страница останется заметной, но не будет выглядеть как кнопка внутри кнопки
 
-активный пункт останется заметным
-
-вложенность будет видна за счёт линии и отступа, а не за счёт лишних рамок
+дерево станет ближе к нормальному сайдбару CMS
 
 
 
 ---
 
-Что бы я делал следующим шагом
+Что я бы делал следующим шагом
 
-После этой правки я бы сделал клик по стрелке для сворачивания/раскрытия веток, потому что структура уже просится быть интерактивной.
+После этой косметики уже логично сделать раскрытие/сворачивание веток по клику на стрелку.
