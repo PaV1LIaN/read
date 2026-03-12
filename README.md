@@ -1,155 +1,225 @@
-Отлично. Переходим к контентным областям страницы.
+Идём дальше. Теперь делаем, чтобы section реально работал в public.php.
 
-Идём правильно, по этапам, чтобы ничего не сломать:
+Смысл будет такой:
 
-Что сделаем сначала
+блок section открывает новую секцию
 
-Добавим новый тип блока: section
+все следующие обычные блоки рендерятся внутри неё
 
-Он будет задавать:
+следующая section закрывает предыдущую
 
-фон секции
-
-отступ сверху
-
-отступ снизу
-
-boxed / full width
-
-border
-
-radius
+если секций нет вообще, всё работает как раньше
 
 
-А обычные блоки будут идти внутри секции по правилу:
+Шаг 1. Добавь функции рендера секций
 
-встретили section → начали новую секцию
+В public.php после функции:
 
-все следующие блоки рендерятся в неё
+function sb_render_blocks(array $blocks, int $siteId): string {
 
-встретили следующую section → закрыли предыдущую
+или сразу после неё вставь это:
 
-
-Это самый мягкий способ встроить секции в твою текущую архитектуру.
-
-
----
-
-Шаг 1. Дорабатываем api.php
-
-1. Разреши section в block.create
-
-Найди в block.create этот кусок:
-
-if (!in_array($type, ['text','image','button', 'heading', 'columns2', 'gallery', 'spacer', 'card', 'cards'], true)) {
-
-Замени на:
-
-if (!in_array($type, ['text','image','button','heading','columns2','gallery','spacer','card','cards','section'], true)) {
-
-
----
-
-2. Добавь обработку section в block.create
-
-Внутри block.create, перед последним else { // button ... }, вставь новый блок:
-
-} elseif ($type === 'section') {
-    $boxed = (string)($_POST['boxed'] ?? '1');
-    $boxed = ($boxed === '1' || $boxed === 'true');
-
-    $background = trim((string)($_POST['background'] ?? '#ffffff'));
+function sb_section_style(array $content): string {
+    $boxed = !empty($content['boxed']);
+    $background = (string)($content['background'] ?? '#ffffff');
     if (!preg_match('~^#[0-9a-fA-F]{6}$~', $background)) $background = '#ffffff';
 
-    $paddingTop = (int)($_POST['paddingTop'] ?? 32);
-    $paddingBottom = (int)($_POST['paddingBottom'] ?? 32);
-
+    $paddingTop = (int)($content['paddingTop'] ?? 32);
+    $paddingBottom = (int)($content['paddingBottom'] ?? 32);
     if ($paddingTop < 0) $paddingTop = 0;
     if ($paddingTop > 200) $paddingTop = 200;
     if ($paddingBottom < 0) $paddingBottom = 0;
     if ($paddingBottom > 200) $paddingBottom = 200;
 
-    $border = (string)($_POST['border'] ?? '0');
-    $border = ($border === '1' || $border === 'true');
-
-    $radius = (int)($_POST['radius'] ?? 0);
+    $border = !empty($content['border']);
+    $radius = (int)($content['radius'] ?? 0);
     if ($radius < 0) $radius = 0;
     if ($radius > 40) $radius = 40;
 
-    $content = [
-        'boxed' => $boxed,
-        'background' => strtoupper($background),
-        'paddingTop' => $paddingTop,
-        'paddingBottom' => $paddingBottom,
-        'border' => $border,
-        'radius' => $radius,
-    ];
+    $styles = [];
+    $styles[] = 'background:' . $background;
+    $styles[] = 'padding-top:' . $paddingTop . 'px';
+    $styles[] = 'padding-bottom:' . $paddingBottom . 'px';
+
+    if ($border) {
+        $styles[] = 'border:1px solid #e5e7eb';
+    }
+    if ($radius > 0) {
+        $styles[] = 'border-radius:' . $radius . 'px';
+    }
+
+    return implode(';', $styles);
+}
+
+function sb_render_page_with_sections(array $blocks, int $siteId): string {
+    if (!$blocks) return '';
+
+    $html = '';
+    $currentSection = null;
+    $buffer = [];
+
+    $flush = function() use (&$html, &$currentSection, &$buffer, $siteId) {
+        if ($currentSection === null) {
+            if ($buffer) {
+                $html .= sb_render_blocks($buffer, $siteId);
+            }
+            $buffer = [];
+            return;
+        }
+
+        $content = is_array($currentSection['content'] ?? null) ? $currentSection['content'] : [];
+        $boxed = !empty($content['boxed']);
+        $style = sb_section_style($content);
+
+        $html .= '<section class="sbSection" style="' . h($style) . '">';
+        if ($boxed) {
+            $html .= '<div class="sbSectionInner sbSectionInnerBoxed">';
+        } else {
+            $html .= '<div class="sbSectionInner sbSectionInnerFull">';
+        }
+
+        if ($buffer) {
+            $html .= sb_render_blocks($buffer, $siteId);
+        }
+
+        $html .= '</div>';
+        $html .= '</section>';
+
+        $buffer = [];
+    };
+
+    foreach ($blocks as $b) {
+        $type = (string)($b['type'] ?? '');
+
+        if ($type === 'section') {
+            $flush();
+            $currentSection = $b;
+            continue;
+        }
+
+        $buffer[] = $b;
+    }
+
+    $flush();
+
+    return $html;
+}
 
 
 ---
 
-3. Разреши section в block.update
+Шаг 2. Добавь стили секций
 
-Найди в block.update обработчики типов и перед последним else { TYPE_NOT_SUPPORTED } вставь:
+В <style> public.php добавь:
 
-} elseif ($type === 'section') {
-    $boxed = (string)($_POST['boxed'] ?? '1');
-    $boxed = ($boxed === '1' || $boxed === 'true');
+.sbSection{
+  margin-top:18px;
+}
 
-    $background = trim((string)($_POST['background'] ?? '#ffffff'));
-    if (!preg_match('~^#[0-9a-fA-F]{6}$~', $background)) $background = '#ffffff';
+.sbSectionInner{
+  width:100%;
+}
 
-    $paddingTop = (int)($_POST['paddingTop'] ?? 32);
-    $paddingBottom = (int)($_POST['paddingBottom'] ?? 32);
+.sbSectionInnerBoxed{
+  width:min(var(--sb-container), calc(100% - 32px));
+  margin:0 auto;
+}
 
-    if ($paddingTop < 0) $paddingTop = 0;
-    if ($paddingTop > 200) $paddingTop = 200;
-    if ($paddingBottom < 0) $paddingBottom = 0;
-    if ($paddingBottom > 200) $paddingBottom = 200;
+.sbSectionInnerFull{
+  width:100%;
+  margin:0;
+}
 
-    $border = (string)($_POST['border'] ?? '0');
-    $border = ($border === '1' || $border === 'true');
-
-    $radius = (int)($_POST['radius'] ?? 0);
-    if ($radius < 0) $radius = 0;
-    if ($radius > 40) $radius = 40;
-
-    $b['content']['boxed'] = $boxed;
-    $b['content']['background'] = strtoupper($background);
-    $b['content']['paddingTop'] = $paddingTop;
-    $b['content']['paddingBottom'] = $paddingBottom;
-    $b['content']['border'] = $border;
-    $b['content']['radius'] = $radius;
+.sbSection .block:first-child{
+  margin-top:0;
+}
 
 
 ---
 
-Шаг 2. Что дальше
+Шаг 3. Не показывай section как обычный блок
 
-После этого следующий шаг — в public.php сделать рендер секций.
+Сейчас в sb_render_block(...) секция не обрабатывается, и это хорошо.
+Главное, чтобы она не попадала как обычный блок в общий рендер.
 
-То есть:
 
-сейчас у тебя блоки рендерятся по одному
+---
 
-мы добавим группировку по section
+Шаг 4. Замени рендер страницы
+
+Найди в public.php:
+
+$pageHtml = sb_render_blocks($blocks, $siteId);
+
+И замени на:
+
+$pageHtml = sb_render_page_with_sections($blocks, $siteId);
+
+
+---
+
+Что получится
+
+Теперь структура будет такой:
+
+если на странице нет ни одного section
+всё отображается как раньше
+
+если есть section
+она начинает новую секцию, и все следующие блоки идут внутрь неё
 
 
 
 ---
 
-Важно
+Как проверить
 
-Пока после правок в api.php секция ещё не будет красиво отображаться в публичке — это нормально.
-Сначала мы добавляем поддержку типа, потом рендер.
+Создай блоки в таком порядке:
+
+1. section
+
+
+2. heading
+
+
+3. text
+
+
+4. button
+
+
+5. section
+
+
+6. cards
+
+
+
+И у первой секции поставь, например:
+
+boxed = 1
+
+background = #F9FAFB
+
+paddingTop = 40
+
+paddingBottom = 40
+
+border = 1
+
+radius = 16
+
+
+У второй:
+
+boxed = 0
+
+background = #EEF2FF
+
+
+Тогда в публичке увидишь две разные смысловые области.
 
 
 ---
 
-Что делаем следующим сообщением
-
-После того как внесёшь эти правки, я дам тебе:
-
-готовый код для public.php,
-
-чтобы section реально начал работать как контейнер контента.
+Следующий шаг после этого — добавить section в UI редактора блоков, чтобы его можно было удобно создавать и редактировать через интерфейс.
