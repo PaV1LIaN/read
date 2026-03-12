@@ -24,8 +24,25 @@ function sb_read_sites(): array { return sb_read_json_file('sites.json'); }
 function sb_read_pages(): array { return sb_read_json_file('pages.json'); }
 function sb_read_blocks(): array { return sb_read_json_file('blocks.json'); }
 function sb_read_menus(): array { return sb_read_json_file('menus.json'); }
+function sb_read_layouts(): array { return sb_read_json_file('layouts.json'); }
 
+function sb_find_layout_record(int $siteId): ?array {
+    foreach (sb_read_layouts() as $r) {
+        if ((int)($r['siteId'] ?? 0) === $siteId) return $r;
+    }
+    return null;
+}
 
+function sb_layout_zone_blocks(int $siteId, string $zone): array {
+    $rec = sb_find_layout_record($siteId);
+    if (!$rec) return [];
+
+    $zones = is_array($rec['zones'] ?? null) ? $rec['zones'] : [];
+    $blocks = is_array($zones[$zone] ?? null) ? $zones[$zone] : [];
+
+    usort($blocks, fn($a, $b) => (int)($a['sort'] ?? 500) <=> (int)($b['sort'] ?? 500));
+    return $blocks;
+}
 
 function find_site(int $siteId): ?array {
     foreach (sb_read_sites() as $s) {
@@ -191,6 +208,178 @@ function public_not_found(string $title = 'Страница не найдена'
     exit;
 }
 
+function sb_render_block(array $b, int $siteId): string {
+    ob_start();
+
+    $type = (string)($b['type'] ?? '');
+    $c = is_array($b['content'] ?? null) ? $b['content'] : [];
+    ?>
+    <div class="block">
+
+      <?php if ($type === 'text'): ?>
+        <div class="textBlock"><?=h($c['text'] ?? '')?></div>
+      <?php endif; ?>
+
+      <?php if ($type === 'heading'): ?>
+        <?php
+          $lvl = in_array(($c['level'] ?? 'h2'), ['h1','h2','h3'], true) ? $c['level'] : 'h2';
+          $al = in_array(($c['align'] ?? 'left'), ['left','center','right'], true) ? $c['align'] : 'left';
+        ?>
+        <<?=h($lvl)?> style="margin:0; text-align:<?=h($al)?>;">
+          <?=h($c['text'] ?? '')?>
+        </<?=h($lvl)?>>
+      <?php endif; ?>
+
+      <?php if ($type === 'image'): ?>
+        <?php $fid = (int)($c['fileId'] ?? 0); ?>
+        <?php if ($fid > 0): ?>
+          <img src="<?=h(file_url($siteId, $fid))?>" alt="<?=h($c['alt'] ?? '')?>">
+        <?php endif; ?>
+      <?php endif; ?>
+
+      <?php if ($type === 'button'): ?>
+        <?php
+          $url = (string)($c['url'] ?? '');
+          $txt = (string)($c['text'] ?? 'Open');
+          $v = (string)($c['variant'] ?? 'primary');
+          $cls = ($v === 'secondary') ? 'secondary' : 'primary';
+        ?>
+        <a class="btn <?=h($cls)?>"
+           href="<?=h($url)?>"
+           <?=preg_match('~^https?://~i', $url) ? 'target="_blank" rel="noopener noreferrer"' : ''?>>
+          <?=h($txt)?>
+        </a>
+      <?php endif; ?>
+
+      <?php if ($type === 'columns2'): ?>
+        <?php
+          $ratio = (string)($c['ratio'] ?? '50-50');
+          $tpl = '1fr 1fr';
+          if ($ratio === '33-67') $tpl = '1fr 2fr';
+          if ($ratio === '67-33') $tpl = '2fr 1fr';
+        ?>
+        <div class="cols2" style="grid-template-columns:<?=h($tpl)?>;">
+          <div><?=h($c['left'] ?? '')?></div>
+          <div><?=h($c['right'] ?? '')?></div>
+        </div>
+      <?php endif; ?>
+
+      <?php if ($type === 'gallery'): ?>
+        <?php
+          $cols = (int)($c['columns'] ?? 3);
+          if (!in_array($cols, [2,3,4], true)) $cols = 3;
+          $tpl = ($cols === 2) ? '1fr 1fr' : (($cols === 4) ? '1fr 1fr 1fr 1fr' : '1fr 1fr 1fr');
+          $imgs = is_array($c['images'] ?? null) ? $c['images'] : [];
+        ?>
+        <div class="galleryGrid" style="grid-template-columns:<?=h($tpl)?>;">
+          <?php foreach ($imgs as $it): ?>
+            <?php
+              $fid = (int)($it['fileId'] ?? 0);
+              if ($fid <= 0) continue;
+            ?>
+            <img src="<?=h(file_url($siteId, $fid))?>" alt="<?=h($it['alt'] ?? '')?>">
+          <?php endforeach; ?>
+        </div>
+      <?php endif; ?>
+
+      <?php if ($type === 'spacer'): ?>
+        <?php
+          $hgt = (int)($c['height'] ?? 40);
+          if ($hgt < 10) $hgt = 10;
+          if ($hgt > 200) $hgt = 200;
+          $line = !empty($c['line']);
+        ?>
+        <div style="height:<?= (int)$hgt ?>px; position:relative;">
+          <?php if ($line): ?>
+            <div style="position:absolute;left:0;right:0;top:50%;height:1px;background:#e5e7ea;"></div>
+          <?php endif; ?>
+        </div>
+      <?php endif; ?>
+
+      <?php if ($type === 'card'): ?>
+        <div class="cardItem">
+          <div class="cardTitle"><?=h($c['title'] ?? '')?></div>
+
+          <?php if ((string)($c['text'] ?? '') !== ''): ?>
+            <div class="cardText"><?=h($c['text'] ?? '')?></div>
+          <?php endif; ?>
+
+          <?php $fid = (int)($c['imageFileId'] ?? 0); ?>
+          <?php if ($fid > 0): ?>
+            <div style="margin-top:10px;">
+              <img src="<?=h(file_url($siteId, $fid))?>" alt="">
+            </div>
+          <?php endif; ?>
+
+          <?php $url = (string)($c['buttonUrl'] ?? ''); ?>
+          <?php if ($url !== ''): ?>
+            <a class="btn secondary"
+               style="margin-top:10px;"
+               href="<?=h($url)?>"
+               <?=preg_match('~^https?://~i', $url) ? 'target="_blank" rel="noopener noreferrer"' : ''?>>
+              <?=h(($c['buttonText'] ?? 'Открыть'))?>
+            </a>
+          <?php endif; ?>
+        </div>
+      <?php endif; ?>
+
+      <?php if ($type === 'cards'): ?>
+        <?php
+          $cols = (int)($c['columns'] ?? 3);
+          if (!in_array($cols, [2,3,4], true)) $cols = 3;
+          $tpl = ($cols === 2) ? '1fr 1fr' : (($cols === 4) ? '1fr 1fr 1fr 1fr' : '1fr 1fr 1fr');
+          $items = is_array($c['items'] ?? null) ? $c['items'] : [];
+        ?>
+        <div class="cardsGrid" style="grid-template-columns:<?=h($tpl)?>;">
+          <?php foreach ($items as $it): ?>
+            <?php
+              if (!is_array($it)) continue;
+              $t = trim((string)($it['title'] ?? ''));
+              if ($t === '') continue;
+            ?>
+            <div class="cardItem">
+              <div class="cardTitle" style="font-size:16px;"><?=h($t)?></div>
+
+              <?php $tx = (string)($it['text'] ?? ''); ?>
+              <?php if ($tx !== ''): ?>
+                <div class="cardText"><?=h($tx)?></div>
+              <?php endif; ?>
+
+              <?php $fid = (int)($it['imageFileId'] ?? 0); ?>
+              <?php if ($fid > 0): ?>
+                <div style="margin-top:10px;">
+                  <img src="<?=h(file_url($siteId, $fid))?>" alt="">
+                </div>
+              <?php endif; ?>
+
+              <?php $url = (string)($it['buttonUrl'] ?? ''); ?>
+              <?php if ($url !== ''): ?>
+                <a class="btn secondary"
+                   style="margin-top:10px;"
+                   href="<?=h($url)?>"
+                   <?=preg_match('~^https?://~i', $url) ? 'target="_blank" rel="noopener noreferrer"' : ''?>>
+                  <?=h(($it['buttonText'] ?? 'Открыть'))?>
+                </a>
+              <?php endif; ?>
+            </div>
+          <?php endforeach; ?>
+        </div>
+      <?php endif; ?>
+
+    </div>
+    <?php
+
+    return (string)ob_get_clean();
+}
+
+function sb_render_blocks(array $blocks, int $siteId): string {
+    $html = '';
+    foreach ($blocks as $b) {
+        $html .= sb_render_block($b, $siteId);
+    }
+    return $html;
+}
+
 // -------------------- input --------------------
 
 $siteId = (int)($_GET['siteId'] ?? 0);
@@ -229,6 +418,18 @@ $accent = (string)($settings['accent'] ?? '#2563eb');
 if (!preg_match('~^#[0-9a-fA-F]{6}$~', $accent)) $accent = '#2563eb';
 
 $logoFileId = (int)($settings['logoFileId'] ?? 0);
+
+$layout = (isset($site['layout']) && is_array($site['layout'])) ? $site['layout'] : [
+    'showHeader' => true,
+    'showFooter' => true,
+    'showLeft' => false,
+    'showRight' => false,
+    'leftWidth' => 260,
+    'rightWidth' => 260,
+];
+
+$headerBlocks = !empty($layout['showHeader']) ? sb_layout_zone_blocks($siteId, 'header') : [];
+$footerBlocks = !empty($layout['showFooter']) ? sb_layout_zone_blocks($siteId, 'footer') : [];
 
 // -------------------- current page --------------------
 
@@ -289,6 +490,10 @@ if ($pageSlug === '' || $currentUsesOldSiteId || $currentUsesOldPageParam) {
 
 $blocks = array_values(array_filter(sb_read_blocks(), fn($b) => (int)($b['pageId'] ?? 0) === $pageId));
 usort($blocks, fn($a, $b) => (int)($a['sort'] ?? 500) <=> (int)($b['sort'] ?? 500));
+
+$pageHtml = sb_render_blocks($blocks, $siteId);
+$headerHtml = sb_render_blocks($headerBlocks, $siteId);
+$footerHtml = sb_render_blocks($footerBlocks, $siteId);
 
 // -------------------- menu --------------------
 
@@ -581,6 +786,25 @@ if ($mainMenu && is_array($mainMenu['items'] ?? null)) {
       line-height:1.7;
     }
 
+    .layoutHeader,
+    .layoutFooter{
+      width:100%;
+    }
+
+    .layoutHeader{
+      margin-top:18px;
+      margin-bottom:8px;
+    }
+
+    .layoutFooter{
+      margin-top:24px;
+    }
+
+    .layoutInner{
+      width:min(var(--sb-container), calc(100% - 32px));
+      margin:0 auto;
+    }
+
     .meta{
       margin-top:28px;
       padding-top:14px;
@@ -640,165 +864,23 @@ if ($mainMenu && is_array($mainMenu['items'] ?? null)) {
     <div class="muted"><?=h($site['name'] ?? 'Site')?></div>
   </div>
 
-  <?php foreach ($blocks as $b): ?>
-    <?php
-      $type = (string)($b['type'] ?? '');
-      $c = is_array($b['content'] ?? null) ? $b['content'] : [];
-    ?>
-    <div class="block">
-
-      <?php if ($type === 'text'): ?>
-        <div class="textBlock"><?=h($c['text'] ?? '')?></div>
-      <?php endif; ?>
-
-      <?php if ($type === 'heading'): ?>
-        <?php
-          $lvl = in_array(($c['level'] ?? 'h2'), ['h1','h2','h3'], true) ? $c['level'] : 'h2';
-          $al = in_array(($c['align'] ?? 'left'), ['left','center','right'], true) ? $c['align'] : 'left';
-        ?>
-        <<?=h($lvl)?> style="margin:0; text-align:<?=h($al)?>;">
-          <?=h($c['text'] ?? '')?>
-        </<?=h($lvl)?>>
-      <?php endif; ?>
-
-      <?php if ($type === 'image'): ?>
-        <?php $fid = (int)($c['fileId'] ?? 0); ?>
-        <?php if ($fid > 0): ?>
-          <img src="<?=h(file_url($siteId, $fid))?>" alt="<?=h($c['alt'] ?? '')?>">
-        <?php endif; ?>
-      <?php endif; ?>
-
-      <?php if ($type === 'button'): ?>
-        <?php
-          $url = (string)($c['url'] ?? '');
-          $txt = (string)($c['text'] ?? 'Open');
-          $v = (string)($c['variant'] ?? 'primary');
-          $cls = ($v === 'secondary') ? 'secondary' : 'primary';
-        ?>
-        <a class="btn <?=h($cls)?>"
-           href="<?=h($url)?>"
-           <?=preg_match('~^https?://~i', $url) ? 'target="_blank" rel="noopener noreferrer"' : ''?>>
-          <?=h($txt)?>
-        </a>
-      <?php endif; ?>
-
-      <?php if ($type === 'columns2'): ?>
-        <?php
-          $ratio = (string)($c['ratio'] ?? '50-50');
-          $tpl = '1fr 1fr';
-          if ($ratio === '33-67') $tpl = '1fr 2fr';
-          if ($ratio === '67-33') $tpl = '2fr 1fr';
-        ?>
-        <div class="cols2" style="grid-template-columns:<?=h($tpl)?>;">
-          <div><?=h($c['left'] ?? '')?></div>
-          <div><?=h($c['right'] ?? '')?></div>
-        </div>
-      <?php endif; ?>
-
-      <?php if ($type === 'gallery'): ?>
-        <?php
-          $cols = (int)($c['columns'] ?? 3);
-          if (!in_array($cols, [2,3,4], true)) $cols = 3;
-          $tpl = ($cols === 2) ? '1fr 1fr' : (($cols === 4) ? '1fr 1fr 1fr 1fr' : '1fr 1fr 1fr');
-          $imgs = is_array($c['images'] ?? null) ? $c['images'] : [];
-        ?>
-        <div class="galleryGrid" style="grid-template-columns:<?=h($tpl)?>;">
-          <?php foreach ($imgs as $it): ?>
-            <?php
-              $fid = (int)($it['fileId'] ?? 0);
-              if ($fid <= 0) continue;
-            ?>
-            <img src="<?=h(file_url($siteId, $fid))?>" alt="<?=h($it['alt'] ?? '')?>">
-          <?php endforeach; ?>
-        </div>
-      <?php endif; ?>
-
-      <?php if ($type === 'spacer'): ?>
-        <?php
-          $hgt = (int)($c['height'] ?? 40);
-          if ($hgt < 10) $hgt = 10;
-          if ($hgt > 200) $hgt = 200;
-          $line = !empty($c['line']);
-        ?>
-        <div style="height:<?= (int)$hgt ?>px; position:relative;">
-          <?php if ($line): ?>
-            <div style="position:absolute;left:0;right:0;top:50%;height:1px;background:#e5e7ea;"></div>
-          <?php endif; ?>
-        </div>
-      <?php endif; ?>
-
-      <?php if ($type === 'card'): ?>
-        <div class="cardItem">
-          <div class="cardTitle"><?=h($c['title'] ?? '')?></div>
-
-          <?php if ((string)($c['text'] ?? '') !== ''): ?>
-            <div class="cardText"><?=h($c['text'] ?? '')?></div>
-          <?php endif; ?>
-
-          <?php $fid = (int)($c['imageFileId'] ?? 0); ?>
-          <?php if ($fid > 0): ?>
-            <div style="margin-top:10px;">
-              <img src="<?=h(file_url($siteId, $fid))?>" alt="">
-            </div>
-          <?php endif; ?>
-
-          <?php $url = (string)($c['buttonUrl'] ?? ''); ?>
-          <?php if ($url !== ''): ?>
-            <a class="btn secondary"
-               style="margin-top:10px;"
-               href="<?=h($url)?>"
-               <?=preg_match('~^https?://~i', $url) ? 'target="_blank" rel="noopener noreferrer"' : ''?>>
-              <?=h(($c['buttonText'] ?? 'Открыть'))?>
-            </a>
-          <?php endif; ?>
-        </div>
-      <?php endif; ?>
-
-      <?php if ($type === 'cards'): ?>
-        <?php
-          $cols = (int)($c['columns'] ?? 3);
-          if (!in_array($cols, [2,3,4], true)) $cols = 3;
-          $tpl = ($cols === 2) ? '1fr 1fr' : (($cols === 4) ? '1fr 1fr 1fr 1fr' : '1fr 1fr 1fr');
-          $items = is_array($c['items'] ?? null) ? $c['items'] : [];
-        ?>
-        <div class="cardsGrid" style="grid-template-columns:<?=h($tpl)?>;">
-          <?php foreach ($items as $it): ?>
-            <?php
-              if (!is_array($it)) continue;
-              $t = trim((string)($it['title'] ?? ''));
-              if ($t === '') continue;
-            ?>
-            <div class="cardItem">
-              <div class="cardTitle" style="font-size:16px;"><?=h($t)?></div>
-
-              <?php $tx = (string)($it['text'] ?? ''); ?>
-              <?php if ($tx !== ''): ?>
-                <div class="cardText"><?=h($tx)?></div>
-              <?php endif; ?>
-
-              <?php $fid = (int)($it['imageFileId'] ?? 0); ?>
-              <?php if ($fid > 0): ?>
-                <div style="margin-top:10px;">
-                  <img src="<?=h(file_url($siteId, $fid))?>" alt="">
-                </div>
-              <?php endif; ?>
-
-              <?php $url = (string)($it['buttonUrl'] ?? ''); ?>
-              <?php if ($url !== ''): ?>
-                <a class="btn secondary"
-                   style="margin-top:10px;"
-                   href="<?=h($url)?>"
-                   <?=preg_match('~^https?://~i', $url) ? 'target="_blank" rel="noopener noreferrer"' : ''?>>
-                  <?=h(($it['buttonText'] ?? 'Открыть'))?>
-                </a>
-              <?php endif; ?>
-            </div>
-          <?php endforeach; ?>
-        </div>
-      <?php endif; ?>
-
+  <?php if ($headerHtml !== ''): ?>
+    <div class="layoutHeader">
+      <div class="layoutInner">
+        <?= $headerHtml ?>
+      </div>
     </div>
-  <?php endforeach; ?>
+  <?php endif; ?>
+
+  <?= $pageHtml ?>
+
+  <?php if ($footerHtml !== ''): ?>
+    <div class="layoutFooter">
+      <div class="layoutInner">
+        <?= $footerHtml ?>
+      </div>
+    </div>
+  <?php endif; ?>
 
   <div class="meta">
     <div>site: <code><?=h((string)($site['slug'] ?? ''))?></code></div>
