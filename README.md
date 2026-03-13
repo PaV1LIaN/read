@@ -1,225 +1,281 @@
-Идём дальше. Теперь делаем, чтобы section реально работал в public.php.
+Да, теперь видно точнее: в editor.php у тебя уже есть панель добавления блоков, но там пока нет section, и в заголовке списка типов тоже нет Section. Это видно в кнопках + Text ... + Cards и в описании доступных блоков в верхней карточке редактора. 
 
-Смысл будет такой:
+Сразу важное замечание: в загруженном архиве api.php всё ещё не содержит section в списке допустимых типов block.create. То есть одной правки editor.php будет мало — кнопка появится, но сохранение не пройдёт, пока не обновишь api.php. Это видно по массиву типов, где есть только text,image,button,heading,columns2,gallery,spacer,card,cards.
 
-блок section открывает новую секцию
+Что сделать в editor.php
 
-все следующие обычные блоки рендерятся внутри неё
+1. Добавить кнопку + Section
 
-следующая section закрывает предыдущую
+Найди вверху, где сейчас:
 
-если секций нет вообще, всё работает как раньше
+<button class="ui-btn ui-btn-primary" id="btnAddText">+ Text</button>
+<button class="ui-btn ui-btn-primary" id="btnAddImage">+ Image</button>
+<button class="ui-btn ui-btn-primary" id="btnAddButton">+ Button</button>
+<button class="ui-btn ui-btn-primary" id="btnAddHeading">+ Heading</button>
+<button class="ui-btn ui-btn-primary" id="btnAddCols2">+ Columns2</button>
+<button class="ui-btn ui-btn-primary" id="btnAddGallery">+ Gallery</button>
+<button class="ui-btn ui-btn-primary" id="btnAddSpacer">+ Spacer</button>
+<button class="ui-btn ui-btn-primary" id="btnAddCard">+ Card</button>
+<button class="ui-btn ui-btn-primary" id="btnAddCards">+ Cards</button>
 
+И добавь рядом:
 
-Шаг 1. Добавь функции рендера секций
+<button class="ui-btn ui-btn-primary" id="btnAddSection">+ Section</button>
 
-В public.php после функции:
+2. Обновить подпись доступных блоков
 
-function sb_render_blocks(array $blocks, int $siteId): string {
+Где сейчас текст:
 
-или сразу после неё вставь это:
+Блоки: <b>Text</b>, <b>Image</b>, <b>Button</b>, <b>Heading</b>, <b>Columns2</b>, <b>Gallery</b>, <b>Spacer</b>, <b>Card</b>.
 
-function sb_section_style(array $content): string {
-    $boxed = !empty($content['boxed']);
-    $background = (string)($content['background'] ?? '#ffffff');
-    if (!preg_match('~^#[0-9a-fA-F]{6}$~', $background)) $background = '#ffffff';
+Сделай так:
 
-    $paddingTop = (int)($content['paddingTop'] ?? 32);
-    $paddingBottom = (int)($content['paddingBottom'] ?? 32);
-    if ($paddingTop < 0) $paddingTop = 0;
-    if ($paddingTop > 200) $paddingTop = 200;
-    if ($paddingBottom < 0) $paddingBottom = 0;
-    if ($paddingBottom > 200) $paddingBottom = 200;
+Блоки: <b>Section</b>, <b>Text</b>, <b>Image</b>, <b>Button</b>, <b>Heading</b>, <b>Columns2</b>, <b>Gallery</b>, <b>Spacer</b>, <b>Card</b>, <b>Cards</b>.
 
-    $border = !empty($content['border']);
-    $radius = (int)($content['radius'] ?? 0);
-    if ($radius < 0) $radius = 0;
-    if ($radius > 40) $radius = 40;
+3. Завести ссылку на новую кнопку в JS
 
-    $styles = [];
-    $styles[] = 'background:' . $background;
-    $styles[] = 'padding-top:' . $paddingTop . 'px';
-    $styles[] = 'padding-bottom:' . $paddingBottom . 'px';
+Рядом с остальными константами:
 
-    if ($border) {
-        $styles[] = 'border:1px solid #e5e7eb';
-    }
-    if ($radius > 0) {
-        $styles[] = 'border-radius:' . $radius . 'px';
-    }
+const btnAddText = document.getElementById('btnAddText');
+const btnAddImage = document.getElementById('btnAddImage');
+...
+const btnAddCards = document.getElementById('btnAddCards');
 
-    return implode(';', $styles);
-}
+добавь:
 
-function sb_render_page_with_sections(array $blocks, int $siteId): string {
-    if (!$blocks) return '';
+const btnAddSection = document.getElementById('btnAddSection');
 
-    $html = '';
-    $currentSection = null;
-    $buffer = [];
+4. Добавить диалог создания section
 
-    $flush = function() use (&$html, &$currentSection, &$buffer, $siteId) {
-        if ($currentSection === null) {
-            if ($buffer) {
-                $html .= sb_render_blocks($buffer, $siteId);
-            }
-            $buffer = [];
+Вставь в editor.php рядом с функциями addSpacerBlock(), addGalleryBlock() и т.п. вот эту функцию:
+
+function addSectionBlock() {
+  BX.UI.Dialogs.MessageBox.show({
+    title: 'Новая Section',
+    message: `
+      <div>
+        <div class="field">
+          <label><input id="sec_boxed" type="checkbox" checked> Boxed контейнер</label>
+        </div>
+
+        <div class="field">
+          <label>Фон секции</label>
+          <input id="sec_bg" class="input" value="#FFFFFF" placeholder="#FFFFFF" />
+        </div>
+
+        <div class="field">
+          <label>Отступ сверху (0..200)</label>
+          <input id="sec_pt" class="input" type="number" min="0" max="200" value="32" />
+        </div>
+
+        <div class="field">
+          <label>Отступ снизу (0..200)</label>
+          <input id="sec_pb" class="input" type="number" min="0" max="200" value="32" />
+        </div>
+
+        <div class="field">
+          <label><input id="sec_border" type="checkbox"> Граница</label>
+        </div>
+
+        <div class="field">
+          <label>Скругление (0..40)</label>
+          <input id="sec_radius" class="input" type="number" min="0" max="40" value="0" />
+        </div>
+      </div>
+    `,
+    buttons: BX.UI.Dialogs.MessageBoxButtons.OK_CANCEL,
+    onOk: function (mb) {
+      const boxed = document.getElementById('sec_boxed')?.checked ? '1' : '0';
+      const background = (document.getElementById('sec_bg')?.value || '#FFFFFF').trim();
+      const paddingTop = parseInt(document.getElementById('sec_pt')?.value || '32', 10);
+      const paddingBottom = parseInt(document.getElementById('sec_pb')?.value || '32', 10);
+      const border = document.getElementById('sec_border')?.checked ? '1' : '0';
+      const radius = parseInt(document.getElementById('sec_radius')?.value || '0', 10);
+
+      api('block.create', {
+        pageId,
+        type: 'section',
+        boxed,
+        background,
+        paddingTop,
+        paddingBottom,
+        border,
+        radius
+      })
+        .then(res => {
+          if (!res || res.ok !== true) {
+            notify('Не удалось создать section');
             return;
-        }
-
-        $content = is_array($currentSection['content'] ?? null) ? $currentSection['content'] : [];
-        $boxed = !empty($content['boxed']);
-        $style = sb_section_style($content);
-
-        $html .= '<section class="sbSection" style="' . h($style) . '">';
-        if ($boxed) {
-            $html .= '<div class="sbSectionInner sbSectionInnerBoxed">';
-        } else {
-            $html .= '<div class="sbSectionInner sbSectionInnerFull">';
-        }
-
-        if ($buffer) {
-            $html .= sb_render_blocks($buffer, $siteId);
-        }
-
-        $html .= '</div>';
-        $html .= '</section>';
-
-        $buffer = [];
-    };
-
-    foreach ($blocks as $b) {
-        $type = (string)($b['type'] ?? '');
-
-        if ($type === 'section') {
-            $flush();
-            $currentSection = $b;
-            continue;
-        }
-
-        $buffer[] = $b;
+          }
+          notify('Section создана');
+          mb.close();
+          loadBlocks();
+        })
+        .catch(() => notify('Ошибка block.create (section)'));
     }
+  });
+}
 
-    $flush();
+5. Привязать кнопку
 
-    return $html;
+Там, где у тебя внизу идут обработчики вроде:
+
+btnAddText?.addEventListener('click', addTextBlock);
+btnAddImage?.addEventListener('click', addImageBlock);
+...
+btnAddCards?.addEventListener('click', addCardsBlock);
+
+добавь:
+
+btnAddSection?.addEventListener('click', addSectionBlock);
+
+
+---
+
+Что ещё нужно для полноценной работы
+
+Чтобы section не просто создавался, но и был виден в списке блоков, нужно добавить его в renderBlocks(blocks).
+
+6. Добавить рендер section в списке блоков
+
+Внутри renderBlocks(blocks) перед TEXT или сразу после начала цикла вставь:
+
+if (type === 'section') {
+  const c = (b.content && typeof b.content === 'object') ? b.content : {};
+  const boxed = !!c.boxed;
+  const background = c.background || '#FFFFFF';
+  const paddingTop = parseInt(c.paddingTop || 32, 10);
+  const paddingBottom = parseInt(c.paddingBottom || 32, 10);
+  const border = !!c.border;
+  const radius = parseInt(c.radius || 0, 10);
+
+  return `
+    <div class="block" style="border:1px solid #cbd5e1;background:#f8fafc;">
+      <div class="row">
+        <div><b>#${id}</b> <span class="muted">(section | sort ${sort})</span></div>
+        <div class="btns">
+          <button class="ui-btn ui-btn-light ui-btn-xs" data-move-block-id="${id}" data-move-dir="up">↑</button>
+          <button class="ui-btn ui-btn-light ui-btn-xs" data-move-block-id="${id}" data-move-dir="down">↓</button>
+          <button class="ui-btn ui-btn-light ui-btn-xs" data-edit-section-id="${id}">Редактировать</button>
+          <button class="ui-btn ui-btn-light ui-btn-xs" data-dup-block-id="${id}">Дублировать</button>
+          <button class="ui-btn ui-btn-danger ui-btn-xs" data-del-block-id="${id}">Удалить</button>
+        </div>
+      </div>
+
+      <div class="muted" style="margin-top:8px;">
+        boxed: <b>${boxed ? 'yes' : 'no'}</b> ·
+        bg: <code>${BX.util.htmlspecialchars(background)}</code> ·
+        pt: <b>${paddingTop}</b> ·
+        pb: <b>${paddingBottom}</b> ·
+        border: <b>${border ? 'yes' : 'no'}</b> ·
+        radius: <b>${radius}</b>
+      </div>
+    </div>
+  `;
+}
+
+7. Добавить редактирование section
+
+Рядом с другими edit...Block функциями вставь:
+
+function editSectionBlock(id) {
+  api('block.list', { pageId }).then(res => {
+    if (!res || res.ok !== true) return;
+    const blk = (res.blocks || []).find(x => parseInt(x.id, 10) === id);
+    const cur = (blk && blk.content && typeof blk.content === 'object') ? blk.content : {};
+
+    BX.UI.Dialogs.MessageBox.show({
+      title: 'Редактировать Section #' + id,
+      message: `
+        <div>
+          <div class="field">
+            <label><input id="sec_boxed_e" type="checkbox" ${cur.boxed ? 'checked' : ''}> Boxed контейнер</label>
+          </div>
+
+          <div class="field">
+            <label>Фон секции</label>
+            <input id="sec_bg_e" class="input" value="${BX.util.htmlspecialchars(cur.background || '#FFFFFF')}" />
+          </div>
+
+          <div class="field">
+            <label>Отступ сверху (0..200)</label>
+            <input id="sec_pt_e" class="input" type="number" min="0" max="200" value="${parseInt(cur.paddingTop || 32, 10)}" />
+          </div>
+
+          <div class="field">
+            <label>Отступ снизу (0..200)</label>
+            <input id="sec_pb_e" class="input" type="number" min="0" max="200" value="${parseInt(cur.paddingBottom || 32, 10)}" />
+          </div>
+
+          <div class="field">
+            <label><input id="sec_border_e" type="checkbox" ${cur.border ? 'checked' : ''}> Граница</label>
+          </div>
+
+          <div class="field">
+            <label>Скругление (0..40)</label>
+            <input id="sec_radius_e" class="input" type="number" min="0" max="40" value="${parseInt(cur.radius || 0, 10)}" />
+          </div>
+        </div>
+      `,
+      buttons: BX.UI.Dialogs.MessageBoxButtons.OK_CANCEL,
+      onOk: function (mb) {
+        const boxed = document.getElementById('sec_boxed_e')?.checked ? '1' : '0';
+        const background = (document.getElementById('sec_bg_e')?.value || '#FFFFFF').trim();
+        const paddingTop = parseInt(document.getElementById('sec_pt_e')?.value || '32', 10);
+        const paddingBottom = parseInt(document.getElementById('sec_pb_e')?.value || '32', 10);
+        const border = document.getElementById('sec_border_e')?.checked ? '1' : '0';
+        const radius = parseInt(document.getElementById('sec_radius_e')?.value || '0', 10);
+
+        api('block.update', {
+          id,
+          boxed,
+          background,
+          paddingTop,
+          paddingBottom,
+          border,
+          radius
+        })
+          .then(r => {
+            if (!r || r.ok !== true) {
+              notify('Не удалось сохранить section');
+              return;
+            }
+            notify('Section сохранена');
+            mb.close();
+            loadBlocks();
+          })
+          .catch(() => notify('Ошибка block.update (section)'));
+      }
+    });
+  });
+}
+
+8. Подключить обработчик клика
+
+В общем document.addEventListener('click', ...), где у тебя уже есть проверки типа data-edit-text-id, data-edit-image-id и т.д., добавь:
+
+const editSectionBtn = e.target.closest('[data-edit-section-id]');
+if (editSectionBtn) {
+  editSectionBlock(parseInt(editSectionBtn.getAttribute('data-edit-section-id'), 10));
+  return;
 }
 
 
 ---
 
-Шаг 2. Добавь стили секций
+Вывод
 
-В <style> public.php добавь:
+После этих правок в editor.php у тебя появится:
 
-.sbSection{
-  margin-top:18px;
-}
+кнопка + Section
 
-.sbSectionInner{
-  width:100%;
-}
+создание секции
 
-.sbSectionInnerBoxed{
-  width:min(var(--sb-container), calc(100% - 32px));
-  margin:0 auto;
-}
+отображение секции в списке блоков
 
-.sbSectionInnerFull{
-  width:100%;
-  margin:0;
-}
-
-.sbSection .block:first-child{
-  margin-top:0;
-}
+редактирование секции
 
 
----
+Но ещё раз: проверь api.php, потому что в архиве он пока не принимает section. Без этого кнопка будет показываться, но сохранение не сработает.
 
-Шаг 3. Не показывай section как обычный блок
-
-Сейчас в sb_render_block(...) секция не обрабатывается, и это хорошо.
-Главное, чтобы она не попадала как обычный блок в общий рендер.
-
-
----
-
-Шаг 4. Замени рендер страницы
-
-Найди в public.php:
-
-$pageHtml = sb_render_blocks($blocks, $siteId);
-
-И замени на:
-
-$pageHtml = sb_render_page_with_sections($blocks, $siteId);
-
-
----
-
-Что получится
-
-Теперь структура будет такой:
-
-если на странице нет ни одного section
-всё отображается как раньше
-
-если есть section
-она начинает новую секцию, и все следующие блоки идут внутрь неё
-
-
-
----
-
-Как проверить
-
-Создай блоки в таком порядке:
-
-1. section
-
-
-2. heading
-
-
-3. text
-
-
-4. button
-
-
-5. section
-
-
-6. cards
-
-
-
-И у первой секции поставь, например:
-
-boxed = 1
-
-background = #F9FAFB
-
-paddingTop = 40
-
-paddingBottom = 40
-
-border = 1
-
-radius = 16
-
-
-У второй:
-
-boxed = 0
-
-background = #EEF2FF
-
-
-Тогда в публичке увидишь две разные смысловые области.
-
-
----
-
-Следующий шаг после этого — добавить section в UI редактора блоков, чтобы его можно было удобно создавать и редактировать через интерфейс.
+Если хочешь, следующим сообщением я соберу тебе полностью готовый editor.php целиком под текущую структуру.
