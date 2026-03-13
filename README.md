@@ -1,194 +1,193 @@
-Идём дальше: делаем, чтобы section в editor.php выглядела как отдельная область, а не как обычный блок.
+Да, причина именно в текущей раскладке pageShell.
 
-Сразу скажу честно: загруженный ранее архив уже недоступен для повторного открытия, поэтому точечно по текущему файлу я сейчас не могу проверить строки. Но я могу дать готовые куски, которые нужно вставить в уже существующий рендер блока section.
+Сейчас центр у тебя участвует в одной общей grid вместе с left/right, поэтому:
 
-Что делаем
+включаешь left
 
-Нужно улучшить 3 вещи:
+слева появляется колонка
 
-внешний вид section в списке блоков
-
-мини-превью её настроек
-
-отдельные стили, чтобы секция визуально отличалась
+центр математически сдвигается вправо
 
 
+То есть это не баг контента, а баг CSS-архитектуры layout.
 
----
+Почему так происходит
 
-1. Добавь CSS для section
+У тебя, скорее всего, сейчас что-то вроде этого:
 
-В <style> editor.php добавь:
-
-.blockSection{
-  border:1px solid #cbd5e1;
-  background:linear-gradient(180deg,#f8fafc 0%, #f1f5f9 100%);
-}
-
-.blockSectionBadge{
-  display:inline-flex;
-  align-items:center;
-  padding:3px 8px;
-  border-radius:999px;
-  font-size:11px;
-  font-weight:700;
-  background:#e2e8f0;
-  color:#334155;
-  border:1px solid #cbd5e1;
-}
-
-.blockSectionGrid{
+.pageShell{
   display:grid;
-  grid-template-columns:repeat(auto-fit,minmax(140px,1fr));
-  gap:8px;
-  margin-top:10px;
+  grid-template-columns: var(--left-col) minmax(0,1fr) minmax(0,var(--sb-container)) minmax(0,1fr) var(--right-col);
 }
 
-.blockSectionItem{
+Из-за этого центральная колонка центрируется вместе с боковыми, а не сама по себе.
+
+
+---
+
+Как исправить правильно
+
+Нужно сделать так, чтобы:
+
+центр всегда был по центру экрана
+
+left и right жили отдельно от него
+
+боковые колонки не влияли на позицию центра
+
+
+
+---
+
+Что поменять в public.php
+
+1. Замени стили pageShell / pageLeft / pageCenter / pageRight
+
+Найди текущие стили:
+
+.pageShell
+.pageLeft
+.pageCenter
+.pageRight
+
+И замени их целиком на это:
+
+.pageShell{
+  position:relative;
+  width:100%;
+  padding:24px 16px 40px;
+}
+
+.pageCenter{
+  width:min(var(--sb-container), calc(100% - 32px));
+  margin:0 auto;
+  min-width:0;
+}
+
+.pageLeft{
+  position:absolute;
+  left:16px;
+  top:24px;
+  width:var(--left-col);
+  min-width:0;
+}
+
+.pageRight{
+  position:absolute;
+  right:16px;
+  top:24px;
+  width:var(--right-col);
+  min-width:0;
+}
+
+
+---
+
+2. Подправь sidebar box
+
+Найди:
+
+.layoutSidebarBox{
+  ...
+  position: sticky;
+  top: 88px;
+}
+
+Оставь sticky, но добавь ширину:
+
+.layoutSidebarBox{
   background:#fff;
-  border:1px solid #e2e8f0;
-  border-radius:10px;
-  padding:8px 10px;
-}
-
-.blockSectionLabel{
-  font-size:11px;
-  color:#64748b;
-  margin-bottom:4px;
-}
-
-.blockSectionValue{
-  font-size:13px;
-  font-weight:600;
-  color:#0f172a;
-  word-break:break-word;
+  border:1px solid #eef2f6;
+  border-radius:14px;
+  padding:12px;
+  box-shadow:0 1px 2px rgba(0,0,0,.03);
+  position:sticky;
+  top:88px;
+  width:100%;
 }
 
 
 ---
 
-2. Замени рендер section в renderBlocks(...)
+3. Обнови media query
 
-Если у тебя уже есть ветка:
+Найди текущий блок:
 
-if (type === 'section') { ... }
+@media (max-width: 1200px){
+  .pageShell{
+    grid-template-columns:1fr;
+    padding:24px 16px 40px;
+  }
+  .pageLeft, .pageCenter, .pageRight{
+    grid-column:1;
+  }
+  .layoutSidebarBox{
+    position:static;
+  }
+}
 
-то замени её целиком на это:
+И замени на:
 
-if (type === 'section') {
-  const c = (b.content && typeof b.content === 'object') ? b.content : {};
-  const boxed = !!c.boxed;
-  const background = c.background || '#FFFFFF';
-  const paddingTop = parseInt(c.paddingTop || 32, 10);
-  const paddingBottom = parseInt(c.paddingBottom || 32, 10);
-  const border = !!c.border;
-  const radius = parseInt(c.radius || 0, 10);
+@media (max-width: 1200px){
+  .pageShell{
+    padding:24px 16px 40px;
+  }
 
-  return `
-    <div class="block blockSection">
-      <div class="row">
-        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
-          <b>#${id}</b>
-          <span class="blockSectionBadge">SECTION</span>
-          <span class="muted">(sort ${sort})</span>
-        </div>
+  .pageLeft,
+  .pageRight,
+  .pageCenter{
+    position:static;
+    width:100%;
+    margin:0 0 16px 0;
+  }
 
-        <div class="btns">
-          <button class="ui-btn ui-btn-light ui-btn-xs" data-move-block-id="${id}" data-move-dir="up">↑</button>
-          <button class="ui-btn ui-btn-light ui-btn-xs" data-move-block-id="${id}" data-move-dir="down">↓</button>
-          <button class="ui-btn ui-btn-light ui-btn-xs" data-edit-section-id="${id}">Редактировать</button>
-          <button class="ui-btn ui-btn-light ui-btn-xs" data-dup-block-id="${id}">Дублировать</button>
-          <button class="ui-btn ui-btn-danger ui-btn-xs" data-del-block-id="${id}">Удалить</button>
-        </div>
-      </div>
-
-      <div class="blockSectionGrid">
-        <div class="blockSectionItem">
-          <div class="blockSectionLabel">Контейнер</div>
-          <div class="blockSectionValue">${boxed ? 'Boxed' : 'Full width'}</div>
-        </div>
-
-        <div class="blockSectionItem">
-          <div class="blockSectionLabel">Фон</div>
-          <div class="blockSectionValue">
-            <span style="display:inline-block;width:12px;height:12px;border-radius:3px;background:${BX.util.htmlspecialchars(background)};border:1px solid #cbd5e1;vertical-align:-1px;margin-right:6px;"></span>
-            ${BX.util.htmlspecialchars(background)}
-          </div>
-        </div>
-
-        <div class="blockSectionItem">
-          <div class="blockSectionLabel">Отступы</div>
-          <div class="blockSectionValue">top ${paddingTop}px / bottom ${paddingBottom}px</div>
-        </div>
-
-        <div class="blockSectionItem">
-          <div class="blockSectionLabel">Граница</div>
-          <div class="blockSectionValue">${border ? 'Да' : 'Нет'}</div>
-        </div>
-
-        <div class="blockSectionItem">
-          <div class="blockSectionLabel">Скругление</div>
-          <div class="blockSectionValue">${radius}px</div>
-        </div>
-      </div>
-    </div>
-  `;
+  .layoutSidebarBox{
+    position:static;
+  }
 }
 
 
 ---
 
-3. Немного улучшить диалог создания/редактирования section
+Что это даст
 
-В формах addSectionBlock() и editSectionBlock() можно заменить подписи:
+Теперь:
 
-Boxed контейнер → Ограничить по контейнеру
+центр всегда останется по центру
 
-Фон секции → Цвет фона
+включение left больше не будет сдвигать центральную колонку
 
-Граница → Показать рамку
+right тоже не будет влиять на центр
 
-
-И значения по умолчанию оставить:
-
-boxed = true
-
-background = #FFFFFF
-
-paddingTop = 32
-
-paddingBottom = 32
-
-border = false
-
-radius = 0
+на узких экранах всё снова сложится в одну колонку
 
 
 
 ---
 
-Что получится
+Важно
 
-После этого в редакторе секция будет выглядеть как самостоятельная область:
+У такого решения есть нюанс:
 
-заметная плашка SECTION
+если leftWidth/rightWidth слишком большие
 
-краткая сводка параметров
-
-сразу видно, где начинается новый смысловой блок страницы
+и экран не очень широкий, то боковые колонки могут визуально приближаться к центру
 
 
-Что дальше
-
-Следующий самый полезный шаг — добавить пресеты section, например:
-
-Hero
-
-Light section
-
-Accent section
-
-Card section
+Но это уже нормальное поведение. Главная проблема со смещением центра уйдёт.
 
 
-Тогда создавать нормальные страницы станет сильно быстрее.
+---
+
+Если хочешь совсем аккуратный вариант
+
+Следующим шагом можно сделать ещё лучше:
+
+автоматически уменьшать left/right, если не хватает места
+
+или скрывать одну из колонок раньше
+
+или делать “прилипание” боковых колонок к центру, а не к краям экрана
+
+
+Но сначала внеси этот CSS — он решает именно твою текущую проблему.
