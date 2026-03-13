@@ -1,144 +1,79 @@
-Да, теперь видно точнее: в editor.php у тебя уже есть панель добавления блоков, но там пока нет section, и в заголовке списка типов тоже нет Section. Это видно в кнопках + Text ... + Cards и в описании доступных блоков в верхней карточке редактора. 
+Идём дальше: делаем, чтобы section в editor.php выглядела как отдельная область, а не как обычный блок.
 
-Сразу важное замечание: в загруженном архиве api.php всё ещё не содержит section в списке допустимых типов block.create. То есть одной правки editor.php будет мало — кнопка появится, но сохранение не пройдёт, пока не обновишь api.php. Это видно по массиву типов, где есть только text,image,button,heading,columns2,gallery,spacer,card,cards.
+Сразу скажу честно: загруженный ранее архив уже недоступен для повторного открытия, поэтому точечно по текущему файлу я сейчас не могу проверить строки. Но я могу дать готовые куски, которые нужно вставить в уже существующий рендер блока section.
 
-Что сделать в editor.php
+Что делаем
 
-1. Добавить кнопку + Section
+Нужно улучшить 3 вещи:
 
-Найди вверху, где сейчас:
+внешний вид section в списке блоков
 
-<button class="ui-btn ui-btn-primary" id="btnAddText">+ Text</button>
-<button class="ui-btn ui-btn-primary" id="btnAddImage">+ Image</button>
-<button class="ui-btn ui-btn-primary" id="btnAddButton">+ Button</button>
-<button class="ui-btn ui-btn-primary" id="btnAddHeading">+ Heading</button>
-<button class="ui-btn ui-btn-primary" id="btnAddCols2">+ Columns2</button>
-<button class="ui-btn ui-btn-primary" id="btnAddGallery">+ Gallery</button>
-<button class="ui-btn ui-btn-primary" id="btnAddSpacer">+ Spacer</button>
-<button class="ui-btn ui-btn-primary" id="btnAddCard">+ Card</button>
-<button class="ui-btn ui-btn-primary" id="btnAddCards">+ Cards</button>
+мини-превью её настроек
 
-И добавь рядом:
+отдельные стили, чтобы секция визуально отличалась
 
-<button class="ui-btn ui-btn-primary" id="btnAddSection">+ Section</button>
-
-2. Обновить подпись доступных блоков
-
-Где сейчас текст:
-
-Блоки: <b>Text</b>, <b>Image</b>, <b>Button</b>, <b>Heading</b>, <b>Columns2</b>, <b>Gallery</b>, <b>Spacer</b>, <b>Card</b>.
-
-Сделай так:
-
-Блоки: <b>Section</b>, <b>Text</b>, <b>Image</b>, <b>Button</b>, <b>Heading</b>, <b>Columns2</b>, <b>Gallery</b>, <b>Spacer</b>, <b>Card</b>, <b>Cards</b>.
-
-3. Завести ссылку на новую кнопку в JS
-
-Рядом с остальными константами:
-
-const btnAddText = document.getElementById('btnAddText');
-const btnAddImage = document.getElementById('btnAddImage');
-...
-const btnAddCards = document.getElementById('btnAddCards');
-
-добавь:
-
-const btnAddSection = document.getElementById('btnAddSection');
-
-4. Добавить диалог создания section
-
-Вставь в editor.php рядом с функциями addSpacerBlock(), addGalleryBlock() и т.п. вот эту функцию:
-
-function addSectionBlock() {
-  BX.UI.Dialogs.MessageBox.show({
-    title: 'Новая Section',
-    message: `
-      <div>
-        <div class="field">
-          <label><input id="sec_boxed" type="checkbox" checked> Boxed контейнер</label>
-        </div>
-
-        <div class="field">
-          <label>Фон секции</label>
-          <input id="sec_bg" class="input" value="#FFFFFF" placeholder="#FFFFFF" />
-        </div>
-
-        <div class="field">
-          <label>Отступ сверху (0..200)</label>
-          <input id="sec_pt" class="input" type="number" min="0" max="200" value="32" />
-        </div>
-
-        <div class="field">
-          <label>Отступ снизу (0..200)</label>
-          <input id="sec_pb" class="input" type="number" min="0" max="200" value="32" />
-        </div>
-
-        <div class="field">
-          <label><input id="sec_border" type="checkbox"> Граница</label>
-        </div>
-
-        <div class="field">
-          <label>Скругление (0..40)</label>
-          <input id="sec_radius" class="input" type="number" min="0" max="40" value="0" />
-        </div>
-      </div>
-    `,
-    buttons: BX.UI.Dialogs.MessageBoxButtons.OK_CANCEL,
-    onOk: function (mb) {
-      const boxed = document.getElementById('sec_boxed')?.checked ? '1' : '0';
-      const background = (document.getElementById('sec_bg')?.value || '#FFFFFF').trim();
-      const paddingTop = parseInt(document.getElementById('sec_pt')?.value || '32', 10);
-      const paddingBottom = parseInt(document.getElementById('sec_pb')?.value || '32', 10);
-      const border = document.getElementById('sec_border')?.checked ? '1' : '0';
-      const radius = parseInt(document.getElementById('sec_radius')?.value || '0', 10);
-
-      api('block.create', {
-        pageId,
-        type: 'section',
-        boxed,
-        background,
-        paddingTop,
-        paddingBottom,
-        border,
-        radius
-      })
-        .then(res => {
-          if (!res || res.ok !== true) {
-            notify('Не удалось создать section');
-            return;
-          }
-          notify('Section создана');
-          mb.close();
-          loadBlocks();
-        })
-        .catch(() => notify('Ошибка block.create (section)'));
-    }
-  });
-}
-
-5. Привязать кнопку
-
-Там, где у тебя внизу идут обработчики вроде:
-
-btnAddText?.addEventListener('click', addTextBlock);
-btnAddImage?.addEventListener('click', addImageBlock);
-...
-btnAddCards?.addEventListener('click', addCardsBlock);
-
-добавь:
-
-btnAddSection?.addEventListener('click', addSectionBlock);
 
 
 ---
 
-Что ещё нужно для полноценной работы
+1. Добавь CSS для section
 
-Чтобы section не просто создавался, но и был виден в списке блоков, нужно добавить его в renderBlocks(blocks).
+В <style> editor.php добавь:
 
-6. Добавить рендер section в списке блоков
+.blockSection{
+  border:1px solid #cbd5e1;
+  background:linear-gradient(180deg,#f8fafc 0%, #f1f5f9 100%);
+}
 
-Внутри renderBlocks(blocks) перед TEXT или сразу после начала цикла вставь:
+.blockSectionBadge{
+  display:inline-flex;
+  align-items:center;
+  padding:3px 8px;
+  border-radius:999px;
+  font-size:11px;
+  font-weight:700;
+  background:#e2e8f0;
+  color:#334155;
+  border:1px solid #cbd5e1;
+}
+
+.blockSectionGrid{
+  display:grid;
+  grid-template-columns:repeat(auto-fit,minmax(140px,1fr));
+  gap:8px;
+  margin-top:10px;
+}
+
+.blockSectionItem{
+  background:#fff;
+  border:1px solid #e2e8f0;
+  border-radius:10px;
+  padding:8px 10px;
+}
+
+.blockSectionLabel{
+  font-size:11px;
+  color:#64748b;
+  margin-bottom:4px;
+}
+
+.blockSectionValue{
+  font-size:13px;
+  font-weight:600;
+  color:#0f172a;
+  word-break:break-word;
+}
+
+
+---
+
+2. Замени рендер section в renderBlocks(...)
+
+Если у тебя уже есть ветка:
+
+if (type === 'section') { ... }
+
+то замени её целиком на это:
 
 if (type === 'section') {
   const c = (b.content && typeof b.content === 'object') ? b.content : {};
@@ -150,9 +85,14 @@ if (type === 'section') {
   const radius = parseInt(c.radius || 0, 10);
 
   return `
-    <div class="block" style="border:1px solid #cbd5e1;background:#f8fafc;">
+    <div class="block blockSection">
       <div class="row">
-        <div><b>#${id}</b> <span class="muted">(section | sort ${sort})</span></div>
+        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+          <b>#${id}</b>
+          <span class="blockSectionBadge">SECTION</span>
+          <span class="muted">(sort ${sort})</span>
+        </div>
+
         <div class="btns">
           <button class="ui-btn ui-btn-light ui-btn-xs" data-move-block-id="${id}" data-move-dir="up">↑</button>
           <button class="ui-btn ui-btn-light ui-btn-xs" data-move-block-id="${id}" data-move-dir="down">↓</button>
@@ -162,120 +102,93 @@ if (type === 'section') {
         </div>
       </div>
 
-      <div class="muted" style="margin-top:8px;">
-        boxed: <b>${boxed ? 'yes' : 'no'}</b> ·
-        bg: <code>${BX.util.htmlspecialchars(background)}</code> ·
-        pt: <b>${paddingTop}</b> ·
-        pb: <b>${paddingBottom}</b> ·
-        border: <b>${border ? 'yes' : 'no'}</b> ·
-        radius: <b>${radius}</b>
+      <div class="blockSectionGrid">
+        <div class="blockSectionItem">
+          <div class="blockSectionLabel">Контейнер</div>
+          <div class="blockSectionValue">${boxed ? 'Boxed' : 'Full width'}</div>
+        </div>
+
+        <div class="blockSectionItem">
+          <div class="blockSectionLabel">Фон</div>
+          <div class="blockSectionValue">
+            <span style="display:inline-block;width:12px;height:12px;border-radius:3px;background:${BX.util.htmlspecialchars(background)};border:1px solid #cbd5e1;vertical-align:-1px;margin-right:6px;"></span>
+            ${BX.util.htmlspecialchars(background)}
+          </div>
+        </div>
+
+        <div class="blockSectionItem">
+          <div class="blockSectionLabel">Отступы</div>
+          <div class="blockSectionValue">top ${paddingTop}px / bottom ${paddingBottom}px</div>
+        </div>
+
+        <div class="blockSectionItem">
+          <div class="blockSectionLabel">Граница</div>
+          <div class="blockSectionValue">${border ? 'Да' : 'Нет'}</div>
+        </div>
+
+        <div class="blockSectionItem">
+          <div class="blockSectionLabel">Скругление</div>
+          <div class="blockSectionValue">${radius}px</div>
+        </div>
       </div>
     </div>
   `;
 }
 
-7. Добавить редактирование section
 
-Рядом с другими edit...Block функциями вставь:
+---
 
-function editSectionBlock(id) {
-  api('block.list', { pageId }).then(res => {
-    if (!res || res.ok !== true) return;
-    const blk = (res.blocks || []).find(x => parseInt(x.id, 10) === id);
-    const cur = (blk && blk.content && typeof blk.content === 'object') ? blk.content : {};
+3. Немного улучшить диалог создания/редактирования section
 
-    BX.UI.Dialogs.MessageBox.show({
-      title: 'Редактировать Section #' + id,
-      message: `
-        <div>
-          <div class="field">
-            <label><input id="sec_boxed_e" type="checkbox" ${cur.boxed ? 'checked' : ''}> Boxed контейнер</label>
-          </div>
+В формах addSectionBlock() и editSectionBlock() можно заменить подписи:
 
-          <div class="field">
-            <label>Фон секции</label>
-            <input id="sec_bg_e" class="input" value="${BX.util.htmlspecialchars(cur.background || '#FFFFFF')}" />
-          </div>
+Boxed контейнер → Ограничить по контейнеру
 
-          <div class="field">
-            <label>Отступ сверху (0..200)</label>
-            <input id="sec_pt_e" class="input" type="number" min="0" max="200" value="${parseInt(cur.paddingTop || 32, 10)}" />
-          </div>
+Фон секции → Цвет фона
 
-          <div class="field">
-            <label>Отступ снизу (0..200)</label>
-            <input id="sec_pb_e" class="input" type="number" min="0" max="200" value="${parseInt(cur.paddingBottom || 32, 10)}" />
-          </div>
+Граница → Показать рамку
 
-          <div class="field">
-            <label><input id="sec_border_e" type="checkbox" ${cur.border ? 'checked' : ''}> Граница</label>
-          </div>
 
-          <div class="field">
-            <label>Скругление (0..40)</label>
-            <input id="sec_radius_e" class="input" type="number" min="0" max="40" value="${parseInt(cur.radius || 0, 10)}" />
-          </div>
-        </div>
-      `,
-      buttons: BX.UI.Dialogs.MessageBoxButtons.OK_CANCEL,
-      onOk: function (mb) {
-        const boxed = document.getElementById('sec_boxed_e')?.checked ? '1' : '0';
-        const background = (document.getElementById('sec_bg_e')?.value || '#FFFFFF').trim();
-        const paddingTop = parseInt(document.getElementById('sec_pt_e')?.value || '32', 10);
-        const paddingBottom = parseInt(document.getElementById('sec_pb_e')?.value || '32', 10);
-        const border = document.getElementById('sec_border_e')?.checked ? '1' : '0';
-        const radius = parseInt(document.getElementById('sec_radius_e')?.value || '0', 10);
+И значения по умолчанию оставить:
 
-        api('block.update', {
-          id,
-          boxed,
-          background,
-          paddingTop,
-          paddingBottom,
-          border,
-          radius
-        })
-          .then(r => {
-            if (!r || r.ok !== true) {
-              notify('Не удалось сохранить section');
-              return;
-            }
-            notify('Section сохранена');
-            mb.close();
-            loadBlocks();
-          })
-          .catch(() => notify('Ошибка block.update (section)'));
-      }
-    });
-  });
-}
+boxed = true
 
-8. Подключить обработчик клика
+background = #FFFFFF
 
-В общем document.addEventListener('click', ...), где у тебя уже есть проверки типа data-edit-text-id, data-edit-image-id и т.д., добавь:
+paddingTop = 32
 
-const editSectionBtn = e.target.closest('[data-edit-section-id]');
-if (editSectionBtn) {
-  editSectionBlock(parseInt(editSectionBtn.getAttribute('data-edit-section-id'), 10));
-  return;
-}
+paddingBottom = 32
+
+border = false
+
+radius = 0
+
 
 
 ---
 
-Вывод
+Что получится
 
-После этих правок в editor.php у тебя появится:
+После этого в редакторе секция будет выглядеть как самостоятельная область:
 
-кнопка + Section
+заметная плашка SECTION
 
-создание секции
+краткая сводка параметров
 
-отображение секции в списке блоков
-
-редактирование секции
+сразу видно, где начинается новый смысловой блок страницы
 
 
-Но ещё раз: проверь api.php, потому что в архиве он пока не принимает section. Без этого кнопка будет показываться, но сохранение не сработает.
+Что дальше
 
-Если хочешь, следующим сообщением я соберу тебе полностью готовый editor.php целиком под текущую структуру.
+Следующий самый полезный шаг — добавить пресеты section, например:
+
+Hero
+
+Light section
+
+Accent section
+
+Card section
+
+
+Тогда создавать нормальные страницы станет сильно быстрее.
