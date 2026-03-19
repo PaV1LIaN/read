@@ -1,198 +1,152 @@
-Давай. Сделаем, чтобы в editor.php было видно: какие блоки относятся к какой section.
+Да, по твоему текущему editor.php скажу точно, куда вставлять.
 
-Идея простая:
+У тебя уже:
 
-SECTION остаётся отдельной заметной карточкой
+CSS для .blockInSection есть
 
-все блоки после неё до следующей SECTION получают:
-
-левую линию
-
-небольшой сдвиг
-
-пометку, что они внутри секции
+section в renderBlocks() есть
 
 
-
-Это сильно улучшит читаемость.
-
-Сейчас загруженный архив у меня уже не открывается, поэтому дам точечные правки, которые вставляются в твой текущий editor.php.
-
-1. Добавь CSS для блоков внутри section
-
-В <style> editor.php добавь:
-
-.blockInSection{
-  margin-left:18px;
-  padding-left:12px;
-  border-left:2px solid #dbeafe;
-}
-
-.blockInSection .row{
-  position:relative;
-}
-
-.blockInSectionTag{
-  display:inline-flex;
-  align-items:center;
-  padding:2px 8px;
-  border-radius:999px;
-  font-size:11px;
-  font-weight:600;
-  background:#eff6ff;
-  color:#1d4ed8;
-  border:1px solid #bfdbfe;
-  margin-left:8px;
-}
-
-.blockSectionDivider{
-  margin-top:8px;
-  margin-bottom:4px;
-  font-size:11px;
-  color:#64748b;
-  text-transform:uppercase;
-  letter-spacing:.04em;
-}
+Но сейчас обычные блоки не оборачиваются как “внутри section”.
+Нужно добавить только 3 точечные правки.
 
 
 ---
 
-2. В renderBlocks(blocks) добавь флаг текущей секции
+1. В renderBlocks(blocks) добавь currentSectionId
 
-В начале renderBlocks(blocks) найди что-то вроде:
+Найди
 
-function renderBlocks(blocks) {
-  if (!blocks || !blocks.length) {
-    ...
-  }
+В renderBlocks(blocks) у тебя сейчас есть:
 
-  return blocks.map(b => {
+blocksBox.innerHTML = filteredBlocks.map(b => {
+  const type = b.type || '';
+  const sort = b.sort;
+  const id = b.id;
 
-И перед return blocks.map(...) добавь:
+Замени на
 
 let currentSectionId = null;
 
-То есть должно получиться примерно так:
-
-function renderBlocks(blocks) {
-  if (!blocks || !blocks.length) {
-    blocksBox.innerHTML = '<div class="muted">Нет блоков</div>';
-    return;
-  }
-
-  let currentSectionId = null;
-
-  return blocks.map(b => {
+blocksBox.innerHTML = filteredBlocks.map(b => {
+  const type = b.type || '';
+  const sort = b.sort;
+  const id = b.id;
 
 
 ---
 
-3. Помечай section как начало группы
+2. Добавь helper wrapBlockHtml(...)
 
-Внутри renderBlocks(blocks) в ветке:
+Куда вставить
+
+Сразу после строки:
+
+let currentSectionId = null;
+
+вставь это:
+
+function wrapBlockHtml(innerHtml) {
+  if (!currentSectionId) return innerHtml;
+
+  return `
+    <div class="blockInSection">
+      <div class="blockSectionDivider">inside section #${currentSectionId}</div>
+      ${innerHtml}
+    </div>
+  `;
+}
+
+То есть начало куска должно стать таким:
+
+let currentSectionId = null;
+
+function wrapBlockHtml(innerHtml) {
+  if (!currentSectionId) return innerHtml;
+
+  return `
+    <div class="blockInSection">
+      <div class="blockSectionDivider">inside section #${currentSectionId}</div>
+      ${innerHtml}
+    </div>
+  `;
+}
+
+blocksBox.innerHTML = filteredBlocks.map(b => {
+
+
+---
+
+3. В ветке section запоминай текущую секцию
+
+Найди
+
+У тебя уже есть:
 
 if (type === 'section') {
+  const c = (b.content && typeof b.content === 'object') ? b.content : {};
 
-в самое начало добавь:
-
-currentSectionId = id;
-
-То есть:
+Замени начало на:
 
 if (type === 'section') {
   currentSectionId = id;
 
-  const c = ...
+  const c = (b.content && typeof b.content === 'object') ? b.content : {};
 
 
 ---
 
-4. Для обычных блоков добавь обёртку “внутри секции”
+4. Оберни обычные блоки через wrapBlockHtml(...)
 
-В каждой ветке обычного блока (text, image, button, heading, columns2, gallery, spacer, card, cards) у тебя сейчас, скорее всего, возвращается что-то вроде:
+Это главное.
 
-return `
-  <div class="block">
-    ...
-  </div>
-`;
+Сейчас у тебя обычные блоки возвращаются так:
 
-Нужно сделать общий helper в начале renderBlocks(blocks):
+return buildBlockShell(
+  ...
+);
 
-function wrapBlockHtml(innerHtml) {
-  if (!currentSectionId) return innerHtml;
+Нужно заменить на:
 
-  return `
-    <div class="blockInSection">
-      <div class="blockSectionDivider">inside section #${currentSectionId}</div>
-      ${innerHtml}
-    </div>
-  `;
-}
-
-Вставь его сразу после:
-
-let currentSectionId = null;
-
-То есть так:
-
-let currentSectionId = null;
-
-function wrapBlockHtml(innerHtml) {
-  if (!currentSectionId) return innerHtml;
-
-  return `
-    <div class="blockInSection">
-      <div class="blockSectionDivider">inside section #${currentSectionId}</div>
-      ${innerHtml}
-    </div>
-  `;
-}
+return wrapBlockHtml(buildBlockShell(
+  ...
+));
 
 
 ---
 
-5. Оберни обычные блоки через wrapBlockHtml(...)
+Что именно менять
 
-Теперь в каждом обычном блоке вместо:
+Было у text
 
-return `
-  <div class="block">
-    ...
-  </div>
-`;
+return buildBlockShell(
+  id, type, sort,
+  `<pre>${BX.util.htmlspecialchars(text)}</pre>`,
+  `
+    ${commonBtns}
+    <button class="ui-btn ui-btn-light ui-btn-xs" data-edit-text-id="${id}">Редактировать</button>
+    <button class="ui-btn ui-btn-danger ui-btn-xs" data-del-block-id="${id}">Удалить</button>
+  `
+);
 
-делай:
+Должно стать
 
-return wrapBlockHtml(`
-  <div class="block">
-    ...
-  </div>
-`);
+return wrapBlockHtml(buildBlockShell(
+  id, type, sort,
+  `<pre>${BX.util.htmlspecialchars(text)}</pre>`,
+  `
+    ${commonBtns}
+    <button class="ui-btn ui-btn-light ui-btn-xs" data-edit-text-id="${id}">Редактировать</button>
+    <button class="ui-btn ui-btn-danger ui-btn-xs" data-del-block-id="${id}">Удалить</button>
+  `
+));
 
-Пример для text
 
-Было:
+---
 
-return `
-  <div class="block">
-    <div class="row">
-      ...
-    </div>
-  </div>
-`;
+То же самое сделать для всех обычных типов:
 
-Станет:
-
-return wrapBlockHtml(`
-  <div class="block">
-    <div class="row">
-      ...
-    </div>
-  </div>
-`);
-
-То же самое для:
+text
 
 image
 
@@ -211,56 +165,60 @@ card
 cards
 
 
+Принцип один и тот же
+
+Вместо:
+
+return buildBlockShell(...)
+
+делай:
+
+return wrapBlockHtml(buildBlockShell(...))
+
 
 ---
 
-6. Не сбрасывай section до следующей section
+Что НЕ трогать
 
-Тут важно: currentSectionId должен оставаться активным, пока не встретится следующая section.
+Ветку if (type === 'section') { ... } не оборачивай через wrapBlockHtml.
 
-То есть:
-
-встретили section #12
-
-все следующие блоки идут как inside section #12
-
-встретили section #18
-
-теперь все следующие идут как inside section #18
-
-
-Дополнительно ничего сбрасывать не нужно.
+section должна оставаться самостоятельной карточкой.
 
 
 ---
 
 Что получится
 
-В редакторе будет видно:
+Теперь логика будет такой:
 
-где начинается новая SECTION
+встретили section #15
 
-какие блоки относятся к ней
-
-какая именно секция их оборачивает
+все следующие обычные блоки будут показываться как:
 
 
-Это уже сильно улучшит UX.
+inside section #15
+[блок]
+
+встретили следующую section #21
+
+дальше уже пойдут как inside section #21
+
 
 
 ---
 
-Что бы я делал следующим шагом
+Если хочешь совсем быстро
 
-После этого логично сделать у section быстрые кнопки:
+Самые важные места в твоём текущем файле:
 
-+ Heading
+renderBlocks(blocks) начинается примерно там, где у тебя уже видно const filteredBlocks...
 
-+ Text
+ветка if (type === 'section') { у тебя уже есть
 
-+ Button
-
-+ Cards
+дальше все return buildBlockShell(...) ниже по функции надо просто обернуть
 
 
-чтобы можно было сразу наполнять секцию контентом.
+
+---
+
+Если покажешь мне кусок renderBlocks() от if (type === 'text') до конца функции, я прямо по твоему коду отмечу, какие конкретно return buildBlockShell заменить.
