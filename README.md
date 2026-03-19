@@ -1,224 +1,226 @@
-Да, по твоему текущему editor.php скажу точно, куда вставлять.
+Делаем. Но прямо сейчас точечно по файлу не смогу показать места вставки: загруженный архив уже протух, и открыть текущий editor.php снова нельзя.
 
-У тебя уже:
+Чтобы не тормозить, даю готовую схему, что добавить. Если потом перезальёшь архив, я укажу exact-места по строкам.
 
-CSS для .blockInSection есть
+Что делаем
 
-section в renderBlocks() есть
+У карточки section добавим быстрые кнопки:
+
++ Heading
+
++ Text
+
++ Button
+
++ Cards
 
 
-Но сейчас обычные блоки не оборачиваются как “внутри section”.
-Нужно добавить только 3 точечные правки.
-
-
----
-
-1. В renderBlocks(blocks) добавь currentSectionId
-
-Найди
-
-В renderBlocks(blocks) у тебя сейчас есть:
-
-blocksBox.innerHTML = filteredBlocks.map(b => {
-  const type = b.type || '';
-  const sort = b.sort;
-  const id = b.id;
-
-Замени на
-
-let currentSectionId = null;
-
-blocksBox.innerHTML = filteredBlocks.map(b => {
-  const type = b.type || '';
-  const sort = b.sort;
-  const id = b.id;
+Они будут создавать обычный блок сразу после этой section.
 
 
 ---
 
-2. Добавь helper wrapBlockHtml(...)
+1. Добавь helper для вставки блока после section
 
-Куда вставить
+В <script> editor.php, рядом с addSectionBlock() и другими add...Block() функциями, вставь:
 
-Сразу после строки:
+async function createBlockAfterSection(sectionId, type, payload = {}) {
+  const listRes = await api('block.list', { pageId });
+  if (!listRes || listRes.ok !== true) {
+    notify('Не удалось загрузить блоки страницы');
+    return;
+  }
 
-let currentSectionId = null;
+  const blocks = Array.isArray(listRes.blocks) ? listRes.blocks.slice() : [];
+  const sectionIndex = blocks.findIndex(b => parseInt(b.id, 10) === parseInt(sectionId, 10));
 
-вставь это:
+  if (sectionIndex < 0) {
+    notify('Section не найдена');
+    return;
+  }
 
-function wrapBlockHtml(innerHtml) {
-  if (!currentSectionId) return innerHtml;
+  const sectionSort = parseInt(blocks[sectionIndex].sort || 0, 10);
 
-  return `
-    <div class="blockInSection">
-      <div class="blockSectionDivider">inside section #${currentSectionId}</div>
-      ${innerHtml}
-    </div>
-  `;
+  let insertSort = sectionSort + 10;
+  for (let i = sectionIndex + 1; i < blocks.length; i++) {
+    const next = blocks[i];
+    if ((next.type || '') === 'section') {
+      insertSort = parseInt(next.sort || insertSort, 10) - 1;
+      break;
+    }
+    insertSort = Math.max(insertSort, parseInt(next.sort || 0, 10) + 10);
+  }
+
+  const createRes = await api('block.create', {
+    pageId,
+    type,
+    ...payload
+  });
+
+  if (!createRes || createRes.ok !== true || !createRes.block) {
+    notify('Не удалось создать блок');
+    return;
+  }
+
+  const newBlockId = parseInt(createRes.block.id, 10);
+
+  const refreshRes = await api('block.list', { pageId });
+  if (!refreshRes || refreshRes.ok !== true) {
+    notify('Блок создан, но не удалось обновить порядок');
+    loadBlocks();
+    return;
+  }
+
+  const freshBlocks = Array.isArray(refreshRes.blocks) ? refreshRes.blocks.slice() : [];
+  const moved = freshBlocks.find(b => parseInt(b.id, 10) === newBlockId);
+  if (!moved) {
+    loadBlocks();
+    return;
+  }
+
+  const desiredOrder = freshBlocks
+    .sort((a, b) => parseInt(a.sort || 0, 10) - parseInt(b.sort || 0, 10))
+    .filter(b => parseInt(b.id, 10) !== newBlockId);
+
+  let targetIndex = desiredOrder.findIndex(b => parseInt(b.sort || 0, 10) > insertSort);
+  if (targetIndex < 0) targetIndex = desiredOrder.length;
+
+  desiredOrder.splice(targetIndex, 0, moved);
+
+  const order = desiredOrder.map(b => parseInt(b.id, 10));
+
+  const reorderRes = await api('block.reorder', {
+    pageId,
+    order: JSON.stringify(order)
+  });
+
+  if (!reorderRes || reorderRes.ok !== true) {
+    notify('Блок создан, но не удалось поставить после section');
+    loadBlocks();
+    return;
+  }
+
+  notify('Блок добавлен');
+  loadBlocks();
 }
 
-То есть начало куска должно стать таким:
 
-let currentSectionId = null;
+---
 
-function wrapBlockHtml(innerHtml) {
-  if (!currentSectionId) return innerHtml;
+2. Добавь быстрые функции для типовых блоков
 
-  return `
-    <div class="blockInSection">
-      <div class="blockSectionDivider">inside section #${currentSectionId}</div>
-      ${innerHtml}
-    </div>
-  `;
+Сразу после helper выше вставь:
+
+function quickAddHeadingAfterSection(sectionId) {
+  createBlockAfterSection(sectionId, 'heading', {
+    text: 'Новый заголовок',
+    level: 'h2',
+    align: 'left'
+  });
 }
 
-blocksBox.innerHTML = filteredBlocks.map(b => {
+function quickAddTextAfterSection(sectionId) {
+  createBlockAfterSection(sectionId, 'text', {
+    text: 'Новый текст'
+  });
+}
+
+function quickAddButtonAfterSection(sectionId) {
+  createBlockAfterSection(sectionId, 'button', {
+    text: 'Кнопка',
+    url: '/',
+    variant: 'primary'
+  });
+}
+
+function quickAddCardsAfterSection(sectionId) {
+  createBlockAfterSection(sectionId, 'cards', {
+    columns: 3,
+    items: JSON.stringify([
+      { title: 'Карточка 1', text: 'Описание 1', imageFileId: 0, buttonText: '', buttonUrl: '' },
+      { title: 'Карточка 2', text: 'Описание 2', imageFileId: 0, buttonText: '', buttonUrl: '' },
+      { title: 'Карточка 3', text: 'Описание 3', imageFileId: 0, buttonText: '', buttonUrl: '' }
+    ])
+  });
+}
 
 
 ---
 
-3. В ветке section запоминай текущую секцию
+3. Добавь кнопки в рендер section
 
-Найди
-
-У тебя уже есть:
+В ветке:
 
 if (type === 'section') {
-  const c = (b.content && typeof b.content === 'object') ? b.content : {};
 
-Замени начало на:
+где у тебя сейчас кнопки section (Редактировать, Дублировать, Удалить, стрелки), добавь рядом ещё этот кусок:
 
-if (type === 'section') {
-  currentSectionId = id;
+<button class="ui-btn ui-btn-success ui-btn-xs" data-add-heading-after-section-id="${id}">+ Heading</button>
+<button class="ui-btn ui-btn-success ui-btn-xs" data-add-text-after-section-id="${id}">+ Text</button>
+<button class="ui-btn ui-btn-success ui-btn-xs" data-add-button-after-section-id="${id}">+ Button</button>
+<button class="ui-btn ui-btn-success ui-btn-xs" data-add-cards-after-section-id="${id}">+ Cards</button>
 
-  const c = (b.content && typeof b.content === 'object') ? b.content : {};
+Если хочешь аккуратнее, можно обернуть их в отдельный блок:
 
-
----
-
-4. Оберни обычные блоки через wrapBlockHtml(...)
-
-Это главное.
-
-Сейчас у тебя обычные блоки возвращаются так:
-
-return buildBlockShell(
-  ...
-);
-
-Нужно заменить на:
-
-return wrapBlockHtml(buildBlockShell(
-  ...
-));
+<div class="btns" style="margin-top:8px;">
+  <button class="ui-btn ui-btn-success ui-btn-xs" data-add-heading-after-section-id="${id}">+ Heading</button>
+  <button class="ui-btn ui-btn-success ui-btn-xs" data-add-text-after-section-id="${id}">+ Text</button>
+  <button class="ui-btn ui-btn-success ui-btn-xs" data-add-button-after-section-id="${id}">+ Button</button>
+  <button class="ui-btn ui-btn-success ui-btn-xs" data-add-cards-after-section-id="${id}">+ Cards</button>
+</div>
 
 
 ---
 
-Что именно менять
+4. Подключи обработчики клика
 
-Было у text
+В общем document.addEventListener('click', ...) добавь:
 
-return buildBlockShell(
-  id, type, sort,
-  `<pre>${BX.util.htmlspecialchars(text)}</pre>`,
-  `
-    ${commonBtns}
-    <button class="ui-btn ui-btn-light ui-btn-xs" data-edit-text-id="${id}">Редактировать</button>
-    <button class="ui-btn ui-btn-danger ui-btn-xs" data-del-block-id="${id}">Удалить</button>
-  `
-);
+const addHeadingAfterSectionBtn = e.target.closest('[data-add-heading-after-section-id]');
+if (addHeadingAfterSectionBtn) {
+  quickAddHeadingAfterSection(parseInt(addHeadingAfterSectionBtn.getAttribute('data-add-heading-after-section-id'), 10));
+  return;
+}
 
-Должно стать
+const addTextAfterSectionBtn = e.target.closest('[data-add-text-after-section-id]');
+if (addTextAfterSectionBtn) {
+  quickAddTextAfterSection(parseInt(addTextAfterSectionBtn.getAttribute('data-add-text-after-section-id'), 10));
+  return;
+}
 
-return wrapBlockHtml(buildBlockShell(
-  id, type, sort,
-  `<pre>${BX.util.htmlspecialchars(text)}</pre>`,
-  `
-    ${commonBtns}
-    <button class="ui-btn ui-btn-light ui-btn-xs" data-edit-text-id="${id}">Редактировать</button>
-    <button class="ui-btn ui-btn-danger ui-btn-xs" data-del-block-id="${id}">Удалить</button>
-  `
-));
+const addButtonAfterSectionBtn = e.target.closest('[data-add-button-after-section-id]');
+if (addButtonAfterSectionBtn) {
+  quickAddButtonAfterSection(parseInt(addButtonAfterSectionBtn.getAttribute('data-add-button-after-section-id'), 10));
+  return;
+}
 
-
----
-
-То же самое сделать для всех обычных типов:
-
-text
-
-image
-
-button
-
-heading
-
-columns2
-
-gallery
-
-spacer
-
-card
-
-cards
-
-
-Принцип один и тот же
-
-Вместо:
-
-return buildBlockShell(...)
-
-делай:
-
-return wrapBlockHtml(buildBlockShell(...))
+const addCardsAfterSectionBtn = e.target.closest('[data-add-cards-after-section-id]');
+if (addCardsAfterSectionBtn) {
+  quickAddCardsAfterSection(parseInt(addCardsAfterSectionBtn.getAttribute('data-add-cards-after-section-id'), 10));
+  return;
+}
 
 
 ---
 
-Что НЕ трогать
+5. Что проверить
 
-Ветку if (type === 'section') { ... } не оборачивай через wrapBlockHtml.
+После этого проверь:
 
-section должна оставаться самостоятельной карточкой.
-
-
----
-
-Что получится
-
-Теперь логика будет такой:
-
-встретили section #15
-
-все следующие обычные блоки будут показываться как:
+1. У SECTION появились зелёные быстрые кнопки.
 
 
-inside section #15
-[блок]
+2. Нажимаешь + Heading — заголовок создаётся сразу после section.
 
-встретили следующую section #21
 
-дальше уже пойдут как inside section #21
+3. Нажимаешь + Text — текст тоже сразу под section.
+
+
+4. Если на странице несколько секций, блок попадает под нужную секцию, а не в конец страницы.
+
 
 
 
 ---
 
-Если хочешь совсем быстро
-
-Самые важные места в твоём текущем файле:
-
-renderBlocks(blocks) начинается примерно там, где у тебя уже видно const filteredBlocks...
-
-ветка if (type === 'section') { у тебя уже есть
-
-дальше все return buildBlockShell(...) ниже по функции надо просто обернуть
-
-
-
----
-
-Если покажешь мне кусок renderBlocks() от if (type === 'text') до конца функции, я прямо по твоему коду отмечу, какие конкретно return buildBlockShell заменить.
+Если хочешь, перезалей архив ещё раз, и я покажу exact-места вставки в твоём текущем editor.php без ручного поиска.
