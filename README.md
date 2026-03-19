@@ -1,136 +1,173 @@
-Проблема найдена.
+Нашёл конкретные ошибки.
 
-Сейчас перетаскивание ломается из-за того, что после добавления blockInSection у тебя DOM стал таким:
+Почему сейчас не работает
 
-section → это .block
+1. section не участвует в drag&drop
 
-обычный блок внутри секции → это .blockInSection > .block
+У тебя ветка if (type === 'section') возвращает свой собственный HTML, а не buildBlockShell(...).
 
+Из-за этого у section нет:
 
-А drag&drop работает только с .block[data-block-id] и при dragover делает:
+data-block-id
 
-block.parentNode.insertBefore(draggedEl, block)
+dragHandle
 
-То есть перетаскивает элемент только внутри его текущего parentNode.
-Из-за этого блоки в секции и вне секции живут в разных контейнерах, и сортировка начинает вести себя криво.
+общей шапки блока
 
-Как починить правильно
-
-Нужно убрать внешнюю обёртку .blockInSection и вместо неё вешать “внутри секции” прямо на сам .block.
-
-Это самый чистый фикс.
+нормальной зоны перетаскивания
 
 
----
-
-Что поменять
-
-1. В buildBlockShell(...) добавь ещё один параметр
-
-Найди:
-
-function buildBlockShell(id, type, sort, bodyHtml, buttonsHtml, extraMetaHtml = '') {
-
-Замени на:
-
-function buildBlockShell(id, type, sort, bodyHtml, buttonsHtml, extraMetaHtml = '', extraClass = '', sectionMarkHtml = '') {
+То есть section сейчас вообще выпадает из механики DnD.
 
 
 ---
 
-2. Внутри buildBlockShell(...) замени открывающий <div class="block ...">
+2. Порядок не сохраняется после перетаскивания
 
-Найди:
+saveBlockOrder() собирает порядок так:
 
-<div class="block ${isCollapsed ? 'blockCollapsed' : ''}" data-type="${BX.util.htmlspecialchars(type)}" data-block-id="${id}">
+const ids = Array.from(blocksBox.querySelectorAll('.block[data-block-id]'))
 
-Замени на:
+А section не попадает в этот список, потому что у неё нет data-block-id.
 
-<div class="block ${isCollapsed ? 'blockCollapsed' : ''} ${extraClass}" data-type="${BX.util.htmlspecialchars(type)}" data-block-id="${id}">
-
-
----
-
-3. В blockBody выведи метку секции
-
-Найди:
-
-<div class="blockBody">
-  ${bodyHtml}
-</div>
-
-Замени на:
-
-<div class="blockBody">
-  ${sectionMarkHtml}
-  ${bodyHtml}
-</div>
+В итоге сервер получает неполный список id, и block.reorder не может сохранить корректный порядок.
 
 
 ---
 
-4. Полностью замени wrapBlockHtml(...)
+3. У обычных блоков ты завёл wrap = wrapBlockMeta(), но не передаёшь его в buildBlockShell(...)
 
-Сейчас у тебя:
+То есть:
 
-function wrapBlockHtml(innerHtml) {
-  if (!currentSectionId) return innerHtml;
+логика “внутри секции” вычисляется
 
+но в рендер не попадает
+
+
+Это не ломает dnd напрямую, но показывает, что часть правки осталась недоделанной.
+
+
+---
+
+Что сделать сейчас
+
+Ниже даю точечные правки.
+
+
+---
+
+1. Замени ветку section целиком
+
+Найди в renderBlocks(blocks):
+
+if (type === 'section') {
+  currentSectionId = id;
+
+  const c = (b.content && typeof b.content === 'object') ? b.content : {};
+  ...
   return `
-    <div class="blockInSection">
-      <div class="blockSectionDivider">inside section #${currentSectionId}</div>
-      ${innerHtml}
+    <div class="block blockSection">
+      ...
     </div>
   `;
 }
 
-Замени на это:
+Замени всю ветку целиком на это:
 
-function wrapBlockMeta() {
-  if (!currentSectionId) {
-    return {
-      extraClass: '',
-      sectionMarkHtml: ''
-    };
-  }
+if (type === 'section') {
+  currentSectionId = id;
 
-  return {
-    extraClass: 'blockInSection',
-    sectionMarkHtml: `<div class="blockSectionDivider">inside section #${currentSectionId}</div>`
-  };
+  const c = (b.content && typeof b.content === 'object') ? b.content : {};
+  const boxed = !!c.boxed;
+  const background = c.background || '#FFFFFF';
+  const paddingTop = parseInt(c.paddingTop || 32, 10);
+  const paddingBottom = parseInt(c.paddingBottom || 32, 10);
+  const border = !!c.border;
+  const radius = parseInt(c.radius || 0, 10);
+
+  return buildBlockShell(
+    id,
+    type,
+    sort,
+    `
+      <div class="blockSectionGrid">
+        <div class="blockSectionItem">
+          <div class="blockSectionLabel">Контейнер</div>
+          <div class="blockSectionValue">${boxed ? 'Boxed' : 'Full width'}</div>
+        </div>
+
+        <div class="blockSectionItem">
+          <div class="blockSectionLabel">Фон</div>
+          <div class="blockSectionValue">
+            <span style="display:inline-block;width:12px;height:12px;border-radius:3px;background:${BX.util.htmlspecialchars(background)};border:1px solid #cbd5e1;vertical-align:-1px;margin-right:6px;"></span>
+            ${BX.util.htmlspecialchars(background)}
+          </div>
+        </div>
+
+        <div class="blockSectionItem">
+          <div class="blockSectionLabel">Отступы</div>
+          <div class="blockSectionValue">top ${paddingTop}px / bottom ${paddingBottom}px</div>
+        </div>
+
+        <div class="blockSectionItem">
+          <div class="blockSectionLabel">Граница</div>
+          <div class="blockSectionValue">${border ? 'Да' : 'Нет'}</div>
+        </div>
+
+        <div class="blockSectionItem">
+          <div class="blockSectionLabel">Скругление</div>
+          <div class="blockSectionValue">${radius}px</div>
+        </div>
+      </div>
+
+      <div class="btns" style="margin-top:10px;">
+        <button class="ui-btn ui-btn-success ui-btn-xs" data-add-heading-after-section-id="${id}">+ Heading</button>
+        <button class="ui-btn ui-btn-success ui-btn-xs" data-add-text-after-section-id="${id}">+ Text</button>
+        <button class="ui-btn ui-btn-success ui-btn-xs" data-add-button-after-section-id="${id}">+ Button</button>
+        <button class="ui-btn ui-btn-success ui-btn-xs" data-add-cards-after-section-id="${id}">+ Cards</button>
+      </div>
+    `,
+    `
+      ${commonBtns}
+      <button class="ui-btn ui-btn-light ui-btn-xs" data-edit-section-id="${id}">Редактировать</button>
+      <button class="ui-btn ui-btn-light ui-btn-xs" data-dup-block-id="${id}">Дублировать</button>
+      <button class="ui-btn ui-btn-danger ui-btn-xs" data-del-block-id="${id}">Удалить</button>
+    `,
+    '',
+    'blockSection'
+  );
 }
 
 
 ---
 
-5. Во всех обычных блоках убери wrapBlockHtml(...)
+2. Исправь обычные блоки: передавай wrap в buildBlockShell(...)
 
-То есть вместо:
-
-return wrapBlockHtml(buildBlockShell(
-  ...
-));
-
-нужно делать так:
+Сейчас у тебя есть, например, text:
 
 const wrap = wrapBlockMeta();
 return buildBlockShell(
   id, type, sort,
   ...,
-  ...,
-  ...,
-  wrap.extraClass,
-  wrap.sectionMarkHtml
+  ...
 );
+
+Нужно сделать так:
+
+Для каждого обычного блока добавь в конец buildBlockShell(...):
+
+wrap.extraClass,
+wrap.sectionMarkHtml
 
 
 ---
 
-Покажу на примере
+Пример для text
 
-Было у text
+Было:
 
-return wrapBlockHtml(buildBlockShell(
+const wrap = wrapBlockMeta();
+return buildBlockShell(
   id, type, sort,
   `<pre>${BX.util.htmlspecialchars(text)}</pre>`,
   `
@@ -138,9 +175,9 @@ return wrapBlockHtml(buildBlockShell(
     <button class="ui-btn ui-btn-light ui-btn-xs" data-edit-text-id="${id}">Редактировать</button>
     <button class="ui-btn ui-btn-danger ui-btn-xs" data-del-block-id="${id}">Удалить</button>
   `
-));
+);
 
-Должно стать
+Должно стать:
 
 const wrap = wrapBlockMeta();
 return buildBlockShell(
@@ -159,7 +196,7 @@ return buildBlockShell(
 
 ---
 
-То же самое сделать для:
+То же самое сделай для:
 
 text
 
@@ -179,71 +216,60 @@ card
 
 cards
 
-unknown type
+fallback unknown type
 
 
 
 ---
 
-6. CSS почти можно оставить, но поправь blockInSection
+3. Ничего не меняй в saveBlockOrder()
 
-Найди:
+После фикса section через buildBlockShell(...) этот код начнёт работать нормально:
 
-.blockInSection{
-  margin-left:18px;
-  padding-left:12px;
-  border-left:2px solid #dbeafe;
-}
+const ids = Array.from(blocksBox.querySelectorAll('.block[data-block-id]'))
 
-Замени на:
-
-.blockInSection{
-  margin-left:18px;
-  border-left:2px solid #dbeafe;
-}
-
-Потому что теперь blockInSection висит на самой .block, а не на внешней обёртке.
+Потому что теперь section тоже станет .block[data-block-id].
 
 
 ---
 
-Почему это чинит drag&drop
+4. Почему после этого всё должно заработать
 
-Теперь все draggable-элементы снова будут одного типа:
+Теперь:
 
-<div class="block ..." data-block-id="...">
+section получит drag handle
 
-И у них будет один и тот же уровень DOM в blocksBox.innerHTML, без вложенных внешних контейнеров.
+section будет draggable
 
-Значит:
+section будет входить в saveBlockOrder()
 
-dragover
+сервер получит полный список id
 
-insertBefore
+порядок начнёт сохраняться
 
-saveBlockOrder
-
-block.reorder
-
-
-снова начнут работать корректно.
 
 
 ---
 
-Что проверить после правок
+Что проверить после правки
 
-1. Перетаскивание обычных блоков вверх/вниз.
+1. У section появился значок перетаскивания ⋮⋮
+
+Если не появился — ветка section всё ещё рендерится не через buildBlockShell.
+
+2. Перетаскивание section
+
+Попробуй перетащить section вверх/вниз.
+
+3. Перетаскивание обычных блоков
+
+Проверь, что после drag порядок сохраняется, а после loadBlocks() не откатывается.
+
+4. Если всё ещё не сохраняется
+
+Тогда пришли текст ответа block.reorder из Network/console, потому что тогда уже надо смотреть, что именно сервер возвращает.
 
 
-2. Перетаскивание section.
+---
 
-
-3. Перетаскивание блока из-под одной секции к другой.
-
-
-4. После loadBlocks() порядок сохраняется правильно.
-
-
-
-Если хочешь, следующим сообщением я могу прямо по твоему текущему renderBlocks() расписать готовые замены для text/image/button/..., чтобы ты не правил каждый блок вручную.
+Если хочешь, я следующим сообщением могу дать тебе готовые куски именно для text/image/button/heading/..., чтобы ты не правил 10 блоков вручную.
