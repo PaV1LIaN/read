@@ -1,226 +1,249 @@
-Делаем. Но прямо сейчас точечно по файлу не смогу показать места вставки: загруженный архив уже протух, и открыть текущий editor.php снова нельзя.
+Проблема найдена.
 
-Чтобы не тормозить, даю готовую схему, что добавить. Если потом перезальёшь архив, я укажу exact-места по строкам.
+Сейчас перетаскивание ломается из-за того, что после добавления blockInSection у тебя DOM стал таким:
 
-Что делаем
+section → это .block
 
-У карточки section добавим быстрые кнопки:
-
-+ Heading
-
-+ Text
-
-+ Button
-
-+ Cards
+обычный блок внутри секции → это .blockInSection > .block
 
 
-Они будут создавать обычный блок сразу после этой section.
+А drag&drop работает только с .block[data-block-id] и при dragover делает:
 
+block.parentNode.insertBefore(draggedEl, block)
 
----
+То есть перетаскивает элемент только внутри его текущего parentNode.
+Из-за этого блоки в секции и вне секции живут в разных контейнерах, и сортировка начинает вести себя криво.
 
-1. Добавь helper для вставки блока после section
+Как починить правильно
 
-В <script> editor.php, рядом с addSectionBlock() и другими add...Block() функциями, вставь:
+Нужно убрать внешнюю обёртку .blockInSection и вместо неё вешать “внутри секции” прямо на сам .block.
 
-async function createBlockAfterSection(sectionId, type, payload = {}) {
-  const listRes = await api('block.list', { pageId });
-  if (!listRes || listRes.ok !== true) {
-    notify('Не удалось загрузить блоки страницы');
-    return;
-  }
-
-  const blocks = Array.isArray(listRes.blocks) ? listRes.blocks.slice() : [];
-  const sectionIndex = blocks.findIndex(b => parseInt(b.id, 10) === parseInt(sectionId, 10));
-
-  if (sectionIndex < 0) {
-    notify('Section не найдена');
-    return;
-  }
-
-  const sectionSort = parseInt(blocks[sectionIndex].sort || 0, 10);
-
-  let insertSort = sectionSort + 10;
-  for (let i = sectionIndex + 1; i < blocks.length; i++) {
-    const next = blocks[i];
-    if ((next.type || '') === 'section') {
-      insertSort = parseInt(next.sort || insertSort, 10) - 1;
-      break;
-    }
-    insertSort = Math.max(insertSort, parseInt(next.sort || 0, 10) + 10);
-  }
-
-  const createRes = await api('block.create', {
-    pageId,
-    type,
-    ...payload
-  });
-
-  if (!createRes || createRes.ok !== true || !createRes.block) {
-    notify('Не удалось создать блок');
-    return;
-  }
-
-  const newBlockId = parseInt(createRes.block.id, 10);
-
-  const refreshRes = await api('block.list', { pageId });
-  if (!refreshRes || refreshRes.ok !== true) {
-    notify('Блок создан, но не удалось обновить порядок');
-    loadBlocks();
-    return;
-  }
-
-  const freshBlocks = Array.isArray(refreshRes.blocks) ? refreshRes.blocks.slice() : [];
-  const moved = freshBlocks.find(b => parseInt(b.id, 10) === newBlockId);
-  if (!moved) {
-    loadBlocks();
-    return;
-  }
-
-  const desiredOrder = freshBlocks
-    .sort((a, b) => parseInt(a.sort || 0, 10) - parseInt(b.sort || 0, 10))
-    .filter(b => parseInt(b.id, 10) !== newBlockId);
-
-  let targetIndex = desiredOrder.findIndex(b => parseInt(b.sort || 0, 10) > insertSort);
-  if (targetIndex < 0) targetIndex = desiredOrder.length;
-
-  desiredOrder.splice(targetIndex, 0, moved);
-
-  const order = desiredOrder.map(b => parseInt(b.id, 10));
-
-  const reorderRes = await api('block.reorder', {
-    pageId,
-    order: JSON.stringify(order)
-  });
-
-  if (!reorderRes || reorderRes.ok !== true) {
-    notify('Блок создан, но не удалось поставить после section');
-    loadBlocks();
-    return;
-  }
-
-  notify('Блок добавлен');
-  loadBlocks();
-}
+Это самый чистый фикс.
 
 
 ---
 
-2. Добавь быстрые функции для типовых блоков
+Что поменять
 
-Сразу после helper выше вставь:
+1. В buildBlockShell(...) добавь ещё один параметр
 
-function quickAddHeadingAfterSection(sectionId) {
-  createBlockAfterSection(sectionId, 'heading', {
-    text: 'Новый заголовок',
-    level: 'h2',
-    align: 'left'
-  });
-}
+Найди:
 
-function quickAddTextAfterSection(sectionId) {
-  createBlockAfterSection(sectionId, 'text', {
-    text: 'Новый текст'
-  });
-}
+function buildBlockShell(id, type, sort, bodyHtml, buttonsHtml, extraMetaHtml = '') {
 
-function quickAddButtonAfterSection(sectionId) {
-  createBlockAfterSection(sectionId, 'button', {
-    text: 'Кнопка',
-    url: '/',
-    variant: 'primary'
-  });
-}
+Замени на:
 
-function quickAddCardsAfterSection(sectionId) {
-  createBlockAfterSection(sectionId, 'cards', {
-    columns: 3,
-    items: JSON.stringify([
-      { title: 'Карточка 1', text: 'Описание 1', imageFileId: 0, buttonText: '', buttonUrl: '' },
-      { title: 'Карточка 2', text: 'Описание 2', imageFileId: 0, buttonText: '', buttonUrl: '' },
-      { title: 'Карточка 3', text: 'Описание 3', imageFileId: 0, buttonText: '', buttonUrl: '' }
-    ])
-  });
-}
+function buildBlockShell(id, type, sort, bodyHtml, buttonsHtml, extraMetaHtml = '', extraClass = '', sectionMarkHtml = '') {
 
 
 ---
 
-3. Добавь кнопки в рендер section
+2. Внутри buildBlockShell(...) замени открывающий <div class="block ...">
 
-В ветке:
+Найди:
 
-if (type === 'section') {
+<div class="block ${isCollapsed ? 'blockCollapsed' : ''}" data-type="${BX.util.htmlspecialchars(type)}" data-block-id="${id}">
 
-где у тебя сейчас кнопки section (Редактировать, Дублировать, Удалить, стрелки), добавь рядом ещё этот кусок:
+Замени на:
 
-<button class="ui-btn ui-btn-success ui-btn-xs" data-add-heading-after-section-id="${id}">+ Heading</button>
-<button class="ui-btn ui-btn-success ui-btn-xs" data-add-text-after-section-id="${id}">+ Text</button>
-<button class="ui-btn ui-btn-success ui-btn-xs" data-add-button-after-section-id="${id}">+ Button</button>
-<button class="ui-btn ui-btn-success ui-btn-xs" data-add-cards-after-section-id="${id}">+ Cards</button>
+<div class="block ${isCollapsed ? 'blockCollapsed' : ''} ${extraClass}" data-type="${BX.util.htmlspecialchars(type)}" data-block-id="${id}">
 
-Если хочешь аккуратнее, можно обернуть их в отдельный блок:
 
-<div class="btns" style="margin-top:8px;">
-  <button class="ui-btn ui-btn-success ui-btn-xs" data-add-heading-after-section-id="${id}">+ Heading</button>
-  <button class="ui-btn ui-btn-success ui-btn-xs" data-add-text-after-section-id="${id}">+ Text</button>
-  <button class="ui-btn ui-btn-success ui-btn-xs" data-add-button-after-section-id="${id}">+ Button</button>
-  <button class="ui-btn ui-btn-success ui-btn-xs" data-add-cards-after-section-id="${id}">+ Cards</button>
+---
+
+3. В blockBody выведи метку секции
+
+Найди:
+
+<div class="blockBody">
+  ${bodyHtml}
+</div>
+
+Замени на:
+
+<div class="blockBody">
+  ${sectionMarkHtml}
+  ${bodyHtml}
 </div>
 
 
 ---
 
-4. Подключи обработчики клика
+4. Полностью замени wrapBlockHtml(...)
 
-В общем document.addEventListener('click', ...) добавь:
+Сейчас у тебя:
 
-const addHeadingAfterSectionBtn = e.target.closest('[data-add-heading-after-section-id]');
-if (addHeadingAfterSectionBtn) {
-  quickAddHeadingAfterSection(parseInt(addHeadingAfterSectionBtn.getAttribute('data-add-heading-after-section-id'), 10));
-  return;
+function wrapBlockHtml(innerHtml) {
+  if (!currentSectionId) return innerHtml;
+
+  return `
+    <div class="blockInSection">
+      <div class="blockSectionDivider">inside section #${currentSectionId}</div>
+      ${innerHtml}
+    </div>
+  `;
 }
 
-const addTextAfterSectionBtn = e.target.closest('[data-add-text-after-section-id]');
-if (addTextAfterSectionBtn) {
-  quickAddTextAfterSection(parseInt(addTextAfterSectionBtn.getAttribute('data-add-text-after-section-id'), 10));
-  return;
-}
+Замени на это:
 
-const addButtonAfterSectionBtn = e.target.closest('[data-add-button-after-section-id]');
-if (addButtonAfterSectionBtn) {
-  quickAddButtonAfterSection(parseInt(addButtonAfterSectionBtn.getAttribute('data-add-button-after-section-id'), 10));
-  return;
-}
+function wrapBlockMeta() {
+  if (!currentSectionId) {
+    return {
+      extraClass: '',
+      sectionMarkHtml: ''
+    };
+  }
 
-const addCardsAfterSectionBtn = e.target.closest('[data-add-cards-after-section-id]');
-if (addCardsAfterSectionBtn) {
-  quickAddCardsAfterSection(parseInt(addCardsAfterSectionBtn.getAttribute('data-add-cards-after-section-id'), 10));
-  return;
+  return {
+    extraClass: 'blockInSection',
+    sectionMarkHtml: `<div class="blockSectionDivider">inside section #${currentSectionId}</div>`
+  };
 }
 
 
 ---
 
-5. Что проверить
+5. Во всех обычных блоках убери wrapBlockHtml(...)
 
-После этого проверь:
+То есть вместо:
 
-1. У SECTION появились зелёные быстрые кнопки.
+return wrapBlockHtml(buildBlockShell(
+  ...
+));
+
+нужно делать так:
+
+const wrap = wrapBlockMeta();
+return buildBlockShell(
+  id, type, sort,
+  ...,
+  ...,
+  ...,
+  wrap.extraClass,
+  wrap.sectionMarkHtml
+);
 
 
-2. Нажимаешь + Heading — заголовок создаётся сразу после section.
+---
+
+Покажу на примере
+
+Было у text
+
+return wrapBlockHtml(buildBlockShell(
+  id, type, sort,
+  `<pre>${BX.util.htmlspecialchars(text)}</pre>`,
+  `
+    ${commonBtns}
+    <button class="ui-btn ui-btn-light ui-btn-xs" data-edit-text-id="${id}">Редактировать</button>
+    <button class="ui-btn ui-btn-danger ui-btn-xs" data-del-block-id="${id}">Удалить</button>
+  `
+));
+
+Должно стать
+
+const wrap = wrapBlockMeta();
+return buildBlockShell(
+  id, type, sort,
+  `<pre>${BX.util.htmlspecialchars(text)}</pre>`,
+  `
+    ${commonBtns}
+    <button class="ui-btn ui-btn-light ui-btn-xs" data-edit-text-id="${id}">Редактировать</button>
+    <button class="ui-btn ui-btn-danger ui-btn-xs" data-del-block-id="${id}">Удалить</button>
+  `,
+  '',
+  wrap.extraClass,
+  wrap.sectionMarkHtml
+);
 
 
-3. Нажимаешь + Text — текст тоже сразу под section.
+---
 
+То же самое сделать для:
 
-4. Если на странице несколько секций, блок попадает под нужную секцию, а не в конец страницы.
+text
 
+image
+
+button
+
+heading
+
+columns2
+
+gallery
+
+spacer
+
+card
+
+cards
+
+unknown type
 
 
 
 ---
 
-Если хочешь, перезалей архив ещё раз, и я покажу exact-места вставки в твоём текущем editor.php без ручного поиска.
+6. CSS почти можно оставить, но поправь blockInSection
+
+Найди:
+
+.blockInSection{
+  margin-left:18px;
+  padding-left:12px;
+  border-left:2px solid #dbeafe;
+}
+
+Замени на:
+
+.blockInSection{
+  margin-left:18px;
+  border-left:2px solid #dbeafe;
+}
+
+Потому что теперь blockInSection висит на самой .block, а не на внешней обёртке.
+
+
+---
+
+Почему это чинит drag&drop
+
+Теперь все draggable-элементы снова будут одного типа:
+
+<div class="block ..." data-block-id="...">
+
+И у них будет один и тот же уровень DOM в blocksBox.innerHTML, без вложенных внешних контейнеров.
+
+Значит:
+
+dragover
+
+insertBefore
+
+saveBlockOrder
+
+block.reorder
+
+
+снова начнут работать корректно.
+
+
+---
+
+Что проверить после правок
+
+1. Перетаскивание обычных блоков вверх/вниз.
+
+
+2. Перетаскивание section.
+
+
+3. Перетаскивание блока из-под одной секции к другой.
+
+
+4. После loadBlocks() порядок сохраняется правильно.
+
+
+
+Если хочешь, следующим сообщением я могу прямо по твоему текущему renderBlocks() расписать готовые замены для text/image/button/..., чтобы ты не правил каждый блок вручную.
