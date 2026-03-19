@@ -1,537 +1,266 @@
-Объясню просто.
+Давай. Сделаем, чтобы в editor.php было видно: какие блоки относятся к какой section.
 
-Что значит 3 пункт
+Идея простая:
 
-В addSectionBlock() мало просто добавить <select id="sec_preset">....
+SECTION остаётся отдельной заметной карточкой
 
-Нужно ещё сделать так, чтобы:
+все блоки после неё до следующей SECTION получают:
 
-ты выбрал Hero
+левую линию
 
-и поля формы сами поменялись
+небольшой сдвиг
 
-background
-
-paddingTop
-
-paddingBottom
-
-border
-
-radius
-
-boxed
+пометку, что они внутри секции
 
 
 
-То есть пункт 3 — это подключить поведение пресета.
+Это сильно улучшит читаемость.
 
+Сейчас загруженный архив у меня уже не открывается, поэтому дам точечные правки, которые вставляются в твой текущий editor.php.
 
----
+1. Добавь CSS для блоков внутри section
 
-Что именно делать
+В <style> editor.php добавь:
 
-Было
+.blockInSection{
+  margin-left:18px;
+  padding-left:12px;
+  border-left:2px solid #dbeafe;
+}
 
-У тебя, скорее всего, сейчас функция выглядит примерно так:
+.blockInSection .row{
+  position:relative;
+}
 
-function addSectionBlock() {
-  BX.UI.Dialogs.MessageBox.show({
-    title: 'Новая Section',
-    message: `...`,
-    buttons: BX.UI.Dialogs.MessageBoxButtons.OK_CANCEL,
-    onOk: function (mb) {
-      const boxed = document.getElementById('sec_boxed')?.checked ? '1' : '0';
-      const background = (document.getElementById('sec_bg')?.value || '#FFFFFF').trim();
-      const paddingTop = parseInt(document.getElementById('sec_pt')?.value || '32', 10);
-      const paddingBottom = parseInt(document.getElementById('sec_pb')?.value || '32', 10);
-      const border = document.getElementById('sec_border')?.checked ? '1' : '0';
-      const radius = parseInt(document.getElementById('sec_radius')?.value || '0', 10);
+.blockInSectionTag{
+  display:inline-flex;
+  align-items:center;
+  padding:2px 8px;
+  border-radius:999px;
+  font-size:11px;
+  font-weight:600;
+  background:#eff6ff;
+  color:#1d4ed8;
+  border:1px solid #bfdbfe;
+  margin-left:8px;
+}
 
-      api('block.create', {
-        pageId,
-        type: 'section',
-        boxed,
-        background,
-        paddingTop,
-        paddingBottom,
-        border,
-        radius
-      })
-      .then(...)
-    }
-  });
+.blockSectionDivider{
+  margin-top:8px;
+  margin-bottom:4px;
+  font-size:11px;
+  color:#64748b;
+  text-transform:uppercase;
+  letter-spacing:.04em;
 }
 
 
 ---
 
-Нужно сделать
+2. В renderBlocks(blocks) добавь флаг текущей секции
 
-Надо заменить BX.UI.Dialogs.MessageBox.show({...}) на вариант, где результат show(...) сохраняется в переменную, а потом мы вешаем обработчик на select.
+В начале renderBlocks(blocks) найди что-то вроде:
 
-Вот полностью готовая addSectionBlock()
-
-Просто замени всю свою функцию addSectionBlock() целиком на это:
-
-function addSectionBlock() {
-  const mb = BX.UI.Dialogs.MessageBox.show({
-    title: 'Новая Section',
-    message: `
-      <div>
-        <div class="field">
-          <label>Пресет</label>
-          <select id="sec_preset" class="input">
-            ${sectionPresetOptions('default')}
-          </select>
-        </div>
-
-        <div class="field">
-          <label><input id="sec_boxed" type="checkbox" checked> Ограничить по контейнеру</label>
-        </div>
-
-        <div class="field">
-          <label>Цвет фона</label>
-          <input id="sec_bg" class="input" value="#FFFFFF" placeholder="#FFFFFF" />
-        </div>
-
-        <div class="field">
-          <label>Отступ сверху (0..200)</label>
-          <input id="sec_pt" class="input" type="number" min="0" max="200" value="32" />
-        </div>
-
-        <div class="field">
-          <label>Отступ снизу (0..200)</label>
-          <input id="sec_pb" class="input" type="number" min="0" max="200" value="32" />
-        </div>
-
-        <div class="field">
-          <label><input id="sec_border" type="checkbox"> Показать рамку</label>
-        </div>
-
-        <div class="field">
-          <label>Скругление (0..40)</label>
-          <input id="sec_radius" class="input" type="number" min="0" max="40" value="0" />
-        </div>
-      </div>
-    `,
-    buttons: BX.UI.Dialogs.MessageBoxButtons.OK_CANCEL,
-    onOk: function (mbox) {
-      const boxed = document.getElementById('sec_boxed')?.checked ? '1' : '0';
-      const background = (document.getElementById('sec_bg')?.value || '#FFFFFF').trim();
-      const paddingTop = parseInt(document.getElementById('sec_pt')?.value || '32', 10);
-      const paddingBottom = parseInt(document.getElementById('sec_pb')?.value || '32', 10);
-      const border = document.getElementById('sec_border')?.checked ? '1' : '0';
-      const radius = parseInt(document.getElementById('sec_radius')?.value || '0', 10);
-
-      api('block.create', {
-        pageId,
-        type: 'section',
-        boxed,
-        background,
-        paddingTop,
-        paddingBottom,
-        border,
-        radius
-      })
-        .then(res => {
-          if (!res || res.ok !== true) {
-            notify('Не удалось создать section');
-            return;
-          }
-          notify('Section создана');
-          mbox.close();
-          loadBlocks();
-        })
-        .catch(() => notify('Ошибка block.create (section)'));
-    }
-  });
-
-  setTimeout(() => {
-    const presetEl = document.getElementById('sec_preset');
-    if (presetEl) {
-      presetEl.addEventListener('change', () => {
-        applySectionPresetToForm(presetEl.value);
-      });
-
-      applySectionPresetToForm('default');
-    }
-  }, 0);
-}
-
-
----
-
-Что делает setTimeout(...)
-
-Вот именно это и есть “добавить применение пресета”.
-
-Этот кусок:
-
-setTimeout(() => {
-  const presetEl = document.getElementById('sec_preset');
-  if (presetEl) {
-    presetEl.addEventListener('change', () => {
-      applySectionPresetToForm(presetEl.value);
-    });
-
-    applySectionPresetToForm('default');
+function renderBlocks(blocks) {
+  if (!blocks || !blocks.length) {
+    ...
   }
-}, 0);
 
-делает 2 вещи:
+  return blocks.map(b => {
 
-1. Когда выбрал пресет
+И перед return blocks.map(...) добавь:
 
-Например Hero, вызывается:
+let currentSectionId = null;
 
-applySectionPresetToForm('hero');
+То есть должно получиться примерно так:
 
-и поля меняются автоматически.
-
-2. Когда окно только открылось
-
-Сразу вызывается:
-
-applySectionPresetToForm('default');
-
-чтобы форма сразу была заполнена корректным дефолтом.
-
-
----
-
-Итого
-
-С 3 пунктом тебе не нужно ничего “внутрь onOk” добавлять.
-
-Нужно:
-
-заменить всю addSectionBlock() на готовую версию выше
-
-и всё
-
-
-
----
-
-Если хочешь, следующим сообщением я так же целиком дам готовую editSectionBlock().
-
-
-
-
-
-
-
-
-Да. Делаем точечно в editor.php.
-
-Нужно добавить 3 вещи:
-
-объект пресетов
-
-select пресета в окно создания/редактирования
-
-автоподстановку значений при выборе пресета
-
-
-
----
-
-1. Добавь объект пресетов
-
-Куда вставить
-
-В editor.php, в <script> рядом с другими общими функциями, до addSectionBlock() и editSectionBlock() вставь:
-
-const SECTION_PRESETS = {
-  default: {
-    boxed: true,
-    background: '#FFFFFF',
-    paddingTop: 32,
-    paddingBottom: 32,
-    border: false,
-    radius: 0
-  },
-  hero: {
-    boxed: true,
-    background: '#F8FAFC',
-    paddingTop: 72,
-    paddingBottom: 72,
-    border: false,
-    radius: 0
-  },
-  light: {
-    boxed: true,
-    background: '#F9FAFB',
-    paddingTop: 40,
-    paddingBottom: 40,
-    border: false,
-    radius: 0
-  },
-  accent: {
-    boxed: false,
-    background: '#EEF2FF',
-    paddingTop: 56,
-    paddingBottom: 56,
-    border: false,
-    radius: 0
-  },
-  card: {
-    boxed: true,
-    background: '#FFFFFF',
-    paddingTop: 32,
-    paddingBottom: 32,
-    border: true,
-    radius: 16
+function renderBlocks(blocks) {
+  if (!blocks || !blocks.length) {
+    blocksBox.innerHTML = '<div class="muted">Нет блоков</div>';
+    return;
   }
-};
 
-function sectionPresetOptions(selected = 'default') {
+  let currentSectionId = null;
+
+  return blocks.map(b => {
+
+
+---
+
+3. Помечай section как начало группы
+
+Внутри renderBlocks(blocks) в ветке:
+
+if (type === 'section') {
+
+в самое начало добавь:
+
+currentSectionId = id;
+
+То есть:
+
+if (type === 'section') {
+  currentSectionId = id;
+
+  const c = ...
+
+
+---
+
+4. Для обычных блоков добавь обёртку “внутри секции”
+
+В каждой ветке обычного блока (text, image, button, heading, columns2, gallery, spacer, card, cards) у тебя сейчас, скорее всего, возвращается что-то вроде:
+
+return `
+  <div class="block">
+    ...
+  </div>
+`;
+
+Нужно сделать общий helper в начале renderBlocks(blocks):
+
+function wrapBlockHtml(innerHtml) {
+  if (!currentSectionId) return innerHtml;
+
   return `
-    <option value="default" ${selected === 'default' ? 'selected' : ''}>Default</option>
-    <option value="hero" ${selected === 'hero' ? 'selected' : ''}>Hero</option>
-    <option value="light" ${selected === 'light' ? 'selected' : ''}>Light</option>
-    <option value="accent" ${selected === 'accent' ? 'selected' : ''}>Accent</option>
-    <option value="card" ${selected === 'card' ? 'selected' : ''}>Card</option>
+    <div class="blockInSection">
+      <div class="blockSectionDivider">inside section #${currentSectionId}</div>
+      ${innerHtml}
+    </div>
   `;
 }
 
-function applySectionPresetToForm(presetKey, suffix = '') {
-  const preset = SECTION_PRESETS[presetKey] || SECTION_PRESETS.default;
+Вставь его сразу после:
 
-  const boxedEl = document.getElementById('sec_boxed' + suffix);
-  const bgEl = document.getElementById('sec_bg' + suffix);
-  const ptEl = document.getElementById('sec_pt' + suffix);
-  const pbEl = document.getElementById('sec_pb' + suffix);
-  const borderEl = document.getElementById('sec_border' + suffix);
-  const radiusEl = document.getElementById('sec_radius' + suffix);
+let currentSectionId = null;
 
-  if (boxedEl) boxedEl.checked = !!preset.boxed;
-  if (bgEl) bgEl.value = preset.background;
-  if (ptEl) ptEl.value = preset.paddingTop;
-  if (pbEl) pbEl.value = preset.paddingBottom;
-  if (borderEl) borderEl.checked = !!preset.border;
-  if (radiusEl) radiusEl.value = preset.radius;
+То есть так:
+
+let currentSectionId = null;
+
+function wrapBlockHtml(innerHtml) {
+  if (!currentSectionId) return innerHtml;
+
+  return `
+    <div class="blockInSection">
+      <div class="blockSectionDivider">inside section #${currentSectionId}</div>
+      ${innerHtml}
+    </div>
+  `;
 }
 
 
 ---
 
-2. Обнови addSectionBlock()
+5. Оберни обычные блоки через wrapBlockHtml(...)
 
-Куда смотреть
+Теперь в каждом обычном блоке вместо:
 
-Найди функцию:
-
-function addSectionBlock() {
-
-Внутри неё, в message: \...`` добавь поле пресета самым первым.
-
-Было примерно так:
-
-<div>
-  <div class="field">
-    <label><input id="sec_boxed" type="checkbox" checked> Boxed контейнер</label>
+return `
+  <div class="block">
+    ...
   </div>
+`;
 
-Должно стать так:
+делай:
 
-message: `
-  <div>
-    <div class="field">
-      <label>Пресет</label>
-      <select id="sec_preset" class="input">
-        ${sectionPresetOptions('default')}
-      </select>
-    </div>
+return wrapBlockHtml(`
+  <div class="block">
+    ...
+  </div>
+`);
 
-    <div class="field">
-      <label><input id="sec_boxed" type="checkbox" checked> Ограничить по контейнеру</label>
-    </div>
+Пример для text
 
-    <div class="field">
-      <label>Цвет фона</label>
-      <input id="sec_bg" class="input" value="#FFFFFF" placeholder="#FFFFFF" />
-    </div>
+Было:
 
-    <div class="field">
-      <label>Отступ сверху (0..200)</label>
-      <input id="sec_pt" class="input" type="number" min="0" max="200" value="32" />
-    </div>
-
-    <div class="field">
-      <label>Отступ снизу (0..200)</label>
-      <input id="sec_pb" class="input" type="number" min="0" max="200" value="32" />
-    </div>
-
-    <div class="field">
-      <label><input id="sec_border" type="checkbox"> Показать рамку</label>
-    </div>
-
-    <div class="field">
-      <label>Скругление (0..40)</label>
-      <input id="sec_radius" class="input" type="number" min="0" max="40" value="0" />
+return `
+  <div class="block">
+    <div class="row">
+      ...
     </div>
   </div>
-`,
+`;
 
+Станет:
 
----
+return wrapBlockHtml(`
+  <div class="block">
+    <div class="row">
+      ...
+    </div>
+  </div>
+`);
 
-3. В addSectionBlock() добавь применение пресета
+То же самое для:
 
-В той же функции, перед api('block.create', ...) в onOk ничего особенного не нужно.
+image
 
-Но нужно повесить change на select после открытия окна.
+button
 
-Сразу после BX.UI.Dialogs.MessageBox.show({ ... });
+heading
 
-если функция у тебя просто вызывает show(...), замени на такой шаблон:
+columns2
 
-const mb = BX.UI.Dialogs.MessageBox.show({
-  title: 'Новая Section',
-  message: `...`,
-  buttons: BX.UI.Dialogs.MessageBoxButtons.OK_CANCEL,
-  onOk: function (mbox) {
-    const boxed = document.getElementById('sec_boxed')?.checked ? '1' : '0';
-    const background = (document.getElementById('sec_bg')?.value || '#FFFFFF').trim();
-    const paddingTop = parseInt(document.getElementById('sec_pt')?.value || '32', 10);
-    const paddingBottom = parseInt(document.getElementById('sec_pb')?.value || '32', 10);
-    const border = document.getElementById('sec_border')?.checked ? '1' : '0';
-    const radius = parseInt(document.getElementById('sec_radius')?.value || '0', 10);
+gallery
 
-    api('block.create', {
-      pageId,
-      type: 'section',
-      boxed,
-      background,
-      paddingTop,
-      paddingBottom,
-      border,
-      radius
-    })
-      .then(res => {
-        if (!res || res.ok !== true) {
-          notify('Не удалось создать section');
-          return;
-        }
-        notify('Section создана');
-        mbox.close();
-        loadBlocks();
-      })
-      .catch(() => notify('Ошибка block.create (section)'));
-  }
-});
+spacer
 
-setTimeout(() => {
-  const presetEl = document.getElementById('sec_preset');
-  if (presetEl) {
-    presetEl.addEventListener('change', () => {
-      applySectionPresetToForm(presetEl.value);
-    });
-    applySectionPresetToForm('default');
-  }
-}, 0);
+card
 
-
----
-
-4. Обнови editSectionBlock(id)
-
-Куда смотреть
-
-Найди функцию:
-
-function editSectionBlock(id) {
-
-Внутри message: \...`` добавь select пресета сверху.
-
-Вставь в начало формы:
-
-<div class="field">
-  <label>Пресет</label>
-  <select id="sec_preset_e" class="input">
-    ${sectionPresetOptions('default')}
-  </select>
-</div>
-
-
----
-
-5. Обнови подписи полей в редактировании
-
-Сделай так же, как в создании:
-
-Boxed контейнер → Ограничить по контейнеру
-
-Фон секции → Цвет фона
-
-Граница → Показать рамку
+cards
 
 
 
 ---
 
-6. Повесь обработчик на пресет в editSectionBlock
+6. Не сбрасывай section до следующей section
 
-После BX.UI.Dialogs.MessageBox.show({...}) добавь:
+Тут важно: currentSectionId должен оставаться активным, пока не встретится следующая section.
 
-setTimeout(() => {
-  const presetEl = document.getElementById('sec_preset_e');
-  if (presetEl) {
-    presetEl.addEventListener('change', () => {
-      applySectionPresetToForm(presetEl.value, '_e');
-    });
-  }
-}, 0);
+То есть:
 
+встретили section #12
 
----
+все следующие блоки идут как inside section #12
 
-7. Что получится
+встретили section #18
 
-Теперь:
-
-в создании section будет выбор пресета
-
-в редактировании тоже
-
-выбор пресета будет автоматически подставлять:
-
-фон
-
-boxed
-
-отступы
-
-border
-
-radius
+теперь все следующие идут как inside section #18
 
 
+Дополнительно ничего сбрасывать не нужно.
 
 
 ---
 
-Что проверить
+Что получится
 
-1. Нажми + Section
+В редакторе будет видно:
 
+где начинается новая SECTION
 
-2. Посмотри, появился ли Пресет
+какие блоки относятся к ней
 
-
-3. Переключи Hero, Accent, Card
-
-
-4. Убедись, что поля меняются автоматически
+какая именно секция их оборачивает
 
 
-5. Создай секцию
+Это уже сильно улучшит UX.
 
 
-6. Нажми Редактировать у секции и проверь, что пресет-селект там тоже есть
+---
+
+Что бы я делал следующим шагом
+
+После этого логично сделать у section быстрые кнопки:
+
++ Heading
+
++ Text
+
++ Button
+
++ Cards
 
 
-
-Если хочешь, следующим сообщением я могу дать тебе готовую целиком функцию addSectionBlock() и целиком editSectionBlock(), чтобы ты не собирал по кускам.
+чтобы можно было сразу наполнять секцию контентом.
