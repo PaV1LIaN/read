@@ -1,137 +1,211 @@
-Часть 6 из 8:
+Часть 7 из 8:
 
-})
-            .catch(() => notify('Ошибка block.update (heading)'));
-        }
-      });
+window.SBEditor = window.SBEditor || {};
 
-      setTimeout(() => {
-        const t = document.getElementById('edit_h_text');
-        const l = document.getElementById('edit_h_level');
-        const a = document.getElementById('edit_h_align');
-        const wrap = document.getElementById('edit_h_preview_wrap');
-        if (!t || !l || !a || !wrap) return;
+window.SBEditor.editTextBlock = function (id) {
+  const st = window.SBEditor.getState();
+  const api = window.SBEditor.api;
+  const notify = window.SBEditor.notify;
 
-        const update = () => {
-          const txt = t.value || 'Заголовок';
-          const tag = headingTag(l.value);
-          const al = headingAlign(a.value);
-          wrap.style.textAlign = al;
-          wrap.innerHTML = `<${tag} id="edit_h_preview">${BX.util.htmlspecialchars(txt)}</${tag}>`;
-        };
+  api('block.list', { pageId: st.pageId }).then(res => {
+    if (!res || res.ok !== true) return;
+    const blk = (res.blocks || []).find(x => parseInt(x.id,10) === id);
 
-        t.addEventListener('input', update);
-        l.addEventListener('change', update);
-        a.addEventListener('change', update);
-        update();
-      }, 0);
+    BX.UI.Dialogs.MessageBox.show({
+      title: 'Редактировать Text #' + id,
+      message: `
+        <div class="field">
+          <label>Текст</label>
+          <textarea id="edit_text_value" class="input" rows="12">${BX.util.htmlspecialchars(blk?.content?.text || '')}</textarea>
+        </div>
+      `,
+      buttons: BX.UI.Dialogs.MessageBoxButtons.OK_CANCEL,
+      onOk: function (mb) {
+        const text = document.getElementById('edit_text_value')?.value || '';
+
+        api('block.update', { id, text })
+          .then(r => {
+            if (!r || r.ok !== true) { notify('Не удалось сохранить text'); return; }
+            notify('Сохранено');
+            mb.close();
+            if (typeof window.SBEditor.loadBlocks === 'function') {
+              window.SBEditor.loadBlocks();
+            }
+          })
+          .catch(() => notify('Ошибка block.update (text)'));
+      }
     });
-  }
+  });
+};
 
-  function editCols2Block(id) {
-    api('block.list', { pageId }).then(res => {
-      if (!res || res.ok !== true) return;
-      const blk = (res.blocks || []).find(x => parseInt(x.id,10) === id);
+window.SBEditor.editImageBlock = async function (id) {
+  const st = window.SBEditor.getState();
+  const api = window.SBEditor.api;
+  const notify = window.SBEditor.notify;
 
-      const curRatio = blk && blk.content ? (blk.content.ratio || '50-50') : '50-50';
-      const curLeft = blk && blk.content ? (blk.content.left || '') : '';
-      const curRight = blk && blk.content ? (blk.content.right || '') : '';
+  let files = [];
+  try { files = await window.SBEditor.getFilesForSite(); }
+  catch (e) { notify('Не удалось загрузить файлы сайта'); return; }
 
-      BX.UI.Dialogs.MessageBox.show({
-        title: 'Редактировать Columns2 #' + id,
-        message: `
-          <div>
-            <div class="field">
-              <label>Соотношение</label>
-              <select id="ec_ratio" class="input">
-                <option value="50-50" ${curRatio==='50-50'?'selected':''}>50 / 50</option>
-                <option value="33-67" ${curRatio==='33-67'?'selected':''}>33 / 67</option>
-                <option value="67-33" ${curRatio==='67-33'?'selected':''}>67 / 33</option>
-              </select>
-            </div>
-            <div class="field">
-              <label>Левая колонка (текст)</label>
-              <textarea id="ec_left" class="input" style="height:120px;">${BX.util.htmlspecialchars(curLeft)}</textarea>
-            </div>
-            <div class="field">
-              <label>Правая колонка (текст)</label>
-              <textarea id="ec_right" class="input" style="height:120px;">${BX.util.htmlspecialchars(curRight)}</textarea>
-            </div>
-          </div>
-        `,
-        buttons: BX.UI.Dialogs.MessageBoxButtons.OK_CANCEL,
-        onOk: function (mb) {
-          const ratio = (document.getElementById('ec_ratio')?.value || '50-50');
-          const left = (document.getElementById('ec_left')?.value || '');
-          const right = (document.getElementById('ec_right')?.value || '');
+  const res = await api('block.list', { pageId: st.pageId });
+  if (!res || res.ok !== true) return;
+  const blk = (res.blocks || []).find(x => parseInt(x.id,10) === id);
 
-          api('block.update', { id, ratio, left, right })
-            .then(r => {
-              if (!r || r.ok !== true) { notify('Не удалось сохранить columns2'); return; }
-              notify('Сохранено');
-              mb.close();
-              loadBlocks();
-            })
-            .catch(() => notify('Ошибка block.update (columns2)'));
-        }
-      });
+  const curFile = parseInt(blk?.content?.fileId || 0, 10);
+  const curAlt = blk?.content?.alt || '';
+
+  const opts = ['<option value="0">— выбрать файл —</option>']
+    .concat(files.map(f => `<option value="${f.id}" ${parseInt(f.id,10)===curFile?'selected':''}>${BX.util.htmlspecialchars(f.name)} (#${f.id})</option>`))
+    .join('');
+
+  BX.UI.Dialogs.MessageBox.show({
+    title: 'Редактировать Image #' + id,
+    message: `
+      <div class="field">
+        <label>Файл</label>
+        <select id="edit_image_file" class="input">${opts}</select>
+      </div>
+      <div class="field">
+        <label>Alt</label>
+        <input id="edit_image_alt" class="input" value="${BX.util.htmlspecialchars(curAlt)}" />
+      </div>
+      <div id="edit_image_preview_wrap" style="margin-top:10px;"></div>
+    `,
+    buttons: BX.UI.Dialogs.MessageBoxButtons.OK_CANCEL,
+    onOk: function (mb) {
+      const fileId = parseInt(document.getElementById('edit_image_file')?.value || '0', 10);
+      const alt = document.getElementById('edit_image_alt')?.value || '';
+
+      if (!fileId) { notify('Выбери файл'); return; }
+
+      api('block.update', { id, fileId, alt })
+        .then(r => {
+          if (!r || r.ok !== true) { notify('Не удалось сохранить image'); return; }
+          notify('Сохранено');
+          mb.close();
+          if (typeof window.SBEditor.loadBlocks === 'function') {
+            window.SBEditor.loadBlocks();
+          }
+        })
+        .catch(() => notify('Ошибка block.update (image)'));
+    }
+  });
+
+  setTimeout(() => {
+    const sel = document.getElementById('edit_image_file');
+    const wrap = document.getElementById('edit_image_preview_wrap');
+    if (!sel || !wrap) return;
+
+    const renderPrev = () => {
+      const fid = parseInt(sel.value || '0', 10);
+      wrap.innerHTML = fid ? `<div class="imgPrev"><img src="${window.SBEditor.fileDownloadUrl(st.siteId, fid)}" alt=""></div>` : '';
+    };
+
+    sel.addEventListener('change', renderPrev);
+    renderPrev();
+  }, 0);
+};
+
+window.SBEditor.editButtonBlock = function (id) {
+  const st = window.SBEditor.getState();
+  const api = window.SBEditor.api;
+  const notify = window.SBEditor.notify;
+
+  api('block.list', { pageId: st.pageId }).then(res => {
+    if (!res || res.ok !== true) return;
+    const blk = (res.blocks || []).find(x => parseInt(x.id,10) === id);
+
+    BX.UI.Dialogs.MessageBox.show({
+      title: 'Редактировать Button #' + id,
+      message: `
+        <div class="field">
+          <label>Текст кнопки</label>
+          <input id="edit_btn_text" class="input" value="${BX.util.htmlspecialchars(blk?.content?.text || '')}" />
+        </div>
+        <div class="field">
+          <label>URL</label>
+          <input id="edit_btn_url" class="input" value="${BX.util.htmlspecialchars(blk?.content?.url || '/')}" />
+        </div>
+        <div class="field">
+          <label>Вариант</label>
+          <select id="edit_btn_variant" class="input">
+            <option value="primary" ${(blk?.content?.variant || 'primary')==='primary'?'selected':''}>primary</option>
+            <option value="secondary" ${(blk?.content?.variant || '')==='secondary'?'selected':''}>secondary</option>
+          </select>
+        </div>
+      `,
+      buttons: BX.UI.Dialogs.MessageBoxButtons.OK_CANCEL,
+      onOk: function (mb) {
+        const text = document.getElementById('edit_btn_text')?.value || '';
+        const url = document.getElementById('edit_btn_url')?.value || '';
+        const variant = document.getElementById('edit_btn_variant')?.value || 'primary';
+
+        api('block.update', { id, text, url, variant })
+          .then(r => {
+            if (!r || r.ok !== true) { notify('Не удалось сохранить button'); return; }
+            notify('Сохранено');
+            mb.close();
+            if (typeof window.SBEditor.loadBlocks === 'function') {
+              window.SBEditor.loadBlocks();
+            }
+          })
+          .catch(() => notify('Ошибка block.update (button)'));
+      }
     });
-  }
+  });
+};
 
-  function editSpacerBlock(id) {
-    api('block.list', { pageId }).then(res => {
-      if (!res || res.ok !== true) return;
-      const blk = (res.blocks || []).find(x => parseInt(x.id,10) === id);
-      const curH = blk && blk.content ? parseInt(blk.content.height || 40, 10) : 40;
-      const curLine = blk && blk.content ? (blk.content.line === true || blk.content.line === 'true') : false;
+window.SBEditor.editHeadingBlock = function (id) {
+  const st = window.SBEditor.getState();
+  const api = window.SBEditor.api;
+  const notify = window.SBEditor.notify;
 
-      BX.UI.Dialogs.MessageBox.show({
-        title: 'Редактировать Spacer #' + id,
-        message: `
-          <div>
-            <div class="field">
-              <label>Высота (10..200 px)</label>
-              <input id="esp_h" class="input" type="number" min="10" max="200" value="${curH}" />
-            </div>
-            <div class="field">
-              <label><input id="esp_line" type="checkbox" ${curLine ? 'checked':''} /> Рисовать линию</label>
-            </div>
-          </div>
-        `,
-        buttons: BX.UI.Dialogs.MessageBoxButtons.OK_CANCEL,
-        onOk: function(mb){
-          const height = parseInt(document.getElementById('esp_h')?.value || String(curH), 10);
-          const line = document.getElementById('esp_line')?.checked ? '1' : '0';
+  api('block.list', { pageId: st.pageId }).then(res => {
+    if (!res || res.ok !== true) return;
+    const blk = (res.blocks || []).find(x => parseInt(x.id,10) === id);
 
-          api('block.update', { id, height, line })
-            .then(r => {
-              if (!r || r.ok !== true) { notify('Не удалось сохранить spacer'); return; }
-              notify('Сохранено');
-              mb.close();
-              loadBlocks();
-            })
-            .catch(() => notify('Ошибка block.update (spacer)'));
-        }
-      });
+    BX.UI.Dialogs.MessageBox.show({
+      title: 'Редактировать Heading #' + id,
+      message: `
+        <div class="field">
+          <label>Текст</label>
+          <input id="edit_h_text" class="input" value="${BX.util.htmlspecialchars(blk?.content?.text || '')}" />
+        </div>
+        <div class="field">
+          <label>Уровень</label>
+          <select id="edit_h_level" class="input">
+            <option value="h1" ${(blk?.content?.level || '')==='h1'?'selected':''}>h1</option>
+            <option value="h2" ${(blk?.content?.level || 'h2')==='h2'?'selected':''}>h2</option>
+            <option value="h3" ${(blk?.content?.level || '')==='h3'?'selected':''}>h3</option>
+          </select>
+        </div>
+        <div class="field">
+          <label>Выравнивание</label>
+          <select id="edit_h_align" class="input">
+            <option value="left" ${(blk?.content?.align || 'left')==='left'?'selected':''}>left</option>
+            <option value="center" ${(blk?.content?.align || '')==='center'?'selected':''}>center</option>
+            <option value="right" ${(blk?.content?.align || '')==='right'?'selected':''}>right</option>
+          </select>
+        </div>
+        <div id="edit_h_preview_wrap" style="margin-top:10px;border:1px dashed #d1d5db;border-radius:10px;padding:12px;background:#fff;"></div>
+      `,
+      buttons: BX.UI.Dialogs.MessageBoxButtons.OK_CANCEL,
+      onOk: function (mb) {
+        const text = document.getElementById('edit_h_text')?.value || '';
+        const level = document.getElementById('edit_h_level')?.value || 'h2';
+        const align = document.getElementById('edit_h_align')?.value || 'left';
+
+        api('block.update', { id, text, level, align })
+          .then(r => {
+            if (!r || r.ok !== true) { notify('Не удалось сохранить heading'); return; }
+            notify('Сохранено');
+            mb.close();
+            if (typeof window.SBEditor.loadBlocks === 'function') {
+              window.SBEditor.loadBlocks();
+            }
+          })
+          .catch(() => notify('Ошибка block.update (heading)'));
+      }
     });
-  }
 
-  function editGalleryBlock(id) {
-    api('block.list', { pageId }).then(res => {
-      if (!res || res.ok !== true) return;
-      const blk = (res.blocks || []).find(x => parseInt(x.id,10) === id);
-      openGalleryDialog('edit', id, blk?.content || null);
-    });
-  }
-
-  function editCardBlock(id) {
-    api('block.list', { pageId }).then(res => {
-      if (!res || res.ok !== true) return;
-      const blk = (res.blocks || []).find(x => parseInt(x.id,10) === id);
-      openCardDialog('edit', id, blk?.content || null);
-    });
-  }
-
-  function addCardsBlock() {
-
-Пришлю часть 7 следующим сообщением.
+Пришли дальше, и я отправлю часть 8 из 8.
