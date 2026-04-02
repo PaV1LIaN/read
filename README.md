@@ -1,223 +1,267 @@
-Продолжение:
+Да, вот первая часть editor.dialogs.js:
 
-notify('Columns2 создан');
-            mb.close();
-            loadBlocks();
-          })
-          .catch(() => notify('Ошибка block.create (columns2)'));
-      }
-    });
-  }
+window.SBEditor = window.SBEditor || {};
 
-  async function openGalleryDialog(mode, blockId, currentContent) {
-    let files = [];
-    try { files = await getFilesForSite(); } catch(e) { files = []; }
+window.SBEditor.saveTemplateFromPage = async function () {
+  const st = window.SBEditor.getState();
+  const api = window.SBEditor.api;
+  const notify = window.SBEditor.notify;
 
-    let columns = currentContent?.columns ? parseInt(currentContent.columns, 10) : 3;
-    if (![2,3,4].includes(columns)) columns = 3;
+  const name = prompt('Название шаблона:');
+  if (!name) return;
 
-    let images = Array.isArray(currentContent?.images) ? currentContent.images.map(x => ({
-      fileId: parseInt(x.fileId || 0, 10) || 0,
-      alt: x.alt || ''
-    })) : [{fileId:0, alt:''}];
-
-    const fileOptions = (selectedId) => {
-      const opts = ['<option value="0">— выбрать файл —</option>'];
-      files.forEach(f => {
-        const s = (parseInt(f.id,10) === selectedId) ? 'selected' : '';
-        opts.push(`<option value="${f.id}" ${s}>${BX.util.htmlspecialchars(f.name)} (id ${f.id})</option>`);
-      });
-      return opts.join('');
-    };
-
-    const renderItems = () => images.map((it, idx) => `
-      <div class="item" data-gi="${idx}">
-        <div class="itemHead">
-          <div><b>Изображение ${idx + 1}</b></div>
-          <div class="miniBtns">
-            <button class="ui-btn ui-btn-light ui-btn-xs" data-gallery-up="${idx}">↑</button>
-            <button class="ui-btn ui-btn-light ui-btn-xs" data-gallery-down="${idx}">↓</button>
-            <button class="ui-btn ui-btn-danger ui-btn-xs" data-gallery-del="${idx}">Удалить</button>
-          </div>
-        </div>
-
-        <div class="grid2" style="margin-top:10px;">
-          <div>
-            <div class="field">
-              <label>Файл</label>
-              <select class="input" data-gallery-file="${idx}">
-                ${fileOptions(parseInt(it.fileId || 0, 10))}
-              </select>
-            </div>
-
-            <div data-gallery-prev="${idx}">
-              ${parseInt(it.fileId || 0, 10) ? `<div class="imgPrev"><img src="${fileDownloadUrl(parseInt(it.fileId || 0, 10))}" alt=""></div>` : ''}
-            </div>
-          </div>
-
-          <div>
-            <div class="field">
-              <label>Alt</label>
-              <input class="input" data-gallery-alt="${idx}" value="${BX.util.htmlspecialchars(it.alt || '')}">
-            </div>
-          </div>
-        </div>
-      </div>
-    `).join('');
-
-    const render = () => `
-      <div class="galleryBuilder">
-        <div class="field">
-          <label>Колонки</label>
-          <select id="gb_cols" class="input">
-            <option value="2" ${columns===2?'selected':''}>2</option>
-            <option value="3" ${columns===3?'selected':''}>3</option>
-            <option value="4" ${columns===4?'selected':''}>4</option>
-          </select>
-        </div>
-
-        <div style="margin-top:10px;">
-          <button class="ui-btn ui-btn-light" id="gb_add">+ Добавить изображение</button>
-        </div>
-
-        <div id="gb_items">${renderItems()}</div>
-      </div>
-    `;
-
-    BX.UI.Dialogs.MessageBox.show({
-      title: mode === 'edit' ? ('Редактировать Gallery #' + blockId) : 'Новая Gallery',
-      message: render(),
-      buttons: BX.UI.Dialogs.MessageBoxButtons.OK_CANCEL,
-      onOk: function(mb){
-        columns = parseInt(document.getElementById('gb_cols')?.value || '3', 10);
-        if (![2,3,4].includes(columns)) columns = 3;
-
-        const collected = images.map((_, idx) => {
-          const fileId = parseInt(document.querySelector(`[data-gallery-file="${idx}"]`)?.value || '0', 10) || 0;
-          const alt = document.querySelector(`[data-gallery-alt="${idx}"]`)?.value || '';
-          return { fileId, alt };
-        }).filter(x => x.fileId > 0);
-
-        if (!collected.length) { notify('Добавь хотя бы одно изображение'); return; }
-
-        const payload = {
-          columns,
-          images: JSON.stringify(collected)
-        };
-
-        const call = (mode === 'edit')
-          ? api('block.update', Object.assign({ id: blockId }, payload))
-          : api('block.create', Object.assign({ pageId, type:'gallery' }, payload));
-
-        call.then(res => {
-          if (!res || res.ok !== true) {
-            notify(mode === 'edit' ? 'Не удалось сохранить gallery' : 'Не удалось создать gallery');
-            return;
-          }
-          notify(mode === 'edit' ? 'Сохранено' : 'Gallery создан');
-          mb.close();
-          loadBlocks();
-        }).catch(() => notify(mode === 'edit' ? 'Ошибка block.update (gallery)' : 'Ошибка block.create (gallery)'));
-      }
+  try {
+    const res = await api('template.createFromPage', {
+      siteId: st.siteId,
+      pageId: st.pageId,
+      name: name.trim()
     });
 
-    setTimeout(() => {
-      const root = document.querySelector('.galleryBuilder');
-      if (!root) return;
+    if (!res || res.ok !== true) {
+      notify('Не удалось сохранить шаблон');
+      return;
+    }
 
-      const snapshot = () => {
-        images = images.map((it, idx) => ({
-          fileId: parseInt(document.querySelector(`[data-gallery-file="${idx}"]`)?.value || it.fileId || 0, 10) || 0,
-          alt: document.querySelector(`[data-gallery-alt="${idx}"]`)?.value || it.alt || ''
-        }));
-        columns = parseInt(document.getElementById('gb_cols')?.value || String(columns), 10);
-        if (![2,3,4].includes(columns)) columns = 3;
-      };
-
-      const rerender = () => {
-        snapshot();
-        root.innerHTML = render();
-        bind();
-      };
-
-      const bind = () => {
-        const addBtn = document.getElementById('gb_add');
-        if (addBtn) addBtn.onclick = () => { snapshot(); images.push({fileId:0, alt:''}); rerender(); };
-
-        root.querySelectorAll('[data-gallery-up]').forEach(btn => {
-          btn.onclick = () => {
-            snapshot();
-            const i = parseInt(btn.getAttribute('data-gallery-up'), 10);
-            if (i > 0) { [images[i-1], images[i]] = [images[i], images[i-1]]; rerender(); }
-          };
-        });
-
-        root.querySelectorAll('[data-gallery-down]').forEach(btn => {
-          btn.onclick = () => {
-            snapshot();
-            const i = parseInt(btn.getAttribute('data-gallery-down'), 10);
-            if (i < images.length - 1) { [images[i+1], images[i]] = [images[i], images[i+1]]; rerender(); }
-          };
-        });
-
-        root.querySelectorAll('[data-gallery-del]').forEach(btn => {
-          btn.onclick = () => {
-            snapshot();
-            const i = parseInt(btn.getAttribute('data-gallery-del'), 10);
-            images.splice(i, 1);
-            if (!images.length) images.push({fileId:0, alt:''});
-            rerender();
-          };
-        });
-
-        root.querySelectorAll('select[data-gallery-file]').forEach(sel => {
-          sel.onchange = () => {
-            const idx = parseInt(sel.getAttribute('data-gallery-file'), 10);
-            const fid = parseInt(sel.value || '0', 10);
-            const box = root.querySelector(`[data-gallery-prev="${idx}"]`);
-            if (!box) return;
-            box.innerHTML = fid ? `<div class="imgPrev"><img src="${fileDownloadUrl(fid)}" alt=""></div>` : '';
-          };
-        });
-      };
-
-      bind();
-    }, 0);
+    notify('Шаблон сохранён');
+  } catch (e) {
+    console.error(e);
+    notify('Ошибка template.createFromPage');
   }
+};
 
-  function addGalleryBlock() {
-    openGalleryDialog('create', 0, null);
-  }
+window.SBEditor.applyTemplateToPage = async function () {
+  const st = window.SBEditor.getState();
+  const api = window.SBEditor.api;
+  const notify = window.SBEditor.notify;
 
-  function addSpacerBlock() {
+  try {
+    const listRes = await api('template.list', {});
+    if (!listRes || listRes.ok !== true) {
+      notify('Не удалось загрузить шаблоны');
+      return;
+    }
+
+    const templates = Array.isArray(listRes.templates) ? listRes.templates : [];
+    if (!templates.length) {
+      notify('Шаблонов пока нет');
+      return;
+    }
+
+    const options = templates.map(t => {
+      return `<option value="${parseInt(t.id, 10)}">${BX.util.htmlspecialchars(String(t.name || ('Template #' + t.id)))}</option>`;
+    }).join('');
+
     BX.UI.Dialogs.MessageBox.show({
-      title: 'Новый Spacer блок',
+      title: 'Применить шаблон',
       message: `
         <div>
           <div class="field">
-            <label>Высота (10..200 px)</label>
-            <input id="sp_h" class="input" type="number" min="10" max="200" value="40" />
+            <label>Шаблон</label>
+            <select id="tpl_apply_id" class="input">${options}</select>
           </div>
           <div class="field">
-            <label><input id="sp_line" type="checkbox" /> Рисовать линию</label>
+            <label>Режим</label>
+            <select id="tpl_apply_mode" class="input">
+              <option value="append">Добавить к текущим блокам</option>
+              <option value="replace">Заменить все текущие блоки</option>
+            </select>
           </div>
         </div>
       `,
       buttons: BX.UI.Dialogs.MessageBoxButtons.OK_CANCEL,
-      onOk: function(mb){
-        const height = parseInt(document.getElementById('sp_h')?.value || '40', 10);
-        const line = document.getElementById('sp_line')?.checked ? '1' : '0';
+      onOk: async function (mbox) {
+        const templateId = parseInt(document.getElementById('tpl_apply_id')?.value || '0', 10);
+        const mode = String(document.getElementById('tpl_apply_mode')?.value || 'append');
 
-        api('block.create', { pageId, type:'spacer', height, line })
-          .then(res => {
-            if (!res || res.ok !== true) { notify('Не удалось создать spacer'); return; }
-            notify('Spacer создан');
-            mb.close();
-            loadBlocks();
-          })
-          .catch(() => notify('Ошибка block.create (spacer)'));
+        if (!templateId) {
+          notify('Шаблон не выбран');
+          return;
+        }
+
+        try {
+          const res = await api('template.applyToPage', {
+            siteId: st.siteId,
+            pageId: st.pageId,
+            templateId,
+            mode
+          });
+
+          if (!res || res.ok !== true) {
+            notify('Не удалось применить шаблон');
+            return;
+          }
+
+          notify('Шаблон применён');
+          mbox.close();
+
+          if (typeof window.SBEditor.loadBlocks === 'function') {
+            window.SBEditor.loadBlocks();
+          }
+        } catch (e) {
+          console.error(e);
+          notify('Ошибка template.applyToPage');
+        }
       }
     });
+  } catch (e) {
+    console.error(e);
+    notify('Ошибка template.list');
   }
+};
 
-Шлю следующий кусок после openCardDialog(...), addCardBlock(), addCardsBlock() и edit... функций.
+window.SBEditor.openSectionsLibrary = function () {
+  const st = window.SBEditor.getState();
+  const notify = window.SBEditor.notify;
+
+  const presets = [
+    {
+      key: 'hero',
+      title: 'Hero',
+      text: 'Секция с крупным заголовком, текстом и кнопкой',
+      create: async function () {
+        await window.SBEditor.addSectionBlockWithPreset('hero');
+
+        const listRes = await window.SBEditor.api('block.list', { pageId: st.pageId });
+        const blocks = Array.isArray(listRes?.blocks) ? listRes.blocks.slice() : [];
+        const sections = blocks
+          .filter(b => String(b.type || '') === 'section')
+          .sort((a, b) => parseInt(b.id, 10) - parseInt(a.id, 10));
+
+        const section = sections[0];
+        if (!section) return;
+
+        await window.SBEditor.quickAddHeadingAfterSection(section.id);
+        await window.SBEditor.quickAddTextAfterSection(section.id);
+        await window.SBEditor.quickAddButtonAfterSection(section.id);
+      }
+    },
+    {
+      key: 'cards',
+      title: 'Cards section',
+      text: 'Секция с карточками преимуществ',
+      create: async function () {
+        await window.SBEditor.addSectionBlockWithPreset('light');
+
+        const listRes = await window.SBEditor.api('block.list', { pageId: st.pageId });
+        const blocks = Array.isArray(listRes?.blocks) ? listRes.blocks.slice() : [];
+        const sections = blocks
+          .filter(b => String(b.type || '') === 'section')
+          .sort((a, b) => parseInt(b.id, 10) - parseInt(a.id, 10));
+
+        const section = sections[0];
+        if (!section) return;
+
+        await window.SBEditor.quickAddHeadingAfterSection(section.id);
+        await window.SBEditor.quickAddCardsAfterSection(section.id);
+      }
+    },
+    {
+      key: 'cta',
+      title: 'CTA',
+      text: 'Небольшая акцентная секция с кнопкой',
+      create: async function () {
+        await window.SBEditor.addSectionBlockWithPreset('accent');
+
+        const listRes = await window.SBEditor.api('block.list', { pageId: st.pageId });
+        const blocks = Array.isArray(listRes?.blocks) ? listRes.blocks.slice() : [];
+        const sections = blocks
+          .filter(b => String(b.type || '') === 'section')
+          .sort((a, b) => parseInt(b.id, 10) - parseInt(a.id, 10));
+
+        const section = sections[0];
+        if (!section) return;
+
+        await window.SBEditor.quickAddHeadingAfterSection(section.id);
+        await window.SBEditor.quickAddButtonAfterSection(section.id);
+      }
+    }
+  ];
+
+  BX.UI.Dialogs.MessageBox.show({
+    title: 'Библиотека секций',
+    message: `
+      <div style="display:grid;gap:12px;">
+        ${presets.map(p => `
+          <div class="subCard" style="padding:12px;">
+            <div style="font-weight:700;font-size:15px;">${BX.util.htmlspecialchars(p.title)}</div>
+            <div class="muted" style="margin-top:6px;">${BX.util.htmlspecialchars(p.text)}</div>
+            <div style="margin-top:10px;">
+              <button class="ui-btn ui-btn-primary ui-btn-xs" data-sections-lib-key="${BX.util.htmlspecialchars(p.key)}">Создать</button>
+            </div>
+          </div>
+        `).join('')}
+      </div>
+    `,
+    buttons: BX.UI.Dialogs.MessageBoxButtons.CANCEL,
+    onCancel: function () {}
+  });
+
+  setTimeout(() => {
+    document.querySelectorAll('[data-sections-lib-key]').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const key = btn.getAttribute('data-sections-lib-key');
+        const preset = presets.find(x => x.key === key);
+        if (!preset) return;
+
+        try {
+          await preset.create();
+          notify('Секция создана');
+
+          if (typeof window.SBEditor.loadBlocks === 'function') {
+            window.SBEditor.loadBlocks();
+          }
+        } catch (e) {
+          console.error(e);
+          notify('Ошибка создания секции');
+        }
+      });
+    });
+  }, 0);
+};
+
+window.SBEditor.openCardsBuilderDialog = function (opts = {}) {
+  const title = String(opts.title || 'Карточки');
+  const initialItems = Array.isArray(opts.items) ? opts.items.slice() : [];
+  const initialColumns = parseInt(opts.columns || 3, 10);
+  const onSubmit = typeof opts.onSubmit === 'function' ? opts.onSubmit : null;
+
+  const rowsHtml = (initialItems.length ? initialItems : [
+    { title: '', text: '', imageFileId: 0, buttonText: '', buttonUrl: '' }
+  ]).map((item, idx) => {
+    const clean = window.SBEditor.cardsNormalizeItem(item);
+
+    return `
+      <div class="cardsBuilderRow" data-cards-row="${idx}" style="border:1px solid #e5e7eb;border-radius:12px;padding:12px;margin-top:10px;">
+        <div class="field">
+          <label>Заголовок</label>
+          <input class="input" data-role="title" value="${BX.util.htmlspecialchars(clean.title)}">
+        </div>
+
+        <div class="field">
+          <label>Текст</label>
+          <textarea class="input" rows="4" data-role="text">${BX.util.htmlspecialchars(clean.text)}</textarea>
+        </div>
+
+        <div class="field">
+          <label>Image fileId</label>
+          <input class="input" data-role="imageFileId" type="number" min="0" value="${clean.imageFileId}">
+        </div>
+
+        <div class="field">
+          <label>Текст кнопки</label>
+          <input class="input" data-role="buttonText" value="${BX.util.htmlspecialchars(clean.buttonText)}">
+        </div>
+
+        <div class="field">
+          <label>URL кнопки</label>
+          <input class="input" data-role="buttonUrl" value="${BX.util.htmlspecialchars(clean.buttonUrl)}">
+        </div>
+
+        <div style="margin-top:8px;">
+          <button type="button" class="ui-btn ui-btn-light ui-btn-xs" data-remove-cards-row="${idx}">Удалить карточку</button>
+        </div>
+      </div>
+    `;
+  }).join('');
+
+Шлю вторую часть дальше.
