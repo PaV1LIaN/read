@@ -1,179 +1,223 @@
-Продолжаю с того места, где у тебя обрывается editHeadingBlock(id):
+Продолжение:
 
-const l = document.getElementById('edit_h_level');
-        const a = document.getElementById('edit_h_align');
-        const wrap = document.getElementById('edit_h_preview_wrap');
-        if (!t || !l || !a || !wrap) return;
-
-        const update = () => {
-          const txt = t.value || 'Заголовок';
-          const tag = headingTag(l.value);
-          const al = headingAlign(a.value);
-          wrap.style.textAlign = al;
-          wrap.innerHTML = `<${tag} id="edit_h_preview">${BX.util.htmlspecialchars(txt)}</${tag}>`;
-        };
-
-        t.addEventListener('input', update);
-        l.addEventListener('change', update);
-        a.addEventListener('change', update);
-        update();
-      }, 0);
+notify('Columns2 создан');
+            mb.close();
+            loadBlocks();
+          })
+          .catch(() => notify('Ошибка block.create (columns2)'));
+      }
     });
   }
 
-  function editCols2Block(id) {
-    api('block.list', { pageId }).then(res => {
-      if (!res || res.ok !== true) return;
-      const blk = (res.blocks || []).find(x => parseInt(x.id,10) === id);
-      const current = blk?.content || {};
+  async function openGalleryDialog(mode, blockId, currentContent) {
+    let files = [];
+    try { files = await getFilesForSite(); } catch(e) { files = []; }
 
-      BX.UI.Dialogs.MessageBox.show({
-        title: 'Редактировать Columns2 #' + id,
-        message: `
+    let columns = currentContent?.columns ? parseInt(currentContent.columns, 10) : 3;
+    if (![2,3,4].includes(columns)) columns = 3;
+
+    let images = Array.isArray(currentContent?.images) ? currentContent.images.map(x => ({
+      fileId: parseInt(x.fileId || 0, 10) || 0,
+      alt: x.alt || ''
+    })) : [{fileId:0, alt:''}];
+
+    const fileOptions = (selectedId) => {
+      const opts = ['<option value="0">— выбрать файл —</option>'];
+      files.forEach(f => {
+        const s = (parseInt(f.id,10) === selectedId) ? 'selected' : '';
+        opts.push(`<option value="${f.id}" ${s}>${BX.util.htmlspecialchars(f.name)} (id ${f.id})</option>`);
+      });
+      return opts.join('');
+    };
+
+    const renderItems = () => images.map((it, idx) => `
+      <div class="item" data-gi="${idx}">
+        <div class="itemHead">
+          <div><b>Изображение ${idx + 1}</b></div>
+          <div class="miniBtns">
+            <button class="ui-btn ui-btn-light ui-btn-xs" data-gallery-up="${idx}">↑</button>
+            <button class="ui-btn ui-btn-light ui-btn-xs" data-gallery-down="${idx}">↓</button>
+            <button class="ui-btn ui-btn-danger ui-btn-xs" data-gallery-del="${idx}">Удалить</button>
+          </div>
+        </div>
+
+        <div class="grid2" style="margin-top:10px;">
           <div>
             <div class="field">
-              <label>Соотношение</label>
-              <select id="edit_c_ratio" class="input">
-                <option value="50-50" ${(current.ratio || '50-50') === '50-50' ? 'selected' : ''}>50 / 50</option>
-                <option value="33-67" ${(current.ratio || '') === '33-67' ? 'selected' : ''}>33 / 67</option>
-                <option value="67-33" ${(current.ratio || '') === '67-33' ? 'selected' : ''}>67 / 33</option>
+              <label>Файл</label>
+              <select class="input" data-gallery-file="${idx}">
+                ${fileOptions(parseInt(it.fileId || 0, 10))}
               </select>
             </div>
-            <div class="field">
-              <label>Левая колонка</label>
-              <textarea id="edit_c_left" class="input" style="height:120px;">${BX.util.htmlspecialchars(current.left || '')}</textarea>
-            </div>
-            <div class="field">
-              <label>Правая колонка</label>
-              <textarea id="edit_c_right" class="input" style="height:120px;">${BX.util.htmlspecialchars(current.right || '')}</textarea>
+
+            <div data-gallery-prev="${idx}">
+              ${parseInt(it.fileId || 0, 10) ? `<div class="imgPrev"><img src="${fileDownloadUrl(parseInt(it.fileId || 0, 10))}" alt=""></div>` : ''}
             </div>
           </div>
-        `,
-        buttons: BX.UI.Dialogs.MessageBoxButtons.OK_CANCEL,
-        onOk: function (mb) {
-          const ratio = document.getElementById('edit_c_ratio')?.value || '50-50';
-          const left = document.getElementById('edit_c_left')?.value || '';
-          const right = document.getElementById('edit_c_right')?.value || '';
 
-          api('block.update', { id, ratio, left, right })
-            .then(r => {
-              if (!r || r.ok !== true) { notify('Не удалось сохранить columns2'); return; }
-              notify('Сохранено');
-              mb.close();
-              loadBlocks();
-            })
-            .catch(() => notify('Ошибка block.update (columns2)'));
-        }
-      });
-    });
-  }
-
-  function editSpacerBlock(id) {
-    api('block.list', { pageId }).then(res => {
-      if (!res || res.ok !== true) return;
-      const blk = (res.blocks || []).find(x => parseInt(x.id,10) === id);
-      const current = blk?.content || {};
-
-      BX.UI.Dialogs.MessageBox.show({
-        title: 'Редактировать Spacer #' + id,
-        message: `
           <div>
             <div class="field">
-              <label>Высота (10..200 px)</label>
-              <input id="edit_sp_h" class="input" type="number" min="10" max="200" value="${parseInt(current.height || 40, 10)}" />
-            </div>
-            <div class="field">
-              <label><input id="edit_sp_line" type="checkbox" ${current.line ? 'checked' : ''} /> Рисовать линию</label>
+              <label>Alt</label>
+              <input class="input" data-gallery-alt="${idx}" value="${BX.util.htmlspecialchars(it.alt || '')}">
             </div>
           </div>
-        `,
-        buttons: BX.UI.Dialogs.MessageBoxButtons.OK_CANCEL,
-        onOk: function(mb){
-          const height = parseInt(document.getElementById('edit_sp_h')?.value || '40', 10);
-          const line = document.getElementById('edit_sp_line')?.checked ? '1' : '0';
+        </div>
+      </div>
+    `).join('');
 
-          api('block.update', { id, height, line })
-            .then(r => {
-              if (!r || r.ok !== true) { notify('Не удалось сохранить spacer'); return; }
-              notify('Сохранено');
-              mb.close();
-              loadBlocks();
-            })
-            .catch(() => notify('Ошибка block.update (spacer)'));
-        }
-      });
-    });
-  }
+    const render = () => `
+      <div class="galleryBuilder">
+        <div class="field">
+          <label>Колонки</label>
+          <select id="gb_cols" class="input">
+            <option value="2" ${columns===2?'selected':''}>2</option>
+            <option value="3" ${columns===3?'selected':''}>3</option>
+            <option value="4" ${columns===4?'selected':''}>4</option>
+          </select>
+        </div>
 
-  function editGalleryBlock(id) {
-    api('block.list', { pageId }).then(res => {
-      if (!res || res.ok !== true) return;
-      const blk = (res.blocks || []).find(x => parseInt(x.id,10) === id);
-      openGalleryDialog('edit', id, blk?.content || null);
-    });
-  }
+        <div style="margin-top:10px;">
+          <button class="ui-btn ui-btn-light" id="gb_add">+ Добавить изображение</button>
+        </div>
 
-  function editCardBlock(id) {
-    api('block.list', { pageId }).then(res => {
-      if (!res || res.ok !== true) return;
-      const blk = (res.blocks || []).find(x => parseInt(x.id,10) === id);
-      openCardDialog('edit', id, blk?.content || null);
-    });
-  }
+        <div id="gb_items">${renderItems()}</div>
+      </div>
+    `;
 
-  function editCardsBlock(id) {
-    api('block.list', { pageId }).then(res => {
-      if (!res || res.ok !== true) return;
-      const blk = (res.blocks || []).find(x => parseInt(x.id,10) === id);
-      const current = blk?.content || {};
+    BX.UI.Dialogs.MessageBox.show({
+      title: mode === 'edit' ? ('Редактировать Gallery #' + blockId) : 'Новая Gallery',
+      message: render(),
+      buttons: BX.UI.Dialogs.MessageBoxButtons.OK_CANCEL,
+      onOk: function(mb){
+        columns = parseInt(document.getElementById('gb_cols')?.value || '3', 10);
+        if (![2,3,4].includes(columns)) columns = 3;
 
-      openCardsBuilderDialog({
-        title: 'Редактировать Cards #' + id,
-        columns: parseInt(current.columns || 3, 10),
-        items: Array.isArray(current.items) ? current.items : [],
-        onSubmit: async function ({ columns, items }) {
-          const r = await api('block.update', {
-            id,
-            columns,
-            items: JSON.stringify(items)
-          });
+        const collected = images.map((_, idx) => {
+          const fileId = parseInt(document.querySelector(`[data-gallery-file="${idx}"]`)?.value || '0', 10) || 0;
+          const alt = document.querySelector(`[data-gallery-alt="${idx}"]`)?.value || '';
+          return { fileId, alt };
+        }).filter(x => x.fileId > 0);
 
-          if (!r || r.ok !== true) {
-            notify('Не удалось сохранить cards');
+        if (!collected.length) { notify('Добавь хотя бы одно изображение'); return; }
+
+        const payload = {
+          columns,
+          images: JSON.stringify(collected)
+        };
+
+        const call = (mode === 'edit')
+          ? api('block.update', Object.assign({ id: blockId }, payload))
+          : api('block.create', Object.assign({ pageId, type:'gallery' }, payload));
+
+        call.then(res => {
+          if (!res || res.ok !== true) {
+            notify(mode === 'edit' ? 'Не удалось сохранить gallery' : 'Не удалось создать gallery');
             return;
           }
-
-          notify('Cards сохранён');
+          notify(mode === 'edit' ? 'Сохранено' : 'Gallery создан');
+          mb.close();
           loadBlocks();
-        }
-      });
+        }).catch(() => notify(mode === 'edit' ? 'Ошибка block.update (gallery)' : 'Ошибка block.create (gallery)'));
+      }
+    });
+
+    setTimeout(() => {
+      const root = document.querySelector('.galleryBuilder');
+      if (!root) return;
+
+      const snapshot = () => {
+        images = images.map((it, idx) => ({
+          fileId: parseInt(document.querySelector(`[data-gallery-file="${idx}"]`)?.value || it.fileId || 0, 10) || 0,
+          alt: document.querySelector(`[data-gallery-alt="${idx}"]`)?.value || it.alt || ''
+        }));
+        columns = parseInt(document.getElementById('gb_cols')?.value || String(columns), 10);
+        if (![2,3,4].includes(columns)) columns = 3;
+      };
+
+      const rerender = () => {
+        snapshot();
+        root.innerHTML = render();
+        bind();
+      };
+
+      const bind = () => {
+        const addBtn = document.getElementById('gb_add');
+        if (addBtn) addBtn.onclick = () => { snapshot(); images.push({fileId:0, alt:''}); rerender(); };
+
+        root.querySelectorAll('[data-gallery-up]').forEach(btn => {
+          btn.onclick = () => {
+            snapshot();
+            const i = parseInt(btn.getAttribute('data-gallery-up'), 10);
+            if (i > 0) { [images[i-1], images[i]] = [images[i], images[i-1]]; rerender(); }
+          };
+        });
+
+        root.querySelectorAll('[data-gallery-down]').forEach(btn => {
+          btn.onclick = () => {
+            snapshot();
+            const i = parseInt(btn.getAttribute('data-gallery-down'), 10);
+            if (i < images.length - 1) { [images[i+1], images[i]] = [images[i], images[i+1]]; rerender(); }
+          };
+        });
+
+        root.querySelectorAll('[data-gallery-del]').forEach(btn => {
+          btn.onclick = () => {
+            snapshot();
+            const i = parseInt(btn.getAttribute('data-gallery-del'), 10);
+            images.splice(i, 1);
+            if (!images.length) images.push({fileId:0, alt:''});
+            rerender();
+          };
+        });
+
+        root.querySelectorAll('select[data-gallery-file]').forEach(sel => {
+          sel.onchange = () => {
+            const idx = parseInt(sel.getAttribute('data-gallery-file'), 10);
+            const fid = parseInt(sel.value || '0', 10);
+            const box = root.querySelector(`[data-gallery-prev="${idx}"]`);
+            if (!box) return;
+            box.innerHTML = fid ? `<div class="imgPrev"><img src="${fileDownloadUrl(fid)}" alt=""></div>` : '';
+          };
+        });
+      };
+
+      bind();
+    }, 0);
+  }
+
+  function addGalleryBlock() {
+    openGalleryDialog('create', 0, null);
+  }
+
+  function addSpacerBlock() {
+    BX.UI.Dialogs.MessageBox.show({
+      title: 'Новый Spacer блок',
+      message: `
+        <div>
+          <div class="field">
+            <label>Высота (10..200 px)</label>
+            <input id="sp_h" class="input" type="number" min="10" max="200" value="40" />
+          </div>
+          <div class="field">
+            <label><input id="sp_line" type="checkbox" /> Рисовать линию</label>
+          </div>
+        </div>
+      `,
+      buttons: BX.UI.Dialogs.MessageBoxButtons.OK_CANCEL,
+      onOk: function(mb){
+        const height = parseInt(document.getElementById('sp_h')?.value || '40', 10);
+        const line = document.getElementById('sp_line')?.checked ? '1' : '0';
+
+        api('block.create', { pageId, type:'spacer', height, line })
+          .then(res => {
+            if (!res || res.ok !== true) { notify('Не удалось создать spacer'); return; }
+            notify('Spacer создан');
+            mb.close();
+            loadBlocks();
+          })
+          .catch(() => notify('Ошибка block.create (spacer)'));
+      }
     });
   }
 
-  window.saveTemplateFromPage = window.SBEditor.saveTemplateFromPage;
-  window.applyTemplateToPage = window.SBEditor.applyTemplateToPage;
-  window.openSectionsLibrary = window.SBEditor.openSectionsLibrary;
-  window.openCardsBuilderDialog = window.SBEditor.openCardsBuilderDialog;
-
-  window.addTextBlock = addTextBlock;
-  window.addImageBlock = addImageBlock;
-  window.addButtonBlock = addButtonBlock;
-  window.addHeadingBlock = addHeadingBlock;
-  window.addCols2Block = addCols2Block;
-  window.addGalleryBlock = addGalleryBlock;
-  window.addSpacerBlock = addSpacerBlock;
-  window.addCardBlock = addCardBlock;
-  window.addCardsBlock = addCardsBlock;
-
-  window.editTextBlock = editTextBlock;
-  window.editImageBlock = editImageBlock;
-  window.editButtonBlock = editButtonBlock;
-  window.editHeadingBlock = editHeadingBlock;
-  window.editCols2Block = editCols2Block;
-  window.editGalleryBlock = editGalleryBlock;
-  window.editSpacerBlock = editSpacerBlock;
-  window.editCardBlock = editCardBlock;
-  window.editCardsBlock = editCardsBlock;
-})();
-
-Если хочешь, я могу теперь собрать тебе цельный editor.dialogs.js одним сообщением в canmore-стиле блоками или помочь сразу проверить, нет ли в твоём текущем куске синтаксических дыр после склейки.
+Шлю следующий кусок после openCardDialog(...), addCardBlock(), addCardsBlock() и edit... функций.
