@@ -1,348 +1,491 @@
-Отлично. Тогда идём правильно: сначала заполняем эти 5 файлов и сразу облегчаем api.php.
+Отлично, это даже безопаснее. api.php пока не трогаем, а продолжаем готовить фундамент вокруг него.
 
-Ниже — готовое содержимое для каждого файла.
+Тогда следующий правильный шаг — добавить ещё 3 файла в lib:
+
+menu.php
+
+layout.php
+
+disk.php
 
 
----
-
-lib/bootstrap.php
-
-<?php
-declare(strict_types=1);
-
-define('NO_KEEP_STATISTIC', true);
-define('NO_AGENT_STATISTIC', true);
-define('DisableEventsCheck', true);
-
-require $_SERVER['DOCUMENT_ROOT'] . '/bitrix/modules/main/include/prolog_before.php';
-
-use Bitrix\Main\Loader;
-use Bitrix\Disk\Storage;
-use Bitrix\Disk\Folder;
-use Bitrix\Disk\File;
-use Bitrix\Disk\Driver;
-
-global $USER;
-
-header('Content-Type: application/json; charset=UTF-8');
-
-if (!$USER->IsAuthorized()) {
-    http_response_code(401);
-    echo json_encode(['ok' => false, 'error' => 'NOT_AUTHORIZED'], JSON_UNESCAPED_UNICODE);
-    exit;
-}
-
-if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
-    http_response_code(405);
-    echo json_encode(['ok' => false, 'error' => 'METHOD_NOT_ALLOWED'], JSON_UNESCAPED_UNICODE);
-    exit;
-}
-
-if (!check_bitrix_sessid()) {
-    http_response_code(403);
-    echo json_encode(['ok' => false, 'error' => 'BAD_SESSID'], JSON_UNESCAPED_UNICODE);
-    exit;
-}
+И только потом уже менять api.php целиком.
 
 
 ---
 
-lib/response.php
+1. lib/menu.php
+
+Создай файл lib/menu.php и вставь:
 
 <?php
 declare(strict_types=1);
 
-function sb_ok(array $data = []): void
+function sb_menu_get_site_record(array $all, int $siteId): ?array
 {
-    echo json_encode(array_merge(['ok' => true], $data), JSON_UNESCAPED_UNICODE);
-    exit;
-}
-
-function sb_error(int $status, string $error, array $extra = []): void
-{
-    http_response_code($status);
-    echo json_encode(array_merge([
-        'ok' => false,
-        'error' => $error,
-    ], $extra), JSON_UNESCAPED_UNICODE);
-    exit;
-}
-
-
----
-
-lib/storage.php
-
-<?php
-declare(strict_types=1);
-
-function sb_data_path(string $file): string
-{
-    return $_SERVER['DOCUMENT_ROOT'] . '/upload/sitebuilder/' . $file;
-}
-
-function sb_read_json_file(string $file): array
-{
-    $path = sb_data_path($file);
-    if (!file_exists($path)) {
-        return [];
-    }
-
-    $fp = fopen($path, 'rb');
-    if (!$fp) {
-        return [];
-    }
-
-    $raw = '';
-    if (flock($fp, LOCK_SH)) {
-        $raw = (string)stream_get_contents($fp);
-        flock($fp, LOCK_UN);
-    } else {
-        $raw = (string)stream_get_contents($fp);
-    }
-    fclose($fp);
-
-    if (strncmp($raw, "\xEF\xBB\xBF", 3) === 0) {
-        $raw = substr($raw, 3);
-    }
-
-    $data = json_decode($raw, true);
-    return is_array($data) ? $data : [];
-}
-
-function sb_write_json_file(string $file, array $data, string $errMsg): void
-{
-    $dir = dirname(sb_data_path($file));
-    if (!is_dir($dir)) {
-        mkdir($dir, 0775, true);
-    }
-
-    $path = sb_data_path($file);
-    $fp = fopen($path, 'c+');
-    if (!$fp) {
-        throw new RuntimeException($errMsg);
-    }
-
-    if (!flock($fp, LOCK_EX)) {
-        fclose($fp);
-        throw new RuntimeException('Cannot lock ' . $file);
-    }
-
-    ftruncate($fp, 0);
-    rewind($fp);
-    fwrite($fp, json_encode(array_values($data), JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT));
-    fflush($fp);
-    flock($fp, LOCK_UN);
-    fclose($fp);
-}
-
-function sb_read_sites(): array { return sb_read_json_file('sites.json'); }
-function sb_write_sites(array $sites): void { sb_write_json_file('sites.json', $sites, 'Cannot open sites.json'); }
-
-function sb_read_pages(): array { return sb_read_json_file('pages.json'); }
-function sb_write_pages(array $pages): void { sb_write_json_file('pages.json', $pages, 'Cannot open pages.json'); }
-
-function sb_read_blocks(): array { return sb_read_json_file('blocks.json'); }
-function sb_write_blocks(array $blocks): void { sb_write_json_file('blocks.json', $blocks, 'Cannot open blocks.json'); }
-
-function sb_read_access(): array { return sb_read_json_file('access.json'); }
-function sb_write_access(array $access): void { sb_write_json_file('access.json', $access, 'Cannot open access.json'); }
-
-function sb_read_menus(): array { return sb_read_json_file('menus.json'); }
-function sb_write_menus(array $menus): void { sb_write_json_file('menus.json', $menus, 'Cannot open menus.json'); }
-
-function sb_read_templates(): array { return sb_read_json_file('templates.json'); }
-function sb_write_templates(array $templates): void { sb_write_json_file('templates.json', $templates, 'Cannot open templates.json'); }
-
-function sb_read_layouts(): array { return sb_read_json_file('layouts.json'); }
-function sb_write_layouts(array $layouts): void { sb_write_json_file('layouts.json', $layouts, 'Cannot open layouts.json'); }
-
-
----
-
-lib/access.php
-
-<?php
-declare(strict_types=1);
-
-function sb_user_access_code(): string
-{
-    return 'U' . (int)$GLOBALS['USER']->GetID();
-}
-
-function sb_get_role(int $siteId, string $accessCode): ?string
-{
-    $access = sb_read_access();
-
-    foreach ($access as $r) {
-        if ((int)($r['siteId'] ?? 0) === $siteId && (string)($r['accessCode'] ?? '') === $accessCode) {
-            $role = strtoupper((string)($r['role'] ?? ''));
-            return $role !== '' ? $role : null;
-        }
-    }
-
-    return null;
-}
-
-function sb_role_rank(?string $role): int
-{
-    $role = strtoupper((string)$role);
-
-    return match ($role) {
-        'OWNER'  => 4,
-        'ADMIN'  => 3,
-        'EDITOR' => 2,
-        'VIEWER' => 1,
-        default  => 0,
-    };
-}
-
-function sb_require_site_role(int $siteId, int $minRank): void
-{
-    $role = sb_get_role($siteId, sb_user_access_code());
-
-    if (sb_role_rank($role) < $minRank) {
-        sb_error(403, 'FORBIDDEN', [
-            'siteId' => $siteId,
-            'role' => $role,
-        ]);
-    }
-}
-
-function sb_require_owner(int $siteId): void { sb_require_site_role($siteId, 4); }
-function sb_require_admin(int $siteId): void { sb_require_site_role($siteId, 3); }
-function sb_require_editor(int $siteId): void { sb_require_site_role($siteId, 2); }
-function sb_require_viewer(int $siteId): void { sb_require_site_role($siteId, 1); }
-
-function sb_site_exists(int $siteId): bool
-{
-    foreach (sb_read_sites() as $s) {
-        if ((int)($s['id'] ?? 0) === $siteId) {
-            return true;
-        }
-    }
-    return false;
-}
-
-function sb_find_site(int $siteId): ?array
-{
-    foreach (sb_read_sites() as $s) {
-        if ((int)($s['id'] ?? 0) === $siteId) {
-            return $s;
+    foreach ($all as $r) {
+        if ((int)($r['siteId'] ?? 0) === $siteId) {
+            return $r;
         }
     }
     return null;
 }
 
-function sb_find_page(int $pageId): ?array
+function sb_menu_upsert_site_record(array &$all, int $siteId, array $record): void
 {
-    foreach (sb_read_pages() as $p) {
-        if ((int)($p['id'] ?? 0) === $pageId) {
-            return $p;
+    $found = false;
+
+    foreach ($all as $i => $r) {
+        if ((int)($r['siteId'] ?? 0) === $siteId) {
+            $all[$i] = $record;
+            $found = true;
+            break;
+        }
+    }
+
+    if (!$found) {
+        $all[] = $record;
+    }
+}
+
+function sb_menu_next_menu_id(array $siteRecord): int
+{
+    $max = 0;
+    foreach (($siteRecord['menus'] ?? []) as $m) {
+        $max = max($max, (int)($m['id'] ?? 0));
+    }
+    return $max + 1;
+}
+
+function sb_menu_next_item_id(array $menu): int
+{
+    $max = 0;
+    foreach (($menu['items'] ?? []) as $it) {
+        $max = max($max, (int)($it['id'] ?? 0));
+    }
+    return $max + 1;
+}
+
+function sb_menu_next_sort(array $items): int
+{
+    $max = 0;
+    foreach ($items as $it) {
+        $max = max($max, (int)($it['sort'] ?? 0));
+    }
+    return $max + 10;
+}
+
+function sb_menu_find_menu(array $siteRecord, int $menuId): ?array
+{
+    foreach (($siteRecord['menus'] ?? []) as $m) {
+        if ((int)($m['id'] ?? 0) === $menuId) {
+            return $m;
         }
     }
     return null;
 }
 
-function sb_find_block(int $blockId): ?array
+function sb_menu_update_menu(array &$siteRecord, int $menuId, callable $fn): bool
 {
-    foreach (sb_read_blocks() as $b) {
+    $menus = $siteRecord['menus'] ?? [];
+    $changed = false;
+
+    foreach ($menus as $i => $m) {
+        if ((int)($m['id'] ?? 0) === $menuId) {
+            $menus[$i] = $fn($m);
+            $changed = true;
+            break;
+        }
+    }
+
+    if ($changed) {
+        $siteRecord['menus'] = $menus;
+    }
+
+    return $changed;
+}
+
+
+---
+
+2. lib/layout.php
+
+Создай файл lib/layout.php и вставь:
+
+<?php
+declare(strict_types=1);
+
+function sb_layout_empty_record(int $siteId): array
+{
+    return [
+        'siteId' => $siteId,
+        'zones' => [
+            'header' => [],
+            'footer' => [],
+            'left'   => [],
+            'right'  => [],
+        ],
+    ];
+}
+
+function sb_layout_find_record(array $all, int $siteId): ?array
+{
+    foreach ($all as $r) {
+        if ((int)($r['siteId'] ?? 0) === $siteId) {
+            return $r;
+        }
+    }
+    return null;
+}
+
+function sb_layout_upsert_record(array &$all, int $siteId, array $record): void
+{
+    $found = false;
+
+    foreach ($all as $i => $r) {
+        if ((int)($r['siteId'] ?? 0) === $siteId) {
+            $all[$i] = $record;
+            $found = true;
+            break;
+        }
+    }
+
+    if (!$found) {
+        $all[] = $record;
+    }
+}
+
+function sb_layout_ensure_record(int $siteId): array
+{
+    $all = sb_read_layouts();
+    $rec = sb_layout_find_record($all, $siteId);
+
+    if ($rec) {
+        return $rec;
+    }
+
+    $rec = sb_layout_empty_record($siteId);
+    $all[] = $rec;
+    sb_write_layouts($all);
+
+    return $rec;
+}
+
+function sb_layout_valid_zone(string $zone): bool
+{
+    return in_array($zone, ['header', 'footer', 'left', 'right'], true);
+}
+
+function sb_layout_zone_blocks(array $record, string $zone): array
+{
+    $zones = $record['zones'] ?? [];
+    $blocks = $zones[$zone] ?? [];
+    return is_array($blocks) ? $blocks : [];
+}
+
+function sb_layout_zone_set(array &$record, string $zone, array $blocks): void
+{
+    if (!isset($record['zones']) || !is_array($record['zones'])) {
+        $record['zones'] = [];
+    }
+
+    $record['zones'][$zone] = array_values($blocks);
+}
+
+function sb_layout_next_block_id(array $record): int
+{
+    $max = 0;
+    $zones = is_array($record['zones'] ?? null) ? $record['zones'] : [];
+
+    foreach ($zones as $zoneBlocks) {
+        if (!is_array($zoneBlocks)) {
+            continue;
+        }
+
+        foreach ($zoneBlocks as $b) {
+            $max = max($max, (int)($b['id'] ?? 0));
+        }
+    }
+
+    return $max + 1;
+}
+
+function sb_layout_next_sort(array $blocks): int
+{
+    $max = 0;
+    foreach ($blocks as $b) {
+        $max = max($max, (int)($b['sort'] ?? 0));
+    }
+    return $max + 10;
+}
+
+function sb_layout_find_block(array $record, string $zone, int $blockId): ?array
+{
+    $blocks = sb_layout_zone_blocks($record, $zone);
+
+    foreach ($blocks as $b) {
         if ((int)($b['id'] ?? 0) === $blockId) {
             return $b;
         }
     }
+
     return null;
 }
 
 
 ---
 
-lib/slug.php
+3. lib/disk.php
+
+Создай файл lib/disk.php и вставь:
 
 <?php
 declare(strict_types=1);
 
-function sb_slugify(string $name): string
+function sb_disk_add_subfolder(Folder $parent, array $fields, Storage $storage): Folder
 {
-    $slug = \CUtil::translit($name, 'ru', [
-        'replace_space' => '-',
-        'replace_other' => '-',
-        'change_case' => 'L',
-        'delete_repeat_replace' => true,
-        'use_google' => false,
+    try {
+        $folder = $parent->addSubFolder($fields, []);
+        if ($folder instanceof Folder) {
+            return $folder;
+        }
+    } catch (\Throwable $e) {
+    }
+
+    $ctx = $storage->getSecurityContext($GLOBALS['USER']);
+    $folder = $parent->addSubFolder($fields, $ctx);
+
+    if ($folder instanceof Folder) {
+        return $folder;
+    }
+
+    throw new RuntimeException('CANNOT_CREATE_FOLDER');
+}
+
+function sb_disk_upload_file(Folder $folder, array $fileArray, array $fields, Storage $storage): File
+{
+    try {
+        $obj = $folder->uploadFile($fileArray, $fields, []);
+        if ($obj instanceof File) {
+            return $obj;
+        }
+    } catch (\Throwable $e) {
+    }
+
+    $ctx = $storage->getSecurityContext($GLOBALS['USER']);
+    $obj = $folder->uploadFile($fileArray, $fields, $ctx);
+
+    if ($obj instanceof File) {
+        return $obj;
+    }
+
+    throw new RuntimeException('UPLOAD_FAILED');
+}
+
+function sb_disk_get_children(Folder $folder, Storage $storage): array
+{
+    try {
+        $ctx = $storage->getSecurityContext($GLOBALS['USER']);
+        return $folder->getChildren($ctx);
+    } catch (\Throwable $e) {
+    }
+
+    return $folder->getChildren();
+}
+
+function sb_disk_common_storage(): Storage
+{
+    if (!Loader::includeModule('disk')) {
+        throw new RuntimeException('DISK_NOT_INSTALLED');
+    }
+
+    if (method_exists(\Bitrix\Disk\Storage::class, 'loadByEntity')) {
+        $storage = \Bitrix\Disk\Storage::loadByEntity('common', 0);
+        if ($storage) {
+            return $storage;
+        }
+    }
+
+    $driver = \Bitrix\Disk\Driver::getInstance();
+    if (method_exists($driver, 'getStorageByCommonId')) {
+        $storage = $driver->getStorageByCommonId('shared_files_' . SITE_ID);
+        if ($storage) {
+            return $storage;
+        }
+    }
+
+    throw new RuntimeException('COMMON_STORAGE_NOT_FOUND');
+}
+
+function sb_disk_get_or_create_root(Storage $storage, string $name): Folder
+{
+    $root = $storage->getRootObject();
+
+    $child = $root->getChild([
+        '=NAME' => $name,
+        '=TYPE' => \Bitrix\Disk\Internals\ObjectTable::TYPE_FOLDER,
     ]);
 
-    $slug = trim($slug, '-');
-    return $slug !== '' ? $slug : 'item';
+    if ($child instanceof Folder) {
+        return $child;
+    }
+
+    return sb_disk_add_subfolder($root, [
+        'NAME' => $name,
+        'CREATED_BY' => (int)$GLOBALS['USER']->GetID(),
+    ], $storage);
+}
+
+function sb_disk_ensure_site_folder(int $siteId): Folder
+{
+    $sites = sb_read_sites();
+    $site = null;
+    $siteIndex = null;
+
+    foreach ($sites as $i => $s) {
+        if ((int)($s['id'] ?? 0) === $siteId) {
+            $site = $s;
+            $siteIndex = $i;
+            break;
+        }
+    }
+
+    if (!$site) {
+        throw new RuntimeException('SITE_NOT_FOUND');
+    }
+
+    $storage = sb_disk_common_storage();
+
+    $diskFolderId = (int)($site['diskFolderId'] ?? 0);
+    if ($diskFolderId > 0) {
+        $folder = Folder::loadById($diskFolderId);
+        if ($folder) {
+            return $folder;
+        }
+    }
+
+    $root = sb_disk_get_or_create_root($storage, 'SiteBuilder');
+
+    $slug = (string)($site['slug'] ?? ('site-' . $siteId));
+    $slug = $slug !== '' ? $slug : ('site-' . $siteId);
+
+    $existing = $root->getChild([
+        '=NAME' => $slug,
+        '=TYPE' => \Bitrix\Disk\Internals\ObjectTable::TYPE_FOLDER,
+    ]);
+
+    if ($existing instanceof Folder) {
+        $folder = $existing;
+    } else {
+        $folder = sb_disk_add_subfolder($root, [
+            'NAME' => $slug,
+            'CREATED_BY' => (int)$GLOBALS['USER']->GetID(),
+        ], $storage);
+    }
+
+    $sites[$siteIndex]['diskFolderId'] = (int)$folder->getId();
+    sb_write_sites($sites);
+
+    return $folder;
+}
+
+function sb_disk_sync_folder_rights(int $siteId, Folder $folder): void
+{
+    $rm = Driver::getInstance()->getRightsManager();
+
+    if (!method_exists($rm, 'setRights')) {
+        return;
+    }
+
+    $taskRead = (method_exists($rm, 'getTaskIdByName') && defined(get_class($rm) . '::TASK_READ'))
+        ? $rm->getTaskIdByName($rm::TASK_READ) : null;
+    $taskEdit = (method_exists($rm, 'getTaskIdByName') && defined(get_class($rm) . '::TASK_EDIT'))
+        ? $rm->getTaskIdByName($rm::TASK_EDIT) : null;
+    $taskFull = (method_exists($rm, 'getTaskIdByName') && defined(get_class($rm) . '::TASK_FULL'))
+        ? $rm->getTaskIdByName($rm::TASK_FULL) : null;
+
+    if (!$taskRead || !$taskEdit || !$taskFull) {
+        return;
+    }
+
+    $acc = sb_read_access();
+    $acc = array_values(array_filter($acc, fn($r) => (int)($r['siteId'] ?? 0) === $siteId));
+
+    $rights = [];
+    foreach ($acc as $r) {
+        $code = (string)($r['accessCode'] ?? '');
+        if ($code === '') {
+            continue;
+        }
+
+        $role = strtoupper((string)($r['role'] ?? 'VIEWER'));
+        $taskId = $taskRead;
+
+        if ($role === 'EDITOR') {
+            $taskId = $taskEdit;
+        }
+        if ($role === 'ADMIN' || $role === 'OWNER') {
+            $taskId = $taskFull;
+        }
+
+        $rights[] = [
+            'ACCESS_CODE' => $code,
+            'TASK_ID' => $taskId,
+        ];
+    }
+
+    $rm->setRights($folder, $rights);
+}
+
+function sb_disk_file_belongs_to_site(int $siteId, int $fileId): bool
+{
+    if ($fileId <= 0) {
+        return false;
+    }
+
+    $folder = sb_disk_ensure_site_folder($siteId);
+    $file = \Bitrix\Disk\File::loadById($fileId);
+
+    if (!$file) {
+        return false;
+    }
+
+    return ((int)$file->getParentId() === (int)$folder->getId());
 }
 
 
 ---
 
-Что сделать в api.php сейчас
+Что делать сейчас
 
-В самый верх api.php вместо старого bootstrap и этих helper-функций вставь:
+Пока api.php не трогаем, как ты и сказал.
 
-<?php
-declare(strict_types=1);
+Сейчас просто:
 
-require __DIR__ . '/lib/bootstrap.php';
-require __DIR__ . '/lib/response.php';
-require __DIR__ . '/lib/storage.php';
-require __DIR__ . '/lib/access.php';
-require __DIR__ . '/lib/slug.php';
+1. Создай эти 3 файла.
 
-И после этого из api.php можно удалить:
 
-весь старый bootstrap
+2. Вставь туда код.
 
-старые функции из этих 5 файлов:
 
-JSON storage
-
-access helpers
-
-slugify
-
-ручные echo json_encode(...); exit; пока можно не все удалять, но новые места уже лучше писать через sb_ok() и sb_error()
+3. Ничего ещё не подключай.
 
 
 
 
 ---
 
-Чтобы не сломать проект
+Следующий шаг
 
-Сделай это по порядку:
+После этого пойдём к следующему безопасному этапу:
 
-1. Заполни 5 файлов кодом выше.
+соберём новый api.php-каркас, который будет:
 
+подключать все lib/*
 
-2. В api.php подключи их через require.
-
-
-3. Не удаляй пока сразу все старые функции.
+но пока ещё не резать actions на отдельные файлы
 
 
-4. Сначала убедись, что api.php вообще открывается без fatal error.
+Это будет промежуточный безопасный шаг перед полным рефакторингом api.php.
 
-
-5. Потом начинай удалять дубли.
-
-
-
-
----
-
-Самый безопасный следующий шаг
-
-После этого я дам тебе следующий набор файлов:
-
-lib/menu.php
-
-lib/layout.php
-
-
-А потом уже вынесем disk-слой и начнём резать api.php на action-файлы.
-
-Когда вставишь это, напиши, и пойдём дальше.
+Когда добавишь эти 3 файла, напиши, и я дам следующий шаг.
