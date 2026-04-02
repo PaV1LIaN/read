@@ -1,155 +1,290 @@
-Сейчас самый безопасный следующий шаг — сделать переходный мост, чтобы потом вынести dialogs почти без переписывания.
-
-Почему: в текущем editor.php блок диалогов жёстко завязан на локальные переменные внутри BX.ready(...):
-
-siteId
-
-pageId
-
-api
-
-notify
-
-loadBlocks
-
-blocksBox
-
-collapsedBlocks
-
-
-Если сразу резать диалоги, легко всё сломать. Поэтому сначала делаем bridge.
-
-1. Создай файл
-
-/local/sitebuilder/assets/js/editor.bridge.js
-
-и вставь:
+Часть 1 из 8:
 
 window.SBEditor = window.SBEditor || {};
 
-window.SBEditor.syncLegacyBridge = function () {
+window.SBEditor.saveTemplateFromPage = async function () {
   const st = window.SBEditor.getState();
+  const api = window.SBEditor.api;
+  const notify = window.SBEditor.notify;
 
-  window.siteId = st.siteId;
-  window.pageId = st.pageId;
-  window.blocksBox = st.blocksBox;
-  window.blockSearch = st.blockSearch;
-  window.collapsedBlocks = st.collapsedBlocks;
-  window.allPageBlocks = st.allPageBlocks || [];
+  const name = prompt('Название шаблона:');
+  if (!name) return;
 
-  window.notify = window.SBEditor.notify;
-  window.api = window.SBEditor.api;
+  try {
+    const res = await api('template.createFromPage', {
+      siteId: st.siteId,
+      pageId: st.pageId,
+      name: name.trim()
+    });
 
-  window.fileDownloadUrl = function (fileId) {
-    return window.SBEditor.fileDownloadUrl(window.SBEditor.getState().siteId, fileId);
-  };
+    if (!res || res.ok !== true) {
+      notify('Не удалось сохранить шаблон');
+      return;
+    }
 
-  window.getFilesForSite = function () {
-    return window.SBEditor.getFilesForSite();
-  };
-
-  window.btnClass = window.SBEditor.btnClass;
-  window.headingTag = window.SBEditor.headingTag;
-  window.headingAlign = window.SBEditor.headingAlign;
-  window.colsGridTemplate = window.SBEditor.colsGridTemplate;
-  window.galleryTemplate = window.SBEditor.galleryTemplate;
-  window.cardsNormalizeItem = window.SBEditor.cardsNormalizeItem;
-
-  window.saveBlockOrder = window.SBEditor.saveBlockOrder;
-  window.initBlockDnD = window.SBEditor.initBlockDnD;
-  window.renderBlocks = window.SBEditor.renderBlocks;
-
-  window.SECTION_PRESETS = window.SBEditor.SECTION_PRESETS;
-  window.sectionPresetOptions = window.SBEditor.sectionPresetOptions;
-  window.applySectionPresetToForm = window.SBEditor.applySectionPresetToForm;
-  window.createBlockAfterSection = window.SBEditor.createBlockAfterSection;
-  window.quickAddHeadingAfterSection = window.SBEditor.quickAddHeadingAfterSection;
-  window.quickAddTextAfterSection = window.SBEditor.quickAddTextAfterSection;
-  window.quickAddButtonAfterSection = window.SBEditor.quickAddButtonAfterSection;
-  window.quickAddCardsAfterSection = window.SBEditor.quickAddCardsAfterSection;
-  window.addSectionBlock = window.SBEditor.addSectionBlock;
-  window.editSectionBlock = window.SBEditor.editSectionBlock;
+    notify('Шаблон сохранён');
+  } catch (e) {
+    console.error(e);
+    notify('Ошибка template.createFromPage');
+  }
 };
 
+window.SBEditor.applyTemplateToPage = async function () {
+  const st = window.SBEditor.getState();
+  const api = window.SBEditor.api;
+  const notify = window.SBEditor.notify;
 
----
+  try {
+    const listRes = await api('template.list', {});
+    if (!listRes || listRes.ok !== true) {
+      notify('Не удалось загрузить шаблоны');
+      return;
+    }
 
-2. В editor.init.js добавь синхронизацию bridge
+    const templates = Array.isArray(listRes.templates) ? listRes.templates : [];
+    if (!templates.length) {
+      notify('Шаблонов пока нет');
+      return;
+    }
 
-Найди:
+    const options = templates.map(t => {
+      return `<option value="${parseInt(t.id, 10)}">${BX.util.htmlspecialchars(String(t.name || ('Template #' + t.id)))}</option>`;
+    }).join('');
 
-window.SBEditor.setState(stPatch);
+    BX.UI.Dialogs.MessageBox.show({
+      title: 'Применить шаблон',
+      message: `
+        <div>
+          <div class="field">
+            <label>Шаблон</label>
+            <select id="tpl_apply_id" class="input">${options}</select>
+          </div>
+          <div class="field">
+            <label>Режим</label>
+            <select id="tpl_apply_mode" class="input">
+              <option value="append">Добавить к текущим блокам</option>
+              <option value="replace">Заменить все текущие блоки</option>
+            </select>
+          </div>
+        </div>
+      `,
+      buttons: BX.UI.Dialogs.MessageBoxButtons.OK_CANCEL,
+      onOk: async function (mbox) {
+        const templateId = parseInt(document.getElementById('tpl_apply_id')?.value || '0', 10);
+        const mode = String(document.getElementById('tpl_apply_mode')?.value || 'append');
 
-Сразу после неё вставь:
+        if (!templateId) {
+          notify('Шаблон не выбран');
+          return;
+        }
 
-window.SBEditor.syncLegacyBridge();
+        try {
+          const res = await api('template.applyToPage', {
+            siteId: st.siteId,
+            pageId: st.pageId,
+            templateId,
+            mode
+          });
 
+          if (!res || res.ok !== true) {
+            notify('Не удалось применить шаблон');
+            return;
+          }
 
----
+          notify('Шаблон применён');
+          mbox.close();
 
-3. И в loadBlocks() после обновления allPageBlocks тоже синхронизируй
+          if (typeof window.SBEditor.loadBlocks === 'function') {
+            window.SBEditor.loadBlocks();
+          }
+        } catch (e) {
+          console.error(e);
+          notify('Ошибка template.applyToPage');
+        }
+      }
+    });
+  } catch (e) {
+    console.error(e);
+    notify('Ошибка template.list');
+  }
+};
 
-Найди внутри window.SBEditor.loadBlocks = async function () { ... }:
+window.SBEditor.openSectionsLibrary = function () {
+  const st = window.SBEditor.getState();
+  const notify = window.SBEditor.notify;
 
-st.allPageBlocks = Array.isArray(res.blocks) ? res.blocks.slice() : [];
+  const presets = [
+    {
+      key: 'hero',
+      title: 'Hero',
+      text: 'Секция с крупным заголовком, текстом и кнопкой',
+      create: async function () {
+        await window.SBEditor.addSectionBlockWithPreset('hero');
 
-Сразу после этого добавь:
+        const listRes = await window.SBEditor.api('block.list', { pageId: st.pageId });
+        const blocks = Array.isArray(listRes?.blocks) ? listRes.blocks.slice() : [];
+        const sections = blocks.filter(b => String(b.type || '') === 'section').sort((a, b) => parseInt(b.id, 10) - parseInt(a.id, 10));
+        const section = sections[0];
+        if (!section) return;
 
-window.SBEditor.syncLegacyBridge();
+        await window.SBEditor.quickAddHeadingAfterSection(section.id);
+        await window.SBEditor.quickAddTextAfterSection(section.id);
+        await window.SBEditor.quickAddButtonAfterSection(section.id);
+      }
+    },
+    {
+      key: 'cards',
+      title: 'Cards section',
+      text: 'Секция с карточками преимуществ',
+      create: async function () {
+        await window.SBEditor.addSectionBlockWithPreset('light');
 
+        const listRes = await window.SBEditor.api('block.list', { pageId: st.pageId });
+        const blocks = Array.isArray(listRes?.blocks) ? listRes.blocks.slice() : [];
+        const sections = blocks.filter(b => String(b.type || '') === 'section').sort((a, b) => parseInt(b.id, 10) - parseInt(a.id, 10));
+        const section = sections[0];
+        if (!section) return;
 
----
+        await window.SBEditor.quickAddHeadingAfterSection(section.id);
+        await window.SBEditor.quickAddCardsAfterSection(section.id);
+      }
+    },
+    {
+      key: 'cta',
+      title: 'CTA',
+      text: 'Небольшая акцентная секция с кнопкой',
+      create: async function () {
+        await window.SBEditor.addSectionBlockWithPreset('accent');
 
-4. Подключи bridge-файл в editor.php
+        const listRes = await window.SBEditor.api('block.list', { pageId: st.pageId });
+        const blocks = Array.isArray(listRes?.blocks) ? listRes.blocks.slice() : [];
+        const sections = blocks.filter(b => String(b.type || '') === 'section').sort((a, b) => parseInt(b.id, 10) - parseInt(a.id, 10));
+        const section = sections[0];
+        if (!section) return;
 
-После:
+        await window.SBEditor.quickAddHeadingAfterSection(section.id);
+        await window.SBEditor.quickAddButtonAfterSection(section.id);
+      }
+    }
+  ];
 
-<script src="/local/sitebuilder/assets/js/editor.blocks.js?v=1"></script>
+  BX.UI.Dialogs.MessageBox.show({
+    title: 'Библиотека секций',
+    message: `
+      <div style="display:grid;gap:12px;">
+        ${presets.map(p => `
+          <div class="subCard" style="padding:12px;">
+            <div style="font-weight:700;font-size:15px;">${BX.util.htmlspecialchars(p.title)}</div>
+            <div class="muted" style="margin-top:6px;">${BX.util.htmlspecialchars(p.text)}</div>
+            <div style="margin-top:10px;">
+              <button class="ui-btn ui-btn-primary ui-btn-xs" data-sections-lib-key="${BX.util.htmlspecialchars(p.key)}">Создать</button>
+            </div>
+          </div>
+        `).join('')}
+      </div>
+    `,
+    buttons: BX.UI.Dialogs.MessageBoxButtons.CANCEL,
+    onCancel: function () {}
+  });
 
-добавь:
+  setTimeout(() => {
+    document.querySelectorAll('[data-sections-lib-key]').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const key = btn.getAttribute('data-sections-lib-key');
+        const preset = presets.find(x => x.key === key);
+        if (!preset) return;
 
-<script src="/local/sitebuilder/assets/js/editor.bridge.js?v=1"></script>
+        try {
+          await preset.create();
+          notify('Секция создана');
 
-Итоговый порядок подключения должен быть такой:
+          if (typeof window.SBEditor.loadBlocks === 'function') {
+            window.SBEditor.loadBlocks();
+          }
+        } catch (e) {
+          console.error(e);
+          notify('Ошибка создания секции');
+        }
+      });
+    });
+  }, 0);
+};
 
-<script src="/local/sitebuilder/assets/js/editor.core.js?v=1"></script>
-<script src="/local/sitebuilder/assets/js/editor.api.js?v=1"></script>
-<script src="/local/sitebuilder/assets/js/editor.sections.js?v=1"></script>
-<script src="/local/sitebuilder/assets/js/editor.dnd.js?v=1"></script>
-<script src="/local/sitebuilder/assets/js/editor.blocks.js?v=1"></script>
-<script src="/local/sitebuilder/assets/js/editor.bridge.js?v=1"></script>
-<script src="/local/sitebuilder/assets/js/editor.init.js?v=1"></script>
+window.SBEditor.openCardsBuilderDialog = function (opts = {}) {
+  const title = String(opts.title || 'Карточки');
+  const initialItems = Array.isArray(opts.items) ? opts.items.slice() : [];
+  const initialColumns = parseInt(opts.columns || 3, 10);
+  const onSubmit = typeof opts.onSubmit === 'function' ? opts.onSubmit : null;
 
+  const rowsHtml = (initialItems.length ? initialItems : [
+    { title: '', text: '', imageFileId: 0, buttonText: '', buttonUrl: '' }
+  ]).map((item, idx) => {
+    const clean = window.SBEditor.cardsNormalizeItem(item);
 
----
+    return `
+      <div class="cardsBuilderRow" data-cards-row="${idx}" style="border:1px solid #e5e7eb;border-radius:12px;padding:12px;margin-top:10px;">
+        <div class="field">
+          <label>Заголовок</label>
+          <input class="input" data-role="title" value="${BX.util.htmlspecialchars(clean.title)}">
+        </div>
 
-Зачем это нужно
+        <div class="field">
+          <label>Текст</label>
+          <textarea class="input" rows="4" data-role="text">${BX.util.htmlspecialchars(clean.text)}</textarea>
+        </div>
 
-После этого можно будет вынести большой блок диалогов из editor.php почти “как есть”, потому что старые имена (pageId, api, notify, fileDownloadUrl и т.д.) будут доступны и снаружи.
+        <div class="field">
+          <label>Image fileId</label>
+          <input class="input" data-role="imageFileId" type="number" min="0" value="${clean.imageFileId}">
+        </div>
 
-Это сильно снижает риск.
+        <div class="field">
+          <label>Текст кнопки</label>
+          <input class="input" data-role="buttonText" value="${BX.util.htmlspecialchars(clean.buttonText)}">
+        </div>
 
-Следующий шаг
+        <div class="field">
+          <label>URL кнопки</label>
+          <input class="input" data-role="buttonUrl" value="${BX.util.htmlspecialchars(clean.buttonUrl)}">
+        </div>
 
-После bridge уже можно выносить:
+        <div style="margin-top:8px;">
+          <button type="button" class="ui-btn ui-btn-light ui-btn-xs" data-remove-cards-row="${idx}">Удалить карточку</button>
+        </div>
+      </div>
+    `;
+  }).join('');
 
-addTextBlock
+  BX.UI.Dialogs.MessageBox.show({
+    title,
+    message: `
+      <div>
+        <div class="field">
+          <label>Колонки</label>
+          <select id="cards_builder_columns" class="input">
+            <option value="2" ${initialColumns === 2 ? 'selected' : ''}>2</option>
+            <option value="3" ${initialColumns === 3 ? 'selected' : ''}>3</option>
+            <option value="4" ${initialColumns === 4 ? 'selected' : ''}>4</option>
+          </select>
+        </div>
 
-addImageBlock
+        <div id="cardsBuilderRows">${rowsHtml}</div>
 
-addButtonBlock
+        <div style="margin-top:12px;">
+          <button type="button" class="ui-btn ui-btn-light" id="cards_builder_add_row">+ Добавить карточку</button>
+        </div>
+      </div>
+    `,
+    buttons: BX.UI.Dialogs.MessageBoxButtons.OK_CANCEL,
+    onOk: function (mbox) {
+      const columns = parseInt(document.getElementById('cards_builder_columns')?.value || '3', 10);
+      const rows = Array.from(document.querySelectorAll('#cardsBuilderRows [data-cards-row]'));
+      const items = rows.map(row => ({
+        title: String(row.querySelector('[data-role="title"]')?.value || '').trim(),
+        text: String(row.querySelector('[data-role="text"]')?.value || ''),
+        imageFileId: parseInt(row.querySelector('[data-role="imageFileId"]')?.value || '0', 10) || 0,
+        buttonText: String(row.querySelector('[data-role="buttonText"]')?.value || '').trim(),
+        buttonUrl: String(row.querySelector('[data-role="buttonUrl"]')?.value || '').trim()
+      })).filter(item => item.title !== '');
 
-addHeadingBlock
-
-addCols2Block
-
-addSpacerBlock
-
-openGalleryDialog
-
-openCardDialog
-
-edit...Block
-
-
-Если хочешь, следующим сообщением я дам уже готовый editor.dialogs.js под текущий проект через этот bridge.
+Пришлю часть 2 следующим сообщением.
