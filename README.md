@@ -1,54 +1,257 @@
-Да, это последняя часть для editor.dialogs.js.
+Идём дальше. Сейчас самый правильный шаг — подключить editor.dialogs.js и аккуратно убрать дубли из editor.php, но без резкого сноса всего inline-кода.
 
-Часть 8 из 8:
+1. Подключение файлов в editor.php
 
-setTimeout(() => {
-        const txt = document.getElementById('edit_btn_text');
-        const url = document.getElementById('edit_btn_url');
-        const variant = document.getElementById('edit_btn_variant');
-        const prev = document.getElementById('edit_btn_preview');
+Перед </body> поставь такой порядок:
 
-        if (!txt || !url || !variant || !prev) return;
+<script>
+  window.SB_EDITOR_SITE_ID = <?= (int)$siteId ?>;
+  window.SB_EDITOR_PAGE_ID = <?= (int)$pageId ?>;
+</script>
 
-        const sync = () => {
-          prev.textContent = txt.value || 'Кнопка';
-          prev.setAttribute('href', url.value || '#');
-          prev.className = btnClass(variant.value || 'primary');
-        };
+<script src="/local/sitebuilder/assets/js/editor.core.js?v=1"></script>
+<script src="/local/sitebuilder/assets/js/editor.api.js?v=1"></script>
+<script src="/local/sitebuilder/assets/js/editor.sections.js?v=1"></script>
+<script src="/local/sitebuilder/assets/js/editor.dnd.js?v=1"></script>
+<script src="/local/sitebuilder/assets/js/editor.blocks.js?v=1"></script>
+<script src="/local/sitebuilder/assets/js/editor.bridge.js?v=1"></script>
+<script src="/local/sitebuilder/assets/js/editor.dialogs.js?v=1"></script>
+<script src="/local/sitebuilder/assets/js/editor.init.js?v=1"></script>
 
-        txt.addEventListener('input', sync);
-        url.addEventListener('input', sync);
-        variant.addEventListener('change', sync);
-        sync();
-      }, 0);
-    });
-  }
 
-  // ---- expose legacy names so current editor.php can still call them ----
-  window.saveTemplateFromPage = window.SBEditor.saveTemplateFromPage;
-  window.applyTemplateToPage = window.SBEditor.applyTemplateToPage;
-  window.openSectionsLibrary = window.SBEditor.openSectionsLibrary;
-  window.openCardsBuilderDialog = window.SBEditor.openCardsBuilderDialog;
+---
 
-  window.addTextBlock = window.SBEditor.addTextBlock;
-  window.addImageBlock = window.SBEditor.addImageBlock;
-  window.addButtonBlock = window.SBEditor.addButtonBlock;
-  window.addHeadingBlock = window.SBEditor.addHeadingBlock;
-  window.addCols2Block = window.SBEditor.addCols2Block;
-  window.addGalleryBlock = window.SBEditor.addGalleryBlock;
-  window.addSpacerBlock = window.SBEditor.addSpacerBlock;
-  window.addCardBlock = window.SBEditor.addCardBlock;
-  window.addCardsBlock = window.SBEditor.addCardsBlock;
+2. Что уже можно удалить из inline JS в editor.php
 
-  window.editTextBlock = window.SBEditor.editTextBlock;
-  window.editImageBlock = window.SBEditor.editImageBlock;
-  window.editButtonBlock = window.SBEditor.editButtonBlock;
-  window.editHeadingBlock = window.SBEditor.editHeadingBlock;
-  window.editCols2Block = window.SBEditor.editCols2Block;
-  window.editGalleryBlock = window.SBEditor.editGalleryBlock;
-  window.editSpacerBlock = window.SBEditor.editSpacerBlock;
-  window.editCardBlock = window.SBEditor.editCardBlock;
-  window.editCardsBlock = window.SBEditor.editCardsBlock;
-})();
+Если ты уже создал и заполнил:
 
-Если хочешь, следующим сообщением я скажу, как правильно подключить editor.dialogs.js и что уже можно удалить из editor.php.
+editor.core.js
+
+editor.api.js
+
+editor.sections.js
+
+editor.dnd.js
+
+editor.blocks.js
+
+editor.bridge.js
+
+editor.dialogs.js
+
+editor.init.js
+
+
+то из editor.php уже можно убрать такие функции:
+
+helpers/api
+
+notify
+
+api
+
+fileDownloadUrl
+
+getFilesForSite
+
+btnClass
+
+headingTag
+
+headingAlign
+
+colsGridTemplate
+
+galleryTemplate
+
+cardsNormalizeItem
+
+
+blocks/render
+
+buildBlockShell
+
+renderBlocks
+
+
+dnd
+
+saveBlockOrder
+
+initBlockDnD
+
+
+section
+
+SECTION_PRESETS
+
+sectionPresetOptions
+
+applySectionPresetToForm
+
+createBlockAfterSection
+
+quickAddHeadingAfterSection
+
+quickAddTextAfterSection
+
+quickAddButtonAfterSection
+
+quickAddCardsAfterSection
+
+addSectionBlock
+
+editSectionBlock
+
+
+dialogs
+
+saveTemplateFromPage
+
+applyTemplateToPage
+
+openSectionsLibrary
+
+openCardsBuilderDialog
+
+addTextBlock
+
+addImageBlock
+
+addButtonBlock
+
+addHeadingBlock
+
+addCols2Block
+
+addGalleryBlock
+
+addSpacerBlock
+
+addCardBlock
+
+addCardsBlock
+
+editTextBlock
+
+editImageBlock
+
+editButtonBlock
+
+editHeadingBlock
+
+editCols2Block
+
+editGalleryBlock
+
+editSpacerBlock
+
+editCardBlock
+
+editCardsBlock
+
+
+
+---
+
+3. Что пока оставить в editor.php
+
+Пока оставь:
+
+HTML-разметку страницы
+
+кнопки и контейнеры DOM
+
+PHP-переменные $siteId, $pageId
+
+если есть специфические куски Bitrix UI, которые ещё не вынесены
+
+всё, что связано с версткой страницы, но не с логикой JS
+
+
+
+---
+
+4. Самый безопасный способ чистки
+
+Не удаляй всё сразу одним махом.
+
+Делай так:
+
+1. Сначала подключи все .js
+
+
+2. Проверь, что редактор открывается без ошибок
+
+
+3. Потом удаляй из inline JS только один логический блок
+
+
+4. Обновляй страницу и проверяй консоль
+
+
+
+Лучший порядок удаления:
+
+1. helpers/api
+
+
+2. section
+
+
+3. dnd
+
+
+4. render
+
+
+5. dialogs
+
+
+6. старый BX.ready(...) хвост
+
+
+
+
+---
+
+5. Что проверить после подключения
+
+Проверь:
+
+редактор открывается
+
+список блоков загружается
+
++ Section работает
+
+редактирование обычных блоков работает
+
+перетаскивание работает
+
+поиск по блокам работает
+
+кнопки + Heading / + Text / + Button / + Cards у section работают
+
+
+
+---
+
+6. Самый логичный следующий шаг
+
+После подключения внешних файлов и удаления дублей следующим этапом надо будет:
+
+почистить editor.php до состояния “шаблон + подключения”
+
+То есть оставить в нём только:
+
+PHP-часть
+
+HTML
+
+подключение CSS/JS
+
+
+А весь JS вынести наружу.
+
+Если хочешь, следующим сообщением я дам тебе чек-лист удаления по строкам/блокам, то есть в каком порядке вырезать куски из editor.php, чтобы ничего не сломать.
