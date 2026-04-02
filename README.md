@@ -1,264 +1,111 @@
-По последнему архиву вижу: текущий editor.php уже 2647 строк, и в нём всё ещё один большой BX.ready(...).
-Рефакторить его правильно можно, но не “разрезая вслепую”. У тебя почти все функции завязаны на локальные переменные внутри BX.ready:
+Идём дальше.
 
-siteId
+Следующий файл — editor.api.js.
 
-pageId
+Создай:
 
-blocksBox
+/local/sitebuilder/assets/js/editor.api.js
 
-blockSearch
-
-collapsedBlocks
-
-кнопки btnAdd...
-
-
-Из-за этого сразу вынести готовые .js файлы без промежуточного шага рискованно.
-
-Что я предлагаю как правильный следующий шаг
-
-Сначала сделать общий объект состояния редактора, и уже потом раскладывать функции по файлам.
-
-
----
-
-Какой должна быть новая структура JS
-
-/local/sitebuilder/assets/js/
-  editor.core.js
-  editor.api.js
-  editor.blocks.js
-  editor.sections.js
-  editor.dnd.js
-  editor.dialogs.js
-  editor.init.js
-
-
----
-
-Что реально есть сейчас в твоём editor.php
-
-Я посмотрел текущий файл, и там уже выделяются такие блоки логики:
-
-API / базовые helper-функции
-
-notify
-
-api
-
-fileDownloadUrl
-
-getFilesForSite
-
-btnClass
-
-headingTag
-
-headingAlign
-
-colsGridTemplate
-
-galleryTemplate
-
-cardsNormalizeItem
-
-
-Рендер
-
-buildBlockShell
-
-renderBlocks
-
-
-DnD / порядок
-
-saveBlockOrder
-
-initBlockDnD
-
-
-Section
-
-SECTION_PRESETS
-
-sectionPresetOptions
-
-applySectionPresetToForm
-
-createBlockAfterSection
-
-quickAddHeadingAfterSection
-
-quickAddTextAfterSection
-
-quickAddButtonAfterSection
-
-quickAddCardsAfterSection
-
-addSectionBlock
-
-editSectionBlock
-
-
-Диалоги обычных блоков
-
-addTextBlock
-
-addImageBlock
-
-addButtonBlock
-
-addHeadingBlock
-
-addCols2Block
-
-addSpacerBlock
-
-addGalleryBlock
-
-addCardBlock
-
-addCardsBlock
-
-editTextBlock
-
-editImageBlock
-
-editButtonBlock
-
-editHeadingBlock
-
-editCols2Block
-
-editSpacerBlock
-
-editGalleryBlock
-
-editCardBlock
-
-editCardsBlock
-
-
-Инициализация / события
-
-loadBlocks
-
-saveTemplateFromPage
-
-applyTemplateToPage
-
-openSectionsLibrary
-
-большой document.addEventListener('click', ...)
-
-привязки btnAdd...addEventListener(...)
-
-loadBlocks();
-
-
-
----
-
-Правильный первый шаг сейчас
-
-Сделать editor.core.js
-
-Он должен создать глобальный namespace и общее состояние редактора.
-
-Готовое содержимое assets/js/editor.core.js
+и вставь туда это:
 
 window.SBEditor = window.SBEditor || {};
 
-window.SBEditor.state = {
-  siteId: 0,
-  pageId: 0,
-  blocksBox: null,
-  blockSearch: null,
-  collapsedBlocks: new Set(),
-
-  btnAddSection: null,
-  btnAddText: null,
-  btnAddImage: null,
-  btnAddButton: null,
-  btnAddHeading: null,
-  btnAddCols2: null,
-  btnAddGallery: null,
-  btnAddSpacer: null,
-  btnAddCard: null,
-  btnAddCards: null,
-
-  btnSaveTemplate: null,
-  btnApplyTemplate: null,
-  btnSections: null,
+window.SBEditor.notify = function (message) {
+  BX.UI.Notification.Center.notify({
+    content: BX.util.htmlspecialchars(String(message || ''))
+  });
 };
 
-window.SBEditor.setState = function (patch) {
-  Object.assign(window.SBEditor.state, patch || {});
+window.SBEditor.api = function (action, data = {}) {
+  return new Promise((resolve, reject) => {
+    BX.ajax.runComponentAction?.(); // безопасно не используем, просто чтобы ничего не ломать
+
+    BX.ajax({
+      url: '/local/sitebuilder/api.php',
+      method: 'POST',
+      dataType: 'json',
+      data: Object.assign({}, data, {
+        action,
+        sessid: BX.bitrix_sessid()
+      }),
+      onsuccess: function (res) {
+        resolve(res);
+      },
+      onfailure: function (err) {
+        reject(err);
+      }
+    });
+  });
 };
 
-window.SBEditor.getState = function () {
-  return window.SBEditor.state;
+window.SBEditor.fileDownloadUrl = function (siteId, fileId) {
+  return '/local/sitebuilder/download.php?siteId=' + encodeURIComponent(siteId) + '&fileId=' + encodeURIComponent(fileId);
 };
 
+window.SBEditor.getFilesForSite = async function () {
+  const st = window.SBEditor.getState();
+  const res = await window.SBEditor.api('file.list', { siteId: st.siteId });
+  if (!res || res.ok !== true) {
+    throw new Error('FILE_LIST_FAILED');
+  }
+  return Array.isArray(res.files) ? res.files : [];
+};
 
----
+window.SBEditor.btnClass = function (kind) {
+  switch (kind) {
+    case 'primary':
+      return 'ui-btn-primary';
+    case 'danger':
+      return 'ui-btn-danger';
+    case 'success':
+      return 'ui-btn-success';
+    case 'warning':
+      return 'ui-btn-warning';
+    default:
+      return 'ui-btn-light';
+  }
+};
 
-Что делать потом
+window.SBEditor.headingTag = function (level) {
+  return ['h1', 'h2', 'h3'].includes(level) ? level : 'h2';
+};
 
-После этого уже можно по-настоящему выносить функции.
+window.SBEditor.headingAlign = function (align) {
+  return ['left', 'center', 'right'].includes(align) ? align : 'left';
+};
 
-Порядок выноса, который я рекомендую
+window.SBEditor.colsGridTemplate = function (ratio) {
+  if (ratio === '33-67') return '1fr 2fr';
+  if (ratio === '67-33') return '2fr 1fr';
+  return '1fr 1fr';
+};
 
-1. editor.core.js
+window.SBEditor.galleryTemplate = function (columns) {
+  const cols = parseInt(columns || 3, 10);
+  if (cols === 2) return '1fr 1fr';
+  if (cols === 4) return '1fr 1fr 1fr 1fr';
+  return '1fr 1fr 1fr';
+};
 
+window.SBEditor.cardsNormalizeItem = function (item = {}) {
+  return {
+    title: String(item.title || '').trim(),
+    text: String(item.text || ''),
+    imageFileId: parseInt(item.imageFileId || 0, 10) || 0,
+    buttonText: String(item.buttonText || '').trim(),
+    buttonUrl: String(item.buttonUrl || '').trim()
+  };
+};
 
-2. editor.api.js
+Что дальше
 
+После этого следующий правильный шаг — editor.sections.js, потому что:
 
-3. editor.sections.js
+у тебя section уже есть
 
+логика section хорошо выделяется
 
-4. editor.dnd.js
-
-
-5. editor.blocks.js
-
-
-6. editor.dialogs.js
-
-
-7. editor.init.js
-
-
-
-
----
-
-Почему не стоит сразу выносить всё
-
-Потому что сейчас если просто копировать функции по файлам, они начнут падать на:
-
-blocksBox is not defined
-
-pageId is not defined
-
-notify is not defined
-
-collapsedBlocks is not defined
+её безопаснее всего вынести первой после API
 
 
-То есть сначала нужен единый shared state, а уже потом — нормальный разнос по файлам.
-
-
----
-
-Что бы я делал прямо сейчас
-
-Создай файл:
-
-/local/sitebuilder/assets/js/editor.core.js
-
-и вставь туда код выше.
-
-После этого следующим сообщением я дам тебе готовый editor.api.js и покажу, как уже начать подключать эти файлы в editor.php без поломки.
+Когда вставишь editor.api.js, напиши, и я дам готовый editor.sections.js.
