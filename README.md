@@ -1,129 +1,11 @@
-Часть 3 из 8:
+Часть 4 из 8:
 
-<button class="ui-btn ui-btn-danger ui-btn-xs" data-tpl-delete="${t.id}">Удалить</button>
-            </div>
-          </div>
-        `;
-      }).join('') || '<div class="muted">Ничего не найдено</div>';
+const align = document.getElementById('new_heading_align')?.value || 'left';
 
-      return `
-        <div class="secSearchWrap">
-          <input class="input" id="secSearchInput" placeholder="Поиск шаблона по названию..." value="${BX.util.htmlspecialchars(query)}">
-        </div>
-        <div class="secGrid">${cards}</div>
-      `;
-    };
-
-    const mb = BX.UI.Dialogs.MessageBox.show({
-      title: 'Библиотека секций / шаблонов',
-      message: `<div id="${containerId}">${render('')}</div>`,
-      buttons: BX.UI.Dialogs.MessageBoxButtons.CANCEL,
-      popupOptions: { width: 980, closeIcon: true, overlay: true }
-    });
-
-    function bindHandlers(root) {
-      const search = root.querySelector('#secSearchInput');
-      if (search) {
-        search.oninput = () => {
-          root.innerHTML = render(search.value || '');
-          bindHandlers(root);
-        };
-      }
-
-      root.querySelectorAll('[data-tpl-apply]').forEach(btn => {
-        btn.onclick = async () => {
-          const templateId = parseInt(btn.getAttribute('data-tpl-apply'), 10);
-          const mode = btn.getAttribute('data-mode') || 'append';
-          try {
-            const r = await api('template.applyToPage', {
-              siteId,
-              pageId,
-              templateId,
-              mode
-            });
-            if (!r || r.ok !== true) { notify('Не удалось применить шаблон'); return; }
-            notify(mode === 'replace' ? 'Страница заменена шаблоном' : 'Шаблон вставлен');
-            mb.close();
-            loadBlocks();
-          } catch (e) {
-            notify('Ошибка template.applyToPage');
-          }
-        };
-      });
-
-      root.querySelectorAll('[data-tpl-rename]').forEach(btn => {
-        btn.onclick = async () => {
-          const id = parseInt(btn.getAttribute('data-tpl-rename'), 10);
-          const cur = templates.find(x => parseInt(x.id, 10) === id);
-          const name = prompt('Новое имя шаблона:', cur?.name || '');
-          if (!name) return;
-
-          try {
-            const r = await api('template.rename', { id, name });
-            if (!r || r.ok !== true) { notify('Не удалось переименовать шаблон'); return; }
-            notify('Шаблон переименован');
-
-            const fresh = await api('template.list', {});
-            templates = (fresh && fresh.ok === true && Array.isArray(fresh.templates)) ? fresh.templates : templates;
-            const rootEl = document.getElementById(containerId);
-            if (rootEl) {
-              const q = rootEl.querySelector('#secSearchInput')?.value || '';
-              rootEl.innerHTML = render(q);
-              bindHandlers(rootEl);
-            }
-          } catch (e) {
-            notify('Ошибка template.rename');
-          }
-        };
-      });
-
-      root.querySelectorAll('[data-tpl-delete]').forEach(btn => {
-        btn.onclick = async () => {
-          const id = parseInt(btn.getAttribute('data-tpl-delete'), 10);
-          if (!confirm('Удалить шаблон #' + id + '?')) return;
-
-          try {
-            const r = await api('template.delete', { id });
-            if (!r || r.ok !== true) { notify('Не удалось удалить шаблон'); return; }
-            notify('Шаблон удалён');
-
-            const fresh = await api('template.list', {});
-            templates = (fresh && fresh.ok === true && Array.isArray(fresh.templates)) ? fresh.templates : templates;
-            const rootEl = document.getElementById(containerId);
-            if (rootEl) {
-              const q = rootEl.querySelector('#secSearchInput')?.value || '';
-              rootEl.innerHTML = render(q);
-              bindHandlers(rootEl);
-            }
-          } catch (e) {
-            notify('Ошибка template.delete');
-          }
-        };
-      });
-    }
-
-    setTimeout(() => {
-      const root = document.getElementById(containerId);
-      if (root) bindHandlers(root);
-    }, 0);
-  }
-
-  function addTextBlock() {
-    BX.UI.Dialogs.MessageBox.show({
-      title: 'Новый Text',
-      message: `
-        <div class="field">
-          <label>Текст</label>
-          <textarea id="new_text_value" class="input" rows="10" placeholder="Введите текст блока"></textarea>
-        </div>
-      `,
-      buttons: BX.UI.Dialogs.MessageBoxButtons.OK_CANCEL,
-      onOk: function (mb) {
-        const text = document.getElementById('new_text_value')?.value || '';
-        api('block.create', { pageId, type: 'text', text })
+        api('block.create', { pageId, type: 'heading', text, level, align })
           .then(r => {
-            if (!r || r.ok !== true) { notify('Не удалось создать text'); return; }
-            notify('Text блок создан');
+            if (!r || r.ok !== true) { notify('Не удалось создать heading'); return; }
+            notify('Heading блок создан');
             mb.close();
             loadBlocks();
           })
@@ -132,39 +14,99 @@
     });
   }
 
-  async function addImageBlock() {
+  function addCols2Block() {
+    BX.UI.Dialogs.MessageBox.show({
+      title: 'Новый Columns2',
+      message: `
+        <div class="field">
+          <label>Левая колонка</label>
+          <textarea id="new_cols2_left" class="input" rows="6"></textarea>
+        </div>
+        <div class="field">
+          <label>Правая колонка</label>
+          <textarea id="new_cols2_right" class="input" rows="6"></textarea>
+        </div>
+        <div class="field">
+          <label>Соотношение</label>
+          <select id="new_cols2_ratio" class="input">
+            <option value="50-50" selected>50-50</option>
+            <option value="33-67">33-67</option>
+            <option value="67-33">67-33</option>
+          </select>
+        </div>
+      `,
+      buttons: BX.UI.Dialogs.MessageBoxButtons.OK_CANCEL,
+      onOk: function (mb) {
+        const left = document.getElementById('new_cols2_left')?.value || '';
+        const right = document.getElementById('new_cols2_right')?.value || '';
+        const ratio = document.getElementById('new_cols2_ratio')?.value || '50-50';
+
+        api('block.create', { pageId, type: 'columns2', left, right, ratio })
+          .then(r => {
+            if (!r || r.ok !== true) { notify('Не удалось создать columns2'); return; }
+            notify('Columns2 блок создан');
+            mb.close();
+            loadBlocks();
+          })
+          .catch(() => notify('Ошибка block.create'));
+      }
+    });
+  }
+
+  async function addGalleryBlock() {
     let files = [];
     try { files = await getFilesForSite(); }
     catch (e) { notify('Не удалось загрузить файлы сайта'); return; }
 
-    const opts = ['<option value="0">— выбрать файл —</option>']
-      .concat(files.map(f => `<option value="${f.id}">${BX.util.htmlspecialchars(f.name)} (#${f.id})</option>`))
-      .join('');
+    const options = files.map(f =>
+      `<option value="${f.id}">${BX.util.htmlspecialchars(f.name)} (#${f.id})</option>`
+    ).join('');
 
     BX.UI.Dialogs.MessageBox.show({
-      title: 'Новый Image',
+      title: 'Новая Gallery',
       message: `
         <div class="field">
-          <label>Файл</label>
-          <select id="new_image_file" class="input">${opts}</select>
+          <label>Колонки</label>
+          <select id="new_gallery_cols" class="input">
+            <option value="2">2</option>
+            <option value="3" selected>3</option>
+            <option value="4">4</option>
+          </select>
         </div>
-        <div class="field">
-          <label>Alt</label>
-          <input id="new_image_alt" class="input" placeholder="Описание изображения" />
+
+        <div id="new_gallery_rows">
+          <div class="field">
+            <label>Изображение 1</label>
+            <select class="input galleryFileSelect">${options}</select>
+            <input class="input galleryAltInput" placeholder="Alt" style="margin-top:8px;" />
+          </div>
         </div>
-        <div id="new_image_preview_wrap" style="margin-top:10px;"></div>
+
+        <div style="margin-top:12px;">
+          <button type="button" class="ui-btn ui-btn-light" id="gallery_add_row">+ Добавить изображение</button>
+        </div>
       `,
       buttons: BX.UI.Dialogs.MessageBoxButtons.OK_CANCEL,
       onOk: function (mb) {
-        const fileId = parseInt(document.getElementById('new_image_file')?.value || '0', 10);
-        const alt = document.getElementById('new_image_alt')?.value || '';
+        const columns = parseInt(document.getElementById('new_gallery_cols')?.value || '3', 10);
+        const rows = Array.from(document.querySelectorAll('#new_gallery_rows .field'));
 
-        if (!fileId) { notify('Выбери файл'); return; }
+        const images = rows.map(row => ({
+          fileId: parseInt(row.querySelector('.galleryFileSelect')?.value || '0', 10),
+          alt: row.querySelector('.galleryAltInput')?.value || ''
+        })).filter(x => x.fileId > 0);
 
-        api('block.create', { pageId, type: 'image', fileId, alt })
+        if (!images.length) { notify('Нужно выбрать хотя бы одно изображение'); return; }
+
+        api('block.create', {
+          pageId,
+          type: 'gallery',
+          columns,
+          images: JSON.stringify(images)
+        })
           .then(r => {
-            if (!r || r.ok !== true) { notify('Не удалось создать image'); return; }
-            notify('Image блок создан');
+            if (!r || r.ok !== true) { notify('Не удалось создать gallery'); return; }
+            notify('Gallery блок создан');
             mb.close();
             loadBlocks();
           })
@@ -173,15 +115,121 @@
     });
 
     setTimeout(() => {
-      const sel = document.getElementById('new_image_file');
-      const wrap = document.getElementById('new_image_preview_wrap');
+      const wrap = document.getElementById('new_gallery_rows');
+      const addBtn = document.getElementById('gallery_add_row');
+      if (!wrap || !addBtn) return;
+
+      addBtn.onclick = () => {
+        const div = document.createElement('div');
+        div.className = 'field';
+        div.innerHTML = `
+          <label>Изображение</label>
+          <select class="input galleryFileSelect">${options}</select>
+          <input class="input galleryAltInput" placeholder="Alt" style="margin-top:8px;" />
+        `;
+        wrap.appendChild(div);
+      };
+    }, 0);
+  }
+
+  function addSpacerBlock() {
+    BX.UI.Dialogs.MessageBox.show({
+      title: 'Новый Spacer',
+      message: `
+        <div class="field">
+          <label>Высота</label>
+          <input id="new_spacer_height" class="input" type="number" min="10" max="200" value="40" />
+        </div>
+        <div class="field">
+          <label><input id="new_spacer_line" type="checkbox"> Показать линию</label>
+        </div>
+      `,
+      buttons: BX.UI.Dialogs.MessageBoxButtons.OK_CANCEL,
+      onOk: function (mb) {
+        const height = parseInt(document.getElementById('new_spacer_height')?.value || '40', 10);
+        const line = document.getElementById('new_spacer_line')?.checked ? '1' : '0';
+
+        api('block.create', { pageId, type: 'spacer', height, line })
+          .then(r => {
+            if (!r || r.ok !== true) { notify('Не удалось создать spacer'); return; }
+            notify('Spacer блок создан');
+            mb.close();
+            loadBlocks();
+          })
+          .catch(() => notify('Ошибка block.create'));
+      }
+    });
+  }
+
+  async function addCardBlock() {
+    let files = [];
+    try { files = await getFilesForSite(); }
+    catch (e) { notify('Не удалось загрузить файлы сайта'); return; }
+
+    const opts = ['<option value="0">— без изображения —</option>']
+      .concat(files.map(f => `<option value="${f.id}">${BX.util.htmlspecialchars(f.name)} (#${f.id})</option>`))
+      .join('');
+
+    BX.UI.Dialogs.MessageBox.show({
+      title: 'Новый Card',
+      message: `
+        <div class="field">
+          <label>Заголовок</label>
+          <input id="new_card_title" class="input" />
+        </div>
+        <div class="field">
+          <label>Текст</label>
+          <textarea id="new_card_text" class="input" rows="6"></textarea>
+        </div>
+        <div class="field">
+          <label>Изображение</label>
+          <select id="new_card_image" class="input">${opts}</select>
+        </div>
+        <div class="field">
+          <label>Текст кнопки</label>
+          <input id="new_card_btn_text" class="input" />
+        </div>
+        <div class="field">
+          <label>URL кнопки</label>
+          <input id="new_card_btn_url" class="input" placeholder="/" />
+        </div>
+        <div id="new_card_preview" style="margin-top:10px;"></div>
+      `,
+      buttons: BX.UI.Dialogs.MessageBoxButtons.OK_CANCEL,
+      onOk: function (mb) {
+        const title = document.getElementById('new_card_title')?.value || '';
+        const text = document.getElementById('new_card_text')?.value || '';
+        const imageFileId = parseInt(document.getElementById('new_card_image')?.value || '0', 10);
+        const buttonText = document.getElementById('new_card_btn_text')?.value || '';
+        const buttonUrl = document.getElementById('new_card_btn_url')?.value || '';
+
+        api('block.create', {
+          pageId,
+          type: 'card',
+          title,
+          text,
+          imageFileId,
+          buttonText,
+          buttonUrl
+        })
+          .then(r => {
+            if (!r || r.ok !== true) { notify('Не удалось создать card'); return; }
+            notify('Card блок создан');
+            mb.close();
+            loadBlocks();
+          })
+          .catch(() => notify('Ошибка block.create'));
+      }
+    });
+
+    setTimeout(() => {
+      const sel = document.getElementById('new_card_image');
+      const wrap = document.getElementById('new_card_preview');
       if (!sel || !wrap) return;
 
       const renderPrev = () => {
         const fid = parseInt(sel.value || '0', 10);
-        wrap.innerHTML = fid
-          ? `<div class="imgPrev"><img src="${fileDownloadUrl(fid)}" alt=""></div>`
-          : '';
+        wrap.innerHTML = fid ? `<div class="imgPrev"><img src="${fileDownloadUrl(fid)}" alt=""></div>` : '';
       };
 
       sel.addEventListener('change', renderPrev);
@@ -189,73 +237,17 @@
     }, 0);
   }
 
-  function addButtonBlock() {
-    BX.UI.Dialogs.MessageBox.show({
-      title: 'Новый Button',
-      message: `
-        <div class="field">
-          <label>Текст кнопки</label>
-          <input id="new_btn_text" class="input" value="Кнопка" />
-        </div>
-        <div class="field">
-          <label>URL</label>
-          <input id="new_btn_url" class="input" value="/" />
-        </div>
-        <div class="field">
-          <label>Вариант</label>
-          <select id="new_btn_variant" class="input">
-            <option value="primary">primary</option>
-            <option value="secondary">secondary</option>
-          </select>
-        </div>
-      `,
-      buttons: BX.UI.Dialogs.MessageBoxButtons.OK_CANCEL,
-      onOk: function (mb) {
-        const text = document.getElementById('new_btn_text')?.value || '';
-        const url = document.getElementById('new_btn_url')?.value || '';
-        const variant = document.getElementById('new_btn_variant')?.value || 'primary';
+  function addCardsBlock() {
+    openCardsBuilderDialog({
+      title: 'Новый Cards',
+      columns: 3,
+      items: [],
+      onSubmit: async function ({ columns, items }) {
+        const r = await api('block.create', {
+          pageId,
+          type: 'cards',
+          columns,
+          items: JSON.stringify(items)
+        });
 
-        api('block.create', { pageId, type: 'button', text, url, variant })
-          .then(r => {
-            if (!r || r.ok !== true) { notify('Не удалось создать button'); return; }
-            notify('Button блок создан');
-            mb.close();
-            loadBlocks();
-          })
-          .catch(() => notify('Ошибка block.create'));
-      }
-    });
-  }
-
-  function addHeadingBlock() {
-    BX.UI.Dialogs.MessageBox.show({
-      title: 'Новый Heading',
-      message: `
-        <div class="field">
-          <label>Текст</label>
-          <input id="new_heading_text" class="input" value="Новый заголовок" />
-        </div>
-        <div class="field">
-          <label>Уровень</label>
-          <select id="new_heading_level" class="input">
-            <option value="h1">h1</option>
-            <option value="h2" selected>h2</option>
-            <option value="h3">h3</option>
-          </select>
-        </div>
-        <div class="field">
-          <label>Выравнивание</label>
-          <select id="new_heading_align" class="input">
-            <option value="left" selected>left</option>
-            <option value="center">center</option>
-            <option value="right">right</option>
-          </select>
-        </div>
-      `,
-      buttons: BX.UI.Dialogs.MessageBoxButtons.OK_CANCEL,
-      onOk: function (mb) {
-        const text = document.getElementById('new_heading_text')?.value || '';
-        const level = document.getElementById('new_heading_level')?.value || 'h2';
-        const align = document.getElementById('new_heading_align')?.value || 'left';
-
-Пришлю часть 4 следующим сообщением.
+Пришлю часть 5 следующим сообщением.
