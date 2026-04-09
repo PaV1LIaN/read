@@ -1,55 +1,22 @@
-Зайти нужно туда, где у тебя лежит новая папка проекта под /local.
+Скорее всего проблема в одном из трёх мест:
 
-Если ты создал её как:
-
-/local/sitebuilder/
-
-то базовые ссылки будут такие:
-
-https://ТВОЙ_ДОМЕН/local/sitebuilder/
-https://ТВОЙ_ДОМЕН/local/sitebuilder/api.php
-
-Проверять можно так.
-
-1. Проверка, что PHP-точка API вообще открывается
-
-Открой:
-
-https://ТВОЙ_ДОМЕН/local/sitebuilder/api.php
-
-Если просто открыть в браузере GET-запросом, ты, скорее всего, увидишь ошибку вроде:
-
-METHOD_NOT_ALLOWED или
-
-NOT_AUTHORIZED
+1. не загрузился BX
 
 
-Это нормально, потому что API ждёт:
+2. JS падает с ошибкой и дальше не выполняется
 
-авторизованного пользователя
 
-POST
-
-sessid
+3. файл открывается, но BX.ajax не существует
 
 
 
----
-
-2. Самая правильная проверка API
-
-Сделай временную тестовую страницу, например:
+Сделай так: замени тестовый файл полностью на этот вариант. Я убрал лишнее и добавил явную диагностику.
 
 /local/sitebuilder/test_api.php
 
-И зайди по ссылке:
-
-https://ТВОЙ_ДОМЕН/local/sitebuilder/test_api.php
-
-Вот готовый файл для проверки:
-
 <?php
 require $_SERVER['DOCUMENT_ROOT'] . '/bitrix/modules/main/include/prolog_before.php';
+\Bitrix\Main\UI\Extension::load('main.core');
 global $USER;
 ?>
 <!doctype html>
@@ -57,170 +24,240 @@ global $USER;
 <head>
     <meta charset="UTF-8">
     <title>SiteBuilder API Test</title>
+    <style>
+        body { font-family: Arial, sans-serif; padding: 20px; }
+        button { margin: 0 10px 10px 0; padding: 10px 14px; cursor: pointer; }
+        pre { white-space: pre-wrap; background: #f5f5f5; padding: 16px; border: 1px solid #ccc; min-height: 180px; }
+        .row { margin-bottom: 12px; }
+    </style>
 </head>
 <body>
-    <h1>Проверка API</h1>
+    <h1>Проверка API SiteBuilder</h1>
 
-    <button id="pingBtn">Ping</button>
-    <button id="siteListBtn">Site list</button>
+    <div class="row">
+        <strong>Пользователь:</strong>
+        <?= htmlspecialchars((string)$USER->GetLogin(), ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?>
+        (ID <?= (int)$USER->GetID() ?>)
+    </div>
 
-    <pre id="out" style="white-space: pre-wrap; background:#f5f5f5; padding:16px; border:1px solid #ccc;"></pre>
+    <div class="row">
+        <strong>sessid:</strong>
+        <span id="sessidView"></span>
+    </div>
+
+    <div class="row">
+        <button type="button" id="checkBxBtn">Проверить BX</button>
+        <button type="button" id="pingBtn">Ping</button>
+        <button type="button" id="siteListBtn">Site list</button>
+    </div>
+
+    <pre id="out">Здесь будет результат...</pre>
 
     <script>
-        function callApi(data) {
-            BX.ajax({
-                url: '/local/sitebuilder/api.php',
-                method: 'POST',
-                data: Object.assign({
-                    sessid: BX.bitrix_sessid()
-                }, data),
-                dataType: 'json',
-                onsuccess: function (res) {
-                    document.getElementById('out').textContent = JSON.stringify(res, null, 2);
-                },
-                onfailure: function (err) {
-                    document.getElementById('out').textContent = 'AJAX ERROR: ' + JSON.stringify(err, null, 2);
+        (function () {
+            var out = document.getElementById('out');
+
+            function print(data) {
+                if (typeof data === 'string') {
+                    out.textContent = data;
+                    return;
                 }
+                try {
+                    out.textContent = JSON.stringify(data, null, 2);
+                } catch (e) {
+                    out.textContent = String(data);
+                }
+            }
+
+            function printError(prefix, err) {
+                var text = prefix + '\n';
+                try {
+                    text += JSON.stringify(err, null, 2);
+                } catch (e) {
+                    text += String(err);
+                }
+                out.textContent = text;
+            }
+
+            function hasBx() {
+                return typeof window.BX !== 'undefined';
+            }
+
+            function callApi(data) {
+                if (!hasBx()) {
+                    print('BX не загружен');
+                    return;
+                }
+
+                if (typeof BX.ajax !== 'function') {
+                    print('BX.ajax не найден');
+                    return;
+                }
+
+                var sessid = BX.bitrix_sessid ? BX.bitrix_sessid() : '';
+                if (!sessid) {
+                    print('Не удалось получить sessid');
+                    return;
+                }
+
+                print({
+                    status: 'sending',
+                    url: '/local/sitebuilder/api.php',
+                    data: Object.assign({ sessid: sessid }, data)
+                });
+
+                BX.ajax({
+                    url: '/local/sitebuilder/api.php',
+                    method: 'POST',
+                    data: Object.assign({
+                        sessid: sessid
+                    }, data),
+                    dataType: 'json',
+                    timeout: 30,
+                    onsuccess: function (res) {
+                        print(res);
+                    },
+                    onfailure: function (err) {
+                        printError('AJAX ERROR', err);
+                    }
+                });
+            }
+
+            window.onerror = function (message, source, lineno, colno, error) {
+                print({
+                    jsError: true,
+                    message: message,
+                    source: source,
+                    line: lineno,
+                    column: colno,
+                    stack: error && error.stack ? error.stack : null
+                });
+            };
+
+            document.getElementById('sessidView').textContent =
+                (hasBx() && BX.bitrix_sessid) ? BX.bitrix_sessid() : 'BX или BX.bitrix_sessid не загружен';
+
+            document.getElementById('checkBxBtn').addEventListener('click', function () {
+                print({
+                    BX_exists: typeof window.BX !== 'undefined',
+                    BX_ajax_type: hasBx() ? typeof BX.ajax : 'BX missing',
+                    BX_bitrix_sessid_type: hasBx() ? typeof BX.bitrix_sessid : 'BX missing',
+                    sessid: (hasBx() && BX.bitrix_sessid) ? BX.bitrix_sessid() : null
+                });
             });
-        }
 
-        document.getElementById('pingBtn').onclick = function () {
-            callApi({ action: 'ping' });
-        };
+            document.getElementById('pingBtn').addEventListener('click', function () {
+                callApi({ action: 'ping' });
+            });
 
-        document.getElementById('siteListBtn').onclick = function () {
-            callApi({ action: 'site.list' });
-        };
+            document.getElementById('siteListBtn').addEventListener('click', function () {
+                callApi({ action: 'site.list' });
+            });
+
+            print({
+                loaded: true,
+                BX_exists: typeof window.BX !== 'undefined',
+                BX_ajax_type: hasBx() ? typeof BX.ajax : 'BX missing',
+                BX_bitrix_sessid_type: hasBx() ? typeof BX.bitrix_sessid : 'BX missing'
+            });
+        })();
     </script>
 </body>
 </html>
 
-Но лучше сразу с подключением BX, иначе BX.ajax не сработает. Вот правильная версия:
+Что проверить сразу
+
+Открой:
+
+/local/sitebuilder/test_api.php
+
+И посмотри, что написано в сером блоке сразу после загрузки.
+
+Нормальный вариант
+
+Там должно быть что-то вроде:
+
+{
+  "loaded": true,
+  "BX_exists": true,
+  "BX_ajax_type": "function",
+  "BX_bitrix_sessid_type": "function"
+}
+
+Если там BX missing
+
+Значит не подгрузился Bitrix JS.
+
+Тогда замени вверху файла:
+
+\Bitrix\Main\UI\Extension::load('main.core');
+
+на более совместимый вариант:
 
 <?php
 require $_SERVER['DOCUMENT_ROOT'] . '/bitrix/modules/main/include/prolog_before.php';
-\Bitrix\Main\UI\Extension::load('main.core');
+CJSCore::Init(['ajax']);
+global $USER;
 ?>
-<!doctype html>
-<html lang="ru">
-<head>
-    <meta charset="UTF-8">
-    <title>SiteBuilder API Test</title>
-</head>
-<body>
-    <h1>Проверка API</h1>
 
-    <button id="pingBtn">Ping</button>
-    <button id="siteListBtn">Site list</button>
+То есть весь верх файла должен стать таким:
 
-    <pre id="out" style="white-space: pre-wrap; background:#f5f5f5; padding:16px; border:1px solid #ccc;"></pre>
+<?php
+require $_SERVER['DOCUMENT_ROOT'] . '/bitrix/modules/main/include/prolog_before.php';
+CJSCore::Init(['ajax']);
+global $USER;
+?>
 
-    <script>
-        function callApi(data) {
-            BX.ajax({
-                url: '/local/sitebuilder/api.php',
-                method: 'POST',
-                data: Object.assign({
-                    sessid: BX.bitrix_sessid()
-                }, data),
-                dataType: 'json',
-                onsuccess: function (res) {
-                    document.getElementById('out').textContent = JSON.stringify(res, null, 2);
-                },
-                onfailure: function (err) {
-                    document.getElementById('out').textContent = 'AJAX ERROR: ' + JSON.stringify(err, null, 2);
-                }
-            });
-        }
+Если кнопки всё равно “молчат”
 
-        document.getElementById('pingBtn').onclick = function () {
-            callApi({ action: 'ping' });
-        };
+Открой консоль браузера:
 
-        document.getElementById('siteListBtn').onclick = function () {
-            callApi({ action: 'site.list' });
-        };
-    </script>
-</body>
-</html>
+F12
+
+вкладка Console
 
 
----
+И пришли мне:
 
-3. Ссылка для проверки
+что написано в сером блоке на странице
 
-Если создашь этот файл, заходить надо сюда:
+есть ли ошибка в Console
 
-https://ТВОЙ_ДОМЕН/local/sitebuilder/test_api.php
+что происходит при нажатии на “Проверить BX”
 
 
----
+Ещё одна частая причина
 
-4. Что должно быть
+Если твоя новая чистая папка называется не /local/sitebuilder/, а по-другому, то вот тут надо поменять путь:
 
-При нажатии Ping должен прийти JSON примерно такой:
+url: '/local/sitebuilder/api.php',
+
+Например, если папка называется /local/sitebuilder_new/, должно быть:
+
+url: '/local/sitebuilder_new/api.php',
+
+Это нужно заменить в двух местах внутри файла.
+
+Быстрый чек без консоли
+
+Нажми кнопку Проверить BX.
+
+Если всё хорошо, увидишь примерно это:
 
 {
-  "ok": true,
-  "time": "2026-04-09T...",
-  "userId": 1,
-  "login": "admin"
+  "BX_exists": true,
+  "BX_ajax_type": "function",
+  "BX_bitrix_sessid_type": "function",
+  "sessid": "..."
 }
 
-При нажатии Site list:
+Если увидишь:
 
-либо список сайтов
+BX missing — проблема в подключении Bitrix JS
 
-либо пустой массив
+BX.ajax not found — проблема в ядре JS
 
-либо ACCESS_DENIED, если нет доступа
-
-либо NOT_AUTHORIZED, если не залогинен
+sending, но дальше ошибка — проблема уже в api.php
 
 
-
----
-
-5. Если хочешь проверить без страницы
-
-Можно через Postman, но нужно передать:
-
-авторизационные cookie Bitrix
-
-POST
-
-sessid
-
-action
-
-
-Поэтому через test_api.php проще всего.
-
-
----
-
-6. Если новая папка называется не sitebuilder
-
-Тогда ссылка будет по её имени, например если папка:
-
-/local/sitebuilder_new/
-
-то проверка:
-
-https://ТВОЙ_ДОМЕН/local/sitebuilder_new/test_api.php
-https://ТВОЙ_ДОМЕН/local/sitebuilder_new/api.php
-
-Если хочешь, следующим сообщением я могу сразу дать тебе готовый test_api.php уже с кнопками для:
-
-site.create
-
-page.list
-
-page.create
-
-block.list
-
-menu.list
-
-
-чтобы ты одним экраном проверял весь API.
+Пришли мне либо текст из серого блока, либо скрин консоли, и я скажу точечно, что именно чинить.
