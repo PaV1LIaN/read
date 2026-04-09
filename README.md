@@ -1,470 +1,226 @@
-Отлично. Делаем template-пакет.
+Зайти нужно туда, где у тебя лежит новая папка проекта под /local.
 
-Сейчас закроем:
+Если ты создал её как:
 
-template.list
+/local/sitebuilder/
 
-template.createFromPage
+то базовые ссылки будут такие:
 
-template.applyToPage
+https://ТВОЙ_ДОМЕН/local/sitebuilder/
+https://ТВОЙ_ДОМЕН/local/sitebuilder/api.php
 
-template.rename
+Проверять можно так.
 
-template.delete
+1. Проверка, что PHP-точка API вообще открывается
 
+Открой:
 
-Логика будет простая и практичная:
+https://ТВОЙ_ДОМЕН/local/sitebuilder/api.php
 
-шаблон хранится в templates.json
+Если просто открыть в браузере GET-запросом, ты, скорее всего, увидишь ошибку вроде:
 
-шаблон принадлежит сайту
+METHOD_NOT_ALLOWED или
 
-шаблон содержит набор блоков страницы
-
-при создании из страницы копируются блоки этой страницы
-
-при применении к странице её текущие блоки заменяются блоками шаблона
+NOT_AUTHORIZED
 
 
-Это хороший рабочий вариант без усложнений.
+Это нормально, потому что API ждёт:
 
+авторизованного пользователя
 
----
+POST
 
-1. Обнови /local/sitebuilder/lib/helpers.php
+sessid
 
-Добавь в конец файла:
-
-<?php
-
-if (!function_exists('sb_find_template')) {
-    function sb_find_template(int $templateId): ?array
-    {
-        foreach (sb_read_templates() as $tpl) {
-            if ((int)($tpl['id'] ?? 0) === $templateId) {
-                return $tpl;
-            }
-        }
-        return null;
-    }
-}
-
-if (!function_exists('sb_next_template_id')) {
-    function sb_next_template_id(array $templates = null): int
-    {
-        if ($templates === null) {
-            $templates = sb_read_templates();
-        }
-
-        $maxId = 0;
-        foreach ($templates as $tpl) {
-            $maxId = max($maxId, (int)($tpl['id'] ?? 0));
-        }
-
-        return $maxId + 1;
-    }
-}
-
-if (!function_exists('sb_templates_for_site')) {
-    function sb_templates_for_site(int $siteId): array
-    {
-        $templates = array_values(array_filter(sb_read_templates(), static function ($tpl) use ($siteId) {
-            return (int)($tpl['siteId'] ?? 0) === $siteId;
-        }));
-
-        usort($templates, static function ($a, $b) {
-            return (int)($a['id'] ?? 0) <=> (int)($b['id'] ?? 0);
-        });
-
-        return $templates;
-    }
-}
-
-if (!function_exists('sb_normalize_template_record')) {
-    function sb_normalize_template_record(array $tpl): array
-    {
-        if (!isset($tpl['name'])) {
-            $tpl['name'] = '';
-        }
-        if (!isset($tpl['siteId'])) {
-            $tpl['siteId'] = 0;
-        }
-        if (!isset($tpl['blocks']) || !is_array($tpl['blocks'])) {
-            $tpl['blocks'] = [];
-        }
-
-        $tpl['blocks'] = array_map('sb_normalize_block_record', $tpl['blocks']);
-
-        usort($tpl['blocks'], static function ($a, $b) {
-            $sortCmp = (int)($a['sort'] ?? 500) <=> (int)($b['sort'] ?? 500);
-            if ($sortCmp !== 0) {
-                return $sortCmp;
-            }
-            return (int)($a['id'] ?? 0) <=> (int)($b['id'] ?? 0);
-        });
-
-        return $tpl;
-    }
-}
 
 
 ---
 
-2. Полностью замени /local/sitebuilder/api/handlers/template.php
+2. Самая правильная проверка API
+
+Сделай временную тестовую страницу, например:
+
+/local/sitebuilder/test_api.php
+
+И зайди по ссылке:
+
+https://ТВОЙ_ДОМЕН/local/sitebuilder/test_api.php
+
+Вот готовый файл для проверки:
 
 <?php
-
+require $_SERVER['DOCUMENT_ROOT'] . '/bitrix/modules/main/include/prolog_before.php';
 global $USER;
+?>
+<!doctype html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <title>SiteBuilder API Test</title>
+</head>
+<body>
+    <h1>Проверка API</h1>
 
-if ($action === 'template.list') {
-    $siteId = (int)($_POST['siteId'] ?? 0);
-    if ($siteId <= 0) {
-        sb_json_error('SITE_ID_REQUIRED', 422);
-    }
+    <button id="pingBtn">Ping</button>
+    <button id="siteListBtn">Site list</button>
 
-    sb_require_viewer($siteId);
+    <pre id="out" style="white-space: pre-wrap; background:#f5f5f5; padding:16px; border:1px solid #ccc;"></pre>
 
-    $templates = array_map('sb_normalize_template_record', sb_templates_for_site($siteId));
-
-    sb_json_ok([
-        'templates' => $templates,
-    ]);
-}
-
-if ($action === 'template.createFromPage') {
-    $siteId = (int)($_POST['siteId'] ?? 0);
-    $pageId = (int)($_POST['pageId'] ?? 0);
-    $name = trim((string)($_POST['name'] ?? ''));
-
-    if ($siteId <= 0) {
-        sb_json_error('SITE_ID_REQUIRED', 422);
-    }
-    if ($pageId <= 0) {
-        sb_json_error('PAGE_ID_REQUIRED', 422);
-    }
-    if ($name === '') {
-        sb_json_error('NAME_REQUIRED', 422);
-    }
-
-    sb_require_editor($siteId);
-
-    $page = sb_find_page($pageId);
-    if (!$page || (int)($page['siteId'] ?? 0) !== $siteId) {
-        sb_json_error('PAGE_NOT_IN_SITE', 422);
-    }
-
-    $pageBlocks = sb_blocks_for_page($pageId);
-
-    $storedBlocks = [];
-    foreach ($pageBlocks as $block) {
-        $copy = sb_normalize_block_record($block);
-        unset($copy['pageId']);
-        $storedBlocks[] = $copy;
-    }
-
-    $templates = sb_read_templates();
-
-    $template = [
-        'id' => sb_next_template_id($templates),
-        'siteId' => $siteId,
-        'name' => $name,
-        'sourcePageId' => $pageId,
-        'blocks' => $storedBlocks,
-        'createdBy' => (int)$USER->GetID(),
-        'createdAt' => date('c'),
-        'updatedAt' => date('c'),
-        'updatedBy' => (int)$USER->GetID(),
-    ];
-
-    $templates[] = $template;
-    sb_write_templates($templates);
-
-    sb_json_ok([
-        'template' => sb_normalize_template_record($template),
-    ]);
-}
-
-if ($action === 'template.applyToPage') {
-    $templateId = (int)($_POST['templateId'] ?? 0);
-    $pageId = (int)($_POST['pageId'] ?? 0);
-
-    if ($templateId <= 0) {
-        sb_json_error('TEMPLATE_ID_REQUIRED', 422);
-    }
-    if ($pageId <= 0) {
-        sb_json_error('PAGE_ID_REQUIRED', 422);
-    }
-
-    $template = sb_find_template($templateId);
-    if (!$template) {
-        sb_json_error('TEMPLATE_NOT_FOUND', 404);
-    }
-
-    $page = sb_find_page($pageId);
-    if (!$page) {
-        sb_json_error('PAGE_NOT_FOUND', 404);
-    }
-
-    $siteId = (int)($page['siteId'] ?? 0);
-    if ((int)($template['siteId'] ?? 0) !== $siteId) {
-        sb_json_error('TEMPLATE_NOT_IN_SITE', 422);
-    }
-
-    sb_require_editor($siteId);
-
-    $blocks = sb_read_blocks();
-
-    $blocks = array_values(array_filter($blocks, static function ($b) use ($pageId) {
-        return (int)($b['pageId'] ?? 0) !== $pageId;
-    }));
-
-    $nextBlockId = sb_next_block_id($blocks);
-
-    $templateBlocks = $template['blocks'] ?? [];
-    usort($templateBlocks, static function ($a, $b) {
-        $sortCmp = (int)($a['sort'] ?? 500) <=> (int)($b['sort'] ?? 500);
-        if ($sortCmp !== 0) {
-            return $sortCmp;
+    <script>
+        function callApi(data) {
+            BX.ajax({
+                url: '/local/sitebuilder/api.php',
+                method: 'POST',
+                data: Object.assign({
+                    sessid: BX.bitrix_sessid()
+                }, data),
+                dataType: 'json',
+                onsuccess: function (res) {
+                    document.getElementById('out').textContent = JSON.stringify(res, null, 2);
+                },
+                onfailure: function (err) {
+                    document.getElementById('out').textContent = 'AJAX ERROR: ' + JSON.stringify(err, null, 2);
+                }
+            });
         }
-        return (int)($a['id'] ?? 0) <=> (int)($b['id'] ?? 0);
-    });
 
-    $sort = 10;
-    foreach ($templateBlocks as $tplBlock) {
-        $newBlock = sb_normalize_block_record($tplBlock);
-        $newBlock['id'] = $nextBlockId++;
-        $newBlock['pageId'] = $pageId;
-        $newBlock['sort'] = $sort;
-        $newBlock['createdBy'] = (int)$USER->GetID();
-        $newBlock['createdAt'] = date('c');
-        $newBlock['updatedAt'] = date('c');
-        $newBlock['updatedBy'] = (int)$USER->GetID();
-        $blocks[] = $newBlock;
-        $sort += 10;
-    }
+        document.getElementById('pingBtn').onclick = function () {
+            callApi({ action: 'ping' });
+        };
 
-    sb_write_blocks($blocks);
+        document.getElementById('siteListBtn').onclick = function () {
+            callApi({ action: 'site.list' });
+        };
+    </script>
+</body>
+</html>
 
-    sb_json_ok([
-        'blocks' => array_map('sb_normalize_block_record', sb_blocks_for_page($pageId)),
-    ]);
-}
+Но лучше сразу с подключением BX, иначе BX.ajax не сработает. Вот правильная версия:
 
-if ($action === 'template.rename') {
-    $id = (int)($_POST['id'] ?? 0);
-    $name = trim((string)($_POST['name'] ?? ''));
+<?php
+require $_SERVER['DOCUMENT_ROOT'] . '/bitrix/modules/main/include/prolog_before.php';
+\Bitrix\Main\UI\Extension::load('main.core');
+?>
+<!doctype html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <title>SiteBuilder API Test</title>
+</head>
+<body>
+    <h1>Проверка API</h1>
 
-    if ($id <= 0) {
-        sb_json_error('ID_REQUIRED', 422);
-    }
-    if ($name === '') {
-        sb_json_error('NAME_REQUIRED', 422);
-    }
+    <button id="pingBtn">Ping</button>
+    <button id="siteListBtn">Site list</button>
 
-    $template = sb_find_template($id);
-    if (!$template) {
-        sb_json_error('TEMPLATE_NOT_FOUND', 404);
-    }
+    <pre id="out" style="white-space: pre-wrap; background:#f5f5f5; padding:16px; border:1px solid #ccc;"></pre>
 
-    $siteId = (int)($template['siteId'] ?? 0);
-    sb_require_editor($siteId);
-
-    $templates = sb_read_templates();
-    $updated = null;
-
-    foreach ($templates as &$tpl) {
-        if ((int)($tpl['id'] ?? 0) === $id) {
-            $tpl['name'] = $name;
-            $tpl['updatedAt'] = date('c');
-            $tpl['updatedBy'] = (int)$USER->GetID();
-            $updated = $tpl;
-            break;
+    <script>
+        function callApi(data) {
+            BX.ajax({
+                url: '/local/sitebuilder/api.php',
+                method: 'POST',
+                data: Object.assign({
+                    sessid: BX.bitrix_sessid()
+                }, data),
+                dataType: 'json',
+                onsuccess: function (res) {
+                    document.getElementById('out').textContent = JSON.stringify(res, null, 2);
+                },
+                onfailure: function (err) {
+                    document.getElementById('out').textContent = 'AJAX ERROR: ' + JSON.stringify(err, null, 2);
+                }
+            });
         }
-    }
-    unset($tpl);
 
-    if (!$updated) {
-        sb_json_error('TEMPLATE_NOT_FOUND', 404);
-    }
+        document.getElementById('pingBtn').onclick = function () {
+            callApi({ action: 'ping' });
+        };
 
-    sb_write_templates($templates);
-
-    sb_json_ok([
-        'template' => sb_normalize_template_record($updated),
-    ]);
-}
-
-if ($action === 'template.delete') {
-    $id = (int)($_POST['id'] ?? 0);
-    if ($id <= 0) {
-        sb_json_error('ID_REQUIRED', 422);
-    }
-
-    $template = sb_find_template($id);
-    if (!$template) {
-        sb_json_error('TEMPLATE_NOT_FOUND', 404);
-    }
-
-    $siteId = (int)($template['siteId'] ?? 0);
-    sb_require_editor($siteId);
-
-    $templates = sb_read_templates();
-    $before = count($templates);
-
-    $templates = array_values(array_filter($templates, static function ($tpl) use ($id) {
-        return (int)($tpl['id'] ?? 0) !== $id;
-    }));
-
-    if (count($templates) === $before) {
-        sb_json_error('TEMPLATE_NOT_FOUND', 404);
-    }
-
-    sb_write_templates($templates);
-
-    sb_json_ok();
-}
-
-sb_json_error('NOT_MOVED_YET', 501, [
-    'handler' => 'template',
-    'action' => $action,
-]);
+        document.getElementById('siteListBtn').onclick = function () {
+            callApi({ action: 'site.list' });
+        };
+    </script>
+</body>
+</html>
 
 
 ---
 
-3. Что теперь должно работать
+3. Ссылка для проверки
 
-После вставки:
+Если создашь этот файл, заходить надо сюда:
 
-template.list
-
-template.createFromPage
-
-template.applyToPage
-
-template.rename
-
-template.delete
-
+https://ТВОЙ_ДОМЕН/local/sitebuilder/test_api.php
 
 
 ---
 
-4. Как сейчас выглядит шаблон
+4. Что должно быть
 
-Пример записи в templates.json:
+При нажатии Ping должен прийти JSON примерно такой:
 
 {
-  "id": 1,
-  "siteId": 3,
-  "name": "Лендинг с hero",
-  "sourcePageId": 12,
-  "blocks": [
-    {
-      "id": 101,
-      "type": "heading",
-      "sort": 10,
-      "content": {
-        "text": "Заголовок",
-        "level": "h1",
-        "align": "center"
-      },
-      "props": {}
-    },
-    {
-      "id": 102,
-      "type": "text",
-      "sort": 20,
-      "content": {
-        "html": "<p>Описание</p>"
-      },
-      "props": {}
-    }
-  ]
+  "ok": true,
+  "time": "2026-04-09T...",
+  "userId": 1,
+  "login": "admin"
 }
 
-Обрати внимание:
+При нажатии Site list:
 
-id у блоков внутри шаблона хранятся как снимок
+либо список сайтов
 
-при применении к странице им назначаются новые реальные block.id
+либо пустой массив
 
+либо ACCESS_DENIED, если нет доступа
 
-Это правильное поведение.
-
-
----
-
-5. Что проверить руками
-
-Проверь по порядку:
-
-1. создать пару блоков на странице
-
-
-2. вызвать template.createFromPage
-
-
-3. вызвать template.list
-
-
-4. переименовать шаблон через template.rename
-
-
-5. создать новую страницу
-
-
-6. применить шаблон через template.applyToPage
-
-
-7. проверить, что блоки появились на новой странице
-
-
-8. удалить шаблон
-
+либо NOT_AUTHORIZED, если не залогинен
 
 
 
 ---
 
-6. Важный момент по apply
+5. Если хочешь проверить без страницы
 
-Сейчас template.applyToPage делает простое и безопасное поведение:
+Можно через Postman, но нужно передать:
 
-удаляет все текущие блоки страницы
+авторизационные cookie Bitrix
 
-вставляет блоки из шаблона
+POST
+
+sessid
+
+action
 
 
-Это лучше, чем пытаться “умно мерджить”, потому что мердж почти всегда ломает редактор.
+Поэтому через test_api.php проще всего.
 
 
 ---
 
-7. Что дальше лучше делать
+6. Если новая папка называется не sitebuilder
 
-Теперь у тебя закрыты:
+Тогда ссылка будет по её имени, например если папка:
 
-site
+/local/sitebuilder_new/
 
-page
+то проверка:
 
-block
+https://ТВОЙ_ДОМЕН/local/sitebuilder_new/test_api.php
+https://ТВОЙ_ДОМЕН/local/sitebuilder_new/api.php
 
-menu
+Если хочешь, следующим сообщением я могу сразу дать тебе готовый test_api.php уже с кнопками для:
 
-access
+site.create
 
-template
+page.list
+
+page.create
+
+block.list
+
+menu.list
 
 
-Остаются два крупных участка:
-
-layout
-
-file / Disk
-
-
-Я бы сейчас делал layout-пакет, потому что он ближе к редактору и публичному рендеру, а Disk лучше выделять уже отдельным шагом.
-
-Напиши: давай layout-пакет
+чтобы ты одним экраном проверял весь API.
