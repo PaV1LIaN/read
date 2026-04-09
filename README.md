@@ -1,49 +1,17 @@
-Отлично. Делаем первый рабочий editor.php.
+Отлично. Красоту уже будем наводить после того, как соберём весь рабочий каркас.
 
-Что он будет уметь уже сейчас:
+Следующий правильный шаг — files.php, чтобы проверить:
 
-загружать сайт
+file.list
 
-показывать список страниц сайта
+file.upload
 
-создавать страницу
-
-удалять страницу
-
-дублировать страницу
-
-менять статус страницы
-
-выбирать текущую страницу
-
-загружать блоки текущей страницы
-
-добавлять блоки
-
-удалять блоки
-
-дублировать блоки
-
-двигать блоки вверх/вниз
-
-редактировать базовые типы:
-
-text
-
-heading
-
-button
-
-html
+file.delete
 
 
+И заодно сразу поймём, нет ли нюансов по Disk на твоей коробке.
 
-Без сложных модалок и без layout-части. Но это уже будет живой редактор на новом API.
-
-
----
-
-/local/sitebuilder/editor.php
+/local/sitebuilder/files.php
 
 <?php
 require $_SERVER['DOCUMENT_ROOT'] . '/bitrix/modules/main/include/prolog_before.php';
@@ -68,7 +36,7 @@ if ($siteId <= 0) {
     <html lang="ru">
     <head>
         <meta charset="UTF-8">
-        <title>SiteBuilder / Editor</title>
+        <title>SiteBuilder / Files</title>
         <?php $APPLICATION->ShowHead(); ?>
     </head>
     <body style="font-family:Arial,sans-serif;padding:20px;">
@@ -84,7 +52,7 @@ if ($siteId <= 0) {
 <html lang="ru">
 <head>
     <meta charset="UTF-8">
-    <title>SiteBuilder / Editor</title>
+    <title>SiteBuilder / Files</title>
     <?php $APPLICATION->ShowHead(); ?>
     <style>
         * { box-sizing: border-box; }
@@ -95,9 +63,9 @@ if ($siteId <= 0) {
             color: #1f2937;
         }
         .page {
-            max-width: 1440px;
+            max-width: 1280px;
             margin: 0 auto;
-            padding: 20px;
+            padding: 24px;
         }
         .topbar {
             display: flex;
@@ -106,7 +74,7 @@ if ($siteId <= 0) {
             gap: 16px;
             margin-bottom: 20px;
         }
-        .topbar-left h1 {
+        .title {
             margin: 0;
             font-size: 28px;
             font-weight: 700;
@@ -123,16 +91,12 @@ if ($siteId <= 0) {
             color: #1d4ed8;
             font-size: 14px;
         }
-        .layout {
-            display: grid;
-            grid-template-columns: 360px 1fr;
-            gap: 20px;
-        }
         .panel {
             background: #fff;
             border: 1px solid #e5e7eb;
             border-radius: 14px;
-            padding: 16px;
+            padding: 18px;
+            margin-bottom: 20px;
             box-shadow: 0 2px 8px rgba(15, 23, 42, 0.04);
         }
         .panel-title {
@@ -140,46 +104,12 @@ if ($siteId <= 0) {
             font-size: 18px;
             font-weight: 700;
         }
-        .form-row {
+        .toolbar {
             display: flex;
             gap: 10px;
             flex-wrap: wrap;
-            align-items: end;
-        }
-        .field {
-            display: flex;
-            flex-direction: column;
-            gap: 6px;
-            min-width: 180px;
-            flex: 1 1 180px;
-        }
-        .field label {
-            font-size: 13px;
-            color: #4b5563;
-        }
-        .field input,
-        .field select,
-        .field textarea {
-            width: 100%;
-            border: 1px solid #d1d5db;
-            border-radius: 10px;
-            outline: none;
-            background: #fff;
-            padding: 10px 12px;
-            font: inherit;
-        }
-        .field input,
-        .field select {
-            height: 40px;
-        }
-        .field textarea {
-            min-height: 120px;
-            resize: vertical;
-        }
-        .field input:focus,
-        .field select:focus,
-        .field textarea:focus {
-            border-color: #2563eb;
+            align-items: center;
+            margin-bottom: 12px;
         }
         .btn {
             height: 40px;
@@ -215,49 +145,35 @@ if ($siteId <= 0) {
         .btn-danger:hover {
             background: #b91c1c;
         }
-        .btn-gray {
-            background: #f3f4f6;
-            color: #374151;
-        }
-        .btn-gray:hover {
-            background: #e5e7eb;
-        }
-        .pages-list,
-        .blocks-list {
-            display: flex;
-            flex-direction: column;
-            gap: 12px;
-        }
-        .page-card,
-        .block-card {
-            border: 1px solid #e5e7eb;
-            border-radius: 12px;
-            padding: 12px;
-            background: #fafafa;
-        }
-        .page-card.active {
-            border-color: #2563eb;
-            background: #eff6ff;
-        }
-        .page-head,
-        .block-head {
-            display: flex;
-            justify-content: space-between;
-            gap: 12px;
-            align-items: flex-start;
-        }
-        .page-title,
-        .block-title {
-            margin: 0 0 6px;
-            font-size: 15px;
-            font-weight: 700;
-        }
         .meta {
             font-size: 13px;
             color: #6b7280;
             line-height: 1.5;
         }
-        .actions {
+        .files-list {
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+        .file-card {
+            border: 1px solid #e5e7eb;
+            border-radius: 12px;
+            padding: 14px;
+            background: #fafafa;
+        }
+        .file-head {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            gap: 12px;
+        }
+        .file-title {
+            margin: 0 0 6px;
+            font-size: 15px;
+            font-weight: 700;
+            word-break: break-word;
+        }
+        .file-actions {
             margin-top: 10px;
             display: flex;
             flex-wrap: wrap;
@@ -273,27 +189,6 @@ if ($siteId <= 0) {
             font-size: 12px;
             white-space: nowrap;
         }
-        .badge-green {
-            background: #dcfce7;
-            color: #166534;
-        }
-        .badge-yellow {
-            background: #fef3c7;
-            color: #92400e;
-        }
-        .block-preview {
-            margin-top: 12px;
-            padding: 12px;
-            border-radius: 10px;
-            background: #fff;
-            border: 1px solid #e5e7eb;
-        }
-        .toolbar {
-            display: flex;
-            gap: 10px;
-            flex-wrap: wrap;
-            margin-bottom: 14px;
-        }
         .empty {
             padding: 20px;
             text-align: center;
@@ -301,11 +196,6 @@ if ($siteId <= 0) {
             border: 1px dashed #d1d5db;
             border-radius: 12px;
             background: #fff;
-        }
-        .editor-grid {
-            display: grid;
-            grid-template-columns: 1fr 420px;
-            gap: 20px;
         }
         .output {
             white-space: pre-wrap;
@@ -318,103 +208,36 @@ if ($siteId <= 0) {
             font-size: 13px;
             overflow: auto;
         }
-        .hidden {
-            display: none !important;
-        }
-        @media (max-width: 1200px) {
-            .layout,
-            .editor-grid {
-                grid-template-columns: 1fr;
-            }
-        }
     </style>
 </head>
 <body>
 <div class="page">
     <div class="topbar">
-        <div class="topbar-left">
+        <div>
             <a class="back-link" href="<?= htmlspecialchars($basePath, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?>/index.php">← К списку сайтов</a>
-            <h1>Редактор сайта</h1>
+            <h1 class="title">Файлы сайта</h1>
             <p class="subtitle">siteId = <?= (int)$siteId ?></p>
         </div>
     </div>
 
-    <div class="layout">
-        <div class="panel">
-            <h2 class="panel-title">Страницы</h2>
-
-            <div class="form-row" style="margin-bottom:14px;">
-                <div class="field">
-                    <label for="newPageTitle">Название страницы</label>
-                    <input type="text" id="newPageTitle" placeholder="Например: Главная">
-                </div>
-                <div class="field">
-                    <label for="newPageSlug">Slug</label>
-                    <input type="text" id="newPageSlug" placeholder="Например: home">
-                </div>
-                <button type="button" class="btn btn-primary" id="createPageBtn">Создать</button>
-            </div>
-
-            <div id="pagesContainer" class="pages-list">
-                <div class="empty">Загрузка страниц...</div>
-            </div>
+    <div class="panel">
+        <h2 class="panel-title">Загрузка файла</h2>
+        <div class="toolbar">
+            <input type="file" id="uploadFileInput">
+            <button type="button" class="btn btn-primary" id="uploadBtn">Загрузить</button>
+            <button type="button" class="btn btn-light" id="reloadBtn">Обновить список</button>
         </div>
+        <div class="meta" id="folderInfo">Папка ещё не загружена</div>
+    </div>
 
-        <div class="editor-grid">
-            <div class="panel">
-                <div style="display:flex; justify-content:space-between; align-items:center; gap:12px; margin-bottom:14px;">
-                    <h2 class="panel-title" style="margin:0;">Блоки страницы</h2>
-                    <button type="button" class="btn btn-light btn-small" id="reloadBlocksBtn">Обновить</button>
-                </div>
-
-                <div id="currentPageInfo" class="meta" style="margin-bottom:14px;">
-                    Страница не выбрана
-                </div>
-
-                <div class="toolbar">
-                    <button type="button" class="btn btn-light btn-small js-add-block" data-type="text">+ Text</button>
-                    <button type="button" class="btn btn-light btn-small js-add-block" data-type="heading">+ Heading</button>
-                    <button type="button" class="btn btn-light btn-small js-add-block" data-type="button">+ Button</button>
-                    <button type="button" class="btn btn-light btn-small js-add-block" data-type="html">+ HTML</button>
-                    <button type="button" class="btn btn-light btn-small js-add-block" data-type="spacer">+ Spacer</button>
-                </div>
-
-                <div id="blocksContainer" class="blocks-list">
-                    <div class="empty">Выберите страницу</div>
-                </div>
-            </div>
-
-            <div class="panel">
-                <h2 class="panel-title">Редактор блока</h2>
-
-                <div id="blockEditorEmpty" class="empty">Выберите блок для редактирования</div>
-
-                <div id="blockEditorForm" class="hidden">
-                    <div class="field" style="margin-bottom:12px;">
-                        <label for="editBlockType">Тип</label>
-                        <input type="text" id="editBlockType" readonly>
-                    </div>
-
-                    <div class="field" style="margin-bottom:12px;">
-                        <label for="editBlockContentText">Content / JSON</label>
-                        <textarea id="editBlockContentText"></textarea>
-                    </div>
-
-                    <div class="field" style="margin-bottom:12px;">
-                        <label for="editBlockPropsText">Props / JSON</label>
-                        <textarea id="editBlockPropsText">{}</textarea>
-                    </div>
-
-                    <div class="form-row">
-                        <button type="button" class="btn btn-primary" id="saveBlockBtn">Сохранить блок</button>
-                        <button type="button" class="btn btn-danger" id="deleteBlockBtn">Удалить блок</button>
-                    </div>
-                </div>
-            </div>
+    <div class="panel">
+        <h2 class="panel-title">Файлы</h2>
+        <div id="filesContainer" class="files-list">
+            <div class="empty">Загрузка...</div>
         </div>
     </div>
 
-    <div class="panel" style="margin-top:20px;">
+    <div class="panel">
         <h2 class="panel-title">Отладка</h2>
         <div id="output" class="output">Здесь будут ответы API...</div>
     </div>
@@ -427,16 +250,13 @@ if ($siteId <= 0) {
     var SITE_ID = <?= (int)$siteId ?>;
 
     var output = document.getElementById('output');
-    var pagesContainer = document.getElementById('pagesContainer');
-    var blocksContainer = document.getElementById('blocksContainer');
-    var currentPageInfo = document.getElementById('currentPageInfo');
+    var filesContainer = document.getElementById('filesContainer');
+    var folderInfo = document.getElementById('folderInfo');
+    var uploadFileInput = document.getElementById('uploadFileInput');
 
     var state = {
-        site: null,
-        pages: [],
-        blocks: [],
-        currentPageId: 0,
-        currentBlockId: 0
+        files: [],
+        folderId: 0
     };
 
     function print(data) {
@@ -501,565 +321,149 @@ if ($siteId <= 0) {
         });
     }
 
-    function loadSite(next) {
-        api('site.get', { siteId: SITE_ID }, function (res) {
-            if (res && res.ok === true) {
-                state.site = res.site || null;
-            }
-            if (typeof next === 'function') {
-                next();
-            }
-        });
-    }
+    function loadFiles() {
+        filesContainer.innerHTML = '<div class="empty">Загрузка...</div>';
 
-    function loadPages(next) {
-        pagesContainer.innerHTML = '<div class="empty">Загрузка страниц...</div>';
-
-        api('page.list', { siteId: SITE_ID }, function (res) {
+        api('file.list', { siteId: SITE_ID }, function (res) {
             if (!res || res.ok !== true) {
-                pagesContainer.innerHTML = '<div class="empty">Не удалось загрузить страницы</div>';
+                filesContainer.innerHTML = '<div class="empty">Не удалось загрузить файлы</div>';
+                folderInfo.textContent = 'Ошибка загрузки папки';
                 return;
             }
 
-            state.pages = Array.isArray(res.pages) ? res.pages : [];
+            state.files = Array.isArray(res.files) ? res.files : [];
+            state.folderId = Number(res.folderId || 0);
 
-            if (!state.currentPageId && state.pages.length) {
-                state.currentPageId = Number(state.pages[0].id || 0);
-            }
-
-            var hasCurrent = false;
-            for (var i = 0; i < state.pages.length; i++) {
-                if (Number(state.pages[i].id || 0) === Number(state.currentPageId || 0)) {
-                    hasCurrent = true;
-                    break;
-                }
-            }
-
-            if (!hasCurrent) {
-                state.currentPageId = state.pages.length ? Number(state.pages[0].id || 0) : 0;
-            }
-
-            renderPages();
-
-            if (typeof next === 'function') {
-                next();
-            }
+            folderInfo.textContent = 'Disk folder ID: ' + state.folderId;
+            renderFiles();
         });
     }
 
-    function renderPages() {
-        if (!state.pages.length) {
-            pagesContainer.innerHTML = '<div class="empty">Страниц пока нет</div>';
-            currentPageInfo.textContent = 'Страница не выбрана';
-            blocksContainer.innerHTML = '<div class="empty">Выберите страницу</div>';
+    function renderFiles() {
+        if (!state.files.length) {
+            filesContainer.innerHTML = '<div class="empty">Файлов пока нет</div>';
             return;
         }
 
         var html = '';
-        for (var i = 0; i < state.pages.length; i++) {
-            html += renderPageCard(state.pages[i]);
+        for (var i = 0; i < state.files.length; i++) {
+            html += renderFileCard(state.files[i]);
         }
-        pagesContainer.innerHTML = html;
+        filesContainer.innerHTML = html;
     }
 
-    function renderPageCard(page) {
-        var id = Number(page.id || 0);
-        var active = id === Number(state.currentPageId || 0) ? ' active' : '';
-        var isPublished = String(page.status || '') === 'published';
-        var badge = isPublished
-            ? '<span class="badge badge-green">published</span>'
-            : '<span class="badge badge-yellow">draft</span>';
+    function renderFileCard(file) {
+        var id = Number(file.id || 0);
+        var name = escapeHtml(file.name || '');
+        var size = Number(file.size || 0);
+        var createTime = escapeHtml(file.createTime || '');
+        var updateTime = escapeHtml(file.updateTime || '');
+        var downloadUrl = escapeHtml(file.downloadUrl || '#');
 
         return ''
-            + '<div class="page-card' + active + '">'
-            + '  <div class="page-head">'
+            + '<div class="file-card">'
+            + '  <div class="file-head">'
             + '    <div>'
-            + '      <div class="page-title">' + escapeHtml(page.title || '') + '</div>'
+            + '      <div class="file-title">' + name + '</div>'
             + '      <div class="meta">'
             + '        <div><strong>ID:</strong> ' + id + '</div>'
-            + '        <div><strong>Slug:</strong> ' + escapeHtml(page.slug || '') + '</div>'
-            + '        <div><strong>Parent ID:</strong> ' + Number(page.parentId || 0) + '</div>'
-            + '        <div><strong>Sort:</strong> ' + Number(page.sort || 0) + '</div>'
+            + '        <div><strong>Размер:</strong> ' + size + ' байт</div>'
+            + '        <div><strong>Создан:</strong> ' + createTime + '</div>'
+            + '        <div><strong>Обновлён:</strong> ' + updateTime + '</div>'
             + '      </div>'
             + '    </div>'
-            + '    ' + badge
+            + '    <span class="badge">file</span>'
             + '  </div>'
-            + '  <div class="actions">'
-            + '    <button type="button" class="btn btn-light btn-small js-open-page" data-id="' + id + '">Открыть</button>'
-            + '    <button type="button" class="btn btn-light btn-small js-rename-page" data-id="' + id + '">Meta</button>'
-            + '    <button type="button" class="btn btn-light btn-small js-duplicate-page" data-id="' + id + '">Дублировать</button>'
-            + '    <button type="button" class="btn btn-light btn-small js-toggle-status" data-id="' + id + '" data-status="' + escapeHtml(page.status || 'draft') + '">'
-            + (isPublished ? 'В draft' : 'Опубликовать')
-            + '    </button>'
-            + '    <button type="button" class="btn btn-gray btn-small js-move-page-up" data-id="' + id + '">↑</button>'
-            + '    <button type="button" class="btn btn-gray btn-small js-move-page-down" data-id="' + id + '">↓</button>'
-            + '    <button type="button" class="btn btn-danger btn-small js-delete-page" data-id="' + id + '">Удалить</button>'
+            + '  <div class="file-actions">'
+            + '    <a class="btn btn-light btn-small" href="' + downloadUrl + '" target="_blank">Скачать</a>'
+            + '    <button type="button" class="btn btn-danger btn-small js-delete-file" data-id="' + id + '">Удалить</button>'
             + '  </div>'
             + '</div>';
     }
 
-    function createPage() {
-        var titleInput = document.getElementById('newPageTitle');
-        var slugInput = document.getElementById('newPageSlug');
-
-        var title = (titleInput.value || '').trim();
-        var slug = (slugInput.value || '').trim();
-
-        if (!title) {
-            alert('Введите название страницы');
-            titleInput.focus();
+    function uploadFile() {
+        if (!uploadFileInput.files || !uploadFileInput.files.length) {
+            alert('Выберите файл');
             return;
         }
 
-        api('page.create', {
+        var file = uploadFileInput.files[0];
+
+        var formData = new FormData();
+        formData.append('action', 'file.upload');
+        formData.append('siteId', String(SITE_ID));
+        formData.append('sessid', getSessid());
+        formData.append('file', file);
+
+        var xhr = new XMLHttpRequest();
+        xhr.open('POST', API_URL, true);
+
+        xhr.onload = function () {
+            var text = xhr.responseText || '';
+            var data = null;
+
+            try {
+                data = JSON.parse(text);
+            } catch (e) {
+                print({
+                    ok: false,
+                    error: 'BAD_JSON',
+                    raw: text
+                });
+                alert('Ответ сервера не является JSON');
+                return;
+            }
+
+            print(data);
+
+            if (!data || data.ok !== true) {
+                alert('Не удалось загрузить файл');
+                return;
+            }
+
+            uploadFileInput.value = '';
+            loadFiles();
+        };
+
+        xhr.onerror = function () {
+            print({
+                ok: false,
+                error: 'XHR_UPLOAD_ERROR'
+            });
+            alert('Ошибка загрузки файла');
+        };
+
+        xhr.send(formData);
+    }
+
+    function deleteFile(fileId) {
+        if (!confirm('Удалить файл #' + fileId + '?')) {
+            return;
+        }
+
+        api('file.delete', {
             siteId: SITE_ID,
-            title: title,
-            slug: slug
+            fileId: fileId
         }, function (res) {
             if (!res || res.ok !== true) {
-                alert('Не удалось создать страницу');
+                alert('Не удалось удалить файл');
                 return;
             }
 
-            titleInput.value = '';
-            slugInput.value = '';
-
-            state.currentPageId = Number((res.page && res.page.id) || 0);
-            loadPages(loadBlocks);
+            loadFiles();
         });
     }
 
-    function openPage(pageId) {
-        state.currentPageId = Number(pageId || 0);
-        state.currentBlockId = 0;
-        renderPages();
-        loadBlocks();
-        clearBlockEditor();
-    }
-
-    function renamePage(pageId) {
-        var page = findPage(pageId);
-        if (!page) {
-            alert('Страница не найдена');
-            return;
-        }
-
-        var title = prompt('Название страницы:', page.title || '');
-        if (title === null) {
-            return;
-        }
-        title = title.trim();
-        if (!title) {
-            alert('Название не может быть пустым');
-            return;
-        }
-
-        var slug = prompt('Slug страницы:', page.slug || '');
-        if (slug === null) {
-            return;
-        }
-        slug = slug.trim();
-
-        api('page.updateMeta', {
-            id: pageId,
-            title: title,
-            slug: slug
-        }, function (res) {
-            if (!res || res.ok !== true) {
-                alert('Не удалось обновить страницу');
-                return;
-            }
-
-            loadPages();
-        });
-    }
-
-    function duplicatePage(pageId) {
-        api('page.duplicate', { id: pageId }, function (res) {
-            if (!res || res.ok !== true) {
-                alert('Не удалось дублировать страницу');
-                return;
-            }
-
-            state.currentPageId = Number((res.page && res.page.id) || 0);
-            loadPages(loadBlocks);
-        });
-    }
-
-    function togglePageStatus(pageId, currentStatus) {
-        var nextStatus = currentStatus === 'published' ? 'draft' : 'published';
-
-        api('page.setStatus', {
-            id: pageId,
-            status: nextStatus
-        }, function (res) {
-            if (!res || res.ok !== true) {
-                alert('Не удалось изменить статус');
-                return;
-            }
-
-            loadPages();
-        });
-    }
-
-    function movePage(pageId, dir) {
-        api('page.move', {
-            id: pageId,
-            dir: dir
-        }, function (res) {
-            if (!res || res.ok !== true) {
-                alert('Не удалось переместить страницу');
-                return;
-            }
-
-            loadPages();
-        });
-    }
-
-    function deletePage(pageId) {
-        if (!confirm('Удалить страницу #' + pageId + '?')) {
-            return;
-        }
-
-        api('page.delete', { id: pageId }, function (res) {
-            if (!res || res.ok !== true) {
-                alert('Не удалось удалить страницу');
-                return;
-            }
-
-            if (Number(state.currentPageId || 0) === Number(pageId || 0)) {
-                state.currentPageId = 0;
-                state.currentBlockId = 0;
-                clearBlockEditor();
-            }
-
-            loadPages(loadBlocks);
-        });
-    }
-
-    function loadBlocks() {
-        if (!state.currentPageId) {
-            currentPageInfo.textContent = 'Страница не выбрана';
-            blocksContainer.innerHTML = '<div class="empty">Выберите страницу</div>';
-            return;
-        }
-
-        var page = findPage(state.currentPageId);
-        if (page) {
-            currentPageInfo.innerHTML =
-                '<strong>Текущая страница:</strong> '
-                + escapeHtml(page.title || '')
-                + ' (#' + Number(page.id || 0) + ', slug: ' + escapeHtml(page.slug || '') + ')';
-        }
-
-        blocksContainer.innerHTML = '<div class="empty">Загрузка блоков...</div>';
-
-        api('block.list', { pageId: state.currentPageId }, function (res) {
-            if (!res || res.ok !== true) {
-                blocksContainer.innerHTML = '<div class="empty">Не удалось загрузить блоки</div>';
-                return;
-            }
-
-            state.blocks = Array.isArray(res.blocks) ? res.blocks : [];
-            renderBlocks();
-        });
-    }
-
-    function renderBlocks() {
-        if (!state.blocks.length) {
-            blocksContainer.innerHTML = '<div class="empty">Блоков пока нет</div>';
-            return;
-        }
-
-        var html = '';
-        for (var i = 0; i < state.blocks.length; i++) {
-            html += renderBlockCard(state.blocks[i], i);
-        }
-        blocksContainer.innerHTML = html;
-    }
-
-    function renderBlockCard(block, index) {
-        var id = Number(block.id || 0);
-        var type = escapeHtml(block.type || '');
-        var preview = escapeHtml(buildPreviewText(block));
-
-        return ''
-            + '<div class="block-card">'
-            + '  <div class="block-head">'
-            + '    <div>'
-            + '      <div class="block-title">' + type + ' #' + id + '</div>'
-            + '      <div class="meta">'
-            + '        <div><strong>Sort:</strong> ' + Number(block.sort || 0) + '</div>'
-            + '      </div>'
-            + '    </div>'
-            + '    <span class="badge">block</span>'
-            + '  </div>'
-            + '  <div class="block-preview">' + preview + '</div>'
-            + '  <div class="actions">'
-            + '    <button type="button" class="btn btn-light btn-small js-edit-block" data-id="' + id + '">Редактировать</button>'
-            + '    <button type="button" class="btn btn-light btn-small js-duplicate-block" data-id="' + id + '">Дублировать</button>'
-            + '    <button type="button" class="btn btn-gray btn-small js-move-block-up" data-id="' + id + '"' + (index === 0 ? ' disabled' : '') + '>↑</button>'
-            + '    <button type="button" class="btn btn-gray btn-small js-move-block-down" data-id="' + id + '"' + (index === state.blocks.length - 1 ? ' disabled' : '') + '>↓</button>'
-            + '    <button type="button" class="btn btn-danger btn-small js-delete-block" data-id="' + id + '">Удалить</button>'
-            + '  </div>'
-            + '</div>';
-    }
-
-    function buildPreviewText(block) {
-        var type = String(block.type || '');
-        var content = block.content || {};
-
-        if (type === 'text') {
-            return String(content.html || '').replace(/<[^>]*>/g, ' ').trim() || '[text]';
-        }
-        if (type === 'heading') {
-            return String(content.text || '') || '[heading]';
-        }
-        if (type === 'button') {
-            return (content.text || '[button]') + ' → ' + (content.href || '');
-        }
-        if (type === 'html') {
-            return String(content.html || '').replace(/<[^>]*>/g, ' ').trim() || '[html]';
-        }
-        if (type === 'spacer') {
-            return 'height: ' + String(content.height || 0);
-        }
-
-        return JSON.stringify(content);
-    }
-
-    function addBlock(type) {
-        if (!state.currentPageId) {
-            alert('Сначала выберите страницу');
-            return;
-        }
-
-        api('block.create', {
-            pageId: state.currentPageId,
-            type: type
-        }, function (res) {
-            if (!res || res.ok !== true) {
-                alert('Не удалось создать блок');
-                return;
-            }
-
-            loadBlocks();
-        });
-    }
-
-    function editBlock(blockId) {
-        var block = findBlock(blockId);
-        if (!block) {
-            alert('Блок не найден');
-            return;
-        }
-
-        state.currentBlockId = Number(blockId || 0);
-
-        document.getElementById('blockEditorEmpty').classList.add('hidden');
-        document.getElementById('blockEditorForm').classList.remove('hidden');
-        document.getElementById('editBlockType').value = block.type || '';
-        document.getElementById('editBlockContentText').value = JSON.stringify(block.content || {}, null, 2);
-        document.getElementById('editBlockPropsText').value = JSON.stringify(block.props || {}, null, 2);
-    }
-
-    function clearBlockEditor() {
-        state.currentBlockId = 0;
-        document.getElementById('blockEditorEmpty').classList.remove('hidden');
-        document.getElementById('blockEditorForm').classList.add('hidden');
-        document.getElementById('editBlockType').value = '';
-        document.getElementById('editBlockContentText').value = '';
-        document.getElementById('editBlockPropsText').value = '{}';
-    }
-
-    function saveBlock() {
-        if (!state.currentBlockId) {
-            return;
-        }
-
-        var contentText = document.getElementById('editBlockContentText').value || '{}';
-        var propsText = document.getElementById('editBlockPropsText').value || '{}';
-
-        try {
-            JSON.parse(contentText);
-        } catch (e) {
-            alert('Content должен быть валидным JSON');
-            return;
-        }
-
-        try {
-            JSON.parse(propsText);
-        } catch (e) {
-            alert('Props должен быть валидным JSON');
-            return;
-        }
-
-        api('block.update', {
-            id: state.currentBlockId,
-            content: contentText,
-            props: propsText
-        }, function (res) {
-            if (!res || res.ok !== true) {
-                alert('Не удалось сохранить блок');
-                return;
-            }
-
-            loadBlocks();
-        });
-    }
-
-    function deleteBlock(blockId) {
-        if (!confirm('Удалить блок #' + blockId + '?')) {
-            return;
-        }
-
-        api('block.delete', { id: blockId }, function (res) {
-            if (!res || res.ok !== true) {
-                alert('Не удалось удалить блок');
-                return;
-            }
-
-            if (Number(state.currentBlockId || 0) === Number(blockId || 0)) {
-                clearBlockEditor();
-            }
-
-            loadBlocks();
-        });
-    }
-
-    function duplicateBlock(blockId) {
-        api('block.duplicate', { id: blockId }, function (res) {
-            if (!res || res.ok !== true) {
-                alert('Не удалось дублировать блок');
-                return;
-            }
-
-            loadBlocks();
-        });
-    }
-
-    function moveBlock(blockId, dir) {
-        api('block.move', {
-            id: blockId,
-            dir: dir
-        }, function (res) {
-            if (!res || res.ok !== true) {
-                alert('Не удалось переместить блок');
-                return;
-            }
-
-            loadBlocks();
-        });
-    }
-
-    function findPage(pageId) {
-        for (var i = 0; i < state.pages.length; i++) {
-            if (Number(state.pages[i].id || 0) === Number(pageId || 0)) {
-                return state.pages[i];
-            }
-        }
-        return null;
-    }
-
-    function findBlock(blockId) {
-        for (var i = 0; i < state.blocks.length; i++) {
-            if (Number(state.blocks[i].id || 0) === Number(blockId || 0)) {
-                return state.blocks[i];
-            }
-        }
-        return null;
-    }
-
-    document.getElementById('createPageBtn').addEventListener('click', createPage);
-    document.getElementById('reloadBlocksBtn').addEventListener('click', loadBlocks);
-    document.getElementById('saveBlockBtn').addEventListener('click', saveBlock);
-    document.getElementById('deleteBlockBtn').addEventListener('click', function () {
-        if (state.currentBlockId) {
-            deleteBlock(state.currentBlockId);
-        }
-    });
+    document.getElementById('uploadBtn').addEventListener('click', uploadFile);
+    document.getElementById('reloadBtn').addEventListener('click', loadFiles);
 
     document.addEventListener('click', function (e) {
-        var addBlockBtn = e.target.closest('.js-add-block');
-        if (addBlockBtn) {
-            addBlock(addBlockBtn.getAttribute('data-type') || 'text');
+        var btn = e.target.closest('.js-delete-file');
+        if (!btn) {
             return;
         }
 
-        var openPageBtn = e.target.closest('.js-open-page');
-        if (openPageBtn) {
-            openPage(parseInt(openPageBtn.getAttribute('data-id'), 10) || 0);
-            return;
-        }
-
-        var renamePageBtn = e.target.closest('.js-rename-page');
-        if (renamePageBtn) {
-            renamePage(parseInt(renamePageBtn.getAttribute('data-id'), 10) || 0);
-            return;
-        }
-
-        var duplicatePageBtn = e.target.closest('.js-duplicate-page');
-        if (duplicatePageBtn) {
-            duplicatePage(parseInt(duplicatePageBtn.getAttribute('data-id'), 10) || 0);
-            return;
-        }
-
-        var toggleStatusBtn = e.target.closest('.js-toggle-status');
-        if (toggleStatusBtn) {
-            togglePageStatus(
-                parseInt(toggleStatusBtn.getAttribute('data-id'), 10) || 0,
-                toggleStatusBtn.getAttribute('data-status') || 'draft'
-            );
-            return;
-        }
-
-        var movePageUpBtn = e.target.closest('.js-move-page-up');
-        if (movePageUpBtn) {
-            movePage(parseInt(movePageUpBtn.getAttribute('data-id'), 10) || 0, 'up');
-            return;
-        }
-
-        var movePageDownBtn = e.target.closest('.js-move-page-down');
-        if (movePageDownBtn) {
-            movePage(parseInt(movePageDownBtn.getAttribute('data-id'), 10) || 0, 'down');
-            return;
-        }
-
-        var deletePageBtn = e.target.closest('.js-delete-page');
-        if (deletePageBtn) {
-            deletePage(parseInt(deletePageBtn.getAttribute('data-id'), 10) || 0);
-            return;
-        }
-
-        var editBlockBtn = e.target.closest('.js-edit-block');
-        if (editBlockBtn) {
-            editBlock(parseInt(editBlockBtn.getAttribute('data-id'), 10) || 0);
-            return;
-        }
-
-        var deleteBlockBtn = e.target.closest('.js-delete-block');
-        if (deleteBlockBtn) {
-            deleteBlock(parseInt(deleteBlockBtn.getAttribute('data-id'), 10) || 0);
-            return;
-        }
-
-        var duplicateBlockBtn = e.target.closest('.js-duplicate-block');
-        if (duplicateBlockBtn) {
-            duplicateBlock(parseInt(duplicateBlockBtn.getAttribute('data-id'), 10) || 0);
-            return;
-        }
-
-        var moveBlockUpBtn = e.target.closest('.js-move-block-up');
-        if (moveBlockUpBtn) {
-            moveBlock(parseInt(moveBlockUpBtn.getAttribute('data-id'), 10) || 0, 'up');
-            return;
-        }
-
-        var moveBlockDownBtn = e.target.closest('.js-move-block-down');
-        if (moveBlockDownBtn) {
-            moveBlock(parseInt(moveBlockDownBtn.getAttribute('data-id'), 10) || 0, 'down');
-            return;
-        }
+        deleteFile(parseInt(btn.getAttribute('data-id'), 10) || 0);
     });
 
     window.onerror = function (message, source, lineno, colno, error) {
@@ -1073,13 +477,7 @@ if ($siteId <= 0) {
         });
     };
 
-    loadSite(function () {
-        loadPages(function () {
-            if (state.currentPageId) {
-                loadBlocks();
-            }
-        });
-    });
+    loadFiles();
 })();
 </script>
 </body>
@@ -1089,55 +487,41 @@ if ($siteId <= 0) {
 
 Открывай:
 
-/local/sitebuilder/editor.php?siteId=1
+/local/sitebuilder/files.php?siteId=1
 
-И проверь по порядку:
+Проверь по порядку:
 
-1. грузится список страниц
-
-
-2. создаётся страница
+1. грузится ли список файлов
 
 
-3. выбирается страница
+2. создаётся ли Disk-папка автоматически
 
 
-4. добавляется блок text
+3. загружается ли файл
 
 
-5. добавляется блок heading
+4. появляется ли он в списке
 
 
-6. редактируется JSON content/props
+5. работает ли скачивание
 
 
-7. дублируется блок
-
-
-8. двигается вверх/вниз
-
-
-9. удаляется блок
-
-
-10. удаляется/дублируется страница
+6. работает ли удаление
 
 
 
-Что это уже даёт
+Если будет ошибка
 
-Это уже не заглушка, а рабочий черновой редактор на новом API.
-Да, пока без красивых диалогов, но backend и основной поток редактирования уже начинают жить.
+Если на file.list или file.upload появится DISK_ERROR, пришли мне точный текст из debug-блока.
+Тогда я подгоню lib/disk.php именно под твою версию Bitrix Disk API.
 
-Что логично делать следующим
+Что дальше
 
-Теперь после проверки editor.php есть два хороших пути:
+Если files.php оживёт, следующим шагом логично делать settings.php, а потом уже:
 
-сделать files.php
+привести layout.php
 
-сделать settings.php
+и только после этого начинать “делать красиво” редактор и интерфейс.
 
 
-Я бы следующим сделал files.php, чтобы сразу добить проверку file.list / file.upload / file.delete и понять, всё ли хорошо с Disk.
-
-Напиши: давай files.php
+Напиши, что выдал files.php.
