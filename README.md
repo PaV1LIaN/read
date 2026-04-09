@@ -1,4 +1,21 @@
-Идём дальше аккуратно: подключаем menu.* обратно в роутер и проверяем уже готовую страницу menu.php.
+Отлично. Значит menu-ветка уже живая.
+
+Дальше логично вернуть block.*, потому что без неё не поднять редактор страниц.
+
+Что делаем сейчас
+
+1. подключаем block.* в роутер
+
+
+2. проверяем block.php
+
+
+3. потом уже собираем editor.php
+
+
+
+
+---
 
 1. Обнови /local/sitebuilder/api/index.php
 
@@ -55,572 +72,479 @@ if (
     exit;
 }
 
+if (
+    $action === 'block.list' ||
+    $action === 'block.create' ||
+    $action === 'block.update' ||
+    $action === 'block.delete' ||
+    $action === 'block.duplicate' ||
+    $action === 'block.move' ||
+    $action === 'block.reorder'
+) {
+    require __DIR__ . '/handlers/block.php';
+    exit;
+}
+
 sb_json_error('UNKNOWN_ACTION', 400, [
     'action' => $action,
     'file' => __FILE__,
 ]);
 
-2. Проверь /local/sitebuilder/api/handlers/menu.php
 
-Очень важно: файл должен начинаться с первой строки:
+---
+
+2. Проверь /local/sitebuilder/api/handlers/block.php
+
+Обязательно убедись, что файл начинается с:
 
 <?php
 
-Если не уверен, лучше сразу замени его целиком на этот вариант:
+Если не уверен — замени целиком на этот вариант.
+
+/local/sitebuilder/api/handlers/block.php
 
 <?php
 
 global $USER;
 
-if ($action === 'menu.list') {
-    $siteId = (int)($_POST['siteId'] ?? 0);
-    if ($siteId <= 0) {
-        sb_json_error('SITE_ID_REQUIRED', 422);
+if ($action === 'block.list') {
+    $pageId = (int)($_POST['pageId'] ?? 0);
+    if ($pageId <= 0) {
+        sb_json_error('PAGE_ID_REQUIRED', 422);
     }
 
+    $page = sb_find_page($pageId);
+    if (!$page) {
+        sb_json_error('PAGE_NOT_FOUND', 404);
+    }
+
+    $siteId = (int)($page['siteId'] ?? 0);
     sb_require_viewer($siteId);
 
-    $menus = array_values(array_filter(sb_read_menus(), static function ($m) use ($siteId) {
-        return (int)($m['siteId'] ?? 0) === $siteId;
-    }));
-
-    $menus = array_map('sb_normalize_menu_record', $menus);
-
-    usort($menus, static function ($a, $b) {
-        return (int)($a['id'] ?? 0) <=> (int)($b['id'] ?? 0);
-    });
-
-    $site = sb_find_site($siteId);
-    $topMenuId = $site ? (int)($site['topMenuId'] ?? 0) : 0;
+    $blocks = sb_blocks_for_page($pageId);
+    $blocks = array_map('sb_normalize_block_record', $blocks);
 
     sb_json_ok([
-        'menus' => $menus,
-        'topMenuId' => $topMenuId,
-        'handler' => 'menu',
+        'blocks' => $blocks,
+        'handler' => 'block',
         'file' => __FILE__,
     ]);
 }
 
-if ($action === 'menu.create') {
-    $siteId = (int)($_POST['siteId'] ?? 0);
-    $name = trim((string)($_POST['name'] ?? ''));
+if ($action === 'block.create') {
+    $pageId = (int)($_POST['pageId'] ?? 0);
+    $type = trim((string)($_POST['type'] ?? 'text'));
 
-    if ($siteId <= 0) {
-        sb_json_error('SITE_ID_REQUIRED', 422);
+    if ($pageId <= 0) {
+        sb_json_error('PAGE_ID_REQUIRED', 422);
     }
-    if ($name === '') {
-        sb_json_error('NAME_REQUIRED', 422);
+    if ($type === '') {
+        sb_json_error('TYPE_REQUIRED', 422);
     }
 
+    $page = sb_find_page($pageId);
+    if (!$page) {
+        sb_json_error('PAGE_NOT_FOUND', 404);
+    }
+
+    $siteId = (int)($page['siteId'] ?? 0);
     sb_require_editor($siteId);
 
-    $menus = sb_read_menus();
+    $blocks = sb_read_blocks();
 
-    $menu = [
-        'id' => sb_next_menu_id($menus),
-        'siteId' => $siteId,
-        'name' => $name,
-        'items' => [],
+    $block = [
+        'id' => sb_next_block_id($blocks),
+        'pageId' => $pageId,
+        'type' => $type,
+        'sort' => sb_next_block_sort($pageId, $blocks),
+        'content' => sb_default_block_content($type),
+        'props' => [],
         'createdBy' => (int)$USER->GetID(),
         'createdAt' => date('c'),
         'updatedAt' => date('c'),
         'updatedBy' => (int)$USER->GetID(),
     ];
 
-    $menus[] = $menu;
-    sb_write_menus($menus);
+    $blocks[] = $block;
+    sb_write_blocks($blocks);
 
     sb_json_ok([
-        'menu' => sb_normalize_menu_record($menu),
-        'handler' => 'menu',
+        'block' => sb_normalize_block_record($block),
+        'handler' => 'block',
         'file' => __FILE__,
     ]);
 }
 
-if ($action === 'menu.update') {
+if ($action === 'block.update') {
     $id = (int)($_POST['id'] ?? 0);
-    $name = trim((string)($_POST['name'] ?? ''));
-
     if ($id <= 0) {
         sb_json_error('ID_REQUIRED', 422);
     }
-    if ($name === '') {
-        sb_json_error('NAME_REQUIRED', 422);
+
+    $block = sb_find_block($id);
+    if (!$block) {
+        sb_json_error('BLOCK_NOT_FOUND', 404);
     }
 
-    $menu = sb_find_menu($id);
-    if (!$menu) {
-        sb_json_error('MENU_NOT_FOUND', 404);
+    $page = sb_find_page((int)($block['pageId'] ?? 0));
+    if (!$page) {
+        sb_json_error('PAGE_NOT_FOUND', 404);
     }
 
-    $siteId = (int)($menu['siteId'] ?? 0);
+    $siteId = (int)($page['siteId'] ?? 0);
     sb_require_editor($siteId);
 
-    $menus = sb_read_menus();
+    $contentRaw = $_POST['content'] ?? null;
+    $propsRaw = $_POST['props'] ?? null;
+    $typeRaw = $_POST['type'] ?? null;
+
+    $newContent = null;
+    $newProps = null;
+    $newType = null;
+
+    if ($contentRaw !== null) {
+        if (is_array($contentRaw)) {
+            $newContent = $contentRaw;
+        } else {
+            $decoded = json_decode((string)$contentRaw, true);
+            if (!is_array($decoded)) {
+                sb_json_error('BAD_CONTENT_JSON', 422);
+            }
+            $newContent = $decoded;
+        }
+    }
+
+    if ($propsRaw !== null) {
+        if (is_array($propsRaw)) {
+            $newProps = $propsRaw;
+        } else {
+            $decoded = json_decode((string)$propsRaw, true);
+            if (!is_array($decoded)) {
+                sb_json_error('BAD_PROPS_JSON', 422);
+            }
+            $newProps = $decoded;
+        }
+    }
+
+    if ($typeRaw !== null) {
+        $newType = trim((string)$typeRaw);
+        if ($newType === '') {
+            sb_json_error('TYPE_REQUIRED', 422);
+        }
+    }
+
+    $blocks = sb_read_blocks();
     $updated = null;
 
-    foreach ($menus as &$m) {
-        if ((int)($m['id'] ?? 0) === $id) {
-            $m['name'] = $name;
-            $m['updatedAt'] = date('c');
-            $m['updatedBy'] = (int)$USER->GetID();
-            $updated = $m;
+    foreach ($blocks as &$b) {
+        if ((int)($b['id'] ?? 0) === $id) {
+            if ($newType !== null) {
+                $b['type'] = $newType;
+            }
+            if ($newContent !== null) {
+                $b['content'] = $newContent;
+            }
+            if ($newProps !== null) {
+                $b['props'] = $newProps;
+            }
+
+            $b['updatedAt'] = date('c');
+            $b['updatedBy'] = (int)$USER->GetID();
+
+            $updated = $b;
             break;
         }
     }
-    unset($m);
+    unset($b);
 
     if (!$updated) {
-        sb_json_error('MENU_NOT_FOUND', 404);
+        sb_json_error('BLOCK_NOT_FOUND', 404);
     }
 
-    sb_write_menus($menus);
+    sb_write_blocks($blocks);
 
     sb_json_ok([
-        'menu' => sb_normalize_menu_record($updated),
-        'handler' => 'menu',
+        'block' => sb_normalize_block_record($updated),
+        'handler' => 'block',
         'file' => __FILE__,
     ]);
 }
 
-if ($action === 'menu.delete') {
+if ($action === 'block.delete') {
     $id = (int)($_POST['id'] ?? 0);
     if ($id <= 0) {
         sb_json_error('ID_REQUIRED', 422);
     }
 
-    $menu = sb_find_menu($id);
-    if (!$menu) {
-        sb_json_error('MENU_NOT_FOUND', 404);
+    $block = sb_find_block($id);
+    if (!$block) {
+        sb_json_error('BLOCK_NOT_FOUND', 404);
     }
 
-    $siteId = (int)($menu['siteId'] ?? 0);
+    $page = sb_find_page((int)($block['pageId'] ?? 0));
+    if (!$page) {
+        sb_json_error('PAGE_NOT_FOUND', 404);
+    }
+
+    $siteId = (int)($page['siteId'] ?? 0);
     sb_require_editor($siteId);
 
-    $menus = sb_read_menus();
-    $before = count($menus);
+    $blocks = sb_read_blocks();
+    $before = count($blocks);
 
-    $menus = array_values(array_filter($menus, static function ($m) use ($id) {
-        return (int)($m['id'] ?? 0) !== $id;
+    $blocks = array_values(array_filter($blocks, static function ($b) use ($id) {
+        return (int)($b['id'] ?? 0) !== $id;
     }));
 
-    if (count($menus) === $before) {
-        sb_json_error('MENU_NOT_FOUND', 404);
+    if (count($blocks) === $before) {
+        sb_json_error('BLOCK_NOT_FOUND', 404);
     }
 
-    sb_write_menus($menus);
-
-    $sites = sb_read_sites();
-    $sitesChanged = false;
-
-    foreach ($sites as &$s) {
-        if ((int)($s['id'] ?? 0) === $siteId && (int)($s['topMenuId'] ?? 0) === $id) {
-            $s['topMenuId'] = 0;
-            $s['updatedAt'] = date('c');
-            $s['updatedBy'] = (int)$USER->GetID();
-            $sitesChanged = true;
-        }
-    }
-    unset($s);
-
-    if ($sitesChanged) {
-        sb_write_sites($sites);
-    }
+    sb_write_blocks($blocks);
 
     sb_json_ok([
-        'handler' => 'menu',
+        'handler' => 'block',
         'file' => __FILE__,
     ]);
 }
 
-if ($action === 'menu.setTop') {
-    $siteId = (int)($_POST['siteId'] ?? 0);
-    $menuId = (int)($_POST['menuId'] ?? 0);
-
-    if ($siteId <= 0) {
-        sb_json_error('SITE_ID_REQUIRED', 422);
+if ($action === 'block.duplicate') {
+    $id = (int)($_POST['id'] ?? 0);
+    if ($id <= 0) {
+        sb_json_error('ID_REQUIRED', 422);
     }
 
+    $src = sb_find_block($id);
+    if (!$src) {
+        sb_json_error('BLOCK_NOT_FOUND', 404);
+    }
+
+    $pageId = (int)($src['pageId'] ?? 0);
+    $page = sb_find_page($pageId);
+    if (!$page) {
+        sb_json_error('PAGE_NOT_FOUND', 404);
+    }
+
+    $siteId = (int)($page['siteId'] ?? 0);
     sb_require_editor($siteId);
 
-    if ($menuId > 0) {
-        $menu = sb_find_menu($menuId);
-        if (!$menu || (int)($menu['siteId'] ?? 0) !== $siteId) {
-            sb_json_error('MENU_NOT_IN_SITE', 422);
+    $blocks = sb_read_blocks();
+    $srcSort = (int)($src['sort'] ?? 500);
+
+    foreach ($blocks as &$b) {
+        if (
+            (int)($b['pageId'] ?? 0) === $pageId &&
+            (int)($b['sort'] ?? 0) > $srcSort
+        ) {
+            $b['sort'] = (int)($b['sort'] ?? 0) + 10;
+            $b['updatedAt'] = date('c');
+            $b['updatedBy'] = (int)$USER->GetID();
         }
     }
+    unset($b);
 
-    $sites = sb_read_sites();
-    $found = false;
+    $copy = $src;
+    $copy['id'] = sb_next_block_id($blocks);
+    $copy['sort'] = $srcSort + 10;
+    $copy['createdBy'] = (int)$USER->GetID();
+    $copy['createdAt'] = date('c');
+    $copy['updatedAt'] = date('c');
+    $copy['updatedBy'] = (int)$USER->GetID();
 
-    foreach ($sites as &$s) {
-        if ((int)($s['id'] ?? 0) === $siteId) {
-            $s['topMenuId'] = $menuId;
-            $s['updatedAt'] = date('c');
-            $s['updatedBy'] = (int)$USER->GetID();
-            $found = true;
-            break;
-        }
-    }
-    unset($s);
-
-    if (!$found) {
-        sb_json_error('SITE_NOT_FOUND', 404);
-    }
-
-    sb_write_sites($sites);
+    $blocks[] = $copy;
+    sb_write_blocks($blocks);
 
     sb_json_ok([
-        'handler' => 'menu',
+        'block' => sb_normalize_block_record($copy),
+        'handler' => 'block',
         'file' => __FILE__,
     ]);
 }
 
-if ($action === 'menu.item.add') {
-    $menuId = (int)($_POST['menuId'] ?? 0);
-    $title = trim((string)($_POST['title'] ?? ''));
-    $type = trim((string)($_POST['type'] ?? 'page'));
-    $pageId = (int)($_POST['pageId'] ?? 0);
-    $url = trim((string)($_POST['url'] ?? ''));
-    $target = trim((string)($_POST['target'] ?? '_self'));
-
-    if ($menuId <= 0) {
-        sb_json_error('MENU_ID_REQUIRED', 422);
-    }
-    if ($title === '') {
-        sb_json_error('TITLE_REQUIRED', 422);
-    }
-    if (!in_array($type, ['page', 'url'], true)) {
-        sb_json_error('BAD_ITEM_TYPE', 422);
-    }
-    if (!in_array($target, ['_self', '_blank'], true)) {
-        $target = '_self';
-    }
-
-    $menu = sb_find_menu($menuId);
-    if (!$menu) {
-        sb_json_error('MENU_NOT_FOUND', 404);
-    }
-
-    $siteId = (int)($menu['siteId'] ?? 0);
-    sb_require_editor($siteId);
-
-    if ($type === 'page') {
-        if ($pageId <= 0) {
-            sb_json_error('PAGE_ID_REQUIRED', 422);
-        }
-
-        $page = sb_find_page($pageId);
-        if (!$page || (int)($page['siteId'] ?? 0) !== $siteId) {
-            sb_json_error('PAGE_NOT_IN_SITE', 422);
-        }
-
-        $url = '';
-    } else {
-        $pageId = 0;
-    }
-
-    $menus = sb_read_menus();
-    $updatedMenu = null;
-
-    foreach ($menus as &$m) {
-        if ((int)($m['id'] ?? 0) !== $menuId) {
-            continue;
-        }
-
-        if (!isset($m['items']) || !is_array($m['items'])) {
-            $m['items'] = [];
-        }
-
-        $item = [
-            'id' => sb_next_menu_item_id($m['items']),
-            'title' => $title,
-            'type' => $type,
-            'pageId' => $pageId,
-            'url' => $url,
-            'target' => $target,
-            'sort' => sb_menu_next_item_sort($m['items']),
-        ];
-
-        $m['items'][] = $item;
-        $m['updatedAt'] = date('c');
-        $m['updatedBy'] = (int)$USER->GetID();
-        $updatedMenu = $m;
-        break;
-    }
-    unset($m);
-
-    if (!$updatedMenu) {
-        sb_json_error('MENU_NOT_FOUND', 404);
-    }
-
-    sb_write_menus($menus);
-
-    sb_json_ok([
-        'menu' => sb_normalize_menu_record($updatedMenu),
-        'handler' => 'menu',
-        'file' => __FILE__,
-    ]);
-}
-
-if ($action === 'menu.item.update') {
-    $menuId = (int)($_POST['menuId'] ?? 0);
-    $itemId = (int)($_POST['itemId'] ?? 0);
-    $title = trim((string)($_POST['title'] ?? ''));
-    $type = trim((string)($_POST['type'] ?? 'page'));
-    $pageId = (int)($_POST['pageId'] ?? 0);
-    $url = trim((string)($_POST['url'] ?? ''));
-    $target = trim((string)($_POST['target'] ?? '_self'));
-
-    if ($menuId <= 0) {
-        sb_json_error('MENU_ID_REQUIRED', 422);
-    }
-    if ($itemId <= 0) {
-        sb_json_error('ITEM_ID_REQUIRED', 422);
-    }
-    if ($title === '') {
-        sb_json_error('TITLE_REQUIRED', 422);
-    }
-    if (!in_array($type, ['page', 'url'], true)) {
-        sb_json_error('BAD_ITEM_TYPE', 422);
-    }
-    if (!in_array($target, ['_self', '_blank'], true)) {
-        $target = '_self';
-    }
-
-    $menu = sb_find_menu($menuId);
-    if (!$menu) {
-        sb_json_error('MENU_NOT_FOUND', 404);
-    }
-
-    $siteId = (int)($menu['siteId'] ?? 0);
-    sb_require_editor($siteId);
-
-    if ($type === 'page') {
-        if ($pageId <= 0) {
-            sb_json_error('PAGE_ID_REQUIRED', 422);
-        }
-
-        $page = sb_find_page($pageId);
-        if (!$page || (int)($page['siteId'] ?? 0) !== $siteId) {
-            sb_json_error('PAGE_NOT_IN_SITE', 422);
-        }
-
-        $url = '';
-    } else {
-        $pageId = 0;
-    }
-
-    $menus = sb_read_menus();
-    $updatedMenu = null;
-    $foundItem = false;
-
-    foreach ($menus as &$m) {
-        if ((int)($m['id'] ?? 0) !== $menuId) {
-            continue;
-        }
-
-        if (!isset($m['items']) || !is_array($m['items'])) {
-            $m['items'] = [];
-        }
-
-        foreach ($m['items'] as &$item) {
-            if ((int)($item['id'] ?? 0) !== $itemId) {
-                continue;
-            }
-
-            $item['title'] = $title;
-            $item['type'] = $type;
-            $item['pageId'] = $pageId;
-            $item['url'] = $url;
-            $item['target'] = $target;
-
-            $foundItem = true;
-            break;
-        }
-        unset($item);
-
-        if ($foundItem) {
-            $m['updatedAt'] = date('c');
-            $m['updatedBy'] = (int)$USER->GetID();
-            $updatedMenu = $m;
-            break;
-        }
-    }
-    unset($m);
-
-    if (!$foundItem || !$updatedMenu) {
-        sb_json_error('ITEM_NOT_FOUND', 404);
-    }
-
-    sb_write_menus($menus);
-
-    sb_json_ok([
-        'menu' => sb_normalize_menu_record($updatedMenu),
-        'handler' => 'menu',
-        'file' => __FILE__,
-    ]);
-}
-
-if ($action === 'menu.item.delete') {
-    $menuId = (int)($_POST['menuId'] ?? 0);
-    $itemId = (int)($_POST['itemId'] ?? 0);
-
-    if ($menuId <= 0) {
-        sb_json_error('MENU_ID_REQUIRED', 422);
-    }
-    if ($itemId <= 0) {
-        sb_json_error('ITEM_ID_REQUIRED', 422);
-    }
-
-    $menu = sb_find_menu($menuId);
-    if (!$menu) {
-        sb_json_error('MENU_NOT_FOUND', 404);
-    }
-
-    $siteId = (int)($menu['siteId'] ?? 0);
-    sb_require_editor($siteId);
-
-    $menus = sb_read_menus();
-    $updatedMenu = null;
-    $foundItem = false;
-
-    foreach ($menus as &$m) {
-        if ((int)($m['id'] ?? 0) !== $menuId) {
-            continue;
-        }
-
-        if (!isset($m['items']) || !is_array($m['items'])) {
-            $m['items'] = [];
-        }
-
-        $before = count($m['items']);
-        $m['items'] = array_values(array_filter($m['items'], static function ($item) use ($itemId) {
-            return (int)($item['id'] ?? 0) !== $itemId;
-        }));
-
-        if (count($m['items']) !== $before) {
-            $foundItem = true;
-            $m['updatedAt'] = date('c');
-            $m['updatedBy'] = (int)$USER->GetID();
-            $updatedMenu = $m;
-        }
-
-        break;
-    }
-    unset($m);
-
-    if (!$foundItem) {
-        sb_json_error('ITEM_NOT_FOUND', 404);
-    }
-
-    sb_write_menus($menus);
-
-    sb_json_ok([
-        'menu' => sb_normalize_menu_record($updatedMenu),
-        'handler' => 'menu',
-        'file' => __FILE__,
-    ]);
-}
-
-if ($action === 'menu.item.move') {
-    $menuId = (int)($_POST['menuId'] ?? 0);
-    $itemId = (int)($_POST['itemId'] ?? 0);
+if ($action === 'block.move') {
+    $id = (int)($_POST['id'] ?? 0);
     $dir = trim((string)($_POST['dir'] ?? ''));
 
-    if ($menuId <= 0) {
-        sb_json_error('MENU_ID_REQUIRED', 422);
-    }
-    if ($itemId <= 0) {
-        sb_json_error('ITEM_ID_REQUIRED', 422);
+    if ($id <= 0) {
+        sb_json_error('ID_REQUIRED', 422);
     }
     if ($dir !== 'up' && $dir !== 'down') {
         sb_json_error('DIR_REQUIRED', 422);
     }
 
-    $menu = sb_find_menu($menuId);
-    if (!$menu) {
-        sb_json_error('MENU_NOT_FOUND', 404);
+    $block = sb_find_block($id);
+    if (!$block) {
+        sb_json_error('BLOCK_NOT_FOUND', 404);
     }
 
-    $siteId = (int)($menu['siteId'] ?? 0);
+    $pageId = (int)($block['pageId'] ?? 0);
+    $page = sb_find_page($pageId);
+    if (!$page) {
+        sb_json_error('PAGE_NOT_FOUND', 404);
+    }
+
+    $siteId = (int)($page['siteId'] ?? 0);
     sb_require_editor($siteId);
 
-    $menus = sb_read_menus();
-    $updatedMenu = null;
-    $foundMenu = false;
+    $blocks = sb_read_blocks();
 
-    foreach ($menus as &$m) {
-        if ((int)($m['id'] ?? 0) !== $menuId) {
-            continue;
+    $siblings = array_values(array_filter($blocks, static function ($b) use ($pageId) {
+        return (int)($b['pageId'] ?? 0) === $pageId;
+    }));
+
+    usort($siblings, static function ($a, $b) {
+        $sortCmp = (int)($a['sort'] ?? 500) <=> (int)($b['sort'] ?? 500);
+        if ($sortCmp !== 0) {
+            return $sortCmp;
         }
+        return (int)($a['id'] ?? 0) <=> (int)($b['id'] ?? 0);
+    });
 
-        $foundMenu = true;
-
-        if (!isset($m['items']) || !is_array($m['items'])) {
-            $m['items'] = [];
-        }
-
-        usort($m['items'], static function ($a, $b) {
-            $sortCmp = (int)($a['sort'] ?? 500) <=> (int)($b['sort'] ?? 500);
-            if ($sortCmp !== 0) {
-                return $sortCmp;
-            }
-            return (int)($a['id'] ?? 0) <=> (int)($b['id'] ?? 0);
-        });
-
-        $pos = null;
-        for ($i = 0, $cnt = count($m['items']); $i < $cnt; $i++) {
-            if ((int)($m['items'][$i]['id'] ?? 0) === $itemId) {
-                $pos = $i;
-                break;
-            }
-        }
-
-        if ($pos === null) {
-            sb_json_error('ITEM_NOT_FOUND', 404);
-        }
-
-        if ($dir === 'up' && $pos === 0) {
-            $updatedMenu = $m;
+    $pos = null;
+    for ($i = 0, $cnt = count($siblings); $i < $cnt; $i++) {
+        if ((int)($siblings[$i]['id'] ?? 0) === $id) {
+            $pos = $i;
             break;
         }
+    }
 
-        if ($dir === 'down' && $pos === count($m['items']) - 1) {
-            $updatedMenu = $m;
-            break;
+    if ($pos === null) {
+        sb_json_ok([
+            'handler' => 'block',
+            'file' => __FILE__,
+        ]);
+    }
+
+    if ($dir === 'up' && $pos === 0) {
+        sb_json_ok([
+            'handler' => 'block',
+            'file' => __FILE__,
+        ]);
+    }
+
+    if ($dir === 'down' && $pos === count($siblings) - 1) {
+        sb_json_ok([
+            'handler' => 'block',
+            'file' => __FILE__,
+        ]);
+    }
+
+    $swapPos = ($dir === 'up') ? $pos - 1 : $pos + 1;
+
+    $idA = (int)$siblings[$pos]['id'];
+    $idB = (int)$siblings[$swapPos]['id'];
+    $sortA = (int)($siblings[$pos]['sort'] ?? 500);
+    $sortB = (int)($siblings[$swapPos]['sort'] ?? 500);
+
+    foreach ($blocks as &$b) {
+        $bid = (int)($b['id'] ?? 0);
+
+        if ($bid === $idA) {
+            $b['sort'] = $sortB;
+            $b['updatedAt'] = date('c');
+            $b['updatedBy'] = (int)$USER->GetID();
         }
 
-        $swapPos = ($dir === 'up') ? $pos - 1 : $pos + 1;
-
-        $sortA = (int)($m['items'][$pos]['sort'] ?? 500);
-        $sortB = (int)($m['items'][$swapPos]['sort'] ?? 500);
-
-        $m['items'][$pos]['sort'] = $sortB;
-        $m['items'][$swapPos]['sort'] = $sortA;
-        $m['updatedAt'] = date('c');
-        $m['updatedBy'] = (int)$USER->GetID();
-
-        $updatedMenu = $m;
-        break;
+        if ($bid === $idB) {
+            $b['sort'] = $sortA;
+            $b['updatedAt'] = date('c');
+            $b['updatedBy'] = (int)$USER->GetID();
+        }
     }
-    unset($m);
+    unset($b);
 
-    if (!$foundMenu) {
-        sb_json_error('MENU_NOT_FOUND', 404);
-    }
-
-    sb_write_menus($menus);
+    sb_write_blocks($blocks);
 
     sb_json_ok([
-        'menu' => sb_normalize_menu_record($updatedMenu),
-        'handler' => 'menu',
+        'handler' => 'block',
+        'file' => __FILE__,
+    ]);
+}
+
+if ($action === 'block.reorder') {
+    $pageId = (int)($_POST['pageId'] ?? 0);
+    if ($pageId <= 0) {
+        sb_json_error('PAGE_ID_REQUIRED', 422);
+    }
+
+    $page = sb_find_page($pageId);
+    if (!$page) {
+        sb_json_error('PAGE_NOT_FOUND', 404);
+    }
+
+    $siteId = (int)($page['siteId'] ?? 0);
+    sb_require_editor($siteId);
+
+    $orderRaw = $_POST['order'] ?? null;
+    if ($orderRaw === null) {
+        sb_json_error('ORDER_REQUIRED', 422);
+    }
+
+    if (is_array($orderRaw)) {
+        $order = $orderRaw;
+    } else {
+        $order = json_decode((string)$orderRaw, true);
+        if (!is_array($order)) {
+            sb_json_error('BAD_ORDER_JSON', 422);
+        }
+    }
+
+    $orderIds = [];
+    foreach ($order as $item) {
+        $bid = (int)$item;
+        if ($bid > 0) {
+            $orderIds[] = $bid;
+        }
+    }
+
+    $pageBlocks = sb_blocks_for_page($pageId);
+    $pageBlockIds = [];
+    foreach ($pageBlocks as $b) {
+        $pageBlockIds[(int)($b['id'] ?? 0)] = true;
+    }
+
+    foreach ($orderIds as $bid) {
+        if (!isset($pageBlockIds[$bid])) {
+            sb_json_error('BLOCK_NOT_IN_PAGE', 422, ['blockId' => $bid]);
+        }
+    }
+
+    $missing = array_diff(array_keys($pageBlockIds), $orderIds);
+    if (!empty($missing)) {
+        foreach ($missing as $bid) {
+            $orderIds[] = (int)$bid;
+        }
+    }
+
+    $sortMap = [];
+    $sort = 10;
+    foreach ($orderIds as $bid) {
+        $sortMap[(int)$bid] = $sort;
+        $sort += 10;
+    }
+
+    $blocks = sb_read_blocks();
+    foreach ($blocks as &$b) {
+        $bid = (int)($b['id'] ?? 0);
+        if ((int)($b['pageId'] ?? 0) === $pageId && isset($sortMap[$bid])) {
+            $b['sort'] = $sortMap[$bid];
+            $b['updatedAt'] = date('c');
+            $b['updatedBy'] = (int)$USER->GetID();
+        }
+    }
+    unset($b);
+
+    sb_write_blocks($blocks);
+
+    sb_json_ok([
+        'blocks' => array_map('sb_normalize_block_record', sb_blocks_for_page($pageId)),
+        'handler' => 'block',
         'file' => __FILE__,
     ]);
 }
 
 sb_json_error('NOT_MOVED_YET', 501, [
-    'handler' => 'menu',
+    'handler' => 'block',
     'action' => $action,
     'file' => __FILE__,
 ]);
@@ -631,35 +555,34 @@ sb_json_error('NOT_MOVED_YET', 501, [
 
 /local/sitebuilder/opcache_reset.php
 
-4. Что проверить
+4. Что проверить сейчас
 
-Открой:
+Пока без editor.php можно проверить так:
 
-/local/sitebuilder/menu.php?siteId=1
+в test_api.php или через временные вызовы из консоли страницы
 
-И проверь по шагам:
+block.list
 
-список меню грузится
+block.create
 
-создание меню
+block.update
 
-переименование
-
-назначение top menu
-
-добавление пункта типа page
-
-добавление пункта типа url
-
-редактирование
-
-удаление
-
-перемещение вверх/вниз
+block.delete
 
 
-5. Если menu.php оживёт
+Но проще дальше уже не мучиться ручными вызовами, а собрать страницу редактора.
 
-Следующий правильный шаг — вернуть в роутер block.*, потому что после этого можно уже собирать editor.php на живом API.
+5. Следующий шаг
 
-Напиши, что именно заработало в menu.php, и я дам следующий пакет без лишнего риска.
+Теперь, когда site, page, menu, block уже подключены, следующий правильный шаг — сделать рабочий editor.php:
+
+список страниц
+
+создание страниц
+
+список блоков текущей страницы
+
+добавление/редактирование/удаление блоков
+
+
+Напиши: давай editor.php
