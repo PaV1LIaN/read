@@ -1,300 +1,103 @@
-Отлично. Дальше идём без переписывания всего проекта, а делаем первый безопасный шаг:
+Отлично. Тогда делаем первый реально рабочий пакет:
 
-Что делаем сейчас
+ping
 
-1. Создаём папки:
+site.list
 
+site.get
 
+site.create
 
-/local/sitebuilder/api
+site.delete
 
-/local/sitebuilder/lib
+site.setHome
 
+page.list
 
-2. Выносим в lib:
-
-
-
-JSON storage
-
-JSON response
-
-ACL / роли
+page.create
 
 
-3. Ставим новый роутер:
-
-
-
-api.php остаётся старой точкой входа для совместимости
-
-внутри он просто подключает api/index.php
-
-
-Это уже даст нормальную базу, и ничего не сломает на фронте.
+Смысл такой: ты уже сможешь подключить новый API и проверить, что основа живая.
 
 
 ---
 
-1. Создай папки
-
-/local/sitebuilder/api
-/local/sitebuilder/lib
-
-
----
-
-2. Новый файл /local/sitebuilder/lib/json.php
-
-<?php
-
-if (!function_exists('sb_data_path')) {
-    function sb_data_path(string $file): string
-    {
-        return $_SERVER['DOCUMENT_ROOT'] . '/upload/sitebuilder/' . $file;
-    }
-}
-
-if (!function_exists('sb_read_json_file')) {
-    function sb_read_json_file(string $file): array
-    {
-        $path = sb_data_path($file);
-        if (!file_exists($path)) {
-            return [];
-        }
-
-        $fp = fopen($path, 'rb');
-        if (!$fp) {
-            return [];
-        }
-
-        $raw = '';
-        if (flock($fp, LOCK_SH)) {
-            $raw = stream_get_contents($fp);
-            flock($fp, LOCK_UN);
-        } else {
-            $raw = stream_get_contents($fp);
-        }
-
-        fclose($fp);
-
-        // Удаляем BOM, если вдруг файл с ним
-        if (strncmp($raw, "\xEF\xBB\xBF", 3) === 0) {
-            $raw = substr($raw, 3);
-        }
-
-        $data = json_decode((string)$raw, true);
-        return is_array($data) ? $data : [];
-    }
-}
-
-if (!function_exists('sb_write_json_file')) {
-    function sb_write_json_file(string $file, array $data, string $errMsg): void
-    {
-        $dir = dirname(sb_data_path($file));
-        if (!is_dir($dir)) {
-            mkdir($dir, 0775, true);
-        }
-
-        $path = sb_data_path($file);
-        $fp = fopen($path, 'c+');
-        if (!$fp) {
-            throw new RuntimeException($errMsg);
-        }
-
-        if (!flock($fp, LOCK_EX)) {
-            fclose($fp);
-            throw new RuntimeException('Cannot lock ' . $file);
-        }
-
-        ftruncate($fp, 0);
-        rewind($fp);
-        fwrite($fp, json_encode(array_values($data), JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT));
-        fflush($fp);
-        flock($fp, LOCK_UN);
-        fclose($fp);
-    }
-}
-
-if (!function_exists('sb_read_sites')) {
-    function sb_read_sites(): array { return sb_read_json_file('sites.json'); }
-}
-if (!function_exists('sb_write_sites')) {
-    function sb_write_sites(array $sites): void { sb_write_json_file('sites.json', $sites, 'Cannot open sites.json'); }
-}
-
-if (!function_exists('sb_read_pages')) {
-    function sb_read_pages(): array { return sb_read_json_file('pages.json'); }
-}
-if (!function_exists('sb_write_pages')) {
-    function sb_write_pages(array $pages): void { sb_write_json_file('pages.json', $pages, 'Cannot open pages.json'); }
-}
-
-if (!function_exists('sb_read_blocks')) {
-    function sb_read_blocks(): array { return sb_read_json_file('blocks.json'); }
-}
-if (!function_exists('sb_write_blocks')) {
-    function sb_write_blocks(array $blocks): void { sb_write_json_file('blocks.json', $blocks, 'Cannot open blocks.json'); }
-}
-
-if (!function_exists('sb_read_access')) {
-    function sb_read_access(): array { return sb_read_json_file('access.json'); }
-}
-if (!function_exists('sb_write_access')) {
-    function sb_write_access(array $access): void { sb_write_json_file('access.json', $access, 'Cannot open access.json'); }
-}
-
-if (!function_exists('sb_read_menus')) {
-    function sb_read_menus(): array { return sb_read_json_file('menus.json'); }
-}
-if (!function_exists('sb_write_menus')) {
-    function sb_write_menus(array $menus): void { sb_write_json_file('menus.json', $menus, 'Cannot open menus.json'); }
-}
-
-if (!function_exists('sb_read_templates')) {
-    function sb_read_templates(): array { return sb_read_json_file('templates.json'); }
-}
-if (!function_exists('sb_write_templates')) {
-    function sb_write_templates(array $templates): void { sb_write_json_file('templates.json', $templates, 'Cannot open templates.json'); }
-}
-
-if (!function_exists('sb_read_layouts')) {
-    function sb_read_layouts(): array { return sb_read_json_file('layouts.json'); }
-}
-if (!function_exists('sb_write_layouts')) {
-    function sb_write_layouts(array $layouts): void { sb_write_json_file('layouts.json', $layouts, 'Cannot open layouts.json'); }
-}
-
-
----
-
-3. Новый файл /local/sitebuilder/lib/response.php
-
-<?php
-
-if (!function_exists('sb_json_response')) {
-    function sb_json_response(array $payload, int $status = 200): void
-    {
-        http_response_code($status);
-        echo json_encode($payload, JSON_UNESCAPED_UNICODE);
-        exit;
-    }
-}
-
-if (!function_exists('sb_json_ok')) {
-    function sb_json_ok(array $data = []): void
-    {
-        sb_json_response(array_merge(['ok' => true], $data), 200);
-    }
-}
-
-if (!function_exists('sb_json_error')) {
-    function sb_json_error(string $error, int $status = 400, array $extra = []): void
-    {
-        sb_json_response(array_merge([
-            'ok' => false,
-            'error' => $error,
-        ], $extra), $status);
-    }
-}
-
-
----
-
-4. Новый файл /local/sitebuilder/lib/access.php
+1. Добавь новый файл /local/sitebuilder/lib/helpers.php
 
 <?php
 
 require_once __DIR__ . '/json.php';
-require_once __DIR__ . '/response.php';
 
-if (!function_exists('sb_user_access_code')) {
-    function sb_user_access_code(): string
+if (!function_exists('sb_slugify')) {
+    function sb_slugify(string $name): string
     {
-        global $USER;
-        return 'U' . (int)$USER->GetID();
+        $slug = \CUtil::translit($name, 'ru', [
+            'replace_space' => '-',
+            'replace_other' => '-',
+            'change_case' => 'L',
+            'delete_repeat_replace' => true,
+            'use_google' => false,
+        ]);
+
+        $slug = trim($slug, '-');
+        return $slug !== '' ? $slug : 'item';
     }
 }
 
-if (!function_exists('sb_get_role')) {
-    function sb_get_role(int $siteId, string $accessCode): ?string
+if (!function_exists('sb_site_exists')) {
+    function sb_site_exists(int $siteId): bool
     {
-        $access = sb_read_access();
-
-        foreach ($access as $row) {
-            if (
-                (int)($row['siteId'] ?? 0) === $siteId
-                && (string)($row['accessCode'] ?? '') === $accessCode
-            ) {
-                return (string)($row['role'] ?? '');
+        foreach (sb_read_sites() as $s) {
+            if ((int)($s['id'] ?? 0) === $siteId) {
+                return true;
             }
         }
+        return false;
+    }
+}
 
+if (!function_exists('sb_find_site')) {
+    function sb_find_site(int $siteId): ?array
+    {
+        foreach (sb_read_sites() as $s) {
+            if ((int)($s['id'] ?? 0) === $siteId) {
+                return $s;
+            }
+        }
         return null;
     }
 }
 
-if (!function_exists('sb_role_rank')) {
-    function sb_role_rank(?string $role): int
+if (!function_exists('sb_find_page')) {
+    function sb_find_page(int $pageId): ?array
     {
-        switch ((string)$role) {
-            case 'VIEWER':
-                return 1;
-            case 'EDITOR':
-                return 2;
-            case 'ADMIN':
-                return 3;
-            case 'OWNER':
-                return 4;
-            default:
-                return 0;
+        foreach (sb_read_pages() as $p) {
+            if ((int)($p['id'] ?? 0) === $pageId) {
+                return $p;
+            }
         }
+        return null;
     }
 }
 
-if (!function_exists('sb_require_site_role')) {
-    function sb_require_site_role(int $siteId, int $minRank): void
+if (!function_exists('sb_find_block')) {
+    function sb_find_block(int $blockId): ?array
     {
-        $role = sb_get_role($siteId, sb_user_access_code());
-
-        if (sb_role_rank($role) < $minRank) {
-            sb_json_error('ACCESS_DENIED', 403);
+        foreach (sb_read_blocks() as $b) {
+            if ((int)($b['id'] ?? 0) === $blockId) {
+                return $b;
+            }
         }
-    }
-}
-
-if (!function_exists('sb_require_owner')) {
-    function sb_require_owner(int $siteId): void
-    {
-        sb_require_site_role($siteId, 4);
-    }
-}
-
-if (!function_exists('sb_require_admin')) {
-    function sb_require_admin(int $siteId): void
-    {
-        sb_require_site_role($siteId, 3);
-    }
-}
-
-if (!function_exists('sb_require_editor')) {
-    function sb_require_editor(int $siteId): void
-    {
-        sb_require_site_role($siteId, 2);
-    }
-}
-
-if (!function_exists('sb_require_viewer')) {
-    function sb_require_viewer(int $siteId): void
-    {
-        sb_require_site_role($siteId, 1);
+        return null;
     }
 }
 
 
 ---
 
-5. Новый файл /local/sitebuilder/api/bootstrap.php
+2. Обнови /local/sitebuilder/api/bootstrap.php
+
+Нужно просто подключить новый helpers.php.
 
 <?php
 
@@ -335,107 +138,227 @@ if (!check_bitrix_sessid()) {
 require_once $_SERVER['DOCUMENT_ROOT'] . '/local/sitebuilder/lib/json.php';
 require_once $_SERVER['DOCUMENT_ROOT'] . '/local/sitebuilder/lib/response.php';
 require_once $_SERVER['DOCUMENT_ROOT'] . '/local/sitebuilder/lib/access.php';
+require_once $_SERVER['DOCUMENT_ROOT'] . '/local/sitebuilder/lib/helpers.php';
 
 
 ---
 
-6. Новый файл /local/sitebuilder/api/index.php
-
-Это новый диспетчер.
-
-<?php
-
-require_once __DIR__ . '/bootstrap.php';
-
-$action = (string)($_POST['action'] ?? '');
-
-$map = [
-    'ping' => __DIR__ . '/handlers/common.php',
-
-    'site.list' => __DIR__ . '/handlers/site.php',
-    'site.get' => __DIR__ . '/handlers/site.php',
-    'site.create' => __DIR__ . '/handlers/site.php',
-    'site.update' => __DIR__ . '/handlers/site.php',
-    'site.delete' => __DIR__ . '/handlers/site.php',
-    'site.setHome' => __DIR__ . '/handlers/site.php',
-
-    'page.list' => __DIR__ . '/handlers/page.php',
-    'page.create' => __DIR__ . '/handlers/page.php',
-    'page.delete' => __DIR__ . '/handlers/page.php',
-    'page.duplicate' => __DIR__ . '/handlers/page.php',
-    'page.updateMeta' => __DIR__ . '/handlers/page.php',
-    'page.setStatus' => __DIR__ . '/handlers/page.php',
-    'page.setParent' => __DIR__ . '/handlers/page.php',
-    'page.move' => __DIR__ . '/handlers/page.php',
-
-    'block.list' => __DIR__ . '/handlers/block.php',
-    'block.create' => __DIR__ . '/handlers/block.php',
-    'block.update' => __DIR__ . '/handlers/block.php',
-    'block.delete' => __DIR__ . '/handlers/block.php',
-    'block.duplicate' => __DIR__ . '/handlers/block.php',
-    'block.move' => __DIR__ . '/handlers/block.php',
-    'block.reorder' => __DIR__ . '/handlers/block.php',
-
-    'access.list' => __DIR__ . '/handlers/access.php',
-    'access.set' => __DIR__ . '/handlers/access.php',
-    'access.delete' => __DIR__ . '/handlers/access.php',
-
-    'file.list' => __DIR__ . '/handlers/file.php',
-    'file.upload' => __DIR__ . '/handlers/file.php',
-    'file.delete' => __DIR__ . '/handlers/file.php',
-
-    'menu.list' => __DIR__ . '/handlers/menu.php',
-    'menu.create' => __DIR__ . '/handlers/menu.php',
-    'menu.update' => __DIR__ . '/handlers/menu.php',
-    'menu.delete' => __DIR__ . '/handlers/menu.php',
-    'menu.setTop' => __DIR__ . '/handlers/menu.php',
-    'menu.item.add' => __DIR__ . '/handlers/menu.php',
-    'menu.item.update' => __DIR__ . '/handlers/menu.php',
-    'menu.item.delete' => __DIR__ . '/handlers/menu.php',
-    'menu.item.move' => __DIR__ . '/handlers/menu.php',
-
-    'template.list' => __DIR__ . '/handlers/template.php',
-    'template.createFromPage' => __DIR__ . '/handlers/template.php',
-    'template.applyToPage' => __DIR__ . '/handlers/template.php',
-    'template.rename' => __DIR__ . '/handlers/template.php',
-    'template.delete' => __DIR__ . '/handlers/template.php',
-
-    'layout.get' => __DIR__ . '/handlers/layout.php',
-    'layout.updateSettings' => __DIR__ . '/handlers/layout.php',
-    'layout.block.list' => __DIR__ . '/handlers/layout.php',
-    'layout.block.create' => __DIR__ . '/handlers/layout.php',
-    'layout.block.update' => __DIR__ . '/handlers/layout.php',
-    'layout.block.delete' => __DIR__ . '/handlers/layout.php',
-    'layout.block.move' => __DIR__ . '/handlers/layout.php',
-];
-
-if (!isset($map[$action])) {
-    sb_json_error('UNKNOWN_ACTION', 400, ['action' => $action]);
-}
-
-require $map[$action];
-
-
----
-
-7. Создай папку /local/sitebuilder/api/handlers
-
-Внутри пока сделаем заглушки, чтобы проект не падал.
-
-/local/sitebuilder/api/handlers/common.php
+3. Замени /local/sitebuilder/api/handlers/common.php
 
 <?php
 
 if ($action === 'ping') {
-    sb_json_ok(['pong' => true]);
+    global $USER;
+
+    sb_json_ok([
+        'time' => date('c'),
+        'userId' => (int)$USER->GetID(),
+        'login' => (string)$USER->GetLogin(),
+    ]);
 }
 
 
 ---
 
-/local/sitebuilder/api/handlers/site.php
+4. Замени /local/sitebuilder/api/handlers/site.php
 
 <?php
+
+global $USER;
+
+if ($action === 'site.list') {
+    $sites = sb_read_sites();
+    $myCode = sb_user_access_code();
+
+    $access = sb_read_access();
+    $allowedSiteIds = [];
+
+    foreach ($access as $r) {
+        if ((string)($r['accessCode'] ?? '') === $myCode) {
+            $sid = (int)($r['siteId'] ?? 0);
+            if ($sid > 0) {
+                $allowedSiteIds[$sid] = true;
+            }
+        }
+    }
+
+    $sites = array_values(array_filter($sites, static function ($s) use ($allowedSiteIds) {
+        return isset($allowedSiteIds[(int)($s['id'] ?? 0)]);
+    }));
+
+    usort($sites, static function ($a, $b) {
+        return (int)($a['id'] ?? 0) <=> (int)($b['id'] ?? 0);
+    });
+
+    sb_json_ok(['sites' => $sites]);
+}
+
+if ($action === 'site.get') {
+    $siteId = (int)($_POST['siteId'] ?? 0);
+    if ($siteId <= 0) {
+        sb_json_error('SITE_ID_REQUIRED', 422);
+    }
+
+    sb_require_viewer($siteId);
+
+    $site = sb_find_site($siteId);
+    if (!$site) {
+        sb_json_error('SITE_NOT_FOUND', 404);
+    }
+
+    sb_json_ok(['site' => $site]);
+}
+
+if ($action === 'site.create') {
+    $name = trim((string)($_POST['name'] ?? ''));
+    if ($name === '') {
+        sb_json_error('NAME_REQUIRED', 422);
+    }
+
+    $sites = sb_read_sites();
+
+    $maxId = 0;
+    foreach ($sites as $s) {
+        $maxId = max($maxId, (int)($s['id'] ?? 0));
+    }
+    $id = $maxId + 1;
+
+    $slug = trim((string)($_POST['slug'] ?? ''));
+    $slug = $slug === '' ? sb_slugify($name) : sb_slugify($slug);
+
+    $existing = array_map(static function ($x) {
+        return (string)($x['slug'] ?? '');
+    }, $sites);
+
+    $base = $slug;
+    $i = 2;
+    while (in_array($slug, $existing, true)) {
+        $slug = $base . '-' . $i;
+        $i++;
+    }
+
+    $site = [
+        'id' => $id,
+        'name' => $name,
+        'slug' => $slug,
+        'createdBy' => (int)$USER->GetID(),
+        'createdAt' => date('c'),
+        'diskFolderId' => 0,
+        'topMenuId' => 0,
+        'settings' => [
+            'containerWidth' => 1100,
+            'accent' => '#2563eb',
+            'logoFileId' => 0,
+        ],
+        'layout' => [
+            'showHeader' => true,
+            'showFooter' => true,
+            'showLeft' => false,
+            'showRight' => false,
+            'leftWidth' => 260,
+            'rightWidth' => 260,
+            'leftMode' => 'blocks',
+        ],
+    ];
+
+    $sites[] = $site;
+    sb_write_sites($sites);
+
+    $access = sb_read_access();
+    $access[] = [
+        'siteId' => $id,
+        'accessCode' => 'U' . (int)$USER->GetID(),
+        'role' => 'OWNER',
+        'createdBy' => (int)$USER->GetID(),
+        'createdAt' => date('c'),
+    ];
+    sb_write_access($access);
+
+    sb_json_ok(['site' => $site]);
+}
+
+if ($action === 'site.delete') {
+    $id = (int)($_POST['id'] ?? 0);
+    if ($id <= 0) {
+        sb_json_error('ID_REQUIRED', 422);
+    }
+
+    sb_require_owner($id);
+
+    $sites = sb_read_sites();
+    $before = count($sites);
+
+    $sites = array_values(array_filter($sites, static function ($s) use ($id) {
+        return (int)($s['id'] ?? 0) !== $id;
+    }));
+
+    if (count($sites) === $before) {
+        sb_json_error('NOT_FOUND', 404);
+    }
+
+    sb_write_sites($sites);
+
+    $pages = sb_read_pages();
+    $pages = array_values(array_filter($pages, static function ($p) use ($id) {
+        return (int)($p['siteId'] ?? 0) !== $id;
+    }));
+    sb_write_pages($pages);
+
+    $pageIdsNow = [];
+    foreach ($pages as $p) {
+        $pageIdsNow[(int)($p['id'] ?? 0)] = true;
+    }
+
+    $blocks = sb_read_blocks();
+    $blocks = array_values(array_filter($blocks, static function ($b) use ($pageIdsNow) {
+        return isset($pageIdsNow[(int)($b['pageId'] ?? 0)]);
+    }));
+    sb_write_blocks($blocks);
+
+    $access = sb_read_access();
+    $access = array_values(array_filter($access, static function ($r) use ($id) {
+        return (int)($r['siteId'] ?? 0) !== $id;
+    }));
+    sb_write_access($access);
+
+    sb_json_ok();
+}
+
+if ($action === 'site.setHome') {
+    $siteId = (int)($_POST['siteId'] ?? 0);
+    $pageId = (int)($_POST['pageId'] ?? 0);
+
+    if ($siteId <= 0 || $pageId <= 0) {
+        sb_json_error('SITE_PAGE_REQUIRED', 422);
+    }
+
+    sb_require_editor($siteId);
+
+    $page = sb_find_page($pageId);
+    if (!$page || (int)($page['siteId'] ?? 0) !== $siteId) {
+        sb_json_error('PAGE_NOT_IN_SITE', 422);
+    }
+
+    $sites = sb_read_sites();
+    $found = false;
+
+    foreach ($sites as $i => $s) {
+        if ((int)($s['id'] ?? 0) === $siteId) {
+            $sites[$i]['homePageId'] = $pageId;
+            $sites[$i]['updatedAt'] = date('c');
+            $sites[$i]['updatedBy'] = (int)$USER->GetID();
+            $found = true;
+            break;
+        }
+    }
+
+    if (!$found) {
+        sb_json_error('SITE_NOT_FOUND', 404);
+    }
+
+    sb_write_sites($sites);
+    sb_json_ok();
+}
 
 sb_json_error('NOT_MOVED_YET', 501, [
     'handler' => 'site',
@@ -445,9 +368,109 @@ sb_json_error('NOT_MOVED_YET', 501, [
 
 ---
 
-/local/sitebuilder/api/handlers/page.php
+5. Замени /local/sitebuilder/api/handlers/page.php
 
 <?php
+
+global $USER;
+
+if ($action === 'page.list') {
+    $siteId = (int)($_POST['siteId'] ?? 0);
+    if ($siteId <= 0) {
+        sb_json_error('SITE_ID_REQUIRED', 422);
+    }
+
+    sb_require_viewer($siteId);
+
+    $pages = sb_read_pages();
+    $pages = array_values(array_filter($pages, static function ($p) use ($siteId) {
+        return (int)($p['siteId'] ?? 0) === $siteId;
+    }));
+
+    foreach ($pages as &$p) {
+        if (!isset($p['status']) || !in_array((string)$p['status'], ['draft', 'published'], true)) {
+            $p['status'] = 'published';
+        }
+        if (!isset($p['publishedAt'])) {
+            $p['publishedAt'] = '';
+        }
+    }
+    unset($p);
+
+    usort($pages, static function ($a, $b) {
+        return (int)($a['id'] ?? 0) <=> (int)($b['id'] ?? 0);
+    });
+
+    $homePageId = 0;
+    $site = sb_find_site($siteId);
+    if ($site) {
+        $homePageId = (int)($site['homePageId'] ?? 0);
+    }
+
+    sb_json_ok([
+        'pages' => $pages,
+        'homePageId' => $homePageId,
+    ]);
+}
+
+if ($action === 'page.create') {
+    $siteId = (int)($_POST['siteId'] ?? 0);
+    $title  = trim((string)($_POST['title'] ?? ''));
+    $slugIn = trim((string)($_POST['slug'] ?? ''));
+
+    if ($siteId <= 0) {
+        sb_json_error('SITE_ID_REQUIRED', 422);
+    }
+    if ($title === '') {
+        sb_json_error('TITLE_REQUIRED', 422);
+    }
+
+    sb_require_editor($siteId);
+
+    $slug = $slugIn !== '' ? sb_slugify($slugIn) : sb_slugify($title);
+
+    $pages = sb_read_pages();
+
+    $maxId = 0;
+    foreach ($pages as $p) {
+        $maxId = max($maxId, (int)($p['id'] ?? 0));
+    }
+    $id = $maxId + 1;
+
+    $existing = array_map(
+        static function ($x) {
+            return (string)($x['slug'] ?? '');
+        },
+        array_filter($pages, static function ($p) use ($siteId) {
+            return (int)($p['siteId'] ?? 0) === $siteId;
+        })
+    );
+
+    $base = $slug;
+    $i = 2;
+    while (in_array($slug, $existing, true)) {
+        $slug = $base . '-' . $i;
+        $i++;
+    }
+
+    $page = [
+        'id' => $id,
+        'siteId' => $siteId,
+        'title' => $title,
+        'slug' => $slug,
+        'parentId' => 0,
+        'sort' => 500,
+        'status' => 'draft',
+        'publishedAt' => '',
+        'createdBy' => (int)$USER->GetID(),
+        'createdAt' => date('c'),
+    ];
+
+    $pages[] = $page;
+    sb_write_pages($pages);
+
+    sb_json_ok(['page' => $page]);
+}
 
 sb_json_error('NOT_MOVED_YET', 501, [
     'handler' => 'page',
@@ -457,163 +480,49 @@ sb_json_error('NOT_MOVED_YET', 501, [
 
 ---
 
-/local/sitebuilder/api/handlers/block.php
+6. Пока остальные handlers оставь заглушками
 
-<?php
+Вот так и оставляй, это нормально на данном этапе:
 
-sb_json_error('NOT_MOVED_YET', 501, [
-    'handler' => 'block',
-    'action' => $action,
-]);
+block.php
 
+access.php
 
----
+file.php
 
-/local/sitebuilder/api/handlers/access.php
+menu.php
 
-<?php
+template.php
 
-sb_json_error('NOT_MOVED_YET', 501, [
-    'handler' => 'access',
-    'action' => $action,
-]);
+layout.php
+
 
 
 ---
 
-/local/sitebuilder/api/handlers/file.php
+7. Теперь можно переключить точку входа
+
+Если у тебя старая папка отдельно, а новая чистая папка — отдельно, то в новом проекте уже можно сделать так:
+
+/local/sitebuilder/api.php
 
 <?php
-
-sb_json_error('NOT_MOVED_YET', 501, [
-    'handler' => 'file',
-    'action' => $action,
-]);
-
-
----
-
-/local/sitebuilder/api/handlers/menu.php
-
-<?php
-
-sb_json_error('NOT_MOVED_YET', 501, [
-    'handler' => 'menu',
-    'action' => $action,
-]);
-
-
----
-
-/local/sitebuilder/api/handlers/template.php
-
-<?php
-
-sb_json_error('NOT_MOVED_YET', 501, [
-    'handler' => 'template',
-    'action' => $action,
-]);
-
-
----
-
-/local/sitebuilder/api/handlers/layout.php
-
-<?php
-
-sb_json_error('NOT_MOVED_YET', 501, [
-    'handler' => 'layout',
-    'action' => $action,
-]);
-
-
----
-
-8. Заменить текущий /local/sitebuilder/api.php
-
-Старый api.php не удаляй, но на этом шаге его содержимое надо заменить на совместимый враппер.
-
-Новый /local/sitebuilder/api.php
-
-<?php
-
 require_once __DIR__ . '/api/index.php';
 
 
 ---
 
-9. Что это даст прямо сейчас
+8. Что уже можно проверить
 
-После этого:
+Сейчас у тебя должны заработать:
 
-фронт по-прежнему будет стучаться в /local/sitebuilder/api.php
+Проверка API
 
-но реально запросы будут идти через новый роутер
+action=ping
 
-инфраструктура будет вынесена из монолита
+Сайты
 
-ты сможешь переносить action-блоки по одному, а не переписывать 3678 строк разом
-
-
-
----
-
-10. Важный момент
-
-После замены api.php на враппер у тебя все действия, кроме ping, начнут отвечать NOT_MOVED_YET, пока мы не перенесём их в handlers.
-
-Поэтому безопасный рабочий вариант такой:
-
-Вариант А — правильный
-
-Сначала:
-
-создать lib/*
-
-создать api/*
-
-не трогать старый api.php
-
-потом я тебе дам следующий код: как перенести site.* и page.list/page.create
-
-
-Вариант Б — быстрый
-
-Сразу заменить api.php на враппер и переносить обработчики пачками. Но в промежутке всё, что не перенесли, работать не будет.
-
-
----
-
-11. Как сделать безопасно без простоя
-
-Я рекомендую так:
-
-Шаг 1
-
-Создай:
-
-lib/json.php
-
-lib/response.php
-
-lib/access.php
-
-api/bootstrap.php
-
-api/index.php
-
-api/handlers/*
-
-
-Шаг 2
-
-Старый api.php пока не трогай
-
-Шаг 3
-
-Я следующим сообщением дам тебе:
-
-готовый перенос site.list
+site.list
 
 site.get
 
@@ -621,29 +530,89 @@ site.create
 
 site.delete
 
+site.setHome
+
+
+Страницы
+
 page.list
 
+page.create
 
-После этого уже можно будет переключать api.php на новый роутер.
 
 
 ---
 
-12. Что делать прямо сейчас
+9. Как быстро проверить руками
 
-Сделай сначала именно это:
+Через твой фронт или через временный тест.
 
-1. создай папки api, api/handlers, lib
+Пример POST:
 
+action=site.list
 
-2. вставь файлы кодом выше
-
-
-3. не заменяй пока старый api.php
+sessid=...
 
 
-4. напиши мне: “готово”
+или:
+
+action=site.create
+
+name=Тестовый сайт
+
+slug=test-site
+
+sessid=...
 
 
 
-И следующим сообщением я пришлю тебе уже первый рабочий пакет обработчиков, которые можно вставить и начать реально переносить монолит.
+---
+
+10. На что обратить внимание
+
+1. Путь до проекта
+
+Я в коде использую: /local/sitebuilder/...
+
+Если новая чистая папка у тебя называется не sitebuilder, а иначе — замени путь в:
+
+bootstrap.php
+
+
+Вот эти строки:
+
+require_once $_SERVER['DOCUMENT_ROOT'] . '/local/sitebuilder/lib/json.php';
+require_once $_SERVER['DOCUMENT_ROOT'] . '/local/sitebuilder/lib/response.php';
+require_once $_SERVER['DOCUMENT_ROOT'] . '/local/sitebuilder/lib/access.php';
+require_once $_SERVER['DOCUMENT_ROOT'] . '/local/sitebuilder/lib/helpers.php';
+
+2. Данные всё ещё хранятся в:
+
+/upload/sitebuilder/
+
+То есть новая чистая папка проекта использует старые JSON-данные. Это удобно для миграции.
+
+
+---
+
+11. Что делаем следующим сообщением
+
+После того как вставишь это, следующий логичный шаг:
+
+page.delete
+
+page.duplicate
+
+page.updateMeta
+
+page.setStatus
+
+page.setParent
+
+page.move
+
+
+Это лучше сделать следующим пакетом, потому что page-ветка у тебя уже почти замкнётся целиком.
+
+Напиши мне одним сообщением: “вставил, давай page-пакет дальше”
+и я пришлю тебе следующий готовый код.
