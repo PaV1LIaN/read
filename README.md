@@ -1,35 +1,299 @@
-{
-    "ok": true,
-    "apiFile": "\/srv\/bx\/docroot\/local\/sitebuilder\/api.php",
-    "time": "2026-04-09T15:51:10+03:00",
-    "files": {
-        "api_index": {
-            "path": "\/srv\/bx\/docroot\/local\/sitebuilder\/api\/index.php",
-            "exists": true,
-            "md5": "3c710ee1d3975799bf47715016909afc",
-            "size": 358,
-            "head": "<?php\n\nrequire_once __DIR__ . '\/bootstrap.php';\n\n$action = (string)($_POST['action'] ?? '');\n\nif ($action === 'ping') {\n    require __DIR__ . '\/handlers\/common.php';\n    exit;\n}\n\nif ($action === 'site.list') {\n    require __DIR__ . '\/handlers\/site.php';\n    exit;\n}\n\nsb_json_error('UNKNOWN_ACTION', 400, [\n    'action' => $action,\n    'file' => __FILE__,\n]);"
-        },
-        "handler_common": {
-            "path": "\/srv\/bx\/docroot\/local\/sitebuilder\/api\/handlers\/common.php",
-            "exists": true,
-            "md5": "02e1f89bb8479607ed5860c86c2d5189",
-            "size": 392,
-            "head": "<?php\n\nglobal $USER;\n\nif ($action === 'ping') {\n    sb_json_ok([\n        'pong' => true,\n        'handler' => 'common',\n        'file' => __FILE__,\n        'userId' => (int)$USER->GetID(),\n        'login' => (string)$USER->GetLogin(),\n        'time' => date('c'),\n    ]);\n}\n\nsb_json_error('NOT_MOVED_YET', 501, [\n    'handler' => 'common',\n    'action' => $action,\n    'file' => __FILE__,\n]);"
-        },
-        "handler_site": {
-            "path": "\/srv\/bx\/docroot\/local\/sitebuilder\/api\/handlers\/site.php",
-            "exists": true,
-            "md5": "a05404ec14981afa3cba38651d621d72",
-            "size": 904,
-            "head": "if ($action === 'site.list') {\n    $sites = sb_read_sites();\n    $myCode = sb_user_access_code();\n\n    $access = sb_read_access();\n    $allowedSiteIds = [];\n\n    foreach ($access as $r) {\n        if ((string)($r['accessCode'] ?? '') === $myCode) {\n            $sid = (int)($r['siteId'] ?? 0);\n            if ($sid > 0) {\n                $allowedSiteIds[$sid] = true;\n            }\n        }\n    }\n\n  "
-        },
-        "handler_access": {
-            "path": "\/srv\/bx\/docroot\/local\/sitebuilder\/api\/handlers\/access.php",
-            "exists": true,
-            "md5": "c8610555408d4591a759f130dde3499c",
-            "size": 3903,
-            "head": "<?php\n\nglobal $USER;\n\nif ($action === 'access.list') {\n    $siteId = (int)($_POST['siteId'] ?? 0);\n    if ($siteId <= 0) {\n        sb_json_error('SITE_ID_REQUIRED', 422);\n    }\n\n    sb_require_admin($siteId);\n\n    $rows = sb_access_rows_for_site($siteId);\n\n    usort($rows, static function ($a, $b) {\n        $roleCmp = sb_role_rank((string)($b['role'] ?? '')) <=> sb_role_rank((string)($a['role'] ??"
+Отлично, теперь видно главное:
+
+api/index.php — правильный
+
+api/handlers/common.php — правильный
+
+api/handlers/access.php — отдельный файл и тоже выглядит нормально
+
+но проблема всё ещё остаётся
+
+
+Значит, почти наверняка ошибка уже не в api/handlers/access.php, а в одном из подключаемых lib-файлов, скорее всего:
+
+lib/access.php
+
+реже api/bootstrap.php
+
+
+Потому что:
+
+bootstrap.php всегда подключает lib/access.php
+
+если ты случайно перезаписал lib/access.php кодом handler-а, то при каждом запросе он будет сразу отдавать: {"ok":false,"error":"NOT_MOVED_YET","handler":"access","action":"ping"}
+
+
+И это идеально совпадает с твоим симптомом.
+
+
+---
+
+Что проверить прямо сейчас
+
+Снова используй диагностический api.php, но теперь посмотри bootstrap и lib.
+
+Замени /local/sitebuilder/api.php на это
+
+<?php
+header('Content-Type: application/json; charset=UTF-8');
+
+$files = [
+    'api_bootstrap' => __DIR__ . '/api/bootstrap.php',
+    'lib_json'      => __DIR__ . '/lib/json.php',
+    'lib_response'  => __DIR__ . '/lib/response.php',
+    'lib_access'    => __DIR__ . '/lib/access.php',
+    'lib_helpers'   => __DIR__ . '/lib/helpers.php',
+    'lib_disk'      => __DIR__ . '/lib/disk.php',
+];
+
+$result = [
+    'ok' => true,
+    'apiFile' => __FILE__,
+    'time' => date('c'),
+    'files' => [],
+];
+
+foreach ($files as $key => $path) {
+    $exists = file_exists($path);
+    $content = $exists ? file_get_contents($path) : '';
+    $result['files'][$key] = [
+        'path' => $path,
+        'exists' => $exists,
+        'md5' => $exists ? md5_file($path) : null,
+        'size' => $exists ? filesize($path) : null,
+        'head' => $exists ? substr($content, 0, 600) : null,
+    ];
+}
+
+echo json_encode($result, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT);
+exit;
+
+Открой:
+
+https://portal24.itsnn.ru/local/sitebuilder/api.php
+
+и пришли JSON.
+
+
+---
+
+Что я ожидаю увидеть
+
+Нормальный lib/access.php должен начинаться примерно так:
+
+<?php
+
+require_once __DIR__ . '/json.php';
+require_once __DIR__ . '/response.php';
+
+if (!function_exists('sb_user_access_code')) {
+
+Если вместо этого там будет что-то вроде:
+
+global $USER;
+
+if ($action === 'access.list') {
+
+то всё, причина найдена:
+ты случайно записал handler-код в lib/access.php.
+
+
+---
+
+Если не хочешь ждать диагностику — вот правильный lib/access.php
+
+Можешь сразу сравнить или просто заменить.
+
+/local/sitebuilder/lib/access.php
+
+<?php
+
+require_once __DIR__ . '/json.php';
+require_once __DIR__ . '/response.php';
+
+if (!function_exists('sb_user_access_code')) {
+    function sb_user_access_code(): string
+    {
+        global $USER;
+        return 'U' . (int)$USER->GetID();
+    }
+}
+
+if (!function_exists('sb_get_role')) {
+    function sb_get_role(int $siteId, string $accessCode): ?string
+    {
+        $access = sb_read_access();
+
+        foreach ($access as $row) {
+            if (
+                (int)($row['siteId'] ?? 0) === $siteId
+                && (string)($row['accessCode'] ?? '') === $accessCode
+            ) {
+                return (string)($row['role'] ?? '');
+            }
+        }
+
+        return null;
+    }
+}
+
+if (!function_exists('sb_role_rank')) {
+    function sb_role_rank(?string $role): int
+    {
+        switch ((string)$role) {
+            case 'VIEWER':
+                return 1;
+            case 'EDITOR':
+                return 2;
+            case 'ADMIN':
+                return 3;
+            case 'OWNER':
+                return 4;
+            default:
+                return 0;
         }
     }
 }
+
+if (!function_exists('sb_require_site_role')) {
+    function sb_require_site_role(int $siteId, int $minRank): void
+    {
+        $role = sb_get_role($siteId, sb_user_access_code());
+
+        if (sb_role_rank($role) < $minRank) {
+            sb_json_error('ACCESS_DENIED', 403);
+        }
+    }
+}
+
+if (!function_exists('sb_require_owner')) {
+    function sb_require_owner(int $siteId): void
+    {
+        sb_require_site_role($siteId, 4);
+    }
+}
+
+if (!function_exists('sb_require_admin')) {
+    function sb_require_admin(int $siteId): void
+    {
+        sb_require_site_role($siteId, 3);
+    }
+}
+
+if (!function_exists('sb_require_editor')) {
+    function sb_require_editor(int $siteId): void
+    {
+        sb_require_site_role($siteId, 2);
+    }
+}
+
+if (!function_exists('sb_require_viewer')) {
+    function sb_require_viewer(int $siteId): void
+    {
+        sb_require_site_role($siteId, 1);
+    }
+}
+
+
+---
+
+И правильный api/bootstrap.php
+
+На всякий случай тоже сверяй. Он должен быть таким:
+
+/local/sitebuilder/api/bootstrap.php
+
+<?php
+
+define('NO_KEEP_STATISTIC', true);
+define('NO_AGENT_STATISTIC', true);
+define('DisableEventsCheck', true);
+
+require $_SERVER['DOCUMENT_ROOT'] . '/bitrix/modules/main/include/prolog_before.php';
+
+use Bitrix\Main\Loader;
+use Bitrix\Disk\Storage;
+use Bitrix\Disk\Folder;
+use Bitrix\Disk\File;
+use Bitrix\Disk\Driver;
+
+global $USER;
+
+header('Content-Type: application/json; charset=UTF-8');
+
+if (!$USER->IsAuthorized()) {
+    http_response_code(401);
+    echo json_encode(['ok' => false, 'error' => 'NOT_AUTHORIZED'], JSON_UNESCAPED_UNICODE);
+    exit;
+}
+
+if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
+    http_response_code(405);
+    echo json_encode(['ok' => false, 'error' => 'METHOD_NOT_ALLOWED'], JSON_UNESCAPED_UNICODE);
+    exit;
+}
+
+if (!check_bitrix_sessid()) {
+    http_response_code(403);
+    echo json_encode(['ok' => false, 'error' => 'BAD_SESSID'], JSON_UNESCAPED_UNICODE);
+    exit;
+}
+
+$projectRoot = dirname(__DIR__);
+
+require_once $projectRoot . '/lib/json.php';
+require_once $projectRoot . '/lib/response.php';
+require_once $projectRoot . '/lib/access.php';
+require_once $projectRoot . '/lib/helpers.php';
+require_once $projectRoot . '/lib/disk.php';
+
+
+---
+
+Что делать после исправления
+
+После того как проверишь/исправишь lib/access.php, сделай:
+
+1. верни api.php обратно:
+
+
+
+<?php
+ini_set('display_errors', '1');
+error_reporting(E_ALL);
+
+require_once __DIR__ . '/api/index.php';
+
+2. открой opcache_reset.php
+
+
+3. снова нажми Ping
+
+
+
+
+---
+
+Что должно прийти
+
+Ожидаемый ответ:
+
+{
+  "ok": true,
+  "pong": true,
+  "handler": "common",
+  "file": "/srv/bx/docroot/local/sitebuilder/api/handlers/common.php"
+}
+
+Если хочешь, можешь сразу не делать диагностику, а просто:
+
+заменить lib/access.php кодом выше
+
+вернуть api.php
+
+сбросить opcache
+
+проверить Ping
+
+
+И прислать результат.
