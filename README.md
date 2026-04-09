@@ -1,188 +1,893 @@
-Проблема найдена: на странице не подключается JS-ядро Битрикса, поэтому BX вообще не существует.
+Отлично. Делаем layout-пакет.
 
-Значит, \Bitrix\Main\UI\Extension::load('main.core'); в твоём окружении на этой странице не дал нужного результата. Для коробки надёжнее подключить ядро старым способом.
+Сейчас закроем:
 
-Сделай так.
+layout.get
 
-Замени test_api.php полностью на этот файл:
+layout.updateSettings
+
+layout.block.list
+
+layout.block.create
+
+layout.block.update
+
+layout.block.delete
+
+layout.block.move
+
+
+Сделаем практично и без переусложнения:
+
+layout хранится в layouts.json
+
+у каждого сайта одна запись layout
+
+в layout есть:
+
+settings
+
+zones
+
+
+zones:
+
+header
+
+footer
+
+left
+
+right
+
+
+у каждой зоны свой набор блоков
+
+
+
+---
+
+1. Обнови /local/sitebuilder/lib/helpers.php
+
+Добавь в конец файла:
 
 <?php
-require $_SERVER['DOCUMENT_ROOT'] . '/bitrix/modules/main/include/prolog_before.php';
-global $APPLICATION, $USER;
 
-if (method_exists($APPLICATION, 'ShowHead')) {
-    // ok
+if (!function_exists('sb_layout_default_record')) {
+    function sb_layout_default_record(int $siteId): array
+    {
+        return [
+            'siteId' => $siteId,
+            'settings' => [
+                'showHeader' => true,
+                'showFooter' => true,
+                'showLeft' => false,
+                'showRight' => false,
+                'leftWidth' => 260,
+                'rightWidth' => 260,
+                'leftMode' => 'blocks',
+            ],
+            'zones' => [
+                'header' => [],
+                'footer' => [],
+                'left' => [],
+                'right' => [],
+            ],
+        ];
+    }
 }
 
-CJSCore::Init(['ajax']);
+if (!function_exists('sb_layout_valid_zone')) {
+    function sb_layout_valid_zone(string $zone): bool
+    {
+        return in_array($zone, ['header', 'footer', 'left', 'right'], true);
+    }
+}
 
-header('Content-Type: text/html; charset=UTF-8');
-?>
-<!doctype html>
-<html lang="ru">
-<head>
-    <meta charset="UTF-8">
-    <title>SiteBuilder API Test</title>
-    <?php $APPLICATION->ShowHead(); ?>
-    <style>
-        body { font-family: Arial, sans-serif; padding: 20px; }
-        button { margin: 0 10px 10px 0; padding: 10px 14px; cursor: pointer; }
-        pre { white-space: pre-wrap; background: #f5f5f5; padding: 16px; border: 1px solid #ccc; min-height: 180px; }
-        .row { margin-bottom: 12px; }
-    </style>
-</head>
-<body>
-    <h1>Проверка API SiteBuilder</h1>
+if (!function_exists('sb_find_layout')) {
+    function sb_find_layout(int $siteId): ?array
+    {
+        foreach (sb_read_layouts() as $layout) {
+            if ((int)($layout['siteId'] ?? 0) === $siteId) {
+                return $layout;
+            }
+        }
+        return null;
+    }
+}
 
-    <div class="row">
-        <strong>Пользователь:</strong>
-        <?= htmlspecialchars((string)$USER->GetLogin(), ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?>
-        (ID <?= (int)$USER->GetID() ?>)
-    </div>
+if (!function_exists('sb_layout_ensure_record')) {
+    function sb_layout_ensure_record(int $siteId): array
+    {
+        $layout = sb_find_layout($siteId);
+        if ($layout) {
+            return sb_normalize_layout_record($layout);
+        }
 
-    <div class="row">
-        <strong>sessid from PHP:</strong>
-        <?= htmlspecialchars(bitrix_sessid(), ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?>
-    </div>
+        $layouts = sb_read_layouts();
+        $layout = sb_layout_default_record($siteId);
+        $layouts[] = $layout;
+        sb_write_layouts($layouts);
 
-    <div class="row">
-        <button type="button" id="checkBxBtn">Проверить BX</button>
-        <button type="button" id="pingBtn">Ping</button>
-        <button type="button" id="siteListBtn">Site list</button>
-    </div>
+        return sb_normalize_layout_record($layout);
+    }
+}
 
-    <pre id="out">Здесь будет результат...</pre>
+if (!function_exists('sb_normalize_layout_record')) {
+    function sb_normalize_layout_record(array $layout): array
+    {
+        if (!isset($layout['settings']) || !is_array($layout['settings'])) {
+            $layout['settings'] = [];
+        }
 
-    <script>
-        (function () {
-            var out = document.getElementById('out');
+        $layout['settings'] = array_merge([
+            'showHeader' => true,
+            'showFooter' => true,
+            'showLeft' => false,
+            'showRight' => false,
+            'leftWidth' => 260,
+            'rightWidth' => 260,
+            'leftMode' => 'blocks',
+        ], $layout['settings']);
 
-            function print(data) {
-                if (typeof data === 'string') {
-                    out.textContent = data;
-                    return;
+        if (!isset($layout['zones']) || !is_array($layout['zones'])) {
+            $layout['zones'] = [];
+        }
+
+        foreach (['header', 'footer', 'left', 'right'] as $zone) {
+            if (!isset($layout['zones'][$zone]) || !is_array($layout['zones'][$zone])) {
+                $layout['zones'][$zone] = [];
+            }
+
+            $layout['zones'][$zone] = array_map('sb_normalize_block_record', $layout['zones'][$zone]);
+
+            usort($layout['zones'][$zone], static function ($a, $b) {
+                $sortCmp = (int)($a['sort'] ?? 500) <=> (int)($b['sort'] ?? 500);
+                if ($sortCmp !== 0) {
+                    return $sortCmp;
                 }
-                try {
-                    out.textContent = JSON.stringify(data, null, 2);
-                } catch (e) {
-                    out.textContent = String(data);
+                return (int)($a['id'] ?? 0) <=> (int)($b['id'] ?? 0);
+            });
+        }
+
+        return $layout;
+    }
+}
+
+if (!function_exists('sb_layout_next_block_id')) {
+    function sb_layout_next_block_id(array $layout): int
+    {
+        $maxId = 0;
+
+        $zones = (array)($layout['zones'] ?? []);
+        foreach ($zones as $blocks) {
+            if (!is_array($blocks)) {
+                continue;
+            }
+
+            foreach ($blocks as $block) {
+                $maxId = max($maxId, (int)($block['id'] ?? 0));
+            }
+        }
+
+        return $maxId + 1;
+    }
+}
+
+if (!function_exists('sb_layout_next_block_sort')) {
+    function sb_layout_next_block_sort(array $layout, string $zone): int
+    {
+        $maxSort = 0;
+
+        $blocks = (array)($layout['zones'][$zone] ?? []);
+        foreach ($blocks as $block) {
+            $maxSort = max($maxSort, (int)($block['sort'] ?? 0));
+        }
+
+        return $maxSort + 10;
+    }
+}
+
+if (!function_exists('sb_layout_find_block')) {
+    function sb_layout_find_block(array $layout, int $blockId): ?array
+    {
+        $zones = (array)($layout['zones'] ?? []);
+        foreach ($zones as $zoneName => $blocks) {
+            if (!is_array($blocks)) {
+                continue;
+            }
+
+            foreach ($blocks as $block) {
+                if ((int)($block['id'] ?? 0) === $blockId) {
+                    $block['_zone'] = (string)$zoneName;
+                    return $block;
+                }
+            }
+        }
+
+        return null;
+    }
+}
+
+
+---
+
+2. Полностью замени /local/sitebuilder/api/handlers/layout.php
+
+<?php
+
+global $USER;
+
+if ($action === 'layout.get') {
+    $siteId = (int)($_POST['siteId'] ?? 0);
+    if ($siteId <= 0) {
+        sb_json_error('SITE_ID_REQUIRED', 422);
+    }
+
+    sb_require_viewer($siteId);
+
+    $layout = sb_layout_ensure_record($siteId);
+
+    sb_json_ok([
+        'layout' => $layout,
+    ]);
+}
+
+if ($action === 'layout.updateSettings') {
+    $siteId = (int)($_POST['siteId'] ?? 0);
+    if ($siteId <= 0) {
+        sb_json_error('SITE_ID_REQUIRED', 422);
+    }
+
+    sb_require_editor($siteId);
+
+    $settingsRaw = $_POST['settings'] ?? null;
+    if ($settingsRaw === null) {
+        sb_json_error('SETTINGS_REQUIRED', 422);
+    }
+
+    if (is_array($settingsRaw)) {
+        $settings = $settingsRaw;
+    } else {
+        $settings = json_decode((string)$settingsRaw, true);
+        if (!is_array($settings)) {
+            sb_json_error('BAD_SETTINGS_JSON', 422);
+        }
+    }
+
+    $allowedKeys = [
+        'showHeader',
+        'showFooter',
+        'showLeft',
+        'showRight',
+        'leftWidth',
+        'rightWidth',
+        'leftMode',
+    ];
+
+    $filtered = [];
+    foreach ($allowedKeys as $key) {
+        if (array_key_exists($key, $settings)) {
+            $filtered[$key] = $settings[$key];
+        }
+    }
+
+    if (isset($filtered['showHeader'])) {
+        $filtered['showHeader'] = (bool)$filtered['showHeader'];
+    }
+    if (isset($filtered['showFooter'])) {
+        $filtered['showFooter'] = (bool)$filtered['showFooter'];
+    }
+    if (isset($filtered['showLeft'])) {
+        $filtered['showLeft'] = (bool)$filtered['showLeft'];
+    }
+    if (isset($filtered['showRight'])) {
+        $filtered['showRight'] = (bool)$filtered['showRight'];
+    }
+    if (isset($filtered['leftWidth'])) {
+        $filtered['leftWidth'] = max(120, min(800, (int)$filtered['leftWidth']));
+    }
+    if (isset($filtered['rightWidth'])) {
+        $filtered['rightWidth'] = max(120, min(800, (int)$filtered['rightWidth']));
+    }
+    if (isset($filtered['leftMode'])) {
+        $filtered['leftMode'] = in_array((string)$filtered['leftMode'], ['blocks', 'menu'], true)
+            ? (string)$filtered['leftMode']
+            : 'blocks';
+    }
+
+    $layouts = sb_read_layouts();
+    $updated = null;
+    $found = false;
+
+    foreach ($layouts as &$layout) {
+        if ((int)($layout['siteId'] ?? 0) !== $siteId) {
+            continue;
+        }
+
+        $layout = sb_normalize_layout_record($layout);
+        $layout['settings'] = array_merge($layout['settings'], $filtered);
+        $layout['updatedAt'] = date('c');
+        $layout['updatedBy'] = (int)$USER->GetID();
+
+        $updated = $layout;
+        $found = true;
+        break;
+    }
+    unset($layout);
+
+    if (!$found) {
+        $updated = sb_layout_default_record($siteId);
+        $updated['settings'] = array_merge($updated['settings'], $filtered);
+        $updated['createdAt'] = date('c');
+        $updated['createdBy'] = (int)$USER->GetID();
+        $updated['updatedAt'] = date('c');
+        $updated['updatedBy'] = (int)$USER->GetID();
+        $layouts[] = $updated;
+    }
+
+    sb_write_layouts($layouts);
+
+    sb_json_ok([
+        'layout' => sb_normalize_layout_record($updated),
+    ]);
+}
+
+if ($action === 'layout.block.list') {
+    $siteId = (int)($_POST['siteId'] ?? 0);
+    $zone = trim((string)($_POST['zone'] ?? ''));
+
+    if ($siteId <= 0) {
+        sb_json_error('SITE_ID_REQUIRED', 422);
+    }
+    if (!sb_layout_valid_zone($zone)) {
+        sb_json_error('BAD_ZONE', 422);
+    }
+
+    sb_require_viewer($siteId);
+
+    $layout = sb_layout_ensure_record($siteId);
+
+    sb_json_ok([
+        'blocks' => array_values($layout['zones'][$zone] ?? []),
+        'zone' => $zone,
+    ]);
+}
+
+if ($action === 'layout.block.create') {
+    $siteId = (int)($_POST['siteId'] ?? 0);
+    $zone = trim((string)($_POST['zone'] ?? ''));
+    $type = trim((string)($_POST['type'] ?? 'text'));
+
+    if ($siteId <= 0) {
+        sb_json_error('SITE_ID_REQUIRED', 422);
+    }
+    if (!sb_layout_valid_zone($zone)) {
+        sb_json_error('BAD_ZONE', 422);
+    }
+    if ($type === '') {
+        sb_json_error('TYPE_REQUIRED', 422);
+    }
+
+    sb_require_editor($siteId);
+
+    $layouts = sb_read_layouts();
+    $updatedLayout = null;
+    $newBlock = null;
+    $found = false;
+
+    foreach ($layouts as &$layout) {
+        if ((int)($layout['siteId'] ?? 0) !== $siteId) {
+            continue;
+        }
+
+        $layout = sb_normalize_layout_record($layout);
+
+        $newBlock = [
+            'id' => sb_layout_next_block_id($layout),
+            'type' => $type,
+            'sort' => sb_layout_next_block_sort($layout, $zone),
+            'content' => sb_default_block_content($type),
+            'props' => [],
+            'createdBy' => (int)$USER->GetID(),
+            'createdAt' => date('c'),
+            'updatedAt' => date('c'),
+            'updatedBy' => (int)$USER->GetID(),
+        ];
+
+        $layout['zones'][$zone][] = $newBlock;
+        $layout['updatedAt'] = date('c');
+        $layout['updatedBy'] = (int)$USER->GetID();
+
+        $updatedLayout = $layout;
+        $found = true;
+        break;
+    }
+    unset($layout);
+
+    if (!$found) {
+        $updatedLayout = sb_layout_default_record($siteId);
+
+        $newBlock = [
+            'id' => 1,
+            'type' => $type,
+            'sort' => 10,
+            'content' => sb_default_block_content($type),
+            'props' => [],
+            'createdBy' => (int)$USER->GetID(),
+            'createdAt' => date('c'),
+            'updatedAt' => date('c'),
+            'updatedBy' => (int)$USER->GetID(),
+        ];
+
+        $updatedLayout['zones'][$zone][] = $newBlock;
+        $updatedLayout['createdAt'] = date('c');
+        $updatedLayout['createdBy'] = (int)$USER->GetID();
+        $updatedLayout['updatedAt'] = date('c');
+        $updatedLayout['updatedBy'] = (int)$USER->GetID();
+
+        $layouts[] = $updatedLayout;
+    }
+
+    sb_write_layouts($layouts);
+
+    sb_json_ok([
+        'block' => sb_normalize_block_record($newBlock),
+        'zone' => $zone,
+        'layout' => sb_normalize_layout_record($updatedLayout),
+    ]);
+}
+
+if ($action === 'layout.block.update') {
+    $siteId = (int)($_POST['siteId'] ?? 0);
+    $id = (int)($_POST['id'] ?? 0);
+
+    if ($siteId <= 0) {
+        sb_json_error('SITE_ID_REQUIRED', 422);
+    }
+    if ($id <= 0) {
+        sb_json_error('ID_REQUIRED', 422);
+    }
+
+    sb_require_editor($siteId);
+
+    $contentRaw = $_POST['content'] ?? null;
+    $propsRaw = $_POST['props'] ?? null;
+    $typeRaw = $_POST['type'] ?? null;
+
+    $newContent = null;
+    $newProps = null;
+    $newType = null;
+
+    if ($contentRaw !== null) {
+        if (is_array($contentRaw)) {
+            $newContent = $contentRaw;
+        } else {
+            $decoded = json_decode((string)$contentRaw, true);
+            if (!is_array($decoded)) {
+                sb_json_error('BAD_CONTENT_JSON', 422);
+            }
+            $newContent = $decoded;
+        }
+    }
+
+    if ($propsRaw !== null) {
+        if (is_array($propsRaw)) {
+            $newProps = $propsRaw;
+        } else {
+            $decoded = json_decode((string)$propsRaw, true);
+            if (!is_array($decoded)) {
+                sb_json_error('BAD_PROPS_JSON', 422);
+            }
+            $newProps = $decoded;
+        }
+    }
+
+    if ($typeRaw !== null) {
+        $newType = trim((string)$typeRaw);
+        if ($newType === '') {
+            sb_json_error('TYPE_REQUIRED', 422);
+        }
+    }
+
+    $layouts = sb_read_layouts();
+    $updatedBlock = null;
+    $updatedLayout = null;
+    $foundLayout = false;
+    $foundBlock = false;
+
+    foreach ($layouts as &$layout) {
+        if ((int)($layout['siteId'] ?? 0) !== $siteId) {
+            continue;
+        }
+
+        $foundLayout = true;
+        $layout = sb_normalize_layout_record($layout);
+
+        foreach (['header', 'footer', 'left', 'right'] as $zone) {
+            foreach ($layout['zones'][$zone] as &$block) {
+                if ((int)($block['id'] ?? 0) !== $id) {
+                    continue;
+                }
+
+                if ($newType !== null) {
+                    $block['type'] = $newType;
+                }
+                if ($newContent !== null) {
+                    $block['content'] = $newContent;
+                }
+                if ($newProps !== null) {
+                    $block['props'] = $newProps;
+                }
+
+                $block['updatedAt'] = date('c');
+                $block['updatedBy'] = (int)$USER->GetID();
+                $block['_zone'] = $zone;
+
+                $updatedBlock = $block;
+                $foundBlock = true;
+                break 2;
+            }
+            unset($block);
+        }
+
+        if ($foundBlock) {
+            $layout['updatedAt'] = date('c');
+            $layout['updatedBy'] = (int)$USER->GetID();
+            $updatedLayout = $layout;
+            break;
+        }
+    }
+    unset($layout);
+
+    if (!$foundLayout) {
+        sb_json_error('LAYOUT_NOT_FOUND', 404);
+    }
+
+    if (!$foundBlock || !$updatedBlock) {
+        sb_json_error('BLOCK_NOT_FOUND', 404);
+    }
+
+    sb_write_layouts($layouts);
+
+    sb_json_ok([
+        'block' => sb_normalize_block_record($updatedBlock),
+        'layout' => sb_normalize_layout_record($updatedLayout),
+    ]);
+}
+
+if ($action === 'layout.block.delete') {
+    $siteId = (int)($_POST['siteId'] ?? 0);
+    $id = (int)($_POST['id'] ?? 0);
+
+    if ($siteId <= 0) {
+        sb_json_error('SITE_ID_REQUIRED', 422);
+    }
+    if ($id <= 0) {
+        sb_json_error('ID_REQUIRED', 422);
+    }
+
+    sb_require_editor($siteId);
+
+    $layouts = sb_read_layouts();
+    $updatedLayout = null;
+    $foundLayout = false;
+    $foundBlock = false;
+
+    foreach ($layouts as &$layout) {
+        if ((int)($layout['siteId'] ?? 0) !== $siteId) {
+            continue;
+        }
+
+        $foundLayout = true;
+        $layout = sb_normalize_layout_record($layout);
+
+        foreach (['header', 'footer', 'left', 'right'] as $zone) {
+            $before = count($layout['zones'][$zone]);
+            $layout['zones'][$zone] = array_values(array_filter(
+                $layout['zones'][$zone],
+                static function ($block) use ($id) {
+                    return (int)($block['id'] ?? 0) !== $id;
+                }
+            ));
+
+            if (count($layout['zones'][$zone]) !== $before) {
+                $foundBlock = true;
+                $layout['updatedAt'] = date('c');
+                $layout['updatedBy'] = (int)$USER->GetID();
+                $updatedLayout = $layout;
+                break;
+            }
+        }
+
+        if ($foundBlock) {
+            break;
+        }
+    }
+    unset($layout);
+
+    if (!$foundLayout) {
+        sb_json_error('LAYOUT_NOT_FOUND', 404);
+    }
+
+    if (!$foundBlock) {
+        sb_json_error('BLOCK_NOT_FOUND', 404);
+    }
+
+    sb_write_layouts($layouts);
+
+    sb_json_ok([
+        'layout' => sb_normalize_layout_record($updatedLayout),
+    ]);
+}
+
+if ($action === 'layout.block.move') {
+    $siteId = (int)($_POST['siteId'] ?? 0);
+    $id = (int)($_POST['id'] ?? 0);
+    $dir = trim((string)($_POST['dir'] ?? ''));
+
+    if ($siteId <= 0) {
+        sb_json_error('SITE_ID_REQUIRED', 422);
+    }
+    if ($id <= 0) {
+        sb_json_error('ID_REQUIRED', 422);
+    }
+    if ($dir !== 'up' && $dir !== 'down') {
+        sb_json_error('DIR_REQUIRED', 422);
+    }
+
+    sb_require_editor($siteId);
+
+    $layouts = sb_read_layouts();
+    $updatedLayout = null;
+    $foundLayout = false;
+    $foundBlock = false;
+
+    foreach ($layouts as &$layout) {
+        if ((int)($layout['siteId'] ?? 0) !== $siteId) {
+            continue;
+        }
+
+        $foundLayout = true;
+        $layout = sb_normalize_layout_record($layout);
+
+        foreach (['header', 'footer', 'left', 'right'] as $zone) {
+            $siblings = $layout['zones'][$zone];
+
+            $pos = null;
+            for ($i = 0, $cnt = count($siblings); $i < $cnt; $i++) {
+                if ((int)($siblings[$i]['id'] ?? 0) === $id) {
+                    $pos = $i;
+                    break;
                 }
             }
 
-            function printError(prefix, err) {
-                var text = prefix + '\n';
-                try {
-                    text += JSON.stringify(err, null, 2);
-                } catch (e) {
-                    text += String(err);
-                }
-                out.textContent = text;
+            if ($pos === null) {
+                continue;
             }
 
-            function callApi(data) {
-                if (typeof window.BX === 'undefined') {
-                    print('BX не загружен');
-                    return;
-                }
+            $foundBlock = true;
 
-                if (typeof BX.ajax !== 'function') {
-                    print('BX.ajax не найден');
-                    return;
-                }
-
-                var sessid = (typeof BX.bitrix_sessid === 'function')
-                    ? BX.bitrix_sessid()
-                    : '<?= CUtil::JSEscape(bitrix_sessid()) ?>';
-
-                print({
-                    status: 'sending',
-                    url: '/local/sitebuilder/api.php',
-                    data: Object.assign({ sessid: sessid }, data)
-                });
-
-                BX.ajax({
-                    url: '/local/sitebuilder/api.php',
-                    method: 'POST',
-                    data: Object.assign({
-                        sessid: sessid
-                    }, data),
-                    dataType: 'json',
-                    timeout: 30,
-                    onsuccess: function (res) {
-                        print(res);
-                    },
-                    onfailure: function (err) {
-                        printError('AJAX ERROR', err);
-                    }
-                });
+            if ($dir === 'up' && $pos === 0) {
+                $updatedLayout = $layout;
+                break 2;
             }
 
-            window.onerror = function (message, source, lineno, colno, error) {
-                print({
-                    jsError: true,
-                    message: message,
-                    source: source,
-                    line: lineno,
-                    column: colno,
-                    stack: error && error.stack ? error.stack : null
-                });
-            };
+            if ($dir === 'down' && $pos === count($siblings) - 1) {
+                $updatedLayout = $layout;
+                break 2;
+            }
 
-            document.getElementById('checkBxBtn').addEventListener('click', function () {
-                print({
-                    BX_exists: typeof window.BX !== 'undefined',
-                    BX_ajax_type: typeof window.BX !== 'undefined' ? typeof BX.ajax : 'BX missing',
-                    BX_bitrix_sessid_type: typeof window.BX !== 'undefined' ? typeof BX.bitrix_sessid : 'BX missing',
-                    sessid_js: (typeof window.BX !== 'undefined' && typeof BX.bitrix_sessid === 'function') ? BX.bitrix_sessid() : null,
-                    sessid_php: '<?= CUtil::JSEscape(bitrix_sessid()) ?>'
-                });
+            $swapPos = ($dir === 'up') ? $pos - 1 : $pos + 1;
+
+            $sortA = (int)($siblings[$pos]['sort'] ?? 500);
+            $sortB = (int)($siblings[$swapPos]['sort'] ?? 500);
+
+            $layout['zones'][$zone][$pos]['sort'] = $sortB;
+            $layout['zones'][$zone][$pos]['updatedAt'] = date('c');
+            $layout['zones'][$zone][$pos]['updatedBy'] = (int)$USER->GetID();
+
+            $layout['zones'][$zone][$swapPos]['sort'] = $sortA;
+            $layout['zones'][$zone][$swapPos]['updatedAt'] = date('c');
+            $layout['zones'][$zone][$swapPos]['updatedBy'] = (int)$USER->GetID();
+
+            usort($layout['zones'][$zone], static function ($a, $b) {
+                $sortCmp = (int)($a['sort'] ?? 500) <=> (int)($b['sort'] ?? 500);
+                if ($sortCmp !== 0) {
+                    return $sortCmp;
+                }
+                return (int)($a['id'] ?? 0) <=> (int)($b['id'] ?? 0);
             });
 
-            document.getElementById('pingBtn').addEventListener('click', function () {
-                callApi({ action: 'ping' });
-            });
+            $layout['updatedAt'] = date('c');
+            $layout['updatedBy'] = (int)$USER->GetID();
+            $updatedLayout = $layout;
+            break 2;
+        }
+    }
+    unset($layout);
 
-            document.getElementById('siteListBtn').addEventListener('click', function () {
-                callApi({ action: 'site.list' });
-            });
+    if (!$foundLayout) {
+        sb_json_error('LAYOUT_NOT_FOUND', 404);
+    }
 
-            print({
-                loaded: true,
-                BX_exists: typeof window.BX !== 'undefined',
-                BX_ajax_type: typeof window.BX !== 'undefined' ? typeof BX.ajax : 'BX missing',
-                BX_bitrix_sessid_type: typeof window.BX !== 'undefined' ? typeof BX.bitrix_sessid : 'BX missing',
-                sessid_php: '<?= CUtil::JSEscape(bitrix_sessid()) ?>'
-            });
-        })();
-    </script>
-</body>
-</html>
+    if (!$foundBlock) {
+        sb_json_error('BLOCK_NOT_FOUND', 404);
+    }
 
-Если у тебя папка называется не /local/sitebuilder/, а по-другому, замени тут путь:
+    sb_write_layouts($layouts);
 
-url: '/local/sitebuilder/api.php',
+    sb_json_ok([
+        'layout' => sb_normalize_layout_record($updatedLayout),
+    ]);
+}
 
-на свой реальный.
-
-Что изменилось:
-
-добавил CJSCore::Init(['ajax'])
-
-добавил <?php $APPLICATION->ShowHead(); ?> в <head>
-
-оставил fallback на PHP bitrix_sessid(), даже если BX.bitrix_sessid() не будет
+sb_json_error('NOT_MOVED_YET', 501, [
+    'handler' => 'layout',
+    'action' => $action,
+]);
 
 
-После этого снова открой страницу и нажми Проверить BX.
+---
 
-Нормальный результат должен быть примерно такой:
+3. Что теперь должно работать
+
+После вставки должны работать:
+
+layout.get
+
+layout.updateSettings
+
+layout.block.list
+
+layout.block.create
+
+layout.block.update
+
+layout.block.delete
+
+layout.block.move
+
+
+
+---
+
+4. Как сейчас выглядит layout
+
+Пример записи в layouts.json:
 
 {
-  "BX_exists": true,
-  "BX_ajax_type": "function",
-  "BX_bitrix_sessid_type": "function",
-  "sessid_js": "...",
-  "sessid_php": "..."
+  "siteId": 3,
+  "settings": {
+    "showHeader": true,
+    "showFooter": true,
+    "showLeft": false,
+    "showRight": false,
+    "leftWidth": 260,
+    "rightWidth": 260,
+    "leftMode": "blocks"
+  },
+  "zones": {
+    "header": [],
+    "footer": [],
+    "left": [],
+    "right": []
+  }
 }
 
-Если BX_exists всё ещё будет false, тогда проблема уже не в тестовом файле, а в окружении/шаблоне подключения ядра на этой чистой странице, и тогда я дам тебе второй вариант — вообще без BX.ajax, через обычный fetch, чтобы проверить API без зависимости от JS-ядра Bitrix.
+
+---
+
+5. Формат layout-блоков
+
+По структуре это почти те же блоки, что и page blocks:
+
+{
+  "id": 1,
+  "type": "text",
+  "sort": 10,
+  "content": {
+    "html": "<p>Текст в шапке</p>"
+  },
+  "props": {}
+}
+
+Это хорошо, потому что редактор диалогов можно потом переиспользовать.
+
+
+---
+
+6. Что проверить руками
+
+Проверь по порядку:
+
+1. layout.get
+
+
+2. layout.updateSettings
+
+
+3. layout.block.create для header
+
+
+4. layout.block.list для header
+
+
+5. layout.block.update
+
+
+6. layout.block.move
+
+
+7. layout.block.delete
+
+
+
+Примеры зон:
+
+header
+
+footer
+
+left
+
+right
+
+
+
+---
+
+7. Что пока сознательно не делал
+
+Пока я не добавлял:
+
+перенос блока между зонами
+
+layout.block.reorder
+
+отдельные preset’ы для layout
+
+сложную схему header/footer templates
+
+
+Почему: сначала нужно поднять стабильную базу.
+
+Если понадобится, следующим сообщением можно быстро добавить:
+
+layout.block.reorder
+
+layout.block.setZone
+
+
+
+---
+
+8. Что дальше логичнее всего
+
+Сейчас у тебя уже закрыты:
+
+site
+
+page
+
+block
+
+menu
+
+access
+
+template
+
+layout
+
+
+Остаётся самый чувствительный кусок:
+
+file / Disk
+
+
+Именно он обычно даёт больше всего проблем в Bitrix24 коробке из-за разных версий API Disk.
+
+Следующий правильный шаг: сделать file-пакет и disk-обвязку отдельно и аккуратно.
+
+Напиши: давай file/disk-пакет
