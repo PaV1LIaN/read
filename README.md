@@ -1,299 +1,49 @@
-Отлично, теперь видно главное:
-
-api/index.php — правильный
-
-api/handlers/common.php — правильный
-
-api/handlers/access.php — отдельный файл и тоже выглядит нормально
-
-но проблема всё ещё остаётся
-
-
-Значит, почти наверняка ошибка уже не в api/handlers/access.php, а в одном из подключаемых lib-файлов, скорее всего:
-
-lib/access.php
-
-реже api/bootstrap.php
-
-
-Потому что:
-
-bootstrap.php всегда подключает lib/access.php
-
-если ты случайно перезаписал lib/access.php кодом handler-а, то при каждом запросе он будет сразу отдавать: {"ok":false,"error":"NOT_MOVED_YET","handler":"access","action":"ping"}
-
-
-И это идеально совпадает с твоим симптомом.
-
-
----
-
-Что проверить прямо сейчас
-
-Снова используй диагностический api.php, но теперь посмотри bootstrap и lib.
-
-Замени /local/sitebuilder/api.php на это
-
-<?php
-header('Content-Type: application/json; charset=UTF-8');
-
-$files = [
-    'api_bootstrap' => __DIR__ . '/api/bootstrap.php',
-    'lib_json'      => __DIR__ . '/lib/json.php',
-    'lib_response'  => __DIR__ . '/lib/response.php',
-    'lib_access'    => __DIR__ . '/lib/access.php',
-    'lib_helpers'   => __DIR__ . '/lib/helpers.php',
-    'lib_disk'      => __DIR__ . '/lib/disk.php',
-];
-
-$result = [
-    'ok' => true,
-    'apiFile' => __FILE__,
-    'time' => date('c'),
-    'files' => [],
-];
-
-foreach ($files as $key => $path) {
-    $exists = file_exists($path);
-    $content = $exists ? file_get_contents($path) : '';
-    $result['files'][$key] = [
-        'path' => $path,
-        'exists' => $exists,
-        'md5' => $exists ? md5_file($path) : null,
-        'size' => $exists ? filesize($path) : null,
-        'head' => $exists ? substr($content, 0, 600) : null,
-    ];
-}
-
-echo json_encode($result, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT);
-exit;
-
-Открой:
-
-https://portal24.itsnn.ru/local/sitebuilder/api.php
-
-и пришли JSON.
-
-
----
-
-Что я ожидаю увидеть
-
-Нормальный lib/access.php должен начинаться примерно так:
-
-<?php
-
-require_once __DIR__ . '/json.php';
-require_once __DIR__ . '/response.php';
-
-if (!function_exists('sb_user_access_code')) {
-
-Если вместо этого там будет что-то вроде:
-
-global $USER;
-
-if ($action === 'access.list') {
-
-то всё, причина найдена:
-ты случайно записал handler-код в lib/access.php.
-
-
----
-
-Если не хочешь ждать диагностику — вот правильный lib/access.php
-
-Можешь сразу сравнить или просто заменить.
-
-/local/sitebuilder/lib/access.php
-
-<?php
-
-require_once __DIR__ . '/json.php';
-require_once __DIR__ . '/response.php';
-
-if (!function_exists('sb_user_access_code')) {
-    function sb_user_access_code(): string
-    {
-        global $USER;
-        return 'U' . (int)$USER->GetID();
-    }
-}
-
-if (!function_exists('sb_get_role')) {
-    function sb_get_role(int $siteId, string $accessCode): ?string
-    {
-        $access = sb_read_access();
-
-        foreach ($access as $row) {
-            if (
-                (int)($row['siteId'] ?? 0) === $siteId
-                && (string)($row['accessCode'] ?? '') === $accessCode
-            ) {
-                return (string)($row['role'] ?? '');
-            }
-        }
-
-        return null;
-    }
-}
-
-if (!function_exists('sb_role_rank')) {
-    function sb_role_rank(?string $role): int
-    {
-        switch ((string)$role) {
-            case 'VIEWER':
-                return 1;
-            case 'EDITOR':
-                return 2;
-            case 'ADMIN':
-                return 3;
-            case 'OWNER':
-                return 4;
-            default:
-                return 0;
-        }
-    }
-}
-
-if (!function_exists('sb_require_site_role')) {
-    function sb_require_site_role(int $siteId, int $minRank): void
-    {
-        $role = sb_get_role($siteId, sb_user_access_code());
-
-        if (sb_role_rank($role) < $minRank) {
-            sb_json_error('ACCESS_DENIED', 403);
-        }
-    }
-}
-
-if (!function_exists('sb_require_owner')) {
-    function sb_require_owner(int $siteId): void
-    {
-        sb_require_site_role($siteId, 4);
-    }
-}
-
-if (!function_exists('sb_require_admin')) {
-    function sb_require_admin(int $siteId): void
-    {
-        sb_require_site_role($siteId, 3);
-    }
-}
-
-if (!function_exists('sb_require_editor')) {
-    function sb_require_editor(int $siteId): void
-    {
-        sb_require_site_role($siteId, 2);
-    }
-}
-
-if (!function_exists('sb_require_viewer')) {
-    function sb_require_viewer(int $siteId): void
-    {
-        sb_require_site_role($siteId, 1);
-    }
-}
-
-
----
-
-И правильный api/bootstrap.php
-
-На всякий случай тоже сверяй. Он должен быть таким:
-
-/local/sitebuilder/api/bootstrap.php
-
-<?php
-
-define('NO_KEEP_STATISTIC', true);
-define('NO_AGENT_STATISTIC', true);
-define('DisableEventsCheck', true);
-
-require $_SERVER['DOCUMENT_ROOT'] . '/bitrix/modules/main/include/prolog_before.php';
-
-use Bitrix\Main\Loader;
-use Bitrix\Disk\Storage;
-use Bitrix\Disk\Folder;
-use Bitrix\Disk\File;
-use Bitrix\Disk\Driver;
-
-global $USER;
-
-header('Content-Type: application/json; charset=UTF-8');
-
-if (!$USER->IsAuthorized()) {
-    http_response_code(401);
-    echo json_encode(['ok' => false, 'error' => 'NOT_AUTHORIZED'], JSON_UNESCAPED_UNICODE);
-    exit;
-}
-
-if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
-    http_response_code(405);
-    echo json_encode(['ok' => false, 'error' => 'METHOD_NOT_ALLOWED'], JSON_UNESCAPED_UNICODE);
-    exit;
-}
-
-if (!check_bitrix_sessid()) {
-    http_response_code(403);
-    echo json_encode(['ok' => false, 'error' => 'BAD_SESSID'], JSON_UNESCAPED_UNICODE);
-    exit;
-}
-
-$projectRoot = dirname(__DIR__);
-
-require_once $projectRoot . '/lib/json.php';
-require_once $projectRoot . '/lib/response.php';
-require_once $projectRoot . '/lib/access.php';
-require_once $projectRoot . '/lib/helpers.php';
-require_once $projectRoot . '/lib/disk.php';
-
-
----
-
-Что делать после исправления
-
-После того как проверишь/исправишь lib/access.php, сделай:
-
-1. верни api.php обратно:
-
-
-
-<?php
-ini_set('display_errors', '1');
-error_reporting(E_ALL);
-
-require_once __DIR__ . '/api/index.php';
-
-2. открой opcache_reset.php
-
-
-3. снова нажми Ping
-
-
-
-
----
-
-Что должно прийти
-
-Ожидаемый ответ:
-
 {
-  "ok": true,
-  "pong": true,
-  "handler": "common",
-  "file": "/srv/bx/docroot/local/sitebuilder/api/handlers/common.php"
+    "ok": true,
+    "apiFile": "\/srv\/bx\/docroot\/local\/sitebuilder\/api.php",
+    "time": "2026-04-09T15:53:36+03:00",
+    "files": {
+        "api_bootstrap": {
+            "path": "\/srv\/bx\/docroot\/local\/sitebuilder\/api\/bootstrap.php",
+            "exists": true,
+            "md5": "6f925665285b9e86fe2fd074c80dbc79",
+            "size": 1169,
+            "head": "<?php\n\ndefine('NO_KEEP_STATISTIC', true);\ndefine('NO_AGENT_STATISTIC', true);\ndefine('DisableEventsCheck', true);\n\nrequire $_SERVER['DOCUMENT_ROOT'] . '\/bitrix\/modules\/main\/include\/prolog_before.php';\n\nuse Bitrix\\Main\\Loader;\nuse Bitrix\\Disk\\Storage;\nuse Bitrix\\Disk\\Folder;\nuse Bitrix\\Disk\\File;\nuse Bitrix\\Disk\\Driver;\n\nglobal $USER;\n\nheader('Content-Type: application\/json; charset=UTF-8');\n\nif (!$USER->IsAuthorized()) {\n    http_response_code(401);\n    echo json_encode(['ok' => false, 'error' => 'NOT_AUTHORIZED'], JSON_UNESCAPED_UNICODE);\n    exit;\n}\n\nif ($_SERVER['REQUEST_METHOD'] !== 'POST'"
+        },
+        "lib_json": {
+            "path": "\/srv\/bx\/docroot\/local\/sitebuilder\/lib\/json.php",
+            "exists": true,
+            "md5": "ad5f057f0653755a8ba0205e5c74dfaa",
+            "size": 3838,
+            "head": "<?php\n\nif (!function_exists('sb_data_path')) {\n    function sb_data_path(string $file): string\n    {\n        return $_SERVER['DOCUMENT_ROOT'] . '\/upload\/sitebuilder\/' . $file;\n    }\n}\n\nif (!function_exists('sb_read_json_file')) {\n    function sb_read_json_file(string $file): array\n    {\n        $path = sb_data_path($file);\n        if (!file_exists($path)) {\n            return [];\n        }\n\n        $fp = fopen($path, 'rb');\n        if (!$fp) {\n            return [];\n        }\n\n        $raw = '';\n        if (flock($fp, LOCK_SH)) {\n            $raw = stream_get_contents($fp);\n            flock($"
+        },
+        "lib_response": {
+            "path": "\/srv\/bx\/docroot\/local\/sitebuilder\/lib\/response.php",
+            "exists": true,
+            "md5": "08045556cc3e778cdc5a57e5cef4f83c",
+            "size": 683,
+            "head": "<?php\n\nif (!function_exists('sb_json_response')) {\n    function sb_json_response(array $payload, int $status = 200): void\n    {\n        http_response_code($status);\n        echo json_encode($payload, JSON_UNESCAPED_UNICODE);\n        exit;\n    }\n}\n\nif (!function_exists('sb_json_ok')) {\n    function sb_json_ok(array $data = []): void\n    {\n        sb_json_response(array_merge(['ok' => true], $data), 200);\n    }\n}\n\nif (!function_exists('sb_json_error')) {\n    function sb_json_error(string $error, int $status = 400, array $extra = []): void\n    {\n        sb_json_response(array_merge([\n            "
+        },
+        "lib_access": {
+            "path": "\/srv\/bx\/docroot\/local\/sitebuilder\/lib\/access.php",
+            "exists": true,
+            "md5": "c23f4eebb15ce71d171fcce71d1c0478",
+            "size": 3695,
+            "head": "<?php\n\nglobal $USER;\n\nif ($action === 'access.list') {\n    $siteId = (int)($_POST['siteId'] ?? 0);\n    if ($siteId <= 0) {\n        sb_json_error('SITE_ID_REQUIRED', 422);\n    }\n\n    sb_require_admin($siteId);\n\n    $rows = sb_access_rows_for_site($siteId);\n\n    usort($rows, static function ($a, $b) {\n        $roleCmp = sb_role_rank((string)($b['role'] ?? '')) <=> sb_role_rank((string)($a['role'] ?? ''));\n        if ($roleCmp !== 0) {\n            return $roleCmp;\n        }\n\n        return strcmp((string)($a['accessCode'] ?? ''), (string)($b['accessCode'] ?? ''));\n    });\n\n    sb_json_ok([\n      "
+        },
+        "lib_helpers": {
+            "path": "\/srv\/bx\/docroot\/local\/sitebuilder\/lib\/helpers.php",
+            "exists": true,
+            "md5": "ce4df5ebaf1e08a64db3da3945471a18",
+            "size": 18030,
+            "head": "<?php\n\nrequire_once __DIR__ . '\/json.php';\n\nif (!function_exists('sb_slugify')) {\n    function sb_slugify(string $name): string\n    {\n        $slug = \\CUtil::translit($name, 'ru', [\n            'replace_space' => '-',\n            'replace_other' => '-',\n            'change_case' => 'L',\n            'delete_repeat_replace' => true,\n            'use_google' => false,\n        ]);\n\n        $slug = trim($slug, '-');\n        return $slug !== '' ? $slug : 'item';\n    }\n}\n\nif (!function_exists('sb_site_exists')) {\n    function sb_site_exists(int $siteId): bool\n    {\n        foreach (sb_read_sites() as"
+        },
+        "lib_disk": {
+            "path": "\/srv\/bx\/docroot\/local\/sitebuilder\/lib\/disk.php",
+            "exists": true,
+            "md5": "0ea05aad362b50af9de0ed3e98af43fb",
+            "size": 9564,
+            "head": "<?php\n\nrequire_once __DIR__ . '\/json.php';\nrequire_once __DIR__ . '\/helpers.php';\n\nuse Bitrix\\Main\\Loader;\nuse Bitrix\\Disk\\Driver;\nuse Bitrix\\Disk\\Storage;\nuse Bitrix\\Disk\\Folder;\nuse Bitrix\\Disk\\File;\nuse Bitrix\\Disk\\Security\\FakeSecurityContext;\n\nif (!function_exists('sb_disk_require_module')) {\n    function sb_disk_require_module(): void\n    {\n        if (!Loader::includeModule('disk')) {\n            throw new RuntimeException('Disk module is not installed');\n        }\n    }\n}\n\nif (!function_exists('sb_disk_security_context')) {\n    function sb_disk_security_context()\n    {\n        global $"
+        }
+    }
 }
-
-Если хочешь, можешь сразу не делать диагностику, а просто:
-
-заменить lib/access.php кодом выше
-
-вернуть api.php
-
-сбросить opcache
-
-проверить Ping
-
-
-И прислать результат.
