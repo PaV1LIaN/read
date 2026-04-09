@@ -1,374 +1,97 @@
-Отлично. Тогда делаем первый реально рабочий пакет:
+Отлично. Тогда добиваем page-ветку до рабочего состояния.
 
-ping
+Ниже даю:
 
-site.list
-
-site.get
-
-site.create
-
-site.delete
-
-site.setHome
-
-page.list
-
-page.create
+1. пару хелперов для страниц
 
 
-Смысл такой: ты уже сможешь подключить новый API и проверить, что основа живая.
+2. полный актуальный api/handlers/page.php
+
+
 
 
 ---
 
-1. Добавь новый файл /local/sitebuilder/lib/helpers.php
+1. Обнови /local/sitebuilder/lib/helpers.php
+
+Добавь в конец файла эти функции:
 
 <?php
 
-require_once __DIR__ . '/json.php';
-
-if (!function_exists('sb_slugify')) {
-    function sb_slugify(string $name): string
+if (!function_exists('sb_page_exists_in_site')) {
+    function sb_page_exists_in_site(int $pageId, int $siteId): bool
     {
-        $slug = \CUtil::translit($name, 'ru', [
-            'replace_space' => '-',
-            'replace_other' => '-',
-            'change_case' => 'L',
-            'delete_repeat_replace' => true,
-            'use_google' => false,
-        ]);
-
-        $slug = trim($slug, '-');
-        return $slug !== '' ? $slug : 'item';
+        $page = sb_find_page($pageId);
+        return $page && (int)($page['siteId'] ?? 0) === $siteId;
     }
 }
 
-if (!function_exists('sb_site_exists')) {
-    function sb_site_exists(int $siteId): bool
+if (!function_exists('sb_page_children_ids')) {
+    function sb_page_children_ids(int $siteId, int $parentId): array
     {
-        foreach (sb_read_sites() as $s) {
-            if ((int)($s['id'] ?? 0) === $siteId) {
-                return true;
+        $ids = [];
+        foreach (sb_read_pages() as $p) {
+            if (
+                (int)($p['siteId'] ?? 0) === $siteId
+                && (int)($p['parentId'] ?? 0) === $parentId
+            ) {
+                $ids[] = (int)($p['id'] ?? 0);
             }
         }
+        return $ids;
+    }
+}
+
+if (!function_exists('sb_page_is_descendant')) {
+    function sb_page_is_descendant(int $siteId, int $candidateId, int $pageId): bool
+    {
+        if ($candidateId <= 0 || $pageId <= 0) {
+            return false;
+        }
+
+        $pages = sb_read_pages();
+
+        $childrenMap = [];
+        foreach ($pages as $p) {
+            if ((int)($p['siteId'] ?? 0) !== $siteId) {
+                continue;
+            }
+
+            $pid = (int)($p['parentId'] ?? 0);
+            $id  = (int)($p['id'] ?? 0);
+
+            if (!isset($childrenMap[$pid])) {
+                $childrenMap[$pid] = [];
+            }
+            $childrenMap[$pid][] = $id;
+        }
+
+        $stack = [$pageId];
+        $seen = [];
+
+        while ($stack) {
+            $current = array_pop($stack);
+            if (isset($seen[$current])) {
+                continue;
+            }
+            $seen[$current] = true;
+
+            foreach (($childrenMap[$current] ?? []) as $childId) {
+                if ($childId === $candidateId) {
+                    return true;
+                }
+                $stack[] = $childId;
+            }
+        }
+
         return false;
     }
 }
 
-if (!function_exists('sb_find_site')) {
-    function sb_find_site(int $siteId): ?array
-    {
-        foreach (sb_read_sites() as $s) {
-            if ((int)($s['id'] ?? 0) === $siteId) {
-                return $s;
-            }
-        }
-        return null;
-    }
-}
-
-if (!function_exists('sb_find_page')) {
-    function sb_find_page(int $pageId): ?array
-    {
-        foreach (sb_read_pages() as $p) {
-            if ((int)($p['id'] ?? 0) === $pageId) {
-                return $p;
-            }
-        }
-        return null;
-    }
-}
-
-if (!function_exists('sb_find_block')) {
-    function sb_find_block(int $blockId): ?array
-    {
-        foreach (sb_read_blocks() as $b) {
-            if ((int)($b['id'] ?? 0) === $blockId) {
-                return $b;
-            }
-        }
-        return null;
-    }
-}
-
 
 ---
 
-2. Обнови /local/sitebuilder/api/bootstrap.php
-
-Нужно просто подключить новый helpers.php.
-
-<?php
-
-define('NO_KEEP_STATISTIC', true);
-define('NO_AGENT_STATISTIC', true);
-define('DisableEventsCheck', true);
-
-require $_SERVER['DOCUMENT_ROOT'] . '/bitrix/modules/main/include/prolog_before.php';
-
-use Bitrix\Main\Loader;
-use Bitrix\Disk\Storage;
-use Bitrix\Disk\Folder;
-use Bitrix\Disk\File;
-use Bitrix\Disk\Driver;
-
-global $USER;
-
-header('Content-Type: application/json; charset=UTF-8');
-
-if (!$USER->IsAuthorized()) {
-    http_response_code(401);
-    echo json_encode(['ok' => false, 'error' => 'NOT_AUTHORIZED'], JSON_UNESCAPED_UNICODE);
-    exit;
-}
-
-if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
-    http_response_code(405);
-    echo json_encode(['ok' => false, 'error' => 'METHOD_NOT_ALLOWED'], JSON_UNESCAPED_UNICODE);
-    exit;
-}
-
-if (!check_bitrix_sessid()) {
-    http_response_code(403);
-    echo json_encode(['ok' => false, 'error' => 'BAD_SESSID'], JSON_UNESCAPED_UNICODE);
-    exit;
-}
-
-require_once $_SERVER['DOCUMENT_ROOT'] . '/local/sitebuilder/lib/json.php';
-require_once $_SERVER['DOCUMENT_ROOT'] . '/local/sitebuilder/lib/response.php';
-require_once $_SERVER['DOCUMENT_ROOT'] . '/local/sitebuilder/lib/access.php';
-require_once $_SERVER['DOCUMENT_ROOT'] . '/local/sitebuilder/lib/helpers.php';
-
-
----
-
-3. Замени /local/sitebuilder/api/handlers/common.php
-
-<?php
-
-if ($action === 'ping') {
-    global $USER;
-
-    sb_json_ok([
-        'time' => date('c'),
-        'userId' => (int)$USER->GetID(),
-        'login' => (string)$USER->GetLogin(),
-    ]);
-}
-
-
----
-
-4. Замени /local/sitebuilder/api/handlers/site.php
-
-<?php
-
-global $USER;
-
-if ($action === 'site.list') {
-    $sites = sb_read_sites();
-    $myCode = sb_user_access_code();
-
-    $access = sb_read_access();
-    $allowedSiteIds = [];
-
-    foreach ($access as $r) {
-        if ((string)($r['accessCode'] ?? '') === $myCode) {
-            $sid = (int)($r['siteId'] ?? 0);
-            if ($sid > 0) {
-                $allowedSiteIds[$sid] = true;
-            }
-        }
-    }
-
-    $sites = array_values(array_filter($sites, static function ($s) use ($allowedSiteIds) {
-        return isset($allowedSiteIds[(int)($s['id'] ?? 0)]);
-    }));
-
-    usort($sites, static function ($a, $b) {
-        return (int)($a['id'] ?? 0) <=> (int)($b['id'] ?? 0);
-    });
-
-    sb_json_ok(['sites' => $sites]);
-}
-
-if ($action === 'site.get') {
-    $siteId = (int)($_POST['siteId'] ?? 0);
-    if ($siteId <= 0) {
-        sb_json_error('SITE_ID_REQUIRED', 422);
-    }
-
-    sb_require_viewer($siteId);
-
-    $site = sb_find_site($siteId);
-    if (!$site) {
-        sb_json_error('SITE_NOT_FOUND', 404);
-    }
-
-    sb_json_ok(['site' => $site]);
-}
-
-if ($action === 'site.create') {
-    $name = trim((string)($_POST['name'] ?? ''));
-    if ($name === '') {
-        sb_json_error('NAME_REQUIRED', 422);
-    }
-
-    $sites = sb_read_sites();
-
-    $maxId = 0;
-    foreach ($sites as $s) {
-        $maxId = max($maxId, (int)($s['id'] ?? 0));
-    }
-    $id = $maxId + 1;
-
-    $slug = trim((string)($_POST['slug'] ?? ''));
-    $slug = $slug === '' ? sb_slugify($name) : sb_slugify($slug);
-
-    $existing = array_map(static function ($x) {
-        return (string)($x['slug'] ?? '');
-    }, $sites);
-
-    $base = $slug;
-    $i = 2;
-    while (in_array($slug, $existing, true)) {
-        $slug = $base . '-' . $i;
-        $i++;
-    }
-
-    $site = [
-        'id' => $id,
-        'name' => $name,
-        'slug' => $slug,
-        'createdBy' => (int)$USER->GetID(),
-        'createdAt' => date('c'),
-        'diskFolderId' => 0,
-        'topMenuId' => 0,
-        'settings' => [
-            'containerWidth' => 1100,
-            'accent' => '#2563eb',
-            'logoFileId' => 0,
-        ],
-        'layout' => [
-            'showHeader' => true,
-            'showFooter' => true,
-            'showLeft' => false,
-            'showRight' => false,
-            'leftWidth' => 260,
-            'rightWidth' => 260,
-            'leftMode' => 'blocks',
-        ],
-    ];
-
-    $sites[] = $site;
-    sb_write_sites($sites);
-
-    $access = sb_read_access();
-    $access[] = [
-        'siteId' => $id,
-        'accessCode' => 'U' . (int)$USER->GetID(),
-        'role' => 'OWNER',
-        'createdBy' => (int)$USER->GetID(),
-        'createdAt' => date('c'),
-    ];
-    sb_write_access($access);
-
-    sb_json_ok(['site' => $site]);
-}
-
-if ($action === 'site.delete') {
-    $id = (int)($_POST['id'] ?? 0);
-    if ($id <= 0) {
-        sb_json_error('ID_REQUIRED', 422);
-    }
-
-    sb_require_owner($id);
-
-    $sites = sb_read_sites();
-    $before = count($sites);
-
-    $sites = array_values(array_filter($sites, static function ($s) use ($id) {
-        return (int)($s['id'] ?? 0) !== $id;
-    }));
-
-    if (count($sites) === $before) {
-        sb_json_error('NOT_FOUND', 404);
-    }
-
-    sb_write_sites($sites);
-
-    $pages = sb_read_pages();
-    $pages = array_values(array_filter($pages, static function ($p) use ($id) {
-        return (int)($p['siteId'] ?? 0) !== $id;
-    }));
-    sb_write_pages($pages);
-
-    $pageIdsNow = [];
-    foreach ($pages as $p) {
-        $pageIdsNow[(int)($p['id'] ?? 0)] = true;
-    }
-
-    $blocks = sb_read_blocks();
-    $blocks = array_values(array_filter($blocks, static function ($b) use ($pageIdsNow) {
-        return isset($pageIdsNow[(int)($b['pageId'] ?? 0)]);
-    }));
-    sb_write_blocks($blocks);
-
-    $access = sb_read_access();
-    $access = array_values(array_filter($access, static function ($r) use ($id) {
-        return (int)($r['siteId'] ?? 0) !== $id;
-    }));
-    sb_write_access($access);
-
-    sb_json_ok();
-}
-
-if ($action === 'site.setHome') {
-    $siteId = (int)($_POST['siteId'] ?? 0);
-    $pageId = (int)($_POST['pageId'] ?? 0);
-
-    if ($siteId <= 0 || $pageId <= 0) {
-        sb_json_error('SITE_PAGE_REQUIRED', 422);
-    }
-
-    sb_require_editor($siteId);
-
-    $page = sb_find_page($pageId);
-    if (!$page || (int)($page['siteId'] ?? 0) !== $siteId) {
-        sb_json_error('PAGE_NOT_IN_SITE', 422);
-    }
-
-    $sites = sb_read_sites();
-    $found = false;
-
-    foreach ($sites as $i => $s) {
-        if ((int)($s['id'] ?? 0) === $siteId) {
-            $sites[$i]['homePageId'] = $pageId;
-            $sites[$i]['updatedAt'] = date('c');
-            $sites[$i]['updatedBy'] = (int)$USER->GetID();
-            $found = true;
-            break;
-        }
-    }
-
-    if (!$found) {
-        sb_json_error('SITE_NOT_FOUND', 404);
-    }
-
-    sb_write_sites($sites);
-    sb_json_ok();
-}
-
-sb_json_error('NOT_MOVED_YET', 501, [
-    'handler' => 'site',
-    'action' => $action,
-]);
-
-
----
-
-5. Замени /local/sitebuilder/api/handlers/page.php
+2. Полностью замени /local/sitebuilder/api/handlers/page.php
 
 <?php
 
@@ -398,6 +121,10 @@ if ($action === 'page.list') {
     unset($p);
 
     usort($pages, static function ($a, $b) {
+        $sortCmp = (int)($a['sort'] ?? 500) <=> (int)($b['sort'] ?? 500);
+        if ($sortCmp !== 0) {
+            return $sortCmp;
+        }
         return (int)($a['id'] ?? 0) <=> (int)($b['id'] ?? 0);
     });
 
@@ -432,8 +159,12 @@ if ($action === 'page.create') {
     $pages = sb_read_pages();
 
     $maxId = 0;
+    $maxSort = 0;
     foreach ($pages as $p) {
         $maxId = max($maxId, (int)($p['id'] ?? 0));
+        if ((int)($p['siteId'] ?? 0) === $siteId && (int)($p['parentId'] ?? 0) === 0) {
+            $maxSort = max($maxSort, (int)($p['sort'] ?? 0));
+        }
     }
     $id = $maxId + 1;
 
@@ -446,7 +177,8 @@ if ($action === 'page.create') {
         })
     );
 
-    $base = $slug;
+    $base = $slug !== '' ? $slug : 'page';
+    $slug = $base;
     $i = 2;
     while (in_array($slug, $existing, true)) {
         $slug = $base . '-' . $i;
@@ -459,7 +191,7 @@ if ($action === 'page.create') {
         'title' => $title,
         'slug' => $slug,
         'parentId' => 0,
-        'sort' => 500,
+        'sort' => $maxSort + 10,
         'status' => 'draft',
         'publishedAt' => '',
         'createdBy' => (int)$USER->GetID(),
@@ -472,6 +204,414 @@ if ($action === 'page.create') {
     sb_json_ok(['page' => $page]);
 }
 
+if ($action === 'page.delete') {
+    $id = (int)($_POST['id'] ?? 0);
+    if ($id <= 0) {
+        sb_json_error('ID_REQUIRED', 422);
+    }
+
+    $page = sb_find_page($id);
+    if (!$page) {
+        sb_json_error('NOT_FOUND', 404);
+    }
+
+    $siteId = (int)($page['siteId'] ?? 0);
+    sb_require_editor($siteId);
+
+    $pages = sb_read_pages();
+    $pages = array_values(array_filter($pages, static function ($p) use ($id) {
+        return (int)($p['id'] ?? 0) !== $id;
+    }));
+    sb_write_pages($pages);
+
+    $blocks = sb_read_blocks();
+    $blocks = array_values(array_filter($blocks, static function ($b) use ($id) {
+        return (int)($b['pageId'] ?? 0) !== $id;
+    }));
+    sb_write_blocks($blocks);
+
+    $sites = sb_read_sites();
+    $sitesChanged = false;
+    foreach ($sites as &$s) {
+        if ((int)($s['id'] ?? 0) === $siteId && (int)($s['homePageId'] ?? 0) === $id) {
+            $s['homePageId'] = 0;
+            $s['updatedAt'] = date('c');
+            $s['updatedBy'] = (int)$USER->GetID();
+            $sitesChanged = true;
+        }
+    }
+    unset($s);
+
+    if ($sitesChanged) {
+        sb_write_sites($sites);
+    }
+
+    sb_json_ok();
+}
+
+if ($action === 'page.duplicate') {
+    $id = (int)($_POST['id'] ?? 0);
+    if ($id <= 0) {
+        sb_json_error('ID_REQUIRED', 422);
+    }
+
+    $srcPage = sb_find_page($id);
+    if (!$srcPage) {
+        sb_json_error('PAGE_NOT_FOUND', 404);
+    }
+
+    $siteId = (int)($srcPage['siteId'] ?? 0);
+    sb_require_editor($siteId);
+
+    $pages = sb_read_pages();
+    $blocks = sb_read_blocks();
+
+    $maxPageId = 0;
+    foreach ($pages as $p) {
+        $maxPageId = max($maxPageId, (int)($p['id'] ?? 0));
+    }
+    $newPageId = $maxPageId + 1;
+
+    $srcTitle = (string)($srcPage['title'] ?? 'Страница');
+    $newTitle = $srcTitle . ' (копия)';
+
+    $baseSlug = sb_slugify((string)($srcPage['slug'] ?? ($srcPage['title'] ?? 'page')));
+    if ($baseSlug === '') {
+        $baseSlug = 'page';
+    }
+
+    $newSlug = $baseSlug . '-copy';
+
+    $existing = array_map(
+        static function ($x) {
+            return (string)($x['slug'] ?? '');
+        },
+        array_filter($pages, static function ($p) use ($siteId) {
+            return (int)($p['siteId'] ?? 0) === $siteId;
+        })
+    );
+
+    $base = $newSlug;
+    $i = 2;
+    while (in_array($newSlug, $existing, true)) {
+        $newSlug = $base . '-' . $i;
+        $i++;
+    }
+
+    $srcSort = (int)($srcPage['sort'] ?? 500);
+    $srcParentId = (int)($srcPage['parentId'] ?? 0);
+
+    foreach ($pages as &$p) {
+        if (
+            (int)($p['siteId'] ?? 0) === $siteId &&
+            (int)($p['parentId'] ?? 0) === $srcParentId &&
+            (int)($p['sort'] ?? 0) > $srcSort
+        ) {
+            $p['sort'] = (int)($p['sort'] ?? 0) + 10;
+            $p['updatedAt'] = date('c');
+            $p['updatedBy'] = (int)$USER->GetID();
+        }
+    }
+    unset($p);
+
+    $newPage = $srcPage;
+    $newPage['id'] = $newPageId;
+    $newPage['title'] = $newTitle;
+    $newPage['slug'] = $newSlug;
+    $newPage['sort'] = $srcSort + 10;
+    $newPage['createdBy'] = (int)$USER->GetID();
+    $newPage['createdAt'] = date('c');
+    $newPage['updatedAt'] = date('c');
+    $newPage['updatedBy'] = (int)$USER->GetID();
+    $newPage['status'] = 'draft';
+    $newPage['publishedAt'] = '';
+
+    $pages[] = $newPage;
+
+    $maxBlockId = 0;
+    foreach ($blocks as $b) {
+        $maxBlockId = max($maxBlockId, (int)($b['id'] ?? 0));
+    }
+    $nextBlockId = $maxBlockId + 1;
+
+    $srcBlocks = array_values(array_filter($blocks, static function ($b) use ($id) {
+        return (int)($b['pageId'] ?? 0) === $id;
+    }));
+
+    usort($srcBlocks, static function ($a, $b) {
+        return (int)($a['sort'] ?? 500) <=> (int)($b['sort'] ?? 500);
+    });
+
+    foreach ($srcBlocks as $b) {
+        $copy = $b;
+        $copy['id'] = $nextBlockId++;
+        $copy['pageId'] = $newPageId;
+        $copy['createdBy'] = (int)$USER->GetID();
+        $copy['createdAt'] = date('c');
+        $copy['updatedAt'] = date('c');
+        $copy['updatedBy'] = (int)$USER->GetID();
+        $blocks[] = $copy;
+    }
+
+    sb_write_pages($pages);
+    sb_write_blocks($blocks);
+
+    sb_json_ok([
+        'page' => $newPage,
+    ]);
+}
+
+if ($action === 'page.updateMeta') {
+    $id = (int)($_POST['id'] ?? 0);
+    if ($id <= 0) {
+        sb_json_error('ID_REQUIRED', 422);
+    }
+
+    $page = sb_find_page($id);
+    if (!$page) {
+        sb_json_error('PAGE_NOT_FOUND', 404);
+    }
+
+    $siteId = (int)($page['siteId'] ?? 0);
+    sb_require_editor($siteId);
+
+    $title = trim((string)($_POST['title'] ?? ''));
+    $slugIn = trim((string)($_POST['slug'] ?? ''));
+
+    $pages = sb_read_pages();
+    $found = false;
+
+    $newSlug = $slugIn !== ''
+        ? sb_slugify($slugIn)
+        : (string)($page['slug'] ?? ('page-' . $id));
+
+    if ($title !== '' && $slugIn === '') {
+        $newSlug = sb_slugify($title);
+    }
+
+    if ($newSlug === '') {
+        $newSlug = 'page-' . $id;
+    }
+
+    $existing = array_map(
+        static function ($x) {
+            return (string)($x['slug'] ?? '');
+        },
+        array_filter($pages, static function ($p) use ($siteId, $id) {
+            return (int)($p['siteId'] ?? 0) === $siteId && (int)($p['id'] ?? 0) !== $id;
+        })
+    );
+
+    $base = $newSlug;
+    $i = 2;
+    while (in_array($newSlug, $existing, true)) {
+        $newSlug = $base . '-' . $i;
+        $i++;
+    }
+
+    foreach ($pages as &$p) {
+        if ((int)($p['id'] ?? 0) === $id) {
+            if ($title !== '') {
+                $p['title'] = $title;
+            }
+            $p['slug'] = $newSlug;
+            $p['updatedAt'] = date('c');
+            $p['updatedBy'] = (int)$USER->GetID();
+            $found = true;
+            break;
+        }
+    }
+    unset($p);
+
+    if (!$found) {
+        sb_json_error('PAGE_NOT_FOUND', 404);
+    }
+
+    sb_write_pages($pages);
+    sb_json_ok();
+}
+
+if ($action === 'page.setStatus') {
+    $id = (int)($_POST['id'] ?? 0);
+    $status = strtolower(trim((string)($_POST['status'] ?? 'draft')));
+
+    if ($id <= 0) {
+        sb_json_error('ID_REQUIRED', 422);
+    }
+
+    if (!in_array($status, ['draft', 'published'], true)) {
+        sb_json_error('BAD_STATUS', 422);
+    }
+
+    $page = sb_find_page($id);
+    if (!$page) {
+        sb_json_error('PAGE_NOT_FOUND', 404);
+    }
+
+    $siteId = (int)($page['siteId'] ?? 0);
+    sb_require_editor($siteId);
+
+    $pages = sb_read_pages();
+    $found = false;
+
+    foreach ($pages as &$p) {
+        if ((int)($p['id'] ?? 0) === $id) {
+            $p['status'] = $status;
+            $p['publishedAt'] = ($status === 'published') ? date('c') : '';
+            $p['updatedAt'] = date('c');
+            $p['updatedBy'] = (int)$USER->GetID();
+            $found = true;
+            break;
+        }
+    }
+    unset($p);
+
+    if (!$found) {
+        sb_json_error('PAGE_NOT_FOUND', 404);
+    }
+
+    sb_write_pages($pages);
+    sb_json_ok();
+}
+
+if ($action === 'page.setParent') {
+    $id = (int)($_POST['id'] ?? 0);
+    $parentId = (int)($_POST['parentId'] ?? 0);
+
+    if ($id <= 0) {
+        sb_json_error('ID_REQUIRED', 422);
+    }
+
+    $page = sb_find_page($id);
+    if (!$page) {
+        sb_json_error('PAGE_NOT_FOUND', 404);
+    }
+
+    $siteId = (int)($page['siteId'] ?? 0);
+    sb_require_editor($siteId);
+
+    if ($parentId > 0) {
+        $parent = sb_find_page($parentId);
+        if (!$parent || (int)($parent['siteId'] ?? 0) !== $siteId) {
+            sb_json_error('PARENT_NOT_IN_SITE', 422);
+        }
+        if ($parentId === $id) {
+            sb_json_error('PARENT_SELF', 422);
+        }
+        if (sb_page_is_descendant($siteId, $parentId, $id)) {
+            sb_json_error('PARENT_DESCENDANT', 422);
+        }
+    }
+
+    $pages = sb_read_pages();
+
+    $maxSort = 0;
+    foreach ($pages as $p) {
+        if (
+            (int)($p['siteId'] ?? 0) === $siteId &&
+            (int)($p['parentId'] ?? 0) === $parentId
+        ) {
+            $maxSort = max($maxSort, (int)($p['sort'] ?? 0));
+        }
+    }
+
+    foreach ($pages as &$p) {
+        if ((int)($p['id'] ?? 0) === $id) {
+            $p['parentId'] = $parentId;
+            $p['sort'] = $maxSort + 10;
+            $p['updatedAt'] = date('c');
+            $p['updatedBy'] = (int)$USER->GetID();
+            break;
+        }
+    }
+    unset($p);
+
+    sb_write_pages($pages);
+    sb_json_ok();
+}
+
+if ($action === 'page.move') {
+    $id = (int)($_POST['id'] ?? 0);
+    $dir = (string)($_POST['dir'] ?? '');
+
+    if ($id <= 0) {
+        sb_json_error('ID_REQUIRED', 422);
+    }
+    if ($dir !== 'up' && $dir !== 'down') {
+        sb_json_error('DIR_REQUIRED', 422);
+    }
+
+    $page = sb_find_page($id);
+    if (!$page) {
+        sb_json_error('PAGE_NOT_FOUND', 404);
+    }
+
+    $siteId = (int)($page['siteId'] ?? 0);
+    sb_require_editor($siteId);
+
+    $parentId = (int)($page['parentId'] ?? 0);
+
+    $pages = sb_read_pages();
+    $siblings = array_values(array_filter($pages, static function ($p) use ($siteId, $parentId) {
+        return
+            (int)($p['siteId'] ?? 0) === $siteId &&
+            (int)($p['parentId'] ?? 0) === $parentId;
+    }));
+
+    usort($siblings, static function ($a, $b) {
+        $sortCmp = (int)($a['sort'] ?? 500) <=> (int)($b['sort'] ?? 500);
+        if ($sortCmp !== 0) {
+            return $sortCmp;
+        }
+        return (int)($a['id'] ?? 0) <=> (int)($b['id'] ?? 0);
+    });
+
+    $pos = null;
+    for ($i = 0; $i < count($siblings); $i++) {
+        if ((int)($siblings[$i]['id'] ?? 0) === $id) {
+            $pos = $i;
+            break;
+        }
+    }
+
+    if ($pos === null) {
+        sb_json_ok();
+    }
+
+    if ($dir === 'up' && $pos === 0) {
+        sb_json_ok();
+    }
+
+    if ($dir === 'down' && $pos === count($siblings) - 1) {
+        sb_json_ok();
+    }
+
+    $swap = ($dir === 'up') ? $pos - 1 : $pos + 1;
+
+    $idA = (int)$siblings[$pos]['id'];
+    $idB = (int)$siblings[$swap]['id'];
+    $sortA = (int)($siblings[$pos]['sort'] ?? 500);
+    $sortB = (int)($siblings[$swap]['sort'] ?? 500);
+
+    foreach ($pages as &$p) {
+        $pid = (int)($p['id'] ?? 0);
+        if ($pid === $idA) {
+            $p['sort'] = $sortB;
+            $p['updatedAt'] = date('c');
+            $p['updatedBy'] = (int)$USER->GetID();
+        }
+        if ($pid === $idB) {
+            $p['sort'] = $sortA;
+            $p['updatedAt'] = date('c');
+            $p['updatedBy'] = (int)$USER->GetID();
+        }
+    }
+    unset($p);
+
+    sb_write_pages($pages);
+    sb_json_ok();
+}
+
 sb_json_error('NOT_MOVED_YET', 501, [
     'handler' => 'page',
     'action' => $action,
@@ -480,124 +620,13 @@ sb_json_error('NOT_MOVED_YET', 501, [
 
 ---
 
-6. Пока остальные handlers оставь заглушками
+3. Что у тебя теперь готово по page
 
-Вот так и оставляй, это нормально на данном этапе:
-
-block.php
-
-access.php
-
-file.php
-
-menu.php
-
-template.php
-
-layout.php
-
-
-
----
-
-7. Теперь можно переключить точку входа
-
-Если у тебя старая папка отдельно, а новая чистая папка — отдельно, то в новом проекте уже можно сделать так:
-
-/local/sitebuilder/api.php
-
-<?php
-require_once __DIR__ . '/api/index.php';
-
-
----
-
-8. Что уже можно проверить
-
-Сейчас у тебя должны заработать:
-
-Проверка API
-
-action=ping
-
-Сайты
-
-site.list
-
-site.get
-
-site.create
-
-site.delete
-
-site.setHome
-
-
-Страницы
+После вставки должны работать:
 
 page.list
 
 page.create
-
-
-
----
-
-9. Как быстро проверить руками
-
-Через твой фронт или через временный тест.
-
-Пример POST:
-
-action=site.list
-
-sessid=...
-
-
-или:
-
-action=site.create
-
-name=Тестовый сайт
-
-slug=test-site
-
-sessid=...
-
-
-
----
-
-10. На что обратить внимание
-
-1. Путь до проекта
-
-Я в коде использую: /local/sitebuilder/...
-
-Если новая чистая папка у тебя называется не sitebuilder, а иначе — замени путь в:
-
-bootstrap.php
-
-
-Вот эти строки:
-
-require_once $_SERVER['DOCUMENT_ROOT'] . '/local/sitebuilder/lib/json.php';
-require_once $_SERVER['DOCUMENT_ROOT'] . '/local/sitebuilder/lib/response.php';
-require_once $_SERVER['DOCUMENT_ROOT'] . '/local/sitebuilder/lib/access.php';
-require_once $_SERVER['DOCUMENT_ROOT'] . '/local/sitebuilder/lib/helpers.php';
-
-2. Данные всё ещё хранятся в:
-
-/upload/sitebuilder/
-
-То есть новая чистая папка проекта использует старые JSON-данные. Это удобно для миграции.
-
-
----
-
-11. Что делаем следующим сообщением
-
-После того как вставишь это, следующий логичный шаг:
 
 page.delete
 
@@ -612,7 +641,71 @@ page.setParent
 page.move
 
 
-Это лучше сделать следующим пакетом, потому что page-ветка у тебя уже почти замкнётся целиком.
 
-Напиши мне одним сообщением: “вставил, давай page-пакет дальше”
-и я пришлю тебе следующий готовый код.
+---
+
+4. Что проверить руками
+
+Проверь по очереди:
+
+1. создать страницу
+
+
+2. сменить title/slug
+
+
+3. сделать копию
+
+
+4. подвигать вверх/вниз
+
+
+5. поменять parent
+
+
+6. сменить статус draft/published
+
+
+7. удалить страницу
+
+
+
+
+---
+
+5. Что я чуть улучшил по сравнению со старым кодом
+
+Тут есть два полезных улучшения:
+
+запрет на установку родителя в собственного потомка: PARENT_DESCENDANT
+
+при смене parent страница уходит в конец нового списка соседей через sort = max + 10
+
+
+Это делает дерево стабильнее.
+
+
+---
+
+6. Следующий правильный шаг
+
+Теперь логично идти в block-ветку, потому что без неё editor дальше не оживить.
+
+Следующим сообщением я могу прислать уже первый рабочий block-пакет:
+
+block.list
+
+block.create
+
+block.update
+
+block.delete
+
+block.duplicate
+
+block.move
+
+block.reorder
+
+
+Напиши: давай block-пакет
