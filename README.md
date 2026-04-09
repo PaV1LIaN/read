@@ -1,780 +1,443 @@
-Хорошо, идём дальше.
+Ниже — прикладная схема именно под твой архив, а не абстрактная архитектура.
 
-Сейчас делаем первый реальный CRUD для сайтов в новом модуле:
+По факту сейчас у тебя проект плоский: почти всё лежит в корне /local/sitebuilder, а ключевая проблема — слишком толстые файлы:
 
-site.get
+api.php — 3678 строк
 
-site.create
+editor.php — 2646 строк
 
-site.delete
+public.php — 1531 строк
+
+layout.php — 1367 строк
+
+index.php — 1143 строки
+
+view.php — 886 строк
 
 
-Пока удаление будет только записи сайта из sites.json, без каскадного удаления pages.json, blocks.json, menus.json, access.json. Это специально, чтобы сначала аккуратно поднять новый слой CRUD, а уже следующим шагом сделать нормальное каскадное удаление.
-
-
----
-
-Что делаем сейчас
-
-1. Создай файл
-
-/local/modules/its.sitebuilder/lib/infrastructure/support/idgenerator.php
-
-Сначала создай папку:
-
-/local/modules/its.sitebuilder/lib/infrastructure/support/
-
-Файл:
-
-<?php
-
-namespace Its\Sitebuilder\Infrastructure\Support;
-
-class IdGenerator
-{
-    public function nextId(array $items, string $field = 'id'): int
-    {
-        $max = 0;
-
-        foreach ($items as $item) {
-            $value = 0;
-
-            if (is_array($item)) {
-                $value = (int)($item[$field] ?? 0);
-            } elseif (is_object($item) && method_exists($item, 'toArray')) {
-                $row = $item->toArray();
-                $value = (int)($row[$field] ?? 0);
-            }
-
-            if ($value > $max) {
-                $max = $value;
-            }
-        }
-
-        return $max + 1;
-    }
-}
+Это уже не вопрос “красоты”, а вопрос поддержки: в одном месте смешаны роутинг, права, Disk, JSON-хранилище, бизнес-логика, рендер, обработка POST, JS-диалоги и UI.
 
 
 ---
 
-2. Создай файл
+1. Что сейчас не так
 
-/local/modules/its.sitebuilder/lib/infrastructure/support/slugger.php
+1. api.php перегружен несколькими ролями сразу
 
-<?php
+Сейчас в нём одновременно:
 
-namespace Its\Sitebuilder\Infrastructure\Support;
+чтение/запись JSON
 
-class Slugger
-{
-    public function slugify(string $value): string
-    {
-        $value = trim($value);
-        $value = mb_strtolower($value, 'UTF-8');
+работа с site/page/block/menu/template/layout
 
-        $map = [
-            'а' => 'a', 'б' => 'b', 'в' => 'v', 'г' => 'g', 'д' => 'd',
-            'е' => 'e', 'ё' => 'e', 'ж' => 'zh', 'з' => 'z', 'и' => 'i',
-            'й' => 'y', 'к' => 'k', 'л' => 'l', 'м' => 'm', 'н' => 'n',
-            'о' => 'o', 'п' => 'p', 'р' => 'r', 'с' => 's', 'т' => 't',
-            'у' => 'u', 'ф' => 'f', 'х' => 'h', 'ц' => 'cz', 'ч' => 'ch',
-            'ш' => 'sh', 'щ' => 'shh', 'ъ' => '', 'ы' => 'y', 'ь' => '',
-            'э' => 'e', 'ю' => 'yu', 'я' => 'ya',
-        ];
+ACL
 
-        $value = strtr($value, $map);
-        $value = preg_replace('/[^a-z0-9]+/u', '-', $value);
-        $value = trim((string)$value, '-');
+Disk
 
-        if ($value === '') {
-            $value = 'site';
-        }
+генерация slug
 
-        return $value;
-    }
+action routing
 
-    public function makeUnique(string $baseSlug, array $existingSlugs): string
-    {
-        $baseSlug = $this->slugify($baseSlug);
+валидация входных данных
 
-        if (!in_array($baseSlug, $existingSlugs, true)) {
-            return $baseSlug;
-        }
+формирование JSON-ответа
 
-        $i = 2;
-        while (in_array($baseSlug . '-' . $i, $existingSlugs, true)) {
-            $i++;
-        }
 
-        return $baseSlug . '-' . $i;
-    }
-}
+То есть это не “API-файл”, а весь backend проекта в одном файле.
 
+2. Повторяются одинаковые низкоуровневые функции
 
----
+Например:
 
-3. Полностью замени
+sb_data_path
 
-/local/modules/its.sitebuilder/lib/infrastructure/repository/siterepository.php
+sb_read_json_file / sb_read_json
 
-<?php
+sb_user_access_code
 
-namespace Its\Sitebuilder\Infrastructure\Repository;
+sb_get_role
 
-use Its\Sitebuilder\Config;
-use Its\Sitebuilder\Domain\Site\SiteEntity;
-use Its\Sitebuilder\Infrastructure\Storage\JsonStorage;
+sb_role_rank
 
-class SiteRepository
-{
-    private JsonStorage $storage;
 
-    public function __construct(?JsonStorage $storage = null)
-    {
-        $this->storage = $storage ?: new JsonStorage();
-    }
+Они есть не только в api.php, но и дублируются в download.php, public.php, view.php.
 
-    /**
-     * @return SiteEntity[]
-     */
-    public function findAll(): array
-    {
-        $rows = $this->storage->readArray(Config::sitesFile(), []);
+Это как раз тот код, который реально общий и должен жить в одном месте.
 
-        $result = [];
+3. Плоская структура в корне
 
-        foreach ($rows as $row) {
-            if (!is_array($row)) {
-                continue;
-            }
+Сейчас файл по имени должен объяснять всё сам:
 
-            $result[] = new SiteEntity($row);
-        }
+menu.php
 
-        usort($result, static function (SiteEntity $a, SiteEntity $b): int {
-            return $a->getId() <=> $b->getId();
-        });
+files.php
 
-        return $result;
-    }
+layout.php
 
-    public function findById(int $id): ?SiteEntity
-    {
-        foreach ($this->findAll() as $site) {
-            if ($site->getId() === $id) {
-                return $site;
-            }
-        }
+settings.php
 
-        return null;
-    }
+public.php
 
-    public function saveAll(array $sites): void
-    {
-        $rows = [];
-
-        foreach ($sites as $site) {
-            if ($site instanceof SiteEntity) {
-                $rows[] = $site->toArray();
-            } elseif (is_array($site)) {
-                $rows[] = $site;
-            }
-        }
-
-        $this->storage->writeArray(Config::sitesFile(), $rows);
-    }
-
-    public function add(array $siteData): SiteEntity
-    {
-        $sites = $this->findAll();
-        $sites[] = new SiteEntity($siteData);
-
-        $this->saveAll($sites);
-
-        return new SiteEntity($siteData);
-    }
-
-    public function deleteById(int $id): bool
-    {
-        $sites = $this->findAll();
-        $before = count($sites);
-
-        $filtered = [];
-
-        foreach ($sites as $site) {
-            if ($site->getId() !== $id) {
-                $filtered[] = $site;
-            }
-        }
-
-        if (count($filtered) === $before) {
-            return false;
-        }
-
-        $this->saveAll($filtered);
-
-        return true;
-    }
-
-    public function existsBySlug(string $slug): bool
-    {
-        foreach ($this->findAll() as $site) {
-            if ($site->getSlug() === $slug) {
-                return true;
-            }
-        }
-
-        return false;
-    }
-
-    public function getAllSlugs(): array
-    {
-        $result = [];
-
-        foreach ($this->findAll() as $site) {
-            $slug = $site->getSlug();
-            if ($slug !== '') {
-                $result[] = $slug;
-            }
-        }
-
-        return $result;
-    }
-}
-
-
----
-
-4. Полностью замени
-
-/local/modules/its.sitebuilder/lib/service/site/service.php
-
-<?php
-
-namespace Its\Sitebuilder\Service\Site;
-
-use Its\Sitebuilder\Domain\Site\SiteEntity;
-use Its\Sitebuilder\Infrastructure\Repository\SiteRepository;
-use Its\Sitebuilder\Infrastructure\Support\IdGenerator;
-use Its\Sitebuilder\Infrastructure\Support\Slugger;
-
-class Service
-{
-    private SiteRepository $siteRepository;
-    private IdGenerator $idGenerator;
-    private Slugger $slugger;
-
-    public function __construct(
-        ?SiteRepository $siteRepository = null,
-        ?IdGenerator $idGenerator = null,
-        ?Slugger $slugger = null
-    ) {
-        $this->siteRepository = $siteRepository ?: new SiteRepository();
-        $this->idGenerator = $idGenerator ?: new IdGenerator();
-        $this->slugger = $slugger ?: new Slugger();
-    }
-
-    public function ping(): array
-    {
-        global $USER;
-
-        return [
-            'ok' => true,
-            'module' => 'its.sitebuilder',
-            'service' => static::class,
-            'userId' => is_object($USER) ? (int)$USER->GetID() : 0,
-            'time' => date('c'),
-        ];
-    }
-
-    public function list(): array
-    {
-        $items = [];
-
-        foreach ($this->siteRepository->findAll() as $site) {
-            $items[] = $site->toArray();
-        }
-
-        return [
-            'items' => $items,
-            'count' => count($items),
-        ];
-    }
-
-    public function get(int $id): array
-    {
-        $site = $this->siteRepository->findById($id);
-
-        if (!$site) {
-            throw new \RuntimeException('Сайт не найден: #' . $id);
-        }
-
-        return [
-            'item' => $site->toArray(),
-        ];
-    }
-
-    public function create(array $data): array
-    {
-        global $USER;
-
-        $name = trim((string)($data['name'] ?? ''));
-        $slug = trim((string)($data['slug'] ?? ''));
-
-        if ($name === '') {
-            throw new \InvalidArgumentException('Не заполнено имя сайта');
-        }
-
-        $existingSites = $this->siteRepository->findAll();
-        $newId = $this->idGenerator->nextId($existingSites, 'id');
-        $existingSlugs = $this->siteRepository->getAllSlugs();
-
-        if ($slug === '') {
-            $slug = $this->slugger->makeUnique($name, $existingSlugs);
-        } else {
-            $slug = $this->slugger->makeUnique($slug, $existingSlugs);
-        }
-
-        $now = date('c');
-        $userId = is_object($USER) ? (int)$USER->GetID() : 0;
-
-        $siteData = [
-            'id' => $newId,
-            'name' => $name,
-            'slug' => $slug,
-            'active' => true,
-            'createdAt' => $now,
-            'updatedAt' => $now,
-            'createdBy' => $userId,
-            'updatedBy' => $userId,
-        ];
-
-        $site = $this->siteRepository->add($siteData);
-
-        return [
-            'item' => $site->toArray(),
-        ];
-    }
-
-    public function delete(int $id): array
-    {
-        $site = $this->siteRepository->findById($id);
-
-        if (!$site) {
-            throw new \RuntimeException('Сайт не найден: #' . $id);
-        }
-
-        $deleted = $this->siteRepository->deleteById($id);
-
-        if (!$deleted) {
-            throw new \RuntimeException('Не удалось удалить сайт: #' . $id);
-        }
-
-        return [
-            'deleted' => true,
-            'id' => $id,
-        ];
-    }
-
-    public function demoList(): array
-    {
-        return [
-            'items' => [
-                [
-                    'id' => 1,
-                    'name' => 'Демо сайт 1',
-                    'slug' => 'demo-1',
-                ],
-                [
-                    'id' => 2,
-                    'name' => 'Демо сайт 2',
-                    'slug' => 'demo-2',
-                ],
-            ],
-        ];
-    }
-}
-
-
----
-
-5. Полностью замени
-
-/local/tools/its.sitebuilder/ajax.php
-
-<?php
-define('NO_KEEP_STATISTIC', true);
-define('NO_AGENT_STATISTIC', true);
-define('NOT_CHECK_PERMISSIONS', true);
-define('DisableEventsCheck', true);
-
-require $_SERVER['DOCUMENT_ROOT'] . '/bitrix/modules/main/include/prolog_before.php';
-
-use Bitrix\Main\Loader;
-use Its\Sitebuilder\Service\Site\Service as SiteService;
-
-header('Content-Type: application/json; charset=UTF-8');
-
-global $USER;
-
-try {
-    if (!$USER || !$USER->IsAuthorized()) {
-        http_response_code(401);
-        echo json_encode([
-            'ok' => false,
-            'error' => 'NOT_AUTHORIZED',
-            'message' => 'Пользователь не авторизован',
-        ], JSON_UNESCAPED_UNICODE);
-        exit;
-    }
-
-    if (!Loader::includeModule('its.sitebuilder')) {
-        throw new \RuntimeException('Модуль its.sitebuilder не подключается');
-    }
-
-    $action = isset($_REQUEST['action']) ? (string)$_REQUEST['action'] : '';
-    $siteService = new SiteService();
-
-    switch ($action) {
-        case 'site.ping':
-            $result = $siteService->ping();
-            break;
-
-        case 'site.list':
-            $result = $siteService->list();
-            break;
-
-        case 'site.get':
-            $result = $siteService->get((int)($_REQUEST['id'] ?? 0));
-            break;
-
-        case 'site.create':
-            $result = $siteService->create([
-                'name' => (string)($_REQUEST['name'] ?? ''),
-                'slug' => (string)($_REQUEST['slug'] ?? ''),
-            ]);
-            break;
-
-        case 'site.delete':
-            $result = $siteService->delete((int)($_REQUEST['id'] ?? 0));
-            break;
-
-        case 'site.demoList':
-            $result = $siteService->demoList();
-            break;
-
-        default:
-            http_response_code(400);
-            echo json_encode([
-                'ok' => false,
-                'error' => 'UNKNOWN_ACTION',
-                'message' => 'Неизвестное действие: ' . $action,
-            ], JSON_UNESCAPED_UNICODE);
-            exit;
-    }
-
-    echo json_encode([
-        'ok' => true,
-        'data' => $result,
-    ], JSON_UNESCAPED_UNICODE);
-} catch (\Throwable $e) {
-    http_response_code(500);
-
-    echo json_encode([
-        'ok' => false,
-        'error' => 'EXCEPTION',
-        'message' => $e->getMessage(),
-        'file' => $e->getFile(),
-        'line' => $e->getLine(),
-    ], JSON_UNESCAPED_UNICODE);
-}
-
-
----
-
-6. Полностью замени
-
-/local/sitebuilder/index.php
-
-<?php
-define('NO_KEEP_STATISTIC', true);
-define('NO_AGENT_STATISTIC', true);
-define('NOT_CHECK_PERMISSIONS', true);
-define('DisableEventsCheck', true);
-
-require $_SERVER['DOCUMENT_ROOT'] . '/bitrix/modules/main/include/prolog_before.php';
-
-use Bitrix\Main\Loader;
-
-global $USER;
-
-if (!$USER || !$USER->IsAuthorized()) {
-    http_response_code(401);
-    ?>
-    <!doctype html>
-    <html lang="ru">
-    <head>
-        <meta charset="UTF-8">
-        <title>Site Builder</title>
-    </head>
-    <body>
-        <div style="padding:20px;font-family:Arial,sans-serif;color:#b00020;">
-            Доступ запрещён. Пользователь не авторизован.
-        </div>
-    </body>
-    </html>
-    <?php
-    exit;
-}
-
-if (!Loader::includeModule('its.sitebuilder')) {
-    http_response_code(500);
-    ?>
-    <!doctype html>
-    <html lang="ru">
-    <head>
-        <meta charset="UTF-8">
-        <title>Site Builder</title>
-    </head>
-    <body>
-        <div style="padding:20px;font-family:Arial,sans-serif;color:#b00020;font-weight:bold;">
-            Модуль its.sitebuilder не установлен или не подключается.
-        </div>
-    </body>
-    </html>
-    <?php
-    exit;
-}
-?>
-<!doctype html>
-<html lang="ru">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>ITS Site Builder</title>
-</head>
-<body style="margin:0;background:#f5f7fb;font-family:Arial,sans-serif;">
-    <div style="padding:20px;max-width:1200px;">
-        <h1 style="margin-top:0;">ITS Site Builder</h1>
-
-        <p>Проверка CRUD сайтов в новом модуле.</p>
-
-        <div style="display:flex;gap:24px;align-items:flex-start;flex-wrap:wrap;">
-            <div style="flex:1 1 360px;background:#fff;border:1px solid #d0d7de;padding:16px;">
-                <h2 style="margin-top:0;font-size:20px;">Создать сайт</h2>
-
-                <div style="margin-bottom:12px;">
-                    <label for="sb-site-name" style="display:block;margin-bottom:6px;">Название</label>
-                    <input id="sb-site-name" type="text" value="" placeholder="Например: Тестовый сайт"
-                           style="width:100%;padding:10px;box-sizing:border-box;">
-                </div>
-
-                <div style="margin-bottom:12px;">
-                    <label for="sb-site-slug" style="display:block;margin-bottom:6px;">Slug (необязательно)</label>
-                    <input id="sb-site-slug" type="text" value="" placeholder="Например: test-site"
-                           style="width:100%;padding:10px;box-sizing:border-box;">
-                </div>
-
-                <div style="margin-top:16px;">
-                    <button id="sb-create-site-btn" style="padding:10px 16px;cursor:pointer;">
-                        Создать сайт
-                    </button>
-                </div>
-            </div>
-
-            <div style="flex:1 1 360px;background:#fff;border:1px solid #d0d7de;padding:16px;">
-                <h2 style="margin-top:0;font-size:20px;">Операции</h2>
-
-                <div style="display:flex;gap:10px;flex-wrap:wrap;">
-                    <button id="sb-ping-btn" style="padding:10px 16px;cursor:pointer;">Ping</button>
-                    <button id="sb-site-list-btn" style="padding:10px 16px;cursor:pointer;">site.list</button>
-                    <button id="sb-site-get-btn" style="padding:10px 16px;cursor:pointer;">site.get</button>
-                    <button id="sb-site-delete-btn" style="padding:10px 16px;cursor:pointer;">site.delete</button>
-                </div>
-
-                <div style="margin-top:12px;">
-                    <label for="sb-site-id" style="display:block;margin-bottom:6px;">ID сайта</label>
-                    <input id="sb-site-id" type="number" value="" placeholder="Например: 1"
-                           style="width:160px;padding:10px;box-sizing:border-box;">
-                </div>
-            </div>
-        </div>
-
-        <div style="margin-top:20px;">
-            <pre id="sb-result" style="background:#fff;border:1px solid #d0d7de;padding:16px;white-space:pre-wrap;min-height:320px;">Нажми кнопку для проверки.</pre>
-        </div>
-    </div>
-
-    <script>
-    (function () {
-        var resultNode = document.getElementById('sb-result');
-
-        var pingBtn = document.getElementById('sb-ping-btn');
-        var siteListBtn = document.getElementById('sb-site-list-btn');
-        var siteGetBtn = document.getElementById('sb-site-get-btn');
-        var siteDeleteBtn = document.getElementById('sb-site-delete-btn');
-        var createSiteBtn = document.getElementById('sb-create-site-btn');
-
-        var siteIdInput = document.getElementById('sb-site-id');
-        var siteNameInput = document.getElementById('sb-site-name');
-        var siteSlugInput = document.getElementById('sb-site-slug');
-
-        function printResult(title, data) {
-            resultNode.textContent = title + "\n\n" + JSON.stringify(data, null, 2);
-        }
-
-        function toFormBody(params) {
-            var parts = [];
-
-            Object.keys(params).forEach(function (key) {
-                parts.push(encodeURIComponent(key) + '=' + encodeURIComponent(params[key]));
-            });
-
-            return parts.join('&');
-        }
-
-        function call(action, params) {
-            var payload = Object.assign({ action: action }, params || {});
-
-            printResult('Запрос...', payload);
-
-            fetch('/local/tools/its.sitebuilder/ajax.php', {
-                method: 'POST',
-                credentials: 'same-origin',
-                headers: {
-                    'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8'
-                },
-                body: toFormBody(payload)
-            })
-            .then(function (response) {
-                return response.text().then(function (text) {
-                    var parsed = null;
-
-                    try {
-                        parsed = JSON.parse(text);
-                    } catch (e) {
-                        parsed = {
-                            ok: false,
-                            error: 'INVALID_JSON',
-                            raw: text
-                        };
-                    }
-
-                    printResult('Ответ сервера', {
-                        httpStatus: response.status,
-                        body: parsed
-                    });
-                });
-            })
-            .catch(function (error) {
-                printResult('Ошибка fetch', {
-                    message: error && error.message ? error.message : String(error)
-                });
-            });
-        }
-
-        pingBtn.addEventListener('click', function () {
-            call('site.ping');
-        });
-
-        siteListBtn.addEventListener('click', function () {
-            call('site.list');
-        });
-
-        siteGetBtn.addEventListener('click', function () {
-            call('site.get', {
-                id: siteIdInput.value || ''
-            });
-        });
-
-        siteDeleteBtn.addEventListener('click', function () {
-            call('site.delete', {
-                id: siteIdInput.value || ''
-            });
-        });
-
-        createSiteBtn.addEventListener('click', function () {
-            call('site.create', {
-                name: siteNameInput.value || '',
-                slug: siteSlugInput.value || ''
-            });
-        });
-
-        printResult('Страница загружена', {
-            js: 'ok',
-            endpoint: '/local/tools/its.sitebuilder/ajax.php',
-            sitesFile: '/upload/sitebuilder/sites.json',
-            note: 'Удаление пока только из sites.json, без каскада'
-        });
-    })();
-    </script>
-</body>
-</html>
-
-
----
-
-Что проверить сейчас
-
-Открой:
-
-/local/sitebuilder/index.php
-
-И проверь по порядку:
-
-1. site.list
-
-
-2. создать новый сайт
-
-
-3. снова site.list
-
-
-4. site.get по ID
-
-
-5. site.delete
-
-
-6. снова site.list
+view.php
 
+
+Для живого проекта это плохо: по дереву нельзя быстро понять, где:
+
+entry point
+
+backend
+
+shared
+
+editor
+
+public rendering
+
+disk
+
+storage
+
+
+4. В editor.php и layout.php смешан PHP + HTML + огромный inline JS
+
+Особенно это видно по:
+
+openTextDialog
+
+openImageDialog
+
+openButtonDialog
+
+openHeadingDialog
+
+openGalleryDialog
+
+openCardDialog
+
+openCardsDialog
+
+
+То есть “страница” и “клиентская логика редактора” слеплены в один файл.
+
+5. Нет явной границы между shared-кодом и локальным кодом сущности
+
+Например:
+
+ACL нужен в нескольких местах → это shared
+
+JSON storage нужен в нескольких местах → shared
+
+Disk-обвязка нужна в нескольких местах → shared
+
+логика карточек для layout/editor → не shared для всего проекта, а локально рядом с editor/layout
+
+рендер публичных блоков → локально рядом с public/view
 
 
 
 ---
 
-Что важно на этом этапе
+2. Нормальная структура для /local/sitebuilder
 
-Сейчас мы уже получили в новом модуле:
+Я бы делал так:
 
-Config
-
-JsonStorage
-
-SiteRepository
-
-IdGenerator
-
-Slugger
-
-SiteService
-
-реальный CRUD для sites.json
-
-
-То есть кусок старого монолита уже реально вынесен в нормальные слои.
+/local/sitebuilder/
+├── index.php
+├── editor.php
+├── menu.php
+├── files.php
+├── settings.php
+├── layout.php
+├── public.php
+├── view.php
+├── download.php
+│
+├── api/
+│   ├── index.php
+│   ├── bootstrap.php
+│   ├── helpers.php
+│   ├── site.php
+│   ├── page.php
+│   ├── block.php
+│   ├── menu.php
+│   ├── access.php
+│   ├── file.php
+│   ├── template.php
+│   └── layout.php
+│
+├── src/
+│   ├── Shared/
+│   │   ├── JsonStorage.php
+│   │   ├── Response.php
+│   │   ├── Request.php
+│   │   ├── Slug.php
+│   │   └── Utils.php
+│   │
+│   ├── Auth/
+│   │   └── Access.php
+│   │
+│   ├── Disk/
+│   │   ├── DiskStorage.php
+│   │   └── DiskRights.php
+│   │
+│   ├── Repositories/
+│   │   ├── SitesRepository.php
+│   │   ├── PagesRepository.php
+│   │   ├── BlocksRepository.php
+│   │   ├── MenusRepository.php
+│   │   ├── AccessRepository.php
+│   │   ├── TemplatesRepository.php
+│   │   └── LayoutsRepository.php
+│   │
+│   ├── Services/
+│   │   ├── SiteService.php
+│   │   ├── PageService.php
+│   │   ├── BlockService.php
+│   │   ├── MenuService.php
+│   │   ├── TemplateService.php
+│   │   ├── FileService.php
+│   │   └── LayoutService.php
+│   │
+│   ├── PublicPage/
+│   │   ├── PublicRenderer.php
+│   │   ├── BlockRenderer.php
+│   │   ├── Breadcrumbs.php
+│   │   └── PageTree.php
+│   │
+│   └── Editor/
+│       ├── BlockConfig.php
+│       └── EditorViewData.php
+│
+├── views/
+│   ├── partials/
+│   │   ├── header.php
+│   │   ├── sidebar.php
+│   │   └── alerts.php
+│   │
+│   ├── editor/
+│   │   ├── toolbar.php
+│   │   ├── blocks-panel.php
+│   │   └── dialogs-container.php
+│   │
+│   ├── layout/
+│   │   ├── toolbar.php
+│   │   └── zones.php
+│   │
+│   └── public/
+│       ├── page.php
+│       ├── breadcrumbs.php
+│       └── menu.php
+│
+├── assets/
+│   ├── css/
+│   │   ├── common.css
+│   │   ├── index.css
+│   │   ├── editor.css
+│   │   ├── layout.css
+│   │   ├── menu.css
+│   │   ├── settings.css
+│   │   └── public.css
+│   │
+│   └── js/
+│       ├── shared/
+│       │   ├── api.js
+│       │   ├── notify.js
+│       │   ├── dom.js
+│       │   └── modal.js
+│       │
+│       ├── editor/
+│       │   ├── state.js
+│       │   ├── blocks-render.js
+│       │   ├── block-actions.js
+│       │   ├── template-actions.js
+│       │   ├── dialogs/
+│       │   │   ├── text.js
+│       │   │   ├── image.js
+│       │   │   ├── button.js
+│       │   │   ├── heading.js
+│       │   │   ├── columns2.js
+│       │   │   ├── gallery.js
+│       │   │   ├── spacer.js
+│       │   │   ├── card.js
+│       │   │   └── cards.js
+│       │   └── index.js
+│       │
+│       ├── layout/
+│       │   ├── state.js
+│       │   ├── zones-render.js
+│       │   ├── block-actions.js
+│       │   ├── settings.js
+│       │   ├── dialogs/
+│       │   │   ├── text.js
+│       │   │   ├── image.js
+│       │   │   ├── button.js
+│       │   │   ├── heading.js
+│       │   │   ├── columns2.js
+│       │   │   ├── gallery.js
+│       │   │   ├── spacer.js
+│       │   │   ├── card.js
+│       │   │   └── cards.js
+│       │   └── index.js
+│       │
+│       ├── menu/
+│       │   └── index.js
+│       │
+│       ├── files/
+│       │   └── index.js
+│       │
+│       ├── settings/
+│       │   └── index.js
+│       │
+│       └── index/
+│           └── index.js
+│
+└── data/
+    ├── sites.json
+    ├── pages.json
+    ├── blocks.json
+    ├── menus.json
+    ├── access.json
+    ├── templates.json
+    └── layouts.json
 
 
 ---
 
-Что дальше
+3. Что где должно лежать
 
-Следующим шагом правильно сделать одно из двух:
+Корень /local/sitebuilder
 
-вариант А — лучший сейчас:
-сразу добавить каскадное удаление сайта из:
+Здесь должны остаться только точки входа:
+
+index.php
+
+editor.php
+
+layout.php
+
+menu.php
+
+files.php
+
+settings.php
+
+public.php
+
+view.php
+
+download.php
+
+
+Их задача:
+
+подключить bootstrap
+
+собрать данные
+
+отрисовать нужный view
+
+подключить CSS/JS
+
+
+Они не должны содержать 1000+ строк бизнес-логики.
+
+
+---
+
+/api
+
+Здесь лежат backend entry point и action handlers.
+
+Должно быть:
+
+разбор action
+
+подключение общего bootstrap
+
+вызов нужного обработчика
+
+возврат JSON
+
+
+Не должно быть:
+
+дублирования JSON storage
+
+дублирования ACL
+
+дублирования Disk helper
+
+огромной логики всех сущностей в одном файле
+
+
+
+---
+
+/src/Shared
+
+Только реально общее:
+
+чтение request
+
+JSON response
+
+slug
+
+общие утилиты
+
+базовая работа с json storage
+
+
+Сюда не надо складывать всё подряд.
+
+
+---
+
+/src/Auth
+
+Только права:
+
+sb_user_access_code
+
+sb_get_role
+
+sb_role_rank
+
+sb_require_owner/admin/editor/viewer
+
+
+Это точно shared, потому что используется в нескольких входных точках.
+
+
+---
+
+/src/Disk
+
+Вся совместимость с Bitrix Disk:
+
+create folder
+
+upload file
+
+list children
+
+sync rights
+
+ensure site folder
+
+belongs-to-site check
+
+
+Disk — отдельная зона ответственности, её надо изолировать.
+
+
+---
+
+/src/Repositories
+
+Только доступ к данным:
+
+sites.json
 
 pages.json
 
@@ -784,8 +447,1022 @@ menus.json
 
 access.json
 
+templates.json
 
-вариант Б:
-перенести page.list / page.create / page.delete.
+layouts.json
 
-Я рекомендую сначала вариант А, потому что без него новый site.delete потенциально оставляет мусор в данных.
+
+Репозиторий должен:
+
+читать
+
+писать
+
+находить
+
+обновлять записи
+
+
+Он не должен:
+
+делать права
+
+знать про HTTP
+
+рендерить HTML
+
+показывать ошибки пользователю
+
+
+
+---
+
+/src/Services
+
+Здесь уже прикладная логика:
+
+создать сайт
+
+удалить страницу
+
+продублировать блок
+
+применить шаблон
+
+обновить layout
+
+загрузить файл
+
+
+Если логика состоит из 1–2 строк, отдельный service можно не делать. Но там, где есть несколько шагов, проверки, каскадные изменения — service нужен.
+
+
+---
+
+/src/PublicPage
+
+Только публичный рендер:
+
+рендер блоков
+
+хлебные крошки
+
+дерево страниц
+
+public url
+
+left menu
+
+
+Этот код не должен лежать в shared, потому что он нужен не всему проекту, а именно публичной части.
+
+
+---
+
+/assets/js
+
+Только JS. Не надо хранить большие inline-скрипты в editor.php и layout.php.
+
+
+---
+
+/views
+
+Только PHP-шаблоны и partials. Не нужно делать “MVC ради MVC”, но повторяющиеся куски интерфейса лучше вынести.
+
+
+---
+
+4. Граница между shared и локальным кодом
+
+Вот самое важное правило для этого проекта.
+
+Выносить в shared / src, если код:
+
+используется минимум в 2–3 местах
+
+не зависит от конкретного экрана
+
+не зависит от конкретной сущности UI
+
+относится к инфраструктуре проекта
+
+
+Примеры:
+
+sb_data_path
+
+sb_read_json_file
+
+sb_write_json_file
+
+sb_user_access_code
+
+sb_get_role
+
+sb_role_rank
+
+sb_slugify
+
+JSON response helper
+
+Bitrix Disk wrappers
+
+
+
+---
+
+Оставлять локально рядом с сущностью, если код:
+
+нужен только editor
+
+нужен только layout
+
+нужен только public render
+
+нужен только menu page
+
+зависит от конкретного DOM / конкретного UI / конкретной структуры блока
+
+
+Примеры:
+
+cardsNormalizeItem() для JS-конструктора карточек
+
+cardsRenderBuilderItems() для диалога cards
+
+openGalleryDialog() как UI-диалог
+
+рендер конкретного блока в preview editor/layout
+
+логика кнопок “переместить вверх/вниз” в редакторе
+
+
+Это не shared, даже если хочется “красиво вынести”.
+
+
+---
+
+5. Как правильно разрезать api.php
+
+Сейчас его надо резать не по строкам, а по ролям.
+
+Что оставить в api/index.php
+
+Только:
+
+подключение bootstrap.php
+
+получение $action
+
+карта action → handler
+
+вызов нужного файла/обработчика
+
+единый try/catch
+
+
+Пример:
+
+<?php
+require __DIR__ . '/bootstrap.php';
+
+$action = (string)($_POST['action'] ?? '');
+
+$map = [
+    'site.list' => __DIR__ . '/site.php',
+    'site.get' => __DIR__ . '/site.php',
+    'site.create' => __DIR__ . '/site.php',
+    'site.update' => __DIR__ . '/site.php',
+    'site.delete' => __DIR__ . '/site.php',
+    'site.setHome' => __DIR__ . '/site.php',
+
+    'page.list' => __DIR__ . '/page.php',
+    'page.create' => __DIR__ . '/page.php',
+    'page.delete' => __DIR__ . '/page.php',
+    'page.duplicate' => __DIR__ . '/page.php',
+    'page.updateMeta' => __DIR__ . '/page.php',
+    'page.setStatus' => __DIR__ . '/page.php',
+    'page.setParent' => __DIR__ . '/page.php',
+    'page.move' => __DIR__ . '/page.php',
+
+    'block.list' => __DIR__ . '/block.php',
+    'block.create' => __DIR__ . '/block.php',
+    'block.update' => __DIR__ . '/block.php',
+    'block.delete' => __DIR__ . '/block.php',
+    'block.duplicate' => __DIR__ . '/block.php',
+    'block.move' => __DIR__ . '/block.php',
+    'block.reorder' => __DIR__ . '/block.php',
+
+    'layout.get' => __DIR__ . '/layout.php',
+    'layout.updateSettings' => __DIR__ . '/layout.php',
+    'layout.block.list' => __DIR__ . '/layout.php',
+    'layout.block.create' => __DIR__ . '/layout.php',
+    'layout.block.update' => __DIR__ . '/layout.php',
+    'layout.block.delete' => __DIR__ . '/layout.php',
+    'layout.block.move' => __DIR__ . '/layout.php',
+];
+
+if (!isset($map[$action])) {
+    json_error('UNKNOWN_ACTION', 400);
+}
+
+require $map[$action];
+
+
+---
+
+Как разложить обработчики
+
+api/site.php
+
+site.list
+
+site.get
+
+site.create
+
+site.update
+
+site.delete
+
+site.setHome
+
+
+api/page.php
+
+page.list
+
+page.create
+
+page.delete
+
+page.duplicate
+
+page.updateMeta
+
+page.setStatus
+
+page.setParent
+
+page.move
+
+
+api/block.php
+
+block.list
+
+block.create
+
+block.update
+
+block.delete
+
+block.duplicate
+
+block.move
+
+block.reorder
+
+
+api/menu.php
+
+menu.list
+
+menu.create
+
+menu.update
+
+menu.delete
+
+menu.setTop
+
+если есть item-операции — тоже сюда
+
+
+api/template.php
+
+template.list
+
+template.createFromPage
+
+template.applyToPage
+
+template.rename
+
+template.delete
+
+
+api/access.php
+
+access.list
+
+access.set
+
+access.delete
+
+
+api/file.php
+
+file.list
+
+file.upload
+
+file.delete
+
+
+api/layout.php
+
+layout.get
+
+layout.updateSettings
+
+layout.block.*
+
+
+
+---
+
+Что вынести из api.php в src сразу
+
+Вот это выносится первым:
+
+JSON storage helpers
+
+ACL
+
+slug
+
+Disk wrappers
+
+layout low-level helpers
+
+menu low-level helpers
+
+site/page/block find helpers
+
+
+
+---
+
+6. Как резать большие JS-файлы типа editor.php / editor.dialogs.js
+
+У тебя в editor.php уже видно отдельные естественные куски.
+
+Не надо резать “по 100 строк”
+
+Надо резать по ответственности.
+
+
+---
+
+Как разложить JS редактора
+
+assets/js/shared/api.js
+
+Общий AJAX-вызов:
+
+export function api(action, data = {}) {
+  return new Promise((resolve, reject) => {
+    BX.ajax({
+      url: '/local/sitebuilder/api/index.php',
+      method: 'POST',
+      data: { action, ...data },
+      dataType: 'json',
+      onsuccess: resolve,
+      onfailure: reject
+    });
+  });
+}
+
+
+---
+
+assets/js/shared/notify.js
+
+Общее уведомление.
+
+
+---
+
+assets/js/editor/state.js
+
+Только состояние редактора:
+
+siteId
+
+pageId
+
+collapsedBlocks
+
+фильтры
+
+текущий список блоков
+
+
+
+---
+
+assets/js/editor/blocks-render.js
+
+Только рендер превью блоков:
+
+renderBlocks
+
+buildBlockShell
+
+headingTag
+
+headingAlign
+
+colsGridTemplate
+
+galleryTemplate
+
+
+
+---
+
+assets/js/editor/block-actions.js
+
+Операции:
+
+load blocks
+
+delete block
+
+duplicate
+
+move
+
+quick add
+
+
+
+---
+
+assets/js/editor/template-actions.js
+
+saveTemplateFromPage
+
+applyTemplateToPage
+
+
+
+---
+
+assets/js/editor/dialogs/*.js
+
+Каждый диалог отдельно:
+
+text.js
+
+image.js
+
+button.js
+
+heading.js
+
+gallery.js
+
+cards.js
+
+
+Это как раз идеальный случай локального кода по назначению.
+
+
+---
+
+Что точно не надо выносить в shared JS
+
+Например:
+
+openCardsBuilderDialog
+
+cardsNormalizeItem
+
+cardsRenderBuilderItems
+
+
+Если они используются только в editor/layout-карточках, держи их рядом с карточками.
+
+
+---
+
+Для layout.php аналогично
+
+Выделить:
+
+assets/js/layout/state.js
+
+assets/js/layout/zones-render.js
+
+assets/js/layout/settings.js
+
+assets/js/layout/block-actions.js
+
+assets/js/layout/dialogs/*.js
+
+
+
+---
+
+7. Что вынести в общее, а что оставить локально
+
+Вынести в общее
+
+PHP shared
+
+sb_data_path
+
+sb_read_json_file
+
+sb_write_json_file
+
+sb_slugify
+
+sb_user_access_code
+
+sb_get_role
+
+sb_role_rank
+
+sb_require_*
+
+общие json response helpers
+
+общие request helpers
+
+
+PHP disk
+
+sb_disk_add_subfolder
+
+sb_disk_upload_file
+
+sb_disk_get_children
+
+sb_disk_common_storage
+
+sb_disk_get_or_create_root
+
+sb_disk_ensure_site_folder
+
+sb_disk_sync_folder_rights
+
+sb_disk_file_belongs_to_site
+
+
+PHP repository-level
+
+sb_read_sites / write_sites
+
+sb_read_pages / write_pages
+
+sb_read_blocks / write_blocks
+
+sb_read_access / write_access
+
+sb_read_menus / write_menus
+
+sb_read_templates / write_templates
+
+sb_read_layouts / write_layouts
+
+
+
+---
+
+Оставить локально
+
+В src/PublicPage
+
+sb_render_block
+
+sb_render_blocks
+
+sb_render_breadcrumbs
+
+sb_render_left_menu_tree
+
+public_page_url
+
+file_url
+
+
+В layout logic
+
+sb_layout_valid_zone
+
+sb_layout_zone_blocks
+
+sb_layout_zone_set
+
+sb_layout_next_block_id
+
+sb_layout_find_block
+
+
+Это не shared на весь проект, а shared внутри layout-зоны.
+
+В menu logic
+
+sb_menu_get_site_record
+
+sb_menu_upsert_site_record
+
+sb_menu_next_menu_id
+
+sb_menu_next_item_id
+
+sb_menu_find_menu
+
+
+Это локально для menu.
+
+
+---
+
+8. Как бы я разбил твои текущие файлы
+
+api.php
+
+Разбить обязательно.
+
+Целевой результат:
+
+api/index.php
+
+api/site.php
+
+api/page.php
+
+api/block.php
+
+api/menu.php
+
+api/access.php
+
+api/file.php
+
+api/template.php
+
+api/layout.php
+
+
+
+---
+
+editor.php
+
+Оставить как entry-point страницы редактора, но вынести:
+
+JS в assets/js/editor/*
+
+повторяющиеся куски HTML в views/editor/*
+
+
+В editor.php должно остаться:
+
+подключение пролога
+
+загрузка данных страницы
+
+вывод контейнеров
+
+подключение CSS/JS
+
+
+
+---
+
+layout.php
+
+Аналогично:
+
+страница + контейнеры + подключение ассетов
+
+JS-логика наружу в assets/js/layout/*
+
+
+
+---
+
+public.php
+
+Сейчас это толстый рендер. Его делить так:
+
+src/PublicPage/PageTree.php
+
+src/PublicPage/Breadcrumbs.php
+
+src/PublicPage/BlockRenderer.php
+
+src/PublicPage/PublicRenderer.php
+
+
+public.php оставить только как публичную точку входа.
+
+
+---
+
+view.php
+
+Скорее всего это административный/preview просмотр. Нужно вынести:
+
+tree helpers
+
+breadcrumbs
+
+page lookup
+
+
+Если пересекается с public.php, не копировать, а переиспользовать код из src/PublicPage.
+
+
+---
+
+download.php
+
+Оставить отдельным entry point, но убрать дубли:
+
+ACL
+
+data path
+
+доступ к site disk folder
+
+
+Пусть использует:
+
+Auth/Access.php
+
+Repositories/SitesRepository.php
+
+Disk/DiskStorage.php
+
+
+
+---
+
+9. Пошаговый безопасный план рефакторинга
+
+Это важно делать без “большого взрыва”.
+
+Этап 1. Создать каркас папок
+
+Не переносить логику сразу. Просто создать:
+
+/api
+
+/src
+
+/assets/js
+
+/assets/css
+
+/views
+
+
+
+---
+
+Этап 2. Вынести самую безопасную общую инфраструктуру
+
+Сначала выносятся функции, которые ничего не меняют по бизнес-логике:
+
+JsonStorage
+
+Response
+
+Access
+
+Slug
+
+DiskStorage
+
+
+После этого старые файлы просто начинают подключать их.
+
+
+---
+
+Этап 3. Разрезать api.php
+
+Сначала без переписывания логики:
+
+скопировать action-блоки в отдельные файлы
+
+оставить старую реализацию внутри этих файлов
+
+в api/index.php сделать диспетчер
+
+
+То есть сначала перенос, а не реинжиниринг.
+
+
+---
+
+Этап 4. Вынести repositories
+
+После стабилизации API:
+
+SitesRepository
+
+PagesRepository
+
+BlocksRepository
+
+MenusRepository
+
+и т.д.
+
+
+И заменить прямые sb_read_* / sb_write_* на методы репозиториев.
+
+
+---
+
+Этап 5. Вынести Disk
+
+Потом выделить весь Disk-код в один слой.
+
+
+---
+
+Этап 6. Разрезать editor.php и layout.php
+
+Сначала вынести JS как есть, почти без изменений:
+
+кусок в отдельный .js
+
+подключить его на странице
+
+проверить, что всё работает
+
+
+Только потом резать на dialogs, render, actions.
+
+
+---
+
+Этап 7. Разрезать public.php
+
+После стабилизации административной части.
+
+
+---
+
+Этап 8. Убрать дубли
+
+Когда новые слои уже используются:
+
+удалить дублированные helpers из public.php, download.php, view.php, api.php
+
+
+
+---
+
+10. Практические правила именования
+
+Для PHP
+
+классы: SiteService, PagesRepository, DiskStorage
+
+методы: createSite, updatePageMeta, deleteBlock, syncFolderRights
+
+не использовать абстрактные названия типа Manager, Helper, Processor, если можно назвать по смыслу
+
+
+Для API handlers
+
+api/site.php
+
+api/page.php
+
+api/layout.php
+
+
+Для JS
+
+blocks-render.js
+
+block-actions.js
+
+template-actions.js
+
+dialogs/gallery.js
+
+
+То есть файл должен отвечать на вопрос: “за что он отвечает”.
+
+
+---
+
+11. Минимальный вариант, если не хочется вводить много классов
+
+Если хочешь совсем без лишнего ООП, можно сделать облегчённую схему:
+
+/local/sitebuilder/
+├── api/
+│   ├── index.php
+│   ├── site.php
+│   ├── page.php
+│   ├── block.php
+│   └── ...
+├── lib/
+│   ├── json.php
+│   ├── access.php
+│   ├── disk.php
+│   ├── site.php
+│   ├── page.php
+│   ├── block.php
+│   ├── menu.php
+│   ├── template.php
+│   ├── layout.php
+│   └── public.php
+├── assets/js/
+├── assets/css/
+├── views/
+└── *.php
+
+Это тоже нормальный путь для Bitrix24-коробки, если не хочется делать src/Shared, src/Services, src/Repositories.
+
+То есть:
+
+минималистично: через lib/*.php
+
+чуть чище и на вырост: через src/*
+
+
+Для твоего проекта я бы выбрал средний вариант:
+
+api/
+
+src/Shared
+
+src/Auth
+
+src/Disk
+
+src/Repositories
+
+src/PublicPage
+
+assets/js
+
+views
+
+
+А вот слишком много service-классов создавал бы только там, где реально есть смысл.
+
+
+---
+
+12. Что я бы сделал первым именно у тебя
+
+Если прямо по текущему архиву, мой первый безопасный шаг был бы такой:
+
+1. Создать api/index.php
+
+
+2. Перенести action-блоки из api.php по файлам:
+
+api/site.php
+
+api/page.php
+
+api/block.php
+
+api/menu.php
+
+api/template.php
+
+api/access.php
+
+api/file.php
+
+api/layout.php
+
+
+
+3. Вынести в src/Shared/JsonStorage.php повторяющиеся sb_read_json_file/sb_write_json_file
+
+
+4. Вынести ACL в src/Auth/Access.php
+
+
+5. Вынести Disk в src/Disk/DiskStorage.php
+
+
+6. Только после этого начинать резать editor.php
+
+
+
+Потому что главная боль сейчас — backend-монолит api.php.
+
+
+---
+
+Если хочешь, следующим сообщением я могу уже на основе твоего архива дать тебе готовое целевое дерево именно с раскладкой каждого текущего файла:
+api.php → куда, public.php → куда, editor.php → на какие JS/PHP части, layout.php → на какие части.
