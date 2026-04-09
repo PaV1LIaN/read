@@ -1,49 +1,219 @@
-{
-    "ok": true,
-    "apiFile": "\/srv\/bx\/docroot\/local\/sitebuilder\/api.php",
-    "time": "2026-04-09T15:53:36+03:00",
-    "files": {
-        "api_bootstrap": {
-            "path": "\/srv\/bx\/docroot\/local\/sitebuilder\/api\/bootstrap.php",
-            "exists": true,
-            "md5": "6f925665285b9e86fe2fd074c80dbc79",
-            "size": 1169,
-            "head": "<?php\n\ndefine('NO_KEEP_STATISTIC', true);\ndefine('NO_AGENT_STATISTIC', true);\ndefine('DisableEventsCheck', true);\n\nrequire $_SERVER['DOCUMENT_ROOT'] . '\/bitrix\/modules\/main\/include\/prolog_before.php';\n\nuse Bitrix\\Main\\Loader;\nuse Bitrix\\Disk\\Storage;\nuse Bitrix\\Disk\\Folder;\nuse Bitrix\\Disk\\File;\nuse Bitrix\\Disk\\Driver;\n\nglobal $USER;\n\nheader('Content-Type: application\/json; charset=UTF-8');\n\nif (!$USER->IsAuthorized()) {\n    http_response_code(401);\n    echo json_encode(['ok' => false, 'error' => 'NOT_AUTHORIZED'], JSON_UNESCAPED_UNICODE);\n    exit;\n}\n\nif ($_SERVER['REQUEST_METHOD'] !== 'POST'"
-        },
-        "lib_json": {
-            "path": "\/srv\/bx\/docroot\/local\/sitebuilder\/lib\/json.php",
-            "exists": true,
-            "md5": "ad5f057f0653755a8ba0205e5c74dfaa",
-            "size": 3838,
-            "head": "<?php\n\nif (!function_exists('sb_data_path')) {\n    function sb_data_path(string $file): string\n    {\n        return $_SERVER['DOCUMENT_ROOT'] . '\/upload\/sitebuilder\/' . $file;\n    }\n}\n\nif (!function_exists('sb_read_json_file')) {\n    function sb_read_json_file(string $file): array\n    {\n        $path = sb_data_path($file);\n        if (!file_exists($path)) {\n            return [];\n        }\n\n        $fp = fopen($path, 'rb');\n        if (!$fp) {\n            return [];\n        }\n\n        $raw = '';\n        if (flock($fp, LOCK_SH)) {\n            $raw = stream_get_contents($fp);\n            flock($"
-        },
-        "lib_response": {
-            "path": "\/srv\/bx\/docroot\/local\/sitebuilder\/lib\/response.php",
-            "exists": true,
-            "md5": "08045556cc3e778cdc5a57e5cef4f83c",
-            "size": 683,
-            "head": "<?php\n\nif (!function_exists('sb_json_response')) {\n    function sb_json_response(array $payload, int $status = 200): void\n    {\n        http_response_code($status);\n        echo json_encode($payload, JSON_UNESCAPED_UNICODE);\n        exit;\n    }\n}\n\nif (!function_exists('sb_json_ok')) {\n    function sb_json_ok(array $data = []): void\n    {\n        sb_json_response(array_merge(['ok' => true], $data), 200);\n    }\n}\n\nif (!function_exists('sb_json_error')) {\n    function sb_json_error(string $error, int $status = 400, array $extra = []): void\n    {\n        sb_json_response(array_merge([\n            "
-        },
-        "lib_access": {
-            "path": "\/srv\/bx\/docroot\/local\/sitebuilder\/lib\/access.php",
-            "exists": true,
-            "md5": "c23f4eebb15ce71d171fcce71d1c0478",
-            "size": 3695,
-            "head": "<?php\n\nglobal $USER;\n\nif ($action === 'access.list') {\n    $siteId = (int)($_POST['siteId'] ?? 0);\n    if ($siteId <= 0) {\n        sb_json_error('SITE_ID_REQUIRED', 422);\n    }\n\n    sb_require_admin($siteId);\n\n    $rows = sb_access_rows_for_site($siteId);\n\n    usort($rows, static function ($a, $b) {\n        $roleCmp = sb_role_rank((string)($b['role'] ?? '')) <=> sb_role_rank((string)($a['role'] ?? ''));\n        if ($roleCmp !== 0) {\n            return $roleCmp;\n        }\n\n        return strcmp((string)($a['accessCode'] ?? ''), (string)($b['accessCode'] ?? ''));\n    });\n\n    sb_json_ok([\n      "
-        },
-        "lib_helpers": {
-            "path": "\/srv\/bx\/docroot\/local\/sitebuilder\/lib\/helpers.php",
-            "exists": true,
-            "md5": "ce4df5ebaf1e08a64db3da3945471a18",
-            "size": 18030,
-            "head": "<?php\n\nrequire_once __DIR__ . '\/json.php';\n\nif (!function_exists('sb_slugify')) {\n    function sb_slugify(string $name): string\n    {\n        $slug = \\CUtil::translit($name, 'ru', [\n            'replace_space' => '-',\n            'replace_other' => '-',\n            'change_case' => 'L',\n            'delete_repeat_replace' => true,\n            'use_google' => false,\n        ]);\n\n        $slug = trim($slug, '-');\n        return $slug !== '' ? $slug : 'item';\n    }\n}\n\nif (!function_exists('sb_site_exists')) {\n    function sb_site_exists(int $siteId): bool\n    {\n        foreach (sb_read_sites() as"
-        },
-        "lib_disk": {
-            "path": "\/srv\/bx\/docroot\/local\/sitebuilder\/lib\/disk.php",
-            "exists": true,
-            "md5": "0ea05aad362b50af9de0ed3e98af43fb",
-            "size": 9564,
-            "head": "<?php\n\nrequire_once __DIR__ . '\/json.php';\nrequire_once __DIR__ . '\/helpers.php';\n\nuse Bitrix\\Main\\Loader;\nuse Bitrix\\Disk\\Driver;\nuse Bitrix\\Disk\\Storage;\nuse Bitrix\\Disk\\Folder;\nuse Bitrix\\Disk\\File;\nuse Bitrix\\Disk\\Security\\FakeSecurityContext;\n\nif (!function_exists('sb_disk_require_module')) {\n    function sb_disk_require_module(): void\n    {\n        if (!Loader::includeModule('disk')) {\n            throw new RuntimeException('Disk module is not installed');\n        }\n    }\n}\n\nif (!function_exists('sb_disk_security_context')) {\n    function sb_disk_security_context()\n    {\n        global $"
+Причина найдена точно.
+
+У тебя lib/access.php перезаписан кодом handler-а.
+
+Смотри на начало файла из диагностики:
+
+<?php
+
+global $USER;
+
+if ($action === 'access.list') {
+
+Такого в lib/access.php быть не должно вообще.
+В lib/access.php должны быть только функции sb_user_access_code, sb_get_role, sb_require_*, а не обработка action.
+
+Из-за этого при каждом запросе bootstrap.php подключает lib/access.php, а тот сразу пытается обработать action и возвращает:
+
+{"ok":false,"error":"NOT_MOVED_YET","handler":"access","action":"ping"}
+
+
+---
+
+Что нужно сделать
+
+1. Полностью замени /local/sitebuilder/lib/access.php на этот код
+
+<?php
+
+require_once __DIR__ . '/json.php';
+require_once __DIR__ . '/response.php';
+
+if (!function_exists('sb_user_access_code')) {
+    function sb_user_access_code(): string
+    {
+        global $USER;
+        return 'U' . (int)$USER->GetID();
+    }
+}
+
+if (!function_exists('sb_get_role')) {
+    function sb_get_role(int $siteId, string $accessCode): ?string
+    {
+        $access = sb_read_access();
+
+        foreach ($access as $row) {
+            if (
+                (int)($row['siteId'] ?? 0) === $siteId
+                && (string)($row['accessCode'] ?? '') === $accessCode
+            ) {
+                return (string)($row['role'] ?? '');
+            }
+        }
+
+        return null;
+    }
+}
+
+if (!function_exists('sb_role_rank')) {
+    function sb_role_rank(?string $role): int
+    {
+        switch ((string)$role) {
+            case 'VIEWER':
+                return 1;
+            case 'EDITOR':
+                return 2;
+            case 'ADMIN':
+                return 3;
+            case 'OWNER':
+                return 4;
+            default:
+                return 0;
         }
     }
 }
+
+if (!function_exists('sb_require_site_role')) {
+    function sb_require_site_role(int $siteId, int $minRank): void
+    {
+        $role = sb_get_role($siteId, sb_user_access_code());
+
+        if (sb_role_rank($role) < $minRank) {
+            sb_json_error('ACCESS_DENIED', 403);
+        }
+    }
+}
+
+if (!function_exists('sb_require_owner')) {
+    function sb_require_owner(int $siteId): void
+    {
+        sb_require_site_role($siteId, 4);
+    }
+}
+
+if (!function_exists('sb_require_admin')) {
+    function sb_require_admin(int $siteId): void
+    {
+        sb_require_site_role($siteId, 3);
+    }
+}
+
+if (!function_exists('sb_require_editor')) {
+    function sb_require_editor(int $siteId): void
+    {
+        sb_require_site_role($siteId, 2);
+    }
+}
+
+if (!function_exists('sb_require_viewer')) {
+    function sb_require_viewer(int $siteId): void
+    {
+        sb_require_site_role($siteId, 1);
+    }
+}
+
+
+---
+
+2. Верни /local/sitebuilder/api.php в нормальный вид
+
+<?php
+ini_set('display_errors', '1');
+error_reporting(E_ALL);
+
+require_once __DIR__ . '/api/index.php';
+
+
+---
+
+3. Сбрось opcache ещё раз
+
+Открой:
+
+/local/sitebuilder/opcache_reset.php
+
+Должно быть:
+
+bool(true)
+
+
+---
+
+4. Проверь Ping
+
+Теперь Ping должен вернуть что-то вроде:
+
+{
+  "ok": true,
+  "pong": true,
+  "handler": "common",
+  "file": "/srv/bx/docroot/local/sitebuilder/api/handlers/common.php",
+  "userId": 1,
+  "login": "admin"
+}
+
+
+---
+
+5. Потом проверь Site list
+
+Ожидаемый ответ:
+
+{
+  "ok": true,
+  "sites": [],
+  "handler": "site",
+  "file": "/srv/bx/docroot/local/sitebuilder/api/handlers/site.php"
+}
+
+или список сайтов.
+
+
+---
+
+Что именно произошло
+
+Ты где-то при копировании файлов вставил код api/handlers/access.php в lib/access.php.
+
+То есть:
+
+api/handlers/access.php — должен быть action-handler
+
+lib/access.php — должен быть набор функций доступа
+
+
+А у тебя в lib/access.php оказался handler.
+
+
+---
+
+Что делать дальше
+
+Сейчас не трогай больше ничего лишнего.
+
+Сделай только:
+
+1. замени lib/access.php
+
+
+2. верни api.php
+
+
+3. сбрось opcache
+
+
+4. проверь Ping
+
+
+5. проверь Site list
+
+
+
+И пришли мне два ответа:
+
+Ping
+
+Site list
+
+
+После этого уже спокойно продолжим сборку проекта без этой путаницы.
