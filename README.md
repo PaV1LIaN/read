@@ -1,61 +1,149 @@
-Идём дальше правильно: сначала делаем диагностический, но уже нормальный рабочий шаг.
+Хорошо.
+Теперь делаем первый реальный перенос логики из старого проекта: чтение списка сайтов из JSON через нормальные классы.
 
-Сейчас проблема, скорее всего, в одном из трёх мест:
+На этом шаге получим:
 
-JS-обработчики не цепляются как надо;
+единое место для пути к данным;
 
-BX.ajax.runAction в этой странице не поднялся;
+единое чтение/запись JSON;
 
-D7 controller не маршрутизируется в твоей коробке так, как ожидается.
+SiteRepository;
+
+SiteService, который уже берёт реальные данные;
+
+новый action site.list.
 
 
-Чтобы не гадать, делаем надёжный промежуточный вариант:
-убираем зависимость от runAction и проверяем модуль через обычный ajax-endpoint.
-
-Это не финальная архитектура, но это правильный технический шаг, потому что:
-
-страница уже начнёт реально ходить в новый модуль;
-
-мы не будем упираться в нюансы Engine\Controller;
-
-дальше этот же endpoint можно заменить на нормальный front controller.
-
+Пока старый api.php не ломаем.
 
 
 ---
 
 Что делаем сейчас
 
-Добавляем:
+Создай/замени следующие файлы.
 
-общий bootstrap модуля;
-
-простой ajax endpoint;
-
-простой service-класс;
-
-обновляем страницу так, чтобы кнопки гарантированно работали.
-
-
-
----
-
-1. Создай файл
-
-/local/modules/its.sitebuilder/lib/bootstrap.php
+1. /local/modules/its.sitebuilder/lib/config.php
 
 <?php
 
 namespace Its\Sitebuilder;
 
-use Bitrix\Main\Loader;
-
-class Bootstrap
+class Config
 {
-    public static function init(): void
+    public static function dataDir(): string
     {
-        if (!Loader::includeModule('main')) {
-            throw new \RuntimeException('Не удалось подключить модуль main');
+        return $_SERVER['DOCUMENT_ROOT'] . '/upload/sitebuilder';
+    }
+
+    public static function sitesFile(): string
+    {
+        return self::dataDir() . '/sites.json';
+    }
+
+    public static function pagesFile(): string
+    {
+        return self::dataDir() . '/pages.json';
+    }
+
+    public static function blocksFile(): string
+    {
+        return self::dataDir() . '/blocks.json';
+    }
+
+    public static function menusFile(): string
+    {
+        return self::dataDir() . '/menus.json';
+    }
+
+    public static function accessFile(): string
+    {
+        return self::dataDir() . '/access.json';
+    }
+
+    public static function templatesFile(): string
+    {
+        return self::dataDir() . '/templates.json';
+    }
+}
+
+
+---
+
+2. /local/modules/its.sitebuilder/lib/infrastructure/storage/jsonstorage.php
+
+Сначала создай папки:
+
+/local/modules/its.sitebuilder/lib/infrastructure/
+/local/modules/its.sitebuilder/lib/infrastructure/storage/
+
+Файл:
+
+<?php
+
+namespace Its\Sitebuilder\Infrastructure\Storage;
+
+class JsonStorage
+{
+    public function ensureDirExists(string $dir): void
+    {
+        if (is_dir($dir)) {
+            return;
+        }
+
+        if (!@mkdir($dir, 0775, true) && !is_dir($dir)) {
+            throw new \RuntimeException('Не удалось создать директорию: ' . $dir);
+        }
+    }
+
+    public function readArray(string $file, array $default = []): array
+    {
+        if (!file_exists($file)) {
+            return $default;
+        }
+
+        $content = @file_get_contents($file);
+        if ($content === false) {
+            throw new \RuntimeException('Не удалось прочитать файл: ' . $file);
+        }
+
+        $content = trim($content);
+        if ($content === '') {
+            return $default;
+        }
+
+        $decoded = json_decode($content, true);
+
+        if (!is_array($decoded)) {
+            throw new \RuntimeException('Некорректный JSON в файле: ' . $file);
+        }
+
+        return $decoded;
+    }
+
+    public function writeArray(string $file, array $data): void
+    {
+        $dir = dirname($file);
+        $this->ensureDirExists($dir);
+
+        $json = json_encode(
+            $data,
+            JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_PRETTY_PRINT
+        );
+
+        if ($json === false) {
+            throw new \RuntimeException('Не удалось сериализовать JSON для файла: ' . $file);
+        }
+
+        $tmpFile = $file . '.tmp';
+
+        if (@file_put_contents($tmpFile, $json, LOCK_EX) === false) {
+            throw new \RuntimeException('Не удалось записать временный файл: ' . $tmpFile);
+        }
+
+        if (!@rename($tmpFile, $file)) {
+            @unlink($tmpFile);
+            throw new \RuntimeException('Не удалось заменить файл: ' . $file);
         }
     }
 }
@@ -63,23 +151,155 @@ class Bootstrap
 
 ---
 
-2. Создай файл
+3. /local/modules/its.sitebuilder/lib/domain/site/siteentity.php
 
-/local/modules/its.sitebuilder/lib/service/site/service.php
+Сначала создай папки:
 
-Сразу создай папки:
-
-/local/modules/its.sitebuilder/lib/service/
-/local/modules/its.sitebuilder/lib/service/site/
+/local/modules/its.sitebuilder/lib/domain/
+/local/modules/its.sitebuilder/lib/domain/site/
 
 Файл:
 
 <?php
 
+namespace Its\Sitebuilder\Domain\Site;
+
+class SiteEntity
+{
+    private array $data;
+
+    public function __construct(array $data)
+    {
+        $this->data = $data;
+    }
+
+    public function toArray(): array
+    {
+        return $this->data;
+    }
+
+    public function getId(): int
+    {
+        return (int)($this->data['id'] ?? 0);
+    }
+
+    public function getName(): string
+    {
+        return (string)($this->data['name'] ?? '');
+    }
+
+    public function getSlug(): string
+    {
+        return (string)($this->data['slug'] ?? '');
+    }
+
+    public function isActive(): bool
+    {
+        return (bool)($this->data['active'] ?? true);
+    }
+}
+
+
+---
+
+4. /local/modules/its.sitebuilder/lib/infrastructure/repository/siterepository.php
+
+Создай папку:
+
+/local/modules/its.sitebuilder/lib/infrastructure/repository/
+
+Файл:
+
+<?php
+
+namespace Its\Sitebuilder\Infrastructure\Repository;
+
+use Its\Sitebuilder\Config;
+use Its\Sitebuilder\Domain\Site\SiteEntity;
+use Its\Sitebuilder\Infrastructure\Storage\JsonStorage;
+
+class SiteRepository
+{
+    private JsonStorage $storage;
+
+    public function __construct(?JsonStorage $storage = null)
+    {
+        $this->storage = $storage ?: new JsonStorage();
+    }
+
+    /**
+     * @return SiteEntity[]
+     */
+    public function findAll(): array
+    {
+        $rows = $this->storage->readArray(Config::sitesFile(), []);
+
+        $result = [];
+
+        foreach ($rows as $row) {
+            if (!is_array($row)) {
+                continue;
+            }
+
+            $result[] = new SiteEntity($row);
+        }
+
+        usort($result, static function (SiteEntity $a, SiteEntity $b): int {
+            return $a->getId() <=> $b->getId();
+        });
+
+        return $result;
+    }
+
+    public function findById(int $id): ?SiteEntity
+    {
+        foreach ($this->findAll() as $site) {
+            if ($site->getId() === $id) {
+                return $site;
+            }
+        }
+
+        return null;
+    }
+
+    public function saveAll(array $sites): void
+    {
+        $rows = [];
+
+        foreach ($sites as $site) {
+            if ($site instanceof SiteEntity) {
+                $rows[] = $site->toArray();
+            } elseif (is_array($site)) {
+                $rows[] = $site;
+            }
+        }
+
+        $this->storage->writeArray(Config::sitesFile(), $rows);
+    }
+}
+
+
+---
+
+5. Полностью замени
+
+/local/modules/its.sitebuilder/lib/service/site/service.php
+
+<?php
+
 namespace Its\Sitebuilder\Service\Site;
+
+use Its\Sitebuilder\Infrastructure\Repository\SiteRepository;
 
 class Service
 {
+    private SiteRepository $siteRepository;
+
+    public function __construct(?SiteRepository $siteRepository = null)
+    {
+        $this->siteRepository = $siteRepository ?: new SiteRepository();
+    }
+
     public function ping(): array
     {
         global $USER;
@@ -90,6 +310,20 @@ class Service
             'service' => static::class,
             'userId' => is_object($USER) ? (int)$USER->GetID() : 0,
             'time' => date('c'),
+        ];
+    }
+
+    public function list(): array
+    {
+        $items = [];
+
+        foreach ($this->siteRepository->findAll() as $site) {
+            $items[] = $site->toArray();
+        }
+
+        return [
+            'items' => $items,
+            'count' => count($items),
         ];
     }
 
@@ -115,15 +349,9 @@ class Service
 
 ---
 
-3. Создай файл
+6. Полностью замени
 
 /local/tools/its.sitebuilder/ajax.php
-
-Сначала создай папку:
-
-/local/tools/its.sitebuilder/
-
-Файл:
 
 <?php
 define('NO_KEEP_STATISTIC', true);
@@ -164,6 +392,10 @@ try {
             $result = $siteService->ping();
             break;
 
+        case 'site.list':
+            $result = $siteService->list();
+            break;
+
         case 'site.demoList':
             $result = $siteService->demoList();
             break;
@@ -197,11 +429,9 @@ try {
 
 ---
 
-4. Полностью замени
+7. Полностью замени
 
 /local/sitebuilder/index.php
-
-Вот на этот вариант:
 
 <?php
 define('NO_KEEP_STATISTIC', true);
@@ -264,11 +494,15 @@ if (!Loader::includeModule('its.sitebuilder')) {
     <div style="padding:20px;">
         <h1 style="margin-top:0;">ITS Site Builder</h1>
 
-        <p>Промежуточная проверка нового модуля через обычный AJAX endpoint.</p>
+        <p>Проверка нового слоя хранения и репозитория сайтов.</p>
 
         <div style="margin:20px 0;">
             <button id="sb-ping-btn" style="padding:10px 16px;cursor:pointer;">
                 Проверить ping
+            </button>
+
+            <button id="sb-site-list-btn" style="padding:10px 16px;cursor:pointer;margin-left:10px;">
+                Показать реальные site.list
             </button>
 
             <button id="sb-demo-list-btn" style="padding:10px 16px;cursor:pointer;margin-left:10px;">
@@ -276,13 +510,14 @@ if (!Loader::includeModule('its.sitebuilder')) {
             </button>
         </div>
 
-        <pre id="sb-result" style="background:#fff;border:1px solid #d0d7de;padding:16px;white-space:pre-wrap;min-height:220px;">Нажми кнопку для проверки.</pre>
+        <pre id="sb-result" style="background:#fff;border:1px solid #d0d7de;padding:16px;white-space:pre-wrap;min-height:260px;">Нажми кнопку для проверки.</pre>
     </div>
 
     <script>
     (function () {
         var resultNode = document.getElementById('sb-result');
         var pingBtn = document.getElementById('sb-ping-btn');
+        var siteListBtn = document.getElementById('sb-site-list-btn');
         var listBtn = document.getElementById('sb-demo-list-btn');
 
         function printResult(title, data) {
@@ -331,13 +566,18 @@ if (!Loader::includeModule('its.sitebuilder')) {
             call('site.ping');
         });
 
+        siteListBtn.addEventListener('click', function () {
+            call('site.list');
+        });
+
         listBtn.addEventListener('click', function () {
             call('site.demoList');
         });
 
         printResult('Страница загружена', {
             js: 'ok',
-            endpoint: '/local/tools/its.sitebuilder/ajax.php'
+            endpoint: '/local/tools/its.sitebuilder/ajax.php',
+            sitesFile: '/upload/sitebuilder/sites.json'
         });
     })();
     </script>
@@ -347,73 +587,89 @@ if (!Loader::includeModule('its.sitebuilder')) {
 
 ---
 
-Что это нам даст
-
-После этого кнопки обязаны начать что-то показывать, потому что:
-
-мы не зависим от BX.ajax.runAction;
-
-используем обычный fetch;
-
-в <pre> выводится даже сырой ответ сервера;
-
-сразу видно HTTP status и JSON.
-
-
-
----
-
-Что проверить после замены
+Что проверять
 
 Открой:
 
 /local/sitebuilder/index.php
 
-И нажми обе кнопки.
+Потом нажми:
 
-Нормальный ответ для ping будет примерно такой:
+Проверить ping
+
+Показать реальные site.list
+
+
+
+---
+
+Какой результат ожидаем
+
+Если старый JSON уже существует в:
+
+/upload/sitebuilder/sites.json
+
+то site.list должен вернуть реальные записи.
+
+Примерно так:
 
 {
-  "httpStatus": 200,
-  "body": {
-    "ok": true,
-    "data": {
-      "ok": true,
-      "module": "its.sitebuilder",
-      "service": "Its\\Sitebuilder\\Service\\Site\\Service",
-      "userId": 1,
-      "time": "2026-04-09T..."
-    }
+  "ok": true,
+  "data": {
+    "items": [
+      {
+        "id": 1,
+        "name": "Тестовый сайт",
+        "slug": "test-site"
+      }
+    ],
+    "count": 1
   }
 }
 
 
 ---
 
-Почему я сейчас увёл от D7 controller
+Что мы только что сделали правильно
 
-Потому что нам сейчас важнее не красота, а поднять рабочий каркас без слепых зон.
+Мы уже убрали из будущего монолита три вещи:
 
-Сначала добиваем:
+путь к данным;
 
-загрузку модуля;
+прямое чтение JSON;
 
-автозагрузку классов;
-
-отдельный ajax-вход;
-
-первый service.
+работу со списком сайтов.
 
 
-А уже следующим шагом переносим из старого проекта:
+То есть теперь логика идёт по цепочке:
 
-site.list
+ajax.php → SiteService → SiteRepository → JsonStorage
+
+Это уже нормальный фундамент.
+
+
+---
+
+Что дальше
+
+Следующим шагом я дам уже готовый код для реального CRUD по сайтам:
+
+site.get
 
 site.create
 
 site.delete
 
 
-в новый модуль с нормальной структурой.
+с генерацией ID, slug и записью в sites.json.
 
-Когда вставишь это и получишь ответ от кнопок, следующим сообщением я дам уже первый реальный рефакторинг старого api.php: вынесем JsonStorage, SiteRepository и перенесём site.list готовым кодом.
+После этого начнём переносить:
+
+access
+
+pages
+
+blocks
+
+
+по тому же шаблону.
