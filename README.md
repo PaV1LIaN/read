@@ -1,32 +1,129 @@
-Да, ты прав по обоим пунктам.
+Идём дальше правильно: сначала делаем диагностический, но уже нормальный рабочий шаг.
 
-1. Шапку/подвал Bitrix подключать не надо, если это отдельный интерфейс конструктора.
+Сейчас проблема, скорее всего, в одном из трёх мест:
+
+JS-обработчики не цепляются как надо;
+
+BX.ajax.runAction в этой странице не поднялся;
+
+D7 controller не маршрутизируется в твоей коробке так, как ожидается.
 
 
-2. В include.php здесь вообще не нужна никакая логика. Я дал лишний мусор, из-за этого проще всего просто сделать пустой безопасный include.php.
+Чтобы не гадать, делаем надёжный промежуточный вариант:
+убираем зависимость от runAction и проверяем модуль через обычный ajax-endpoint.
 
+Это не финальная архитектура, но это правильный технический шаг, потому что:
 
+страница уже начнёт реально ходить в новый модуль;
 
-Ниже даю исправленные готовые файлы.
+мы не будем упираться в нюансы Engine\Controller;
+
+дальше этот же endpoint можно заменить на нормальный front controller.
+
 
 
 ---
 
-1. /local/modules/its.sitebuilder/include.php
+Что делаем сейчас
 
-Полностью замени на это:
+Добавляем:
+
+общий bootstrap модуля;
+
+простой ajax endpoint;
+
+простой service-класс;
+
+обновляем страницу так, чтобы кнопки гарантированно работали.
+
+
+
+---
+
+1. Создай файл
+
+/local/modules/its.sitebuilder/lib/bootstrap.php
 
 <?php
 
-Да, просто так.
-Для старта модуля этого достаточно.
+namespace Its\Sitebuilder;
+
+use Bitrix\Main\Loader;
+
+class Bootstrap
+{
+    public static function init(): void
+    {
+        if (!Loader::includeModule('main')) {
+            throw new \RuntimeException('Не удалось подключить модуль main');
+        }
+    }
+}
 
 
 ---
 
-2. /local/sitebuilder/index.php
+2. Создай файл
 
-Тоже замени полностью, без подключения шаблона Bitrix:
+/local/modules/its.sitebuilder/lib/service/site/service.php
+
+Сразу создай папки:
+
+/local/modules/its.sitebuilder/lib/service/
+/local/modules/its.sitebuilder/lib/service/site/
+
+Файл:
+
+<?php
+
+namespace Its\Sitebuilder\Service\Site;
+
+class Service
+{
+    public function ping(): array
+    {
+        global $USER;
+
+        return [
+            'ok' => true,
+            'module' => 'its.sitebuilder',
+            'service' => static::class,
+            'userId' => is_object($USER) ? (int)$USER->GetID() : 0,
+            'time' => date('c'),
+        ];
+    }
+
+    public function demoList(): array
+    {
+        return [
+            'items' => [
+                [
+                    'id' => 1,
+                    'name' => 'Демо сайт 1',
+                    'slug' => 'demo-1',
+                ],
+                [
+                    'id' => 2,
+                    'name' => 'Демо сайт 2',
+                    'slug' => 'demo-2',
+                ],
+            ],
+        ];
+    }
+}
+
+
+---
+
+3. Создай файл
+
+/local/tools/its.sitebuilder/ajax.php
+
+Сначала создай папку:
+
+/local/tools/its.sitebuilder/
+
+Файл:
 
 <?php
 define('NO_KEEP_STATISTIC', true);
@@ -37,7 +134,84 @@ define('DisableEventsCheck', true);
 require $_SERVER['DOCUMENT_ROOT'] . '/bitrix/modules/main/include/prolog_before.php';
 
 use Bitrix\Main\Loader;
-use Bitrix\Main\UI\Extension;
+use Its\Sitebuilder\Service\Site\Service as SiteService;
+
+header('Content-Type: application/json; charset=UTF-8');
+
+global $USER;
+
+try {
+    if (!$USER || !$USER->IsAuthorized()) {
+        http_response_code(401);
+        echo json_encode([
+            'ok' => false,
+            'error' => 'NOT_AUTHORIZED',
+            'message' => 'Пользователь не авторизован',
+        ], JSON_UNESCAPED_UNICODE);
+        exit;
+    }
+
+    if (!Loader::includeModule('its.sitebuilder')) {
+        throw new \RuntimeException('Модуль its.sitebuilder не подключается');
+    }
+
+    $action = isset($_REQUEST['action']) ? (string)$_REQUEST['action'] : '';
+
+    $siteService = new SiteService();
+
+    switch ($action) {
+        case 'site.ping':
+            $result = $siteService->ping();
+            break;
+
+        case 'site.demoList':
+            $result = $siteService->demoList();
+            break;
+
+        default:
+            http_response_code(400);
+            echo json_encode([
+                'ok' => false,
+                'error' => 'UNKNOWN_ACTION',
+                'message' => 'Неизвестное действие: ' . $action,
+            ], JSON_UNESCAPED_UNICODE);
+            exit;
+    }
+
+    echo json_encode([
+        'ok' => true,
+        'data' => $result,
+    ], JSON_UNESCAPED_UNICODE);
+} catch (\Throwable $e) {
+    http_response_code(500);
+
+    echo json_encode([
+        'ok' => false,
+        'error' => 'EXCEPTION',
+        'message' => $e->getMessage(),
+        'file' => $e->getFile(),
+        'line' => $e->getLine(),
+    ], JSON_UNESCAPED_UNICODE);
+}
+
+
+---
+
+4. Полностью замени
+
+/local/sitebuilder/index.php
+
+Вот на этот вариант:
+
+<?php
+define('NO_KEEP_STATISTIC', true);
+define('NO_AGENT_STATISTIC', true);
+define('NOT_CHECK_PERMISSIONS', true);
+define('DisableEventsCheck', true);
+
+require $_SERVER['DOCUMENT_ROOT'] . '/bitrix/modules/main/include/prolog_before.php';
+
+use Bitrix\Main\Loader;
 
 global $USER;
 
@@ -78,8 +252,6 @@ if (!Loader::includeModule('its.sitebuilder')) {
     <?php
     exit;
 }
-
-Extension::load('main.core');
 ?>
 <!doctype html>
 <html lang="ru">
@@ -92,13 +264,11 @@ Extension::load('main.core');
     <div style="padding:20px;">
         <h1 style="margin-top:0;">ITS Site Builder</h1>
 
-        <p>
-            Это тестовая страница нового модуля без шаблона Bitrix.
-        </p>
+        <p>Промежуточная проверка нового модуля через обычный AJAX endpoint.</p>
 
         <div style="margin:20px 0;">
             <button id="sb-ping-btn" style="padding:10px 16px;cursor:pointer;">
-                Проверить контроллер ping
+                Проверить ping
             </button>
 
             <button id="sb-demo-list-btn" style="padding:10px 16px;cursor:pointer;margin-left:10px;">
@@ -106,11 +276,11 @@ Extension::load('main.core');
             </button>
         </div>
 
-        <pre id="sb-result" style="background:#fff;border:1px solid #d0d7de;padding:16px;white-space:pre-wrap;min-height:180px;">Нажми кнопку для проверки.</pre>
+        <pre id="sb-result" style="background:#fff;border:1px solid #d0d7de;padding:16px;white-space:pre-wrap;min-height:220px;">Нажми кнопку для проверки.</pre>
     </div>
 
     <script>
-    BX.ready(function () {
+    (function () {
         var resultNode = document.getElementById('sb-result');
         var pingBtn = document.getElementById('sb-ping-btn');
         var listBtn = document.getElementById('sb-demo-list-btn');
@@ -119,30 +289,57 @@ Extension::load('main.core');
             resultNode.textContent = title + "\n\n" + JSON.stringify(data, null, 2);
         }
 
-        pingBtn.addEventListener('click', function () {
-            printResult('Запрос...', { action: 'its:sitebuilder.Site.ping' });
+        function call(action) {
+            printResult('Запрос...', { action: action });
 
-            BX.ajax.runAction('its:sitebuilder.Site.ping')
-                .then(function (response) {
-                    printResult('Успех', response);
-                })
-                .catch(function (error) {
-                    printResult('Ошибка', error);
+            fetch('/local/tools/its.sitebuilder/ajax.php', {
+                method: 'POST',
+                credentials: 'same-origin',
+                headers: {
+                    'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8'
+                },
+                body: 'action=' + encodeURIComponent(action)
+            })
+            .then(function (response) {
+                return response.text().then(function (text) {
+                    var parsed = null;
+
+                    try {
+                        parsed = JSON.parse(text);
+                    } catch (e) {
+                        parsed = {
+                            ok: false,
+                            error: 'INVALID_JSON',
+                            raw: text
+                        };
+                    }
+
+                    printResult('Ответ сервера', {
+                        httpStatus: response.status,
+                        body: parsed
+                    });
                 });
+            })
+            .catch(function (error) {
+                printResult('Ошибка fetch', {
+                    message: error && error.message ? error.message : String(error)
+                });
+            });
+        }
+
+        pingBtn.addEventListener('click', function () {
+            call('site.ping');
         });
 
         listBtn.addEventListener('click', function () {
-            printResult('Запрос...', { action: 'its:sitebuilder.Site.demoList' });
-
-            BX.ajax.runAction('its:sitebuilder.Site.demoList')
-                .then(function (response) {
-                    printResult('Успех', response);
-                })
-                .catch(function (error) {
-                    printResult('Ошибка', error);
-                });
+            call('site.demoList');
         });
-    });
+
+        printResult('Страница загружена', {
+            js: 'ok',
+            endpoint: '/local/tools/its.sitebuilder/ajax.php'
+        });
+    })();
     </script>
 </body>
 </html>
@@ -150,109 +347,73 @@ Extension::load('main.core');
 
 ---
 
-3. /local/modules/its.sitebuilder/.settings.php
+Что это нам даст
 
-На всякий случай ещё раз привожу целиком:
+После этого кнопки обязаны начать что-то показывать, потому что:
 
-<?php
+мы не зависим от BX.ajax.runAction;
 
-return [
-    'controllers' => [
-        'value' => [
-            'defaultNamespace' => '\\Its\\Sitebuilder\\Controller',
-        ],
-        'readonly' => true,
-    ],
-];
+используем обычный fetch;
+
+в <pre> выводится даже сырой ответ сервера;
+
+сразу видно HTTP status и JSON.
+
 
 
 ---
 
-4. /local/modules/its.sitebuilder/lib/controller/site.php
+Что проверить после замены
 
-И тоже лучше сразу поставить вот этот вариант:
+Открой:
 
-<?php
+/local/sitebuilder/index.php
 
-namespace Its\Sitebuilder\Controller;
+И нажми обе кнопки.
 
-use Bitrix\Main\Engine\Controller;
+Нормальный ответ для ping будет примерно такой:
 
-class Site extends Controller
 {
-    public function pingAction(): array
-    {
-        global $USER;
-
-        return [
-            'ok' => true,
-            'module' => 'its.sitebuilder',
-            'controller' => static::class,
-            'userId' => is_object($USER) ? (int)$USER->GetID() : 0,
-            'time' => date('c'),
-        ];
+  "httpStatus": 200,
+  "body": {
+    "ok": true,
+    "data": {
+      "ok": true,
+      "module": "its.sitebuilder",
+      "service": "Its\\Sitebuilder\\Service\\Site\\Service",
+      "userId": 1,
+      "time": "2026-04-09T..."
     }
-
-    public function demoListAction(): array
-    {
-        return [
-            'items' => [
-                [
-                    'id' => 1,
-                    'name' => 'Демо сайт 1',
-                    'slug' => 'demo-1',
-                ],
-                [
-                    'id' => 2,
-                    'name' => 'Демо сайт 2',
-                    'slug' => 'demo-2',
-                ],
-            ],
-        ];
-    }
-
-    public function configureActions(): array
-    {
-        return [
-            'ping' => [
-                'prefilters' => [],
-            ],
-            'demoList' => [
-                'prefilters' => [],
-            ],
-        ];
-    }
+  }
 }
 
 
 ---
 
-Почему упало
+Почему я сейчас увёл от D7 controller
 
-Причина была в том, что для include.php я дал ненужную конструкцию.
-В модуле на старте нам сейчас вообще не нужен никакой код в include.php, поэтому safest-вариант — оставить просто:
+Потому что нам сейчас важнее не красота, а поднять рабочий каркас без слепых зон.
 
-<?php
+Сначала добиваем:
 
+загрузку модуля;
 
----
+автозагрузку классов;
 
-Что сделать сейчас
+отдельный ajax-вход;
 
-1. Замени include.php на пустой.
-
-
-2. Замени index.php на вариант без шаблона Bitrix.
+первый service.
 
 
-3. Открой:
+А уже следующим шагом переносим из старого проекта:
+
+site.list
+
+site.create
+
+site.delete
 
 
+в новый модуль с нормальной структурой.
 
-/local/sitebuilder/index.php
-
-4. Проверь две кнопки.
-
-
-
-Если после этого будет ошибка уже не parse, а например контроллер не найдётся — следующим сообщением я дам тебе сразу полный рабочий вариант с sitebuilder.php вместо D7 controller, если твоя коробка капризно работает с Engine\Controller.
+Когда вставишь это и получишь ответ от кнопок, следующим сообщением я дам уже первый реальный рефакторинг старого api.php: вынесем JsonStorage, SiteRepository и перенесём site.list готовым кодом.
