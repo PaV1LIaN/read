@@ -1,26 +1,32 @@
-Отлично. Делаем access-пакет.
+Отлично. Делаем template-пакет.
 
 Сейчас закроем:
 
-access.list
+template.list
 
-access.set
+template.createFromPage
 
-access.delete
+template.applyToPage
+
+template.rename
+
+template.delete
 
 
-Логика будет такая:
+Логика будет простая и практичная:
 
-доступы хранятся в access.json
+шаблон хранится в templates.json
 
-одна запись = один siteId + accessCode
+шаблон принадлежит сайту
 
-при set запись либо создаётся, либо обновляется
+шаблон содержит набор блоков страницы
 
-владельца (OWNER) через обычный access.set менять не даём
+при создании из страницы копируются блоки этой страницы
 
-удалить последнего владельца тоже не даём
+при применении к странице её текущие блоки заменяются блоками шаблона
 
+
+Это хороший рабочий вариант без усложнений.
 
 
 ---
@@ -31,213 +37,295 @@ access.delete
 
 <?php
 
-if (!function_exists('sb_find_access_row')) {
-    function sb_find_access_row(int $siteId, string $accessCode): ?array
+if (!function_exists('sb_find_template')) {
+    function sb_find_template(int $templateId): ?array
     {
-        foreach (sb_read_access() as $row) {
-            if (
-                (int)($row['siteId'] ?? 0) === $siteId
-                && (string)($row['accessCode'] ?? '') === $accessCode
-            ) {
-                return $row;
+        foreach (sb_read_templates() as $tpl) {
+            if ((int)($tpl['id'] ?? 0) === $templateId) {
+                return $tpl;
             }
         }
-
         return null;
     }
 }
 
-if (!function_exists('sb_access_rows_for_site')) {
-    function sb_access_rows_for_site(int $siteId): array
+if (!function_exists('sb_next_template_id')) {
+    function sb_next_template_id(array $templates = null): int
     {
-        return array_values(array_filter(sb_read_access(), static function ($row) use ($siteId) {
-            return (int)($row['siteId'] ?? 0) === $siteId;
+        if ($templates === null) {
+            $templates = sb_read_templates();
+        }
+
+        $maxId = 0;
+        foreach ($templates as $tpl) {
+            $maxId = max($maxId, (int)($tpl['id'] ?? 0));
+        }
+
+        return $maxId + 1;
+    }
+}
+
+if (!function_exists('sb_templates_for_site')) {
+    function sb_templates_for_site(int $siteId): array
+    {
+        $templates = array_values(array_filter(sb_read_templates(), static function ($tpl) use ($siteId) {
+            return (int)($tpl['siteId'] ?? 0) === $siteId;
         }));
+
+        usort($templates, static function ($a, $b) {
+            return (int)($a['id'] ?? 0) <=> (int)($b['id'] ?? 0);
+        });
+
+        return $templates;
     }
 }
 
-if (!function_exists('sb_normalize_access_role')) {
-    function sb_normalize_access_role(string $role): string
+if (!function_exists('sb_normalize_template_record')) {
+    function sb_normalize_template_record(array $tpl): array
     {
-        $role = strtoupper(trim($role));
-
-        if (!in_array($role, ['VIEWER', 'EDITOR', 'ADMIN', 'OWNER'], true)) {
-            return '';
+        if (!isset($tpl['name'])) {
+            $tpl['name'] = '';
+        }
+        if (!isset($tpl['siteId'])) {
+            $tpl['siteId'] = 0;
+        }
+        if (!isset($tpl['blocks']) || !is_array($tpl['blocks'])) {
+            $tpl['blocks'] = [];
         }
 
-        return $role;
-    }
-}
+        $tpl['blocks'] = array_map('sb_normalize_block_record', $tpl['blocks']);
 
-if (!function_exists('sb_count_site_owners')) {
-    function sb_count_site_owners(int $siteId): int
-    {
-        $count = 0;
-
-        foreach (sb_read_access() as $row) {
-            if (
-                (int)($row['siteId'] ?? 0) === $siteId
-                && (string)($row['role'] ?? '') === 'OWNER'
-            ) {
-                $count++;
+        usort($tpl['blocks'], static function ($a, $b) {
+            $sortCmp = (int)($a['sort'] ?? 500) <=> (int)($b['sort'] ?? 500);
+            if ($sortCmp !== 0) {
+                return $sortCmp;
             }
-        }
+            return (int)($a['id'] ?? 0) <=> (int)($b['id'] ?? 0);
+        });
 
-        return $count;
+        return $tpl;
     }
 }
 
 
 ---
 
-2. Полностью замени /local/sitebuilder/api/handlers/access.php
+2. Полностью замени /local/sitebuilder/api/handlers/template.php
 
 <?php
 
 global $USER;
 
-if ($action === 'access.list') {
+if ($action === 'template.list') {
     $siteId = (int)($_POST['siteId'] ?? 0);
     if ($siteId <= 0) {
         sb_json_error('SITE_ID_REQUIRED', 422);
     }
 
-    sb_require_admin($siteId);
+    sb_require_viewer($siteId);
 
-    $rows = sb_access_rows_for_site($siteId);
-
-    usort($rows, static function ($a, $b) {
-        $roleCmp = sb_role_rank((string)($b['role'] ?? '')) <=> sb_role_rank((string)($a['role'] ?? ''));
-        if ($roleCmp !== 0) {
-            return $roleCmp;
-        }
-
-        return strcmp((string)($a['accessCode'] ?? ''), (string)($b['accessCode'] ?? ''));
-    });
+    $templates = array_map('sb_normalize_template_record', sb_templates_for_site($siteId));
 
     sb_json_ok([
-        'access' => $rows,
+        'templates' => $templates,
     ]);
 }
 
-if ($action === 'access.set') {
+if ($action === 'template.createFromPage') {
     $siteId = (int)($_POST['siteId'] ?? 0);
-    $accessCode = trim((string)($_POST['accessCode'] ?? ''));
-    $role = sb_normalize_access_role((string)($_POST['role'] ?? ''));
+    $pageId = (int)($_POST['pageId'] ?? 0);
+    $name = trim((string)($_POST['name'] ?? ''));
 
     if ($siteId <= 0) {
         sb_json_error('SITE_ID_REQUIRED', 422);
     }
-    if ($accessCode === '') {
-        sb_json_error('ACCESS_CODE_REQUIRED', 422);
+    if ($pageId <= 0) {
+        sb_json_error('PAGE_ID_REQUIRED', 422);
     }
-    if ($role === '') {
-        sb_json_error('BAD_ROLE', 422);
-    }
-
-    sb_require_admin($siteId);
-
-    if (!sb_site_exists($siteId)) {
-        sb_json_error('SITE_NOT_FOUND', 404);
+    if ($name === '') {
+        sb_json_error('NAME_REQUIRED', 422);
     }
 
-    $current = sb_find_access_row($siteId, $accessCode);
+    sb_require_editor($siteId);
 
-    if ($current && (string)($current['role'] ?? '') === 'OWNER' && $role !== 'OWNER') {
-        sb_json_error('CANNOT_DOWNGRADE_OWNER', 422);
+    $page = sb_find_page($pageId);
+    if (!$page || (int)($page['siteId'] ?? 0) !== $siteId) {
+        sb_json_error('PAGE_NOT_IN_SITE', 422);
     }
 
-    if ($role === 'OWNER') {
-        sb_json_error('OWNER_ASSIGNMENT_FORBIDDEN', 422);
+    $pageBlocks = sb_blocks_for_page($pageId);
+
+    $storedBlocks = [];
+    foreach ($pageBlocks as $block) {
+        $copy = sb_normalize_block_record($block);
+        unset($copy['pageId']);
+        $storedBlocks[] = $copy;
     }
 
-    $rows = sb_read_access();
+    $templates = sb_read_templates();
+
+    $template = [
+        'id' => sb_next_template_id($templates),
+        'siteId' => $siteId,
+        'name' => $name,
+        'sourcePageId' => $pageId,
+        'blocks' => $storedBlocks,
+        'createdBy' => (int)$USER->GetID(),
+        'createdAt' => date('c'),
+        'updatedAt' => date('c'),
+        'updatedBy' => (int)$USER->GetID(),
+    ];
+
+    $templates[] = $template;
+    sb_write_templates($templates);
+
+    sb_json_ok([
+        'template' => sb_normalize_template_record($template),
+    ]);
+}
+
+if ($action === 'template.applyToPage') {
+    $templateId = (int)($_POST['templateId'] ?? 0);
+    $pageId = (int)($_POST['pageId'] ?? 0);
+
+    if ($templateId <= 0) {
+        sb_json_error('TEMPLATE_ID_REQUIRED', 422);
+    }
+    if ($pageId <= 0) {
+        sb_json_error('PAGE_ID_REQUIRED', 422);
+    }
+
+    $template = sb_find_template($templateId);
+    if (!$template) {
+        sb_json_error('TEMPLATE_NOT_FOUND', 404);
+    }
+
+    $page = sb_find_page($pageId);
+    if (!$page) {
+        sb_json_error('PAGE_NOT_FOUND', 404);
+    }
+
+    $siteId = (int)($page['siteId'] ?? 0);
+    if ((int)($template['siteId'] ?? 0) !== $siteId) {
+        sb_json_error('TEMPLATE_NOT_IN_SITE', 422);
+    }
+
+    sb_require_editor($siteId);
+
+    $blocks = sb_read_blocks();
+
+    $blocks = array_values(array_filter($blocks, static function ($b) use ($pageId) {
+        return (int)($b['pageId'] ?? 0) !== $pageId;
+    }));
+
+    $nextBlockId = sb_next_block_id($blocks);
+
+    $templateBlocks = $template['blocks'] ?? [];
+    usort($templateBlocks, static function ($a, $b) {
+        $sortCmp = (int)($a['sort'] ?? 500) <=> (int)($b['sort'] ?? 500);
+        if ($sortCmp !== 0) {
+            return $sortCmp;
+        }
+        return (int)($a['id'] ?? 0) <=> (int)($b['id'] ?? 0);
+    });
+
+    $sort = 10;
+    foreach ($templateBlocks as $tplBlock) {
+        $newBlock = sb_normalize_block_record($tplBlock);
+        $newBlock['id'] = $nextBlockId++;
+        $newBlock['pageId'] = $pageId;
+        $newBlock['sort'] = $sort;
+        $newBlock['createdBy'] = (int)$USER->GetID();
+        $newBlock['createdAt'] = date('c');
+        $newBlock['updatedAt'] = date('c');
+        $newBlock['updatedBy'] = (int)$USER->GetID();
+        $blocks[] = $newBlock;
+        $sort += 10;
+    }
+
+    sb_write_blocks($blocks);
+
+    sb_json_ok([
+        'blocks' => array_map('sb_normalize_block_record', sb_blocks_for_page($pageId)),
+    ]);
+}
+
+if ($action === 'template.rename') {
+    $id = (int)($_POST['id'] ?? 0);
+    $name = trim((string)($_POST['name'] ?? ''));
+
+    if ($id <= 0) {
+        sb_json_error('ID_REQUIRED', 422);
+    }
+    if ($name === '') {
+        sb_json_error('NAME_REQUIRED', 422);
+    }
+
+    $template = sb_find_template($id);
+    if (!$template) {
+        sb_json_error('TEMPLATE_NOT_FOUND', 404);
+    }
+
+    $siteId = (int)($template['siteId'] ?? 0);
+    sb_require_editor($siteId);
+
+    $templates = sb_read_templates();
     $updated = null;
-    $found = false;
 
-    foreach ($rows as &$row) {
-        if (
-            (int)($row['siteId'] ?? 0) === $siteId
-            && (string)($row['accessCode'] ?? '') === $accessCode
-        ) {
-            $row['role'] = $role;
-            $row['updatedAt'] = date('c');
-            $row['updatedBy'] = (int)$USER->GetID();
-            $updated = $row;
-            $found = true;
+    foreach ($templates as &$tpl) {
+        if ((int)($tpl['id'] ?? 0) === $id) {
+            $tpl['name'] = $name;
+            $tpl['updatedAt'] = date('c');
+            $tpl['updatedBy'] = (int)$USER->GetID();
+            $updated = $tpl;
             break;
         }
     }
-    unset($row);
+    unset($tpl);
 
-    if (!$found) {
-        $updated = [
-            'siteId' => $siteId,
-            'accessCode' => $accessCode,
-            'role' => $role,
-            'createdBy' => (int)$USER->GetID(),
-            'createdAt' => date('c'),
-            'updatedAt' => date('c'),
-            'updatedBy' => (int)$USER->GetID(),
-        ];
-
-        $rows[] = $updated;
+    if (!$updated) {
+        sb_json_error('TEMPLATE_NOT_FOUND', 404);
     }
 
-    sb_write_access($rows);
+    sb_write_templates($templates);
 
     sb_json_ok([
-        'accessRow' => $updated,
+        'template' => sb_normalize_template_record($updated),
     ]);
 }
 
-if ($action === 'access.delete') {
-    $siteId = (int)($_POST['siteId'] ?? 0);
-    $accessCode = trim((string)($_POST['accessCode'] ?? ''));
-
-    if ($siteId <= 0) {
-        sb_json_error('SITE_ID_REQUIRED', 422);
-    }
-    if ($accessCode === '') {
-        sb_json_error('ACCESS_CODE_REQUIRED', 422);
+if ($action === 'template.delete') {
+    $id = (int)($_POST['id'] ?? 0);
+    if ($id <= 0) {
+        sb_json_error('ID_REQUIRED', 422);
     }
 
-    sb_require_admin($siteId);
-
-    $row = sb_find_access_row($siteId, $accessCode);
-    if (!$row) {
-        sb_json_error('ACCESS_NOT_FOUND', 404);
+    $template = sb_find_template($id);
+    if (!$template) {
+        sb_json_error('TEMPLATE_NOT_FOUND', 404);
     }
 
-    $role = (string)($row['role'] ?? '');
-    if ($role === 'OWNER') {
-        if (sb_count_site_owners($siteId) <= 1) {
-            sb_json_error('CANNOT_DELETE_LAST_OWNER', 422);
-        }
-        sb_json_error('OWNER_DELETE_FORBIDDEN', 422);
-    }
+    $siteId = (int)($template['siteId'] ?? 0);
+    sb_require_editor($siteId);
 
-    $rows = sb_read_access();
-    $before = count($rows);
+    $templates = sb_read_templates();
+    $before = count($templates);
 
-    $rows = array_values(array_filter($rows, static function ($r) use ($siteId, $accessCode) {
-        return !(
-            (int)($r['siteId'] ?? 0) === $siteId
-            && (string)($r['accessCode'] ?? '') === $accessCode
-        );
+    $templates = array_values(array_filter($templates, static function ($tpl) use ($id) {
+        return (int)($tpl['id'] ?? 0) !== $id;
     }));
 
-    if (count($rows) === $before) {
-        sb_json_error('ACCESS_NOT_FOUND', 404);
+    if (count($templates) === $before) {
+        sb_json_error('TEMPLATE_NOT_FOUND', 404);
     }
 
-    sb_write_access($rows);
+    sb_write_templates($templates);
 
     sb_json_ok();
 }
 
 sb_json_error('NOT_MOVED_YET', 501, [
-    'handler' => 'access',
+    'handler' => 'template',
     'action' => $action,
 ]);
 
@@ -248,111 +336,114 @@ sb_json_error('NOT_MOVED_YET', 501, [
 
 После вставки:
 
-access.list
+template.list
 
-access.set
+template.createFromPage
 
-access.delete
+template.applyToPage
 
+template.rename
 
-
----
-
-4. Как использовать accessCode
-
-Сейчас логика завязана на том же формате, что и раньше:
-
-пользователь: U<ID>, например U1
-
-дальше при необходимости можно добавить группы, но пока не усложняем
-
-
-Примеры:
-
-U1
-
-U25
+template.delete
 
 
 
 ---
 
-5. Какие роли поддерживаются
+4. Как сейчас выглядит шаблон
 
-Только:
+Пример записи в templates.json:
 
-VIEWER
+{
+  "id": 1,
+  "siteId": 3,
+  "name": "Лендинг с hero",
+  "sourcePageId": 12,
+  "blocks": [
+    {
+      "id": 101,
+      "type": "heading",
+      "sort": 10,
+      "content": {
+        "text": "Заголовок",
+        "level": "h1",
+        "align": "center"
+      },
+      "props": {}
+    },
+    {
+      "id": 102,
+      "type": "text",
+      "sort": 20,
+      "content": {
+        "html": "<p>Описание</p>"
+      },
+      "props": {}
+    }
+  ]
+}
 
-EDITOR
+Обрати внимание:
 
-ADMIN
+id у блоков внутри шаблона хранятся как снимок
 
-OWNER
+при применении к странице им назначаются новые реальные block.id
 
+
+Это правильное поведение.
 
 
 ---
 
-6. Что намеренно запрещено
-
-Сейчас я специально запретил через обычный API:
-
-назначать OWNER через access.set
-
-понижать OWNER до другой роли
-
-удалять OWNER
-
-
-Почему так:
-
-владелец сейчас создаётся автоматически при site.create
-
-это защищает от случайного “отрубания” себе доступа
-
-
-Если позже захочешь, можно будет сделать отдельный action:
-
-access.transferOwnership
-
-
-Но сейчас лучше не добавлять это, чтобы не сломать права.
-
-
----
-
-7. Что проверить руками
+5. Что проверить руками
 
 Проверь по порядку:
 
-1. access.list
+1. создать пару блоков на странице
 
 
-2. access.set для нового U<ID> с ролью VIEWER
+2. вызвать template.createFromPage
 
 
-3. изменить этому же пользователю роль на EDITOR
+3. вызвать template.list
 
 
-4. изменить на ADMIN
+4. переименовать шаблон через template.rename
 
 
-5. access.delete для этого пользователя
+5. создать новую страницу
 
 
-6. попробовать поставить OWNER через access.set — должна быть ошибка
+6. применить шаблон через template.applyToPage
 
 
-7. попробовать удалить владельца — должна быть ошибка
+7. проверить, что блоки появились на новой странице
+
+
+8. удалить шаблон
 
 
 
 
 ---
 
-8. Что дальше лучше делать
+6. Важный момент по apply
 
-Сейчас у тебя уже закрыты:
+Сейчас template.applyToPage делает простое и безопасное поведение:
+
+удаляет все текущие блоки страницы
+
+вставляет блоки из шаблона
+
+
+Это лучше, чем пытаться “умно мерджить”, потому что мердж почти всегда ломает редактор.
+
+
+---
+
+7. Что дальше лучше делать
+
+Теперь у тебя закрыты:
 
 site
 
@@ -364,19 +455,16 @@ menu
 
 access
 
-
-Самый логичный следующий шаг:
-
-1. template
+template
 
 
-2. layout
+Остаются два крупных участка:
+
+layout
+
+file / Disk
 
 
-3. file / Disk
+Я бы сейчас делал layout-пакет, потому что он ближе к редактору и публичному рендеру, а Disk лучше выделять уже отдельным шагом.
 
-
-
-Я бы следующим делом делал template-пакет, потому что он ближе к редактору страниц и обычно проще, чем Disk.
-
-Напиши: давай template-пакет
+Напиши: давай layout-пакет
