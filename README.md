@@ -1,41 +1,115 @@
-Отлично. Тогда даю рабочий block-пакет.
+Отлично. Делаем menu-пакет.
 
-Сейчас сделаем:
+Сейчас закроем:
 
-block.list
+menu.list
 
-block.create
+menu.create
 
-block.update
+menu.update
 
-block.delete
+menu.delete
 
-block.duplicate
+menu.setTop
 
-block.move
+menu.item.add
 
-block.reorder
+menu.item.update
+
+menu.item.delete
+
+menu.item.move
 
 
-Это уже даст основу для редактора страниц.
+Сделаем это без усложнения: меню храним в menus.json, у записи меню есть items, а у сайта — topMenuId.
 
 
 ---
 
 1. Обнови /local/sitebuilder/lib/helpers.php
 
-Добавь в конец файла эти функции:
+Добавь в конец файла:
 
 <?php
 
-if (!function_exists('sb_blocks_for_page')) {
-    function sb_blocks_for_page(int $pageId): array
+if (!function_exists('sb_find_menu')) {
+    function sb_find_menu(int $menuId): ?array
     {
-        $blocks = array_values(array_filter(sb_read_blocks(), static function ($b) use ($pageId) {
-            return (int)($b['pageId'] ?? 0) === $pageId;
-        }));
+        foreach (sb_read_menus() as $m) {
+            if ((int)($m['id'] ?? 0) === $menuId) {
+                return $m;
+            }
+        }
+        return null;
+    }
+}
 
-        usort($blocks, static function ($a, $b) {
+if (!function_exists('sb_next_menu_id')) {
+    function sb_next_menu_id(array $menus = null): int
+    {
+        if ($menus === null) {
+            $menus = sb_read_menus();
+        }
+
+        $maxId = 0;
+        foreach ($menus as $m) {
+            $maxId = max($maxId, (int)($m['id'] ?? 0));
+        }
+
+        return $maxId + 1;
+    }
+}
+
+if (!function_exists('sb_next_menu_item_id')) {
+    function sb_next_menu_item_id(array $items): int
+    {
+        $maxId = 0;
+        foreach ($items as $item) {
+            $maxId = max($maxId, (int)($item['id'] ?? 0));
+        }
+        return $maxId + 1;
+    }
+}
+
+if (!function_exists('sb_normalize_menu_item')) {
+    function sb_normalize_menu_item(array $item): array
+    {
+        if (!isset($item['id'])) {
+            $item['id'] = 0;
+        }
+        if (!isset($item['title'])) {
+            $item['title'] = '';
+        }
+        if (!isset($item['type'])) {
+            $item['type'] = 'page';
+        }
+        if (!isset($item['pageId'])) {
+            $item['pageId'] = 0;
+        }
+        if (!isset($item['url'])) {
+            $item['url'] = '';
+        }
+        if (!isset($item['target'])) {
+            $item['target'] = '_self';
+        }
+        if (!isset($item['sort'])) {
+            $item['sort'] = 500;
+        }
+
+        return $item;
+    }
+}
+
+if (!function_exists('sb_normalize_menu_record')) {
+    function sb_normalize_menu_record(array $menu): array
+    {
+        if (!isset($menu['items']) || !is_array($menu['items'])) {
+            $menu['items'] = [];
+        }
+
+        $menu['items'] = array_map('sb_normalize_menu_item', $menu['items']);
+
+        usort($menu['items'], static function ($a, $b) {
             $sortCmp = (int)($a['sort'] ?? 500) <=> (int)($b['sort'] ?? 500);
             if ($sortCmp !== 0) {
                 return $sortCmp;
@@ -43,614 +117,622 @@ if (!function_exists('sb_blocks_for_page')) {
             return (int)($a['id'] ?? 0) <=> (int)($b['id'] ?? 0);
         });
 
-        return $blocks;
+        if (!isset($menu['name'])) {
+            $menu['name'] = '';
+        }
+        if (!isset($menu['siteId'])) {
+            $menu['siteId'] = 0;
+        }
+
+        return $menu;
     }
 }
 
-if (!function_exists('sb_next_block_id')) {
-    function sb_next_block_id(array $blocks = null): int
+if (!function_exists('sb_menu_next_item_sort')) {
+    function sb_menu_next_item_sort(array $items): int
     {
-        if ($blocks === null) {
-            $blocks = sb_read_blocks();
-        }
-
-        $maxId = 0;
-        foreach ($blocks as $b) {
-            $maxId = max($maxId, (int)($b['id'] ?? 0));
-        }
-
-        return $maxId + 1;
-    }
-}
-
-if (!function_exists('sb_next_block_sort')) {
-    function sb_next_block_sort(int $pageId, array $blocks = null): int
-    {
-        if ($blocks === null) {
-            $blocks = sb_read_blocks();
-        }
-
         $maxSort = 0;
-        foreach ($blocks as $b) {
-            if ((int)($b['pageId'] ?? 0) === $pageId) {
-                $maxSort = max($maxSort, (int)($b['sort'] ?? 0));
-            }
+        foreach ($items as $item) {
+            $maxSort = max($maxSort, (int)($item['sort'] ?? 0));
         }
-
         return $maxSort + 10;
-    }
-}
-
-if (!function_exists('sb_default_block_content')) {
-    function sb_default_block_content(string $type): array
-    {
-        switch ($type) {
-            case 'text':
-                return ['html' => '<p>Новый текст</p>'];
-
-            case 'heading':
-                return [
-                    'text' => 'Новый заголовок',
-                    'level' => 'h2',
-                    'align' => 'left',
-                ];
-
-            case 'image':
-                return [
-                    'fileId' => 0,
-                    'src' => '',
-                    'alt' => '',
-                    'title' => '',
-                    'width' => '',
-                    'height' => '',
-                    'link' => '',
-                ];
-
-            case 'button':
-                return [
-                    'text' => 'Кнопка',
-                    'href' => '#',
-                    'target' => '_self',
-                    'style' => 'primary',
-                    'align' => 'left',
-                ];
-
-            case 'spacer':
-                return [
-                    'height' => 30,
-                ];
-
-            case 'columns2':
-                return [
-                    'leftHtml' => '<p>Левая колонка</p>',
-                    'rightHtml' => '<p>Правая колонка</p>',
-                    'ratio' => '1:1',
-                    'gap' => 24,
-                ];
-
-            case 'gallery':
-                return [
-                    'items' => [],
-                    'columns' => 3,
-                    'gap' => 16,
-                ];
-
-            case 'card':
-                return [
-                    'title' => 'Карточка',
-                    'text' => 'Описание карточки',
-                    'imageFileId' => 0,
-                    'imageSrc' => '',
-                    'buttonText' => '',
-                    'buttonHref' => '',
-                ];
-
-            case 'cards':
-                return [
-                    'items' => [],
-                    'columns' => 3,
-                    'gap' => 24,
-                ];
-
-            case 'html':
-                return [
-                    'html' => '<div>HTML блок</div>',
-                ];
-
-            default:
-                return [];
-        }
-    }
-}
-
-if (!function_exists('sb_normalize_block_record')) {
-    function sb_normalize_block_record(array $block): array
-    {
-        if (!isset($block['content']) || !is_array($block['content'])) {
-            $block['content'] = [];
-        }
-
-        if (!isset($block['props']) || !is_array($block['props'])) {
-            $block['props'] = [];
-        }
-
-        if (!isset($block['type'])) {
-            $block['type'] = 'text';
-        }
-
-        if (!isset($block['sort'])) {
-            $block['sort'] = 500;
-        }
-
-        return $block;
     }
 }
 
 
 ---
 
-2. Полностью замени /local/sitebuilder/api/handlers/block.php
+2. Полностью замени /local/sitebuilder/api/handlers/menu.php
 
 <?php
 
 global $USER;
 
-if ($action === 'block.list') {
-    $pageId = (int)($_POST['pageId'] ?? 0);
-    if ($pageId <= 0) {
-        sb_json_error('PAGE_ID_REQUIRED', 422);
+if ($action === 'menu.list') {
+    $siteId = (int)($_POST['siteId'] ?? 0);
+    if ($siteId <= 0) {
+        sb_json_error('SITE_ID_REQUIRED', 422);
     }
 
-    $page = sb_find_page($pageId);
-    if (!$page) {
-        sb_json_error('PAGE_NOT_FOUND', 404);
-    }
-
-    $siteId = (int)($page['siteId'] ?? 0);
     sb_require_viewer($siteId);
 
-    $blocks = sb_blocks_for_page($pageId);
-    $blocks = array_map('sb_normalize_block_record', $blocks);
+    $menus = array_values(array_filter(sb_read_menus(), static function ($m) use ($siteId) {
+        return (int)($m['siteId'] ?? 0) === $siteId;
+    }));
 
-    sb_json_ok(['blocks' => $blocks]);
+    $menus = array_map('sb_normalize_menu_record', $menus);
+
+    usort($menus, static function ($a, $b) {
+        return (int)($a['id'] ?? 0) <=> (int)($b['id'] ?? 0);
+    });
+
+    $site = sb_find_site($siteId);
+    $topMenuId = $site ? (int)($site['topMenuId'] ?? 0) : 0;
+
+    sb_json_ok([
+        'menus' => $menus,
+        'topMenuId' => $topMenuId,
+    ]);
 }
 
-if ($action === 'block.create') {
-    $pageId = (int)($_POST['pageId'] ?? 0);
-    $type = trim((string)($_POST['type'] ?? 'text'));
+if ($action === 'menu.create') {
+    $siteId = (int)($_POST['siteId'] ?? 0);
+    $name = trim((string)($_POST['name'] ?? ''));
 
-    if ($pageId <= 0) {
-        sb_json_error('PAGE_ID_REQUIRED', 422);
+    if ($siteId <= 0) {
+        sb_json_error('SITE_ID_REQUIRED', 422);
     }
-    if ($type === '') {
-        sb_json_error('TYPE_REQUIRED', 422);
-    }
-
-    $page = sb_find_page($pageId);
-    if (!$page) {
-        sb_json_error('PAGE_NOT_FOUND', 404);
+    if ($name === '') {
+        sb_json_error('NAME_REQUIRED', 422);
     }
 
-    $siteId = (int)($page['siteId'] ?? 0);
     sb_require_editor($siteId);
 
-    $blocks = sb_read_blocks();
+    $menus = sb_read_menus();
 
-    $block = [
-        'id' => sb_next_block_id($blocks),
-        'pageId' => $pageId,
-        'type' => $type,
-        'sort' => sb_next_block_sort($pageId, $blocks),
-        'content' => sb_default_block_content($type),
-        'props' => [],
+    $menu = [
+        'id' => sb_next_menu_id($menus),
+        'siteId' => $siteId,
+        'name' => $name,
+        'items' => [],
         'createdBy' => (int)$USER->GetID(),
         'createdAt' => date('c'),
         'updatedAt' => date('c'),
         'updatedBy' => (int)$USER->GetID(),
     ];
 
-    $blocks[] = $block;
-    sb_write_blocks($blocks);
+    $menus[] = $menu;
+    sb_write_menus($menus);
 
     sb_json_ok([
-        'block' => sb_normalize_block_record($block),
+        'menu' => sb_normalize_menu_record($menu),
     ]);
 }
 
-if ($action === 'block.update') {
+if ($action === 'menu.update') {
     $id = (int)($_POST['id'] ?? 0);
+    $name = trim((string)($_POST['name'] ?? ''));
+
     if ($id <= 0) {
         sb_json_error('ID_REQUIRED', 422);
     }
-
-    $block = sb_find_block($id);
-    if (!$block) {
-        sb_json_error('BLOCK_NOT_FOUND', 404);
+    if ($name === '') {
+        sb_json_error('NAME_REQUIRED', 422);
     }
 
-    $page = sb_find_page((int)($block['pageId'] ?? 0));
-    if (!$page) {
-        sb_json_error('PAGE_NOT_FOUND', 404);
+    $menu = sb_find_menu($id);
+    if (!$menu) {
+        sb_json_error('MENU_NOT_FOUND', 404);
     }
 
-    $siteId = (int)($page['siteId'] ?? 0);
+    $siteId = (int)($menu['siteId'] ?? 0);
     sb_require_editor($siteId);
 
-    $contentRaw = $_POST['content'] ?? null;
-    $propsRaw = $_POST['props'] ?? null;
-    $typeRaw = $_POST['type'] ?? null;
-
-    $newContent = null;
-    $newProps = null;
-    $newType = null;
-
-    if ($contentRaw !== null) {
-        if (is_array($contentRaw)) {
-            $newContent = $contentRaw;
-        } else {
-            $decoded = json_decode((string)$contentRaw, true);
-            if (!is_array($decoded)) {
-                sb_json_error('BAD_CONTENT_JSON', 422);
-            }
-            $newContent = $decoded;
-        }
-    }
-
-    if ($propsRaw !== null) {
-        if (is_array($propsRaw)) {
-            $newProps = $propsRaw;
-        } else {
-            $decoded = json_decode((string)$propsRaw, true);
-            if (!is_array($decoded)) {
-                sb_json_error('BAD_PROPS_JSON', 422);
-            }
-            $newProps = $decoded;
-        }
-    }
-
-    if ($typeRaw !== null) {
-        $newType = trim((string)$typeRaw);
-        if ($newType === '') {
-            sb_json_error('TYPE_REQUIRED', 422);
-        }
-    }
-
-    $blocks = sb_read_blocks();
+    $menus = sb_read_menus();
     $updated = null;
 
-    foreach ($blocks as &$b) {
-        if ((int)($b['id'] ?? 0) === $id) {
-            if ($newType !== null) {
-                $b['type'] = $newType;
-            }
-            if ($newContent !== null) {
-                $b['content'] = $newContent;
-            }
-            if ($newProps !== null) {
-                $b['props'] = $newProps;
-            }
-
-            $b['updatedAt'] = date('c');
-            $b['updatedBy'] = (int)$USER->GetID();
-
-            $updated = $b;
+    foreach ($menus as &$m) {
+        if ((int)($m['id'] ?? 0) === $id) {
+            $m['name'] = $name;
+            $m['updatedAt'] = date('c');
+            $m['updatedBy'] = (int)$USER->GetID();
+            $updated = $m;
             break;
         }
     }
-    unset($b);
+    unset($m);
 
     if (!$updated) {
-        sb_json_error('BLOCK_NOT_FOUND', 404);
+        sb_json_error('MENU_NOT_FOUND', 404);
     }
 
-    sb_write_blocks($blocks);
+    sb_write_menus($menus);
 
     sb_json_ok([
-        'block' => sb_normalize_block_record($updated),
+        'menu' => sb_normalize_menu_record($updated),
     ]);
 }
 
-if ($action === 'block.delete') {
+if ($action === 'menu.delete') {
     $id = (int)($_POST['id'] ?? 0);
     if ($id <= 0) {
         sb_json_error('ID_REQUIRED', 422);
     }
 
-    $block = sb_find_block($id);
-    if (!$block) {
-        sb_json_error('BLOCK_NOT_FOUND', 404);
+    $menu = sb_find_menu($id);
+    if (!$menu) {
+        sb_json_error('MENU_NOT_FOUND', 404);
     }
 
-    $page = sb_find_page((int)($block['pageId'] ?? 0));
-    if (!$page) {
-        sb_json_error('PAGE_NOT_FOUND', 404);
-    }
-
-    $siteId = (int)($page['siteId'] ?? 0);
+    $siteId = (int)($menu['siteId'] ?? 0);
     sb_require_editor($siteId);
 
-    $blocks = sb_read_blocks();
-    $before = count($blocks);
+    $menus = sb_read_menus();
+    $before = count($menus);
 
-    $blocks = array_values(array_filter($blocks, static function ($b) use ($id) {
-        return (int)($b['id'] ?? 0) !== $id;
+    $menus = array_values(array_filter($menus, static function ($m) use ($id) {
+        return (int)($m['id'] ?? 0) !== $id;
     }));
 
-    if (count($blocks) === $before) {
-        sb_json_error('BLOCK_NOT_FOUND', 404);
+    if (count($menus) === $before) {
+        sb_json_error('MENU_NOT_FOUND', 404);
     }
 
-    sb_write_blocks($blocks);
+    sb_write_menus($menus);
+
+    $sites = sb_read_sites();
+    $sitesChanged = false;
+
+    foreach ($sites as &$s) {
+        if ((int)($s['id'] ?? 0) === $siteId && (int)($s['topMenuId'] ?? 0) === $id) {
+            $s['topMenuId'] = 0;
+            $s['updatedAt'] = date('c');
+            $s['updatedBy'] = (int)$USER->GetID();
+            $sitesChanged = true;
+        }
+    }
+    unset($s);
+
+    if ($sitesChanged) {
+        sb_write_sites($sites);
+    }
+
     sb_json_ok();
 }
 
-if ($action === 'block.duplicate') {
-    $id = (int)($_POST['id'] ?? 0);
-    if ($id <= 0) {
-        sb_json_error('ID_REQUIRED', 422);
+if ($action === 'menu.setTop') {
+    $siteId = (int)($_POST['siteId'] ?? 0);
+    $menuId = (int)($_POST['menuId'] ?? 0);
+
+    if ($siteId <= 0) {
+        sb_json_error('SITE_ID_REQUIRED', 422);
     }
 
-    $src = sb_find_block($id);
-    if (!$src) {
-        sb_json_error('BLOCK_NOT_FOUND', 404);
-    }
-
-    $pageId = (int)($src['pageId'] ?? 0);
-    $page = sb_find_page($pageId);
-    if (!$page) {
-        sb_json_error('PAGE_NOT_FOUND', 404);
-    }
-
-    $siteId = (int)($page['siteId'] ?? 0);
     sb_require_editor($siteId);
 
-    $blocks = sb_read_blocks();
-    $srcSort = (int)($src['sort'] ?? 500);
-
-    foreach ($blocks as &$b) {
-        if (
-            (int)($b['pageId'] ?? 0) === $pageId
-            && (int)($b['sort'] ?? 0) > $srcSort
-        ) {
-            $b['sort'] = (int)($b['sort'] ?? 0) + 10;
-            $b['updatedAt'] = date('c');
-            $b['updatedBy'] = (int)$USER->GetID();
+    if ($menuId > 0) {
+        $menu = sb_find_menu($menuId);
+        if (!$menu || (int)($menu['siteId'] ?? 0) !== $siteId) {
+            sb_json_error('MENU_NOT_IN_SITE', 422);
         }
     }
-    unset($b);
 
-    $copy = $src;
-    $copy['id'] = sb_next_block_id($blocks);
-    $copy['sort'] = $srcSort + 10;
-    $copy['createdBy'] = (int)$USER->GetID();
-    $copy['createdAt'] = date('c');
-    $copy['updatedAt'] = date('c');
-    $copy['updatedBy'] = (int)$USER->GetID();
+    $sites = sb_read_sites();
+    $found = false;
 
-    $blocks[] = $copy;
-    sb_write_blocks($blocks);
+    foreach ($sites as &$s) {
+        if ((int)($s['id'] ?? 0) === $siteId) {
+            $s['topMenuId'] = $menuId;
+            $s['updatedAt'] = date('c');
+            $s['updatedBy'] = (int)$USER->GetID();
+            $found = true;
+            break;
+        }
+    }
+    unset($s);
+
+    if (!$found) {
+        sb_json_error('SITE_NOT_FOUND', 404);
+    }
+
+    sb_write_sites($sites);
+    sb_json_ok();
+}
+
+if ($action === 'menu.item.add') {
+    $menuId = (int)($_POST['menuId'] ?? 0);
+    $title = trim((string)($_POST['title'] ?? ''));
+    $type = trim((string)($_POST['type'] ?? 'page'));
+    $pageId = (int)($_POST['pageId'] ?? 0);
+    $url = trim((string)($_POST['url'] ?? ''));
+    $target = trim((string)($_POST['target'] ?? '_self'));
+
+    if ($menuId <= 0) {
+        sb_json_error('MENU_ID_REQUIRED', 422);
+    }
+    if ($title === '') {
+        sb_json_error('TITLE_REQUIRED', 422);
+    }
+    if (!in_array($type, ['page', 'url'], true)) {
+        sb_json_error('BAD_ITEM_TYPE', 422);
+    }
+    if (!in_array($target, ['_self', '_blank'], true)) {
+        $target = '_self';
+    }
+
+    $menu = sb_find_menu($menuId);
+    if (!$menu) {
+        sb_json_error('MENU_NOT_FOUND', 404);
+    }
+
+    $siteId = (int)($menu['siteId'] ?? 0);
+    sb_require_editor($siteId);
+
+    if ($type === 'page') {
+        if ($pageId <= 0) {
+            sb_json_error('PAGE_ID_REQUIRED', 422);
+        }
+
+        $page = sb_find_page($pageId);
+        if (!$page || (int)($page['siteId'] ?? 0) !== $siteId) {
+            sb_json_error('PAGE_NOT_IN_SITE', 422);
+        }
+
+        $url = '';
+    } else {
+        $pageId = 0;
+    }
+
+    $menus = sb_read_menus();
+    $updatedMenu = null;
+
+    foreach ($menus as &$m) {
+        if ((int)($m['id'] ?? 0) !== $menuId) {
+            continue;
+        }
+
+        if (!isset($m['items']) || !is_array($m['items'])) {
+            $m['items'] = [];
+        }
+
+        $item = [
+            'id' => sb_next_menu_item_id($m['items']),
+            'title' => $title,
+            'type' => $type,
+            'pageId' => $pageId,
+            'url' => $url,
+            'target' => $target,
+            'sort' => sb_menu_next_item_sort($m['items']),
+        ];
+
+        $m['items'][] = $item;
+        $m['updatedAt'] = date('c');
+        $m['updatedBy'] = (int)$USER->GetID();
+        $updatedMenu = $m;
+        break;
+    }
+    unset($m);
+
+    if (!$updatedMenu) {
+        sb_json_error('MENU_NOT_FOUND', 404);
+    }
+
+    sb_write_menus($menus);
 
     sb_json_ok([
-        'block' => sb_normalize_block_record($copy),
+        'menu' => sb_normalize_menu_record($updatedMenu),
     ]);
 }
 
-if ($action === 'block.move') {
-    $id = (int)($_POST['id'] ?? 0);
+if ($action === 'menu.item.update') {
+    $menuId = (int)($_POST['menuId'] ?? 0);
+    $itemId = (int)($_POST['itemId'] ?? 0);
+    $title = trim((string)($_POST['title'] ?? ''));
+    $type = trim((string)($_POST['type'] ?? 'page'));
+    $pageId = (int)($_POST['pageId'] ?? 0);
+    $url = trim((string)($_POST['url'] ?? ''));
+    $target = trim((string)($_POST['target'] ?? '_self'));
+
+    if ($menuId <= 0) {
+        sb_json_error('MENU_ID_REQUIRED', 422);
+    }
+    if ($itemId <= 0) {
+        sb_json_error('ITEM_ID_REQUIRED', 422);
+    }
+    if ($title === '') {
+        sb_json_error('TITLE_REQUIRED', 422);
+    }
+    if (!in_array($type, ['page', 'url'], true)) {
+        sb_json_error('BAD_ITEM_TYPE', 422);
+    }
+    if (!in_array($target, ['_self', '_blank'], true)) {
+        $target = '_self';
+    }
+
+    $menu = sb_find_menu($menuId);
+    if (!$menu) {
+        sb_json_error('MENU_NOT_FOUND', 404);
+    }
+
+    $siteId = (int)($menu['siteId'] ?? 0);
+    sb_require_editor($siteId);
+
+    if ($type === 'page') {
+        if ($pageId <= 0) {
+            sb_json_error('PAGE_ID_REQUIRED', 422);
+        }
+
+        $page = sb_find_page($pageId);
+        if (!$page || (int)($page['siteId'] ?? 0) !== $siteId) {
+            sb_json_error('PAGE_NOT_IN_SITE', 422);
+        }
+
+        $url = '';
+    } else {
+        $pageId = 0;
+    }
+
+    $menus = sb_read_menus();
+    $updatedMenu = null;
+    $foundItem = false;
+
+    foreach ($menus as &$m) {
+        if ((int)($m['id'] ?? 0) !== $menuId) {
+            continue;
+        }
+
+        if (!isset($m['items']) || !is_array($m['items'])) {
+            $m['items'] = [];
+        }
+
+        foreach ($m['items'] as &$item) {
+            if ((int)($item['id'] ?? 0) !== $itemId) {
+                continue;
+            }
+
+            $item['title'] = $title;
+            $item['type'] = $type;
+            $item['pageId'] = $pageId;
+            $item['url'] = $url;
+            $item['target'] = $target;
+
+            $foundItem = true;
+            break;
+        }
+        unset($item);
+
+        if ($foundItem) {
+            $m['updatedAt'] = date('c');
+            $m['updatedBy'] = (int)$USER->GetID();
+            $updatedMenu = $m;
+            break;
+        }
+    }
+    unset($m);
+
+    if (!$foundItem || !$updatedMenu) {
+        sb_json_error('ITEM_NOT_FOUND', 404);
+    }
+
+    sb_write_menus($menus);
+
+    sb_json_ok([
+        'menu' => sb_normalize_menu_record($updatedMenu),
+    ]);
+}
+
+if ($action === 'menu.item.delete') {
+    $menuId = (int)($_POST['menuId'] ?? 0);
+    $itemId = (int)($_POST['itemId'] ?? 0);
+
+    if ($menuId <= 0) {
+        sb_json_error('MENU_ID_REQUIRED', 422);
+    }
+    if ($itemId <= 0) {
+        sb_json_error('ITEM_ID_REQUIRED', 422);
+    }
+
+    $menu = sb_find_menu($menuId);
+    if (!$menu) {
+        sb_json_error('MENU_NOT_FOUND', 404);
+    }
+
+    $siteId = (int)($menu['siteId'] ?? 0);
+    sb_require_editor($siteId);
+
+    $menus = sb_read_menus();
+    $updatedMenu = null;
+    $foundItem = false;
+
+    foreach ($menus as &$m) {
+        if ((int)($m['id'] ?? 0) !== $menuId) {
+            continue;
+        }
+
+        if (!isset($m['items']) || !is_array($m['items'])) {
+            $m['items'] = [];
+        }
+
+        $before = count($m['items']);
+        $m['items'] = array_values(array_filter($m['items'], static function ($item) use ($itemId) {
+            return (int)($item['id'] ?? 0) !== $itemId;
+        }));
+
+        if (count($m['items']) !== $before) {
+            $foundItem = true;
+            $m['updatedAt'] = date('c');
+            $m['updatedBy'] = (int)$USER->GetID();
+            $updatedMenu = $m;
+        }
+
+        break;
+    }
+    unset($m);
+
+    if (!$foundItem) {
+        sb_json_error('ITEM_NOT_FOUND', 404);
+    }
+
+    sb_write_menus($menus);
+
+    sb_json_ok([
+        'menu' => sb_normalize_menu_record($updatedMenu),
+    ]);
+}
+
+if ($action === 'menu.item.move') {
+    $menuId = (int)($_POST['menuId'] ?? 0);
+    $itemId = (int)($_POST['itemId'] ?? 0);
     $dir = trim((string)($_POST['dir'] ?? ''));
 
-    if ($id <= 0) {
-        sb_json_error('ID_REQUIRED', 422);
+    if ($menuId <= 0) {
+        sb_json_error('MENU_ID_REQUIRED', 422);
+    }
+    if ($itemId <= 0) {
+        sb_json_error('ITEM_ID_REQUIRED', 422);
     }
     if ($dir !== 'up' && $dir !== 'down') {
         sb_json_error('DIR_REQUIRED', 422);
     }
 
-    $block = sb_find_block($id);
-    if (!$block) {
-        sb_json_error('BLOCK_NOT_FOUND', 404);
+    $menu = sb_find_menu($menuId);
+    if (!$menu) {
+        sb_json_error('MENU_NOT_FOUND', 404);
     }
 
-    $pageId = (int)($block['pageId'] ?? 0);
-    $page = sb_find_page($pageId);
-    if (!$page) {
-        sb_json_error('PAGE_NOT_FOUND', 404);
-    }
-
-    $siteId = (int)($page['siteId'] ?? 0);
+    $siteId = (int)($menu['siteId'] ?? 0);
     sb_require_editor($siteId);
 
-    $blocks = sb_read_blocks();
+    $menus = sb_read_menus();
+    $updatedMenu = null;
+    $foundMenu = false;
 
-    $siblings = array_values(array_filter($blocks, static function ($b) use ($pageId) {
-        return (int)($b['pageId'] ?? 0) === $pageId;
-    }));
-
-    usort($siblings, static function ($a, $b) {
-        $sortCmp = (int)($a['sort'] ?? 500) <=> (int)($b['sort'] ?? 500);
-        if ($sortCmp !== 0) {
-            return $sortCmp;
+    foreach ($menus as &$m) {
+        if ((int)($m['id'] ?? 0) !== $menuId) {
+            continue;
         }
-        return (int)($a['id'] ?? 0) <=> (int)($b['id'] ?? 0);
-    });
 
-    $pos = null;
-    for ($i = 0, $cnt = count($siblings); $i < $cnt; $i++) {
-        if ((int)($siblings[$i]['id'] ?? 0) === $id) {
-            $pos = $i;
+        $foundMenu = true;
+
+        if (!isset($m['items']) || !is_array($m['items'])) {
+            $m['items'] = [];
+        }
+
+        usort($m['items'], static function ($a, $b) {
+            $sortCmp = (int)($a['sort'] ?? 500) <=> (int)($b['sort'] ?? 500);
+            if ($sortCmp !== 0) {
+                return $sortCmp;
+            }
+            return (int)($a['id'] ?? 0) <=> (int)($b['id'] ?? 0);
+        });
+
+        $pos = null;
+        for ($i = 0, $cnt = count($m['items']); $i < $cnt; $i++) {
+            if ((int)($m['items'][$i]['id'] ?? 0) === $itemId) {
+                $pos = $i;
+                break;
+            }
+        }
+
+        if ($pos === null) {
+            sb_json_error('ITEM_NOT_FOUND', 404);
+        }
+
+        if ($dir === 'up' && $pos === 0) {
+            $updatedMenu = $m;
             break;
         }
-    }
 
-    if ($pos === null) {
-        sb_json_ok();
-    }
-
-    if ($dir === 'up' && $pos === 0) {
-        sb_json_ok();
-    }
-
-    if ($dir === 'down' && $pos === count($siblings) - 1) {
-        sb_json_ok();
-    }
-
-    $swapPos = ($dir === 'up') ? $pos - 1 : $pos + 1;
-
-    $idA = (int)$siblings[$pos]['id'];
-    $idB = (int)$siblings[$swapPos]['id'];
-    $sortA = (int)($siblings[$pos]['sort'] ?? 500);
-    $sortB = (int)($siblings[$swapPos]['sort'] ?? 500);
-
-    foreach ($blocks as &$b) {
-        $bid = (int)($b['id'] ?? 0);
-
-        if ($bid === $idA) {
-            $b['sort'] = $sortB;
-            $b['updatedAt'] = date('c');
-            $b['updatedBy'] = (int)$USER->GetID();
+        if ($dir === 'down' && $pos === count($m['items']) - 1) {
+            $updatedMenu = $m;
+            break;
         }
 
-        if ($bid === $idB) {
-            $b['sort'] = $sortA;
-            $b['updatedAt'] = date('c');
-            $b['updatedBy'] = (int)$USER->GetID();
-        }
+        $swapPos = ($dir === 'up') ? $pos - 1 : $pos + 1;
+
+        $sortA = (int)($m['items'][$pos]['sort'] ?? 500);
+        $sortB = (int)($m['items'][$swapPos]['sort'] ?? 500);
+
+        $m['items'][$pos]['sort'] = $sortB;
+        $m['items'][$swapPos]['sort'] = $sortA;
+        $m['updatedAt'] = date('c');
+        $m['updatedBy'] = (int)$USER->GetID();
+
+        $updatedMenu = $m;
+        break;
     }
-    unset($b);
+    unset($m);
 
-    sb_write_blocks($blocks);
-    sb_json_ok();
-}
-
-if ($action === 'block.reorder') {
-    $pageId = (int)($_POST['pageId'] ?? 0);
-    if ($pageId <= 0) {
-        sb_json_error('PAGE_ID_REQUIRED', 422);
-    }
-
-    $page = sb_find_page($pageId);
-    if (!$page) {
-        sb_json_error('PAGE_NOT_FOUND', 404);
+    if (!$foundMenu) {
+        sb_json_error('MENU_NOT_FOUND', 404);
     }
 
-    $siteId = (int)($page['siteId'] ?? 0);
-    sb_require_editor($siteId);
-
-    $orderRaw = $_POST['order'] ?? null;
-    if ($orderRaw === null) {
-        sb_json_error('ORDER_REQUIRED', 422);
-    }
-
-    if (is_array($orderRaw)) {
-        $order = $orderRaw;
-    } else {
-        $order = json_decode((string)$orderRaw, true);
-        if (!is_array($order)) {
-            sb_json_error('BAD_ORDER_JSON', 422);
-        }
-    }
-
-    $orderIds = [];
-    foreach ($order as $item) {
-        $bid = (int)$item;
-        if ($bid > 0) {
-            $orderIds[] = $bid;
-        }
-    }
-
-    $pageBlocks = sb_blocks_for_page($pageId);
-    $pageBlockIds = [];
-    foreach ($pageBlocks as $b) {
-        $pageBlockIds[(int)($b['id'] ?? 0)] = true;
-    }
-
-    foreach ($orderIds as $bid) {
-        if (!isset($pageBlockIds[$bid])) {
-            sb_json_error('BLOCK_NOT_IN_PAGE', 422, ['blockId' => $bid]);
-        }
-    }
-
-    $missing = array_diff(array_keys($pageBlockIds), $orderIds);
-    if (!empty($missing)) {
-        foreach ($missing as $bid) {
-            $orderIds[] = (int)$bid;
-        }
-    }
-
-    $sortMap = [];
-    $sort = 10;
-    foreach ($orderIds as $bid) {
-        $sortMap[(int)$bid] = $sort;
-        $sort += 10;
-    }
-
-    $blocks = sb_read_blocks();
-    foreach ($blocks as &$b) {
-        $bid = (int)($b['id'] ?? 0);
-        if ((int)($b['pageId'] ?? 0) === $pageId && isset($sortMap[$bid])) {
-            $b['sort'] = $sortMap[$bid];
-            $b['updatedAt'] = date('c');
-            $b['updatedBy'] = (int)$USER->GetID();
-        }
-    }
-    unset($b);
-
-    sb_write_blocks($blocks);
+    sb_write_menus($menus);
 
     sb_json_ok([
-        'blocks' => array_map('sb_normalize_block_record', sb_blocks_for_page($pageId)),
+        'menu' => sb_normalize_menu_record($updatedMenu),
     ]);
 }
 
 sb_json_error('NOT_MOVED_YET', 501, [
-    'handler' => 'block',
+    'handler' => 'menu',
     'action' => $action,
 ]);
 
 
 ---
 
-3. Что теперь готово по block
+3. Что теперь должно работать
 
-После вставки у тебя должны работать:
+После вставки:
 
-block.list
+menu.list
 
-block.create
+menu.create
 
-block.update
+menu.update
 
-block.delete
+menu.delete
 
-block.duplicate
+menu.setTop
 
-block.move
+menu.item.add
 
-block.reorder
+menu.item.update
+
+menu.item.delete
+
+menu.item.move
 
 
 
 ---
 
-4. В каком формате можно вызывать block.update
+4. Как устроены items
 
-Сейчас block.update понимает оба варианта:
+Каждый item сейчас такой:
 
-Вариант 1 — как массив
+{
+  "id": 1,
+  "title": "Главная",
+  "type": "page",
+  "pageId": 12,
+  "url": "",
+  "target": "_self",
+  "sort": 10
+}
 
-Если фронт шлёт обычный POST-массив:
+или внешний URL:
 
-content[html]=<p>Текст</p>
-props[className]=hero
-
-Вариант 2 — как JSON-строка
-
-Если фронт шлёт:
-
-content: "{\"html\":\"<p>Текст</p>\"}"
-props: "{\"className\":\"hero\"}"
-
-Это сделано специально, чтобы не ломать старый фронт.
+{
+  "id": 2,
+  "title": "Документация",
+  "type": "url",
+  "pageId": 0,
+  "url": "https://example.com",
+  "target": "_blank",
+  "sort": 20
+}
 
 
 ---
@@ -659,58 +741,65 @@ props: "{\"className\":\"hero\"}"
 
 Проверь по порядку:
 
-1. block.create для text
+1. создать меню
 
 
-2. block.list
+2. переименовать меню
 
 
-3. block.update содержимого
+3. добавить пункт типа page
 
 
-4. block.duplicate
+4. добавить пункт типа url
 
 
-5. block.move
+5. подвигать item вверх/вниз
 
 
-6. block.reorder
+6. обновить item
 
 
-7. block.delete
+7. назначить topMenuId через menu.setTop
+
+
+8. удалить item
+
+
+9. удалить меню
 
 
 
 
 ---
 
-6. На что обратить внимание
+6. Что дальше лучше делать
 
-Сейчас block.create создаёт стандартный content по типу блока. Это временно правильно, потому что редактор потом всё равно будет сохранять конкретные данные через block.update.
+Теперь уже закрыты основные CRUD-ветки:
 
+site
 
----
+page
 
-7. Следующий правильный шаг
+block
 
-Теперь у тебя backend уже начинает оживать. Логично идти дальше в таком порядке:
-
-1. menu
-
-
-2. access
+menu
 
 
-3. template
+Самый логичный следующий шаг:
+
+1. access
 
 
-4. layout
+2. template
 
 
-5. file / Disk
+3. layout
+
+
+4. file / Disk
 
 
 
-Я бы следующим делом делал menu-пакет, потому что он обычно проще Disk и быстро закрывает навигацию сайта.
+Я бы следующим сделал access-пакет, потому что он небольшой и сразу даст нормальное управление ролями.
 
-Напиши: давай menu-пакет
+Напиши: давай access-пакет
