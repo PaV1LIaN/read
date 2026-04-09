@@ -1,739 +1,609 @@
-Отлично. Делаем file / Disk-пакет.
+Отлично. Делаем первый рабочий index.php для новой структуры.
 
-Это самый чувствительный участок, поэтому делаем практично и с совместимостью:
+Он будет:
 
-file.list
+показывать список сайтов
 
-file.upload
+создавать сайт
 
-file.delete
+удалять сайт
+
+давать ссылки на:
+
+editor
+
+layout
+
+menu
+
+files
+
+settings
 
 
-И выносим Disk-обвязку в отдельный файл:
 
-lib/disk.php
-
-
-Подход такой:
-
-у каждого сайта есть папка в общем Disk-хранилище
-
-diskFolderId хранится в sites.json
-
-если папки ещё нет — создаём
-
-список файлов отдаём из этой папки
-
-загрузка идёт в эту папку
-
-удаление разрешаем только файлов из папки этого сайта
-
+Пока без лишней красоты, но уже рабочий и нормальный по структуре.
 
 
 ---
 
-1. Создай новый файл /local/sitebuilder/lib/disk.php
+/local/sitebuilder/index.php
 
 <?php
-
-require_once __DIR__ . '/json.php';
-require_once __DIR__ . '/helpers.php';
-
-use Bitrix\Main\Loader;
-use Bitrix\Disk\Driver;
-use Bitrix\Disk\Storage;
-use Bitrix\Disk\Folder;
-use Bitrix\Disk\File;
-use Bitrix\Disk\Security\FakeSecurityContext;
-
-if (!function_exists('sb_disk_require_module')) {
-    function sb_disk_require_module(): void
-    {
-        if (!Loader::includeModule('disk')) {
-            throw new RuntimeException('Disk module is not installed');
-        }
-    }
-}
-
-if (!function_exists('sb_disk_security_context')) {
-    function sb_disk_security_context()
-    {
-        global $USER;
-
-        if (class_exists(FakeSecurityContext::class)) {
-            return new FakeSecurityContext((int)$USER->GetID());
-        }
-
-        return null;
-    }
-}
-
-if (!function_exists('sb_disk_common_storage')) {
-    function sb_disk_common_storage(): ?Storage
-    {
-        sb_disk_require_module();
-
-        if (method_exists(Storage::class, 'loadByEntity')) {
-            $storage = Storage::loadByEntity('common', 0);
-            if ($storage) {
-                return $storage;
-            }
-        }
-
-        if (class_exists(Driver::class)) {
-            $driver = Driver::getInstance();
-
-            if (method_exists($driver, 'getStorageByCommonId')) {
-                $storage = $driver->getStorageByCommonId('shared_files_' . SITE_ID);
-                if ($storage) {
-                    return $storage;
-                }
-            }
-        }
-
-        return null;
-    }
-}
-
-if (!function_exists('sb_disk_root_folder')) {
-    function sb_disk_root_folder(): Folder
-    {
-        $storage = sb_disk_common_storage();
-        if (!$storage) {
-            throw new RuntimeException('Common Disk storage not found');
-        }
-
-        $root = $storage->getRootObject();
-        if (!$root instanceof Folder) {
-            throw new RuntimeException('Common Disk root folder not found');
-        }
-
-        return $root;
-    }
-}
-
-if (!function_exists('sb_disk_get_children')) {
-    function sb_disk_get_children(Folder $folder): array
-    {
-        $securityContext = sb_disk_security_context();
-
-        try {
-            if ($securityContext) {
-                return (array)$folder->getChildren($securityContext);
-            }
-        } catch (Throwable $e) {
-        }
-
-        try {
-            return (array)$folder->getChildren();
-        } catch (Throwable $e) {
-            return [];
-        }
-    }
-}
-
-if (!function_exists('sb_disk_find_child_folder_by_name')) {
-    function sb_disk_find_child_folder_by_name(Folder $parent, string $name): ?Folder
-    {
-        foreach (sb_disk_get_children($parent) as $child) {
-            if ($child instanceof Folder && (string)$child->getName() === $name) {
-                return $child;
-            }
-        }
-        return null;
-    }
-}
-
-if (!function_exists('sb_disk_add_subfolder')) {
-    function sb_disk_add_subfolder(Folder $parent, string $name): Folder
-    {
-        $fields = ['NAME' => $name];
-        $securityContext = sb_disk_security_context();
-
-        try {
-            $created = $parent->addSubFolder($fields, []);
-            if ($created instanceof Folder) {
-                return $created;
-            }
-            if (is_array($created) && isset($created['OBJECT']) && $created['OBJECT'] instanceof Folder) {
-                return $created['OBJECT'];
-            }
-        } catch (Throwable $e) {
-        }
-
-        try {
-            if ($securityContext) {
-                $created = $parent->addSubFolder($fields, $securityContext);
-                if ($created instanceof Folder) {
-                    return $created;
-                }
-                if (is_array($created) && isset($created['OBJECT']) && $created['OBJECT'] instanceof Folder) {
-                    return $created['OBJECT'];
-                }
-            }
-        } catch (Throwable $e) {
-        }
-
-        throw new RuntimeException('Cannot create Disk folder: ' . $name);
-    }
-}
-
-if (!function_exists('sb_disk_get_or_create_sitebuilder_root')) {
-    function sb_disk_get_or_create_sitebuilder_root(): Folder
-    {
-        $root = sb_disk_root_folder();
-
-        $folder = sb_disk_find_child_folder_by_name($root, 'SiteBuilder');
-        if ($folder) {
-            return $folder;
-        }
-
-        return sb_disk_add_subfolder($root, 'SiteBuilder');
-    }
-}
-
-if (!function_exists('sb_disk_load_folder_by_id')) {
-    function sb_disk_load_folder_by_id(int $folderId): ?Folder
-    {
-        if ($folderId <= 0) {
-            return null;
-        }
-
-        sb_disk_require_module();
-
-        $folder = Folder::loadById($folderId);
-        return $folder instanceof Folder ? $folder : null;
-    }
-}
-
-if (!function_exists('sb_disk_load_file_by_id')) {
-    function sb_disk_load_file_by_id(int $fileId): ?File
-    {
-        if ($fileId <= 0) {
-            return null;
-        }
-
-        sb_disk_require_module();
-
-        $file = File::loadById($fileId);
-        return $file instanceof File ? $file : null;
-    }
-}
-
-if (!function_exists('sb_disk_site_folder_name')) {
-    function sb_disk_site_folder_name(array $site): string
-    {
-        $slug = trim((string)($site['slug'] ?? ''));
-        if ($slug !== '') {
-            return $slug;
-        }
-
-        $id = (int)($site['id'] ?? 0);
-        return $id > 0 ? ('site-' . $id) : 'sitebuilder-site';
-    }
-}
-
-if (!function_exists('sb_disk_ensure_site_folder')) {
-    function sb_disk_ensure_site_folder(int $siteId): Folder
-    {
-        $site = sb_find_site($siteId);
-        if (!$site) {
-            throw new RuntimeException('Site not found');
-        }
-
-        $folderId = (int)($site['diskFolderId'] ?? 0);
-        if ($folderId > 0) {
-            $folder = sb_disk_load_folder_by_id($folderId);
-            if ($folder) {
-                return $folder;
-            }
-        }
-
-        $sitebuilderRoot = sb_disk_get_or_create_sitebuilder_root();
-        $folderName = sb_disk_site_folder_name($site);
-
-        $folder = sb_disk_find_child_folder_by_name($sitebuilderRoot, $folderName);
-        if (!$folder) {
-            $folder = sb_disk_add_subfolder($sitebuilderRoot, $folderName);
-        }
-
-        $sites = sb_read_sites();
-        foreach ($sites as &$s) {
-            if ((int)($s['id'] ?? 0) === $siteId) {
-                $s['diskFolderId'] = (int)$folder->getId();
-                $s['updatedAt'] = date('c');
-                break;
-            }
-        }
-        unset($s);
-        sb_write_sites($sites);
-
-        return $folder;
-    }
-}
-
-if (!function_exists('sb_disk_upload_file_to_folder')) {
-    function sb_disk_upload_file_to_folder(Folder $folder, array $fileArray): File
-    {
-        $securityContext = sb_disk_security_context();
-
-        $uploadData = [
-            'NAME' => (string)($fileArray['name'] ?? 'file'),
-            'FILE_SIZE' => (int)($fileArray['size'] ?? 0),
-            'TMP_NAME' => (string)($fileArray['tmp_name'] ?? ''),
-            'TYPE' => (string)($fileArray['type'] ?? 'application/octet-stream'),
-        ];
-
-        try {
-            $created = $folder->uploadFile($fileArray, []);
-            if ($created instanceof File) {
-                return $created;
-            }
-            if (is_array($created) && isset($created['OBJECT']) && $created['OBJECT'] instanceof File) {
-                return $created['OBJECT'];
-            }
-        } catch (Throwable $e) {
-        }
-
-        try {
-            if ($securityContext) {
-                $created = $folder->uploadFile($fileArray, $securityContext);
-                if ($created instanceof File) {
-                    return $created;
-                }
-                if (is_array($created) && isset($created['OBJECT']) && $created['OBJECT'] instanceof File) {
-                    return $created['OBJECT'];
-                }
-            }
-        } catch (Throwable $e) {
-        }
-
-        try {
-            $created = $folder->uploadFile($uploadData, []);
-            if ($created instanceof File) {
-                return $created;
-            }
-            if (is_array($created) && isset($created['OBJECT']) && $created['OBJECT'] instanceof File) {
-                return $created['OBJECT'];
-            }
-        } catch (Throwable $e) {
-        }
-
-        throw new RuntimeException('Cannot upload file to Disk folder');
-    }
-}
-
-if (!function_exists('sb_disk_file_belongs_to_site')) {
-    function sb_disk_file_belongs_to_site(int $siteId, int $fileId): bool
-    {
-        $site = sb_find_site($siteId);
-        if (!$site) {
-            return false;
-        }
-
-        $siteFolderId = (int)($site['diskFolderId'] ?? 0);
-        if ($siteFolderId <= 0) {
-            return false;
-        }
-
-        $file = sb_disk_load_file_by_id($fileId);
-        if (!$file) {
-            return false;
-        }
-
-        $parentId = (int)$file->getParentId();
-        return $parentId === $siteFolderId;
-    }
-}
-
-if (!function_exists('sb_disk_delete_file')) {
-    function sb_disk_delete_file(File $file): bool
-    {
-        $securityContext = sb_disk_security_context();
-
-        try {
-            if ($securityContext) {
-                return (bool)$file->delete($securityContext);
-            }
-        } catch (Throwable $e) {
-        }
-
-        try {
-            return (bool)$file->delete();
-        } catch (Throwable $e) {
-            return false;
-        }
-    }
-}
-
-if (!function_exists('sb_disk_file_download_url')) {
-    function sb_disk_file_download_url(File $file): string
-    {
-        $fileId = (int)$file->getId();
-        return '/bitrix/tools/disk/downloadFile.php?objectId=' . $fileId;
-    }
-}
-
-
----
-
-2. Обнови /local/sitebuilder/api/bootstrap.php
-
-Нужно подключить disk.php.
-
-Полная версия файла:
-
-<?php
-
-define('NO_KEEP_STATISTIC', true);
-define('NO_AGENT_STATISTIC', true);
-define('DisableEventsCheck', true);
-
 require $_SERVER['DOCUMENT_ROOT'] . '/bitrix/modules/main/include/prolog_before.php';
 
-use Bitrix\Main\Loader;
-use Bitrix\Disk\Storage;
-use Bitrix\Disk\Folder;
-use Bitrix\Disk\File;
-use Bitrix\Disk\Driver;
-
-global $USER;
-
-header('Content-Type: application/json; charset=UTF-8');
+global $APPLICATION, $USER;
 
 if (!$USER->IsAuthorized()) {
-    http_response_code(401);
-    echo json_encode(['ok' => false, 'error' => 'NOT_AUTHORIZED'], JSON_UNESCAPED_UNICODE);
+    require $_SERVER['DOCUMENT_ROOT'] . '/auth.php';
     exit;
 }
 
-if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
-    http_response_code(405);
-    echo json_encode(['ok' => false, 'error' => 'METHOD_NOT_ALLOWED'], JSON_UNESCAPED_UNICODE);
-    exit;
-}
+CJSCore::Init(['ajax']);
 
-if (!check_bitrix_sessid()) {
-    http_response_code(403);
-    echo json_encode(['ok' => false, 'error' => 'BAD_SESSID'], JSON_UNESCAPED_UNICODE);
-    exit;
-}
+header('Content-Type: text/html; charset=UTF-8');
 
-require_once $_SERVER['DOCUMENT_ROOT'] . '/local/sitebuilder/lib/json.php';
-require_once $_SERVER['DOCUMENT_ROOT'] . '/local/sitebuilder/lib/response.php';
-require_once $_SERVER['DOCUMENT_ROOT'] . '/local/sitebuilder/lib/access.php';
-require_once $_SERVER['DOCUMENT_ROOT'] . '/local/sitebuilder/lib/helpers.php';
-require_once $_SERVER['DOCUMENT_ROOT'] . '/local/sitebuilder/lib/disk.php';
+$basePath = '/local/sitebuilder';
+?>
+<!doctype html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <title>SiteBuilder</title>
+    <?php $APPLICATION->ShowHead(); ?>
+    <style>
+        * { box-sizing: border-box; }
+        body {
+            margin: 0;
+            font-family: Arial, sans-serif;
+            background: #f6f8fb;
+            color: #1f2937;
+        }
+        .page {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 24px;
+        }
+        .topbar {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 16px;
+            margin-bottom: 24px;
+        }
+        .title {
+            margin: 0;
+            font-size: 28px;
+            font-weight: 700;
+        }
+        .subtitle {
+            margin: 6px 0 0;
+            color: #6b7280;
+            font-size: 14px;
+        }
+        .userbox {
+            font-size: 14px;
+            color: #374151;
+            background: #fff;
+            border: 1px solid #e5e7eb;
+            border-radius: 10px;
+            padding: 10px 14px;
+        }
+        .panel {
+            background: #fff;
+            border: 1px solid #e5e7eb;
+            border-radius: 14px;
+            padding: 18px;
+            margin-bottom: 20px;
+            box-shadow: 0 2px 8px rgba(15, 23, 42, 0.04);
+        }
+        .panel-title {
+            margin: 0 0 14px;
+            font-size: 18px;
+            font-weight: 700;
+        }
+        .form-row {
+            display: flex;
+            gap: 12px;
+            flex-wrap: wrap;
+            align-items: end;
+        }
+        .field {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+            min-width: 240px;
+            flex: 1 1 240px;
+        }
+        .field label {
+            font-size: 13px;
+            color: #4b5563;
+        }
+        .field input {
+            width: 100%;
+            height: 40px;
+            padding: 0 12px;
+            border: 1px solid #d1d5db;
+            border-radius: 10px;
+            outline: none;
+            background: #fff;
+        }
+        .field input:focus {
+            border-color: #2563eb;
+        }
+        .btn {
+            height: 40px;
+            border: 0;
+            border-radius: 10px;
+            padding: 0 16px;
+            cursor: pointer;
+            font-weight: 600;
+        }
+        .btn-primary {
+            background: #2563eb;
+            color: #fff;
+        }
+        .btn-primary:hover {
+            background: #1d4ed8;
+        }
+        .btn-danger {
+            background: #dc2626;
+            color: #fff;
+        }
+        .btn-danger:hover {
+            background: #b91c1c;
+        }
+        .btn-light {
+            background: #eef2ff;
+            color: #1e3a8a;
+        }
+        .btn-light:hover {
+            background: #e0e7ff;
+        }
+        .btn-small {
+            height: 34px;
+            padding: 0 12px;
+            font-size: 13px;
+        }
+        .muted {
+            color: #6b7280;
+        }
+        .sites-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+            gap: 16px;
+        }
+        .site-card {
+            background: #fff;
+            border: 1px solid #e5e7eb;
+            border-radius: 14px;
+            padding: 16px;
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+        .site-head {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            gap: 12px;
+        }
+        .site-name {
+            margin: 0;
+            font-size: 18px;
+            font-weight: 700;
+            word-break: break-word;
+        }
+        .site-meta {
+            font-size: 13px;
+            color: #6b7280;
+            line-height: 1.5;
+        }
+        .site-actions {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+        }
+        .site-actions a,
+        .site-actions button {
+            text-decoration: none;
+        }
+        .status {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            background: #f3f4f6;
+            color: #374151;
+            border-radius: 999px;
+            padding: 4px 10px;
+            font-size: 12px;
+            white-space: nowrap;
+        }
+        .output {
+            white-space: pre-wrap;
+            background: #0f172a;
+            color: #e5e7eb;
+            border-radius: 12px;
+            padding: 14px;
+            min-height: 120px;
+            font-family: Consolas, Monaco, monospace;
+            font-size: 13px;
+            overflow: auto;
+        }
+        .empty {
+            padding: 24px;
+            text-align: center;
+            color: #6b7280;
+            border: 1px dashed #d1d5db;
+            border-radius: 12px;
+            background: #fff;
+        }
+        @media (max-width: 768px) {
+            .topbar {
+                flex-direction: column;
+                align-items: stretch;
+            }
+            .sites-grid {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+</head>
+<body>
+<div class="page">
+    <div class="topbar">
+        <div>
+            <h1 class="title">SiteBuilder</h1>
+            <p class="subtitle">Управление сайтами конструктора</p>
+        </div>
+        <div class="userbox">
+            Пользователь:
+            <strong><?= htmlspecialchars((string)$USER->GetLogin(), ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?></strong>
+            (ID <?= (int)$USER->GetID() ?>)
+        </div>
+    </div>
 
+    <div class="panel">
+        <h2 class="panel-title">Создать сайт</h2>
+        <div class="form-row">
+            <div class="field">
+                <label for="siteName">Название сайта</label>
+                <input type="text" id="siteName" placeholder="Например: Корпоративный портал">
+            </div>
+            <div class="field">
+                <label for="siteSlug">Slug</label>
+                <input type="text" id="siteSlug" placeholder="Например: corp-portal">
+            </div>
+            <button type="button" class="btn btn-primary" id="createSiteBtn">Создать</button>
+        </div>
+    </div>
 
----
+    <div class="panel">
+        <div style="display:flex; justify-content:space-between; align-items:center; gap:12px; margin-bottom:14px;">
+            <h2 class="panel-title" style="margin:0;">Сайты</h2>
+            <button type="button" class="btn btn-light btn-small" id="reloadBtn">Обновить список</button>
+        </div>
+        <div id="sitesContainer">
+            <div class="empty">Загрузка списка сайтов...</div>
+        </div>
+    </div>
 
-3. Полностью замени /local/sitebuilder/api/handlers/file.php
+    <div class="panel">
+        <h2 class="panel-title">Отладка</h2>
+        <div id="output" class="output">Здесь будут ответы API...</div>
+    </div>
+</div>
 
-<?php
+<script>
+(function () {
+    var BASE_PATH = '<?= CUtil::JSEscape($basePath) ?>';
+    var API_URL = BASE_PATH + '/api.php';
+    var output = document.getElementById('output');
+    var sitesContainer = document.getElementById('sitesContainer');
 
-global $USER;
-
-if ($action === 'file.list') {
-    $siteId = (int)($_POST['siteId'] ?? 0);
-    if ($siteId <= 0) {
-        sb_json_error('SITE_ID_REQUIRED', 422);
+    function print(data) {
+        if (typeof data === 'string') {
+            output.textContent = data;
+            return;
+        }
+        try {
+            output.textContent = JSON.stringify(data, null, 2);
+        } catch (e) {
+            output.textContent = String(data);
+        }
     }
 
-    sb_require_viewer($siteId);
+    function escapeHtml(value) {
+        return String(value)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#039;');
+    }
 
-    try {
-        $folder = sb_disk_ensure_site_folder($siteId);
-        $children = sb_disk_get_children($folder);
+    function getSessid() {
+        if (typeof window.BX !== 'undefined' && typeof BX.bitrix_sessid === 'function') {
+            return BX.bitrix_sessid();
+        }
+        return '<?= CUtil::JSEscape(bitrix_sessid()) ?>';
+    }
 
-        $files = [];
-        foreach ($children as $child) {
-            if (!$child instanceof \Bitrix\Disk\File) {
-                continue;
+    function api(action, data, onSuccess, onFailure) {
+        if (typeof window.BX === 'undefined' || typeof BX.ajax !== 'function') {
+            print('BX.ajax не загружен');
+            return;
+        }
+
+        BX.ajax({
+            url: API_URL,
+            method: 'POST',
+            dataType: 'json',
+            timeout: 60,
+            data: Object.assign({
+                action: action,
+                sessid: getSessid()
+            }, data || {}),
+            onsuccess: function (res) {
+                print(res);
+                if (typeof onSuccess === 'function') {
+                    onSuccess(res);
+                }
+            },
+            onfailure: function (err) {
+                print({
+                    ok: false,
+                    error: 'AJAX_ERROR',
+                    detail: err
+                });
+                if (typeof onFailure === 'function') {
+                    onFailure(err);
+                }
+            }
+        });
+    }
+
+    function siteCard(site) {
+        var id = Number(site.id || 0);
+        var name = escapeHtml(site.name || '');
+        var slug = escapeHtml(site.slug || '');
+        var createdAt = escapeHtml(site.createdAt || '');
+        var homePageId = Number(site.homePageId || 0);
+        var diskFolderId = Number(site.diskFolderId || 0);
+
+        return ''
+            + '<div class="site-card">'
+            + '  <div class="site-head">'
+            + '    <div>'
+            + '      <h3 class="site-name">' + name + '</h3>'
+            + '      <div class="site-meta">'
+            + '        <div><strong>ID:</strong> ' + id + '</div>'
+            + '        <div><strong>Slug:</strong> ' + slug + '</div>'
+            + '        <div><strong>Home page ID:</strong> ' + homePageId + '</div>'
+            + '        <div><strong>Disk folder ID:</strong> ' + diskFolderId + '</div>'
+            + '        <div><strong>Создан:</strong> ' + createdAt + '</div>'
+            + '      </div>'
+            + '    </div>'
+            + '    <span class="status">site #' + id + '</span>'
+            + '  </div>'
+            + ''
+            + '  <div class="site-actions">'
+            + '    <a class="btn btn-light btn-small" href="' + BASE_PATH + '/editor.php?siteId=' + id + '">Редактор</a>'
+            + '    <a class="btn btn-light btn-small" href="' + BASE_PATH + '/layout.php?siteId=' + id + '">Layout</a>'
+            + '    <a class="btn btn-light btn-small" href="' + BASE_PATH + '/menu.php?siteId=' + id + '">Меню</a>'
+            + '    <a class="btn btn-light btn-small" href="' + BASE_PATH + '/files.php?siteId=' + id + '">Файлы</a>'
+            + '    <a class="btn btn-light btn-small" href="' + BASE_PATH + '/settings.php?siteId=' + id + '">Настройки</a>'
+            + '    <a class="btn btn-light btn-small" href="' + BASE_PATH + '/public.php?siteId=' + id + '" target="_blank">Публичная</a>'
+            + '    <button type="button" class="btn btn-danger btn-small js-delete-site" data-id="' + id + '">Удалить</button>'
+            + '  </div>'
+            + '</div>';
+    }
+
+    function renderSites(sites) {
+        if (!Array.isArray(sites) || !sites.length) {
+            sitesContainer.innerHTML = '<div class="empty">Сайтов пока нет</div>';
+            return;
+        }
+
+        var html = '<div class="sites-grid">';
+        for (var i = 0; i < sites.length; i++) {
+            html += siteCard(sites[i]);
+        }
+        html += '</div>';
+
+        sitesContainer.innerHTML = html;
+    }
+
+    function loadSites() {
+        sitesContainer.innerHTML = '<div class="empty">Загрузка...</div>';
+
+        api('site.list', {}, function (res) {
+            if (!res || res.ok !== true) {
+                sitesContainer.innerHTML = '<div class="empty">Не удалось загрузить список сайтов</div>';
+                return;
+            }
+            renderSites(res.sites || []);
+        });
+    }
+
+    function createSite() {
+        var nameInput = document.getElementById('siteName');
+        var slugInput = document.getElementById('siteSlug');
+
+        var name = (nameInput.value || '').trim();
+        var slug = (slugInput.value || '').trim();
+
+        if (!name) {
+            alert('Введите название сайта');
+            nameInput.focus();
+            return;
+        }
+
+        api('site.create', {
+            name: name,
+            slug: slug
+        }, function (res) {
+            if (!res || res.ok !== true) {
+                alert('Не удалось создать сайт');
+                return;
             }
 
-            $files[] = [
-                'id' => (int)$child->getId(),
-                'name' => (string)$child->getName(),
-                'size' => (int)$child->getSize(),
-                'createTime' => method_exists($child, 'getCreateTime') && $child->getCreateTime()
-                    ? $child->getCreateTime()->format('c')
-                    : '',
-                'updateTime' => method_exists($child, 'getUpdateTime') && $child->getUpdateTime()
-                    ? $child->getUpdateTime()->format('c')
-                    : '',
-                'downloadUrl' => sb_disk_file_download_url($child),
-            ];
-        }
-
-        usort($files, static function ($a, $b) {
-            return strcmp((string)$a['name'], (string)$b['name']);
+            nameInput.value = '';
+            slugInput.value = '';
+            loadSites();
         });
-
-        sb_json_ok([
-            'files' => $files,
-            'folderId' => (int)$folder->getId(),
-        ]);
-    } catch (Throwable $e) {
-        sb_json_error('DISK_ERROR', 500, [
-            'message' => $e->getMessage(),
-        ]);
-    }
-}
-
-if ($action === 'file.upload') {
-    $siteId = (int)($_POST['siteId'] ?? 0);
-    if ($siteId <= 0) {
-        sb_json_error('SITE_ID_REQUIRED', 422);
     }
 
-    sb_require_editor($siteId);
-
-    if (empty($_FILES['file']) || !is_array($_FILES['file'])) {
-        sb_json_error('FILE_REQUIRED', 422);
-    }
-
-    $upload = $_FILES['file'];
-
-    if ((int)($upload['error'] ?? UPLOAD_ERR_NO_FILE) !== UPLOAD_ERR_OK) {
-        sb_json_error('UPLOAD_ERROR', 422, [
-            'phpUploadError' => (int)($upload['error'] ?? UPLOAD_ERR_NO_FILE),
-        ]);
-    }
-
-    if (!is_uploaded_file((string)($upload['tmp_name'] ?? ''))) {
-        sb_json_error('BAD_UPLOADED_FILE', 422);
-    }
-
-    try {
-        $folder = sb_disk_ensure_site_folder($siteId);
-        $file = sb_disk_upload_file_to_folder($folder, $upload);
-
-        sb_json_ok([
-            'file' => [
-                'id' => (int)$file->getId(),
-                'name' => (string)$file->getName(),
-                'size' => (int)$file->getSize(),
-                'downloadUrl' => sb_disk_file_download_url($file),
-            ],
-            'folderId' => (int)$folder->getId(),
-        ]);
-    } catch (Throwable $e) {
-        sb_json_error('DISK_ERROR', 500, [
-            'message' => $e->getMessage(),
-        ]);
-    }
-}
-
-if ($action === 'file.delete') {
-    $siteId = (int)($_POST['siteId'] ?? 0);
-    $fileId = (int)($_POST['fileId'] ?? 0);
-
-    if ($siteId <= 0) {
-        sb_json_error('SITE_ID_REQUIRED', 422);
-    }
-    if ($fileId <= 0) {
-        sb_json_error('FILE_ID_REQUIRED', 422);
-    }
-
-    sb_require_editor($siteId);
-
-    try {
-        if (!sb_disk_file_belongs_to_site($siteId, $fileId)) {
-            sb_json_error('FILE_NOT_IN_SITE', 422);
+    function deleteSite(id) {
+        if (!id) {
+            return;
         }
 
-        $file = sb_disk_load_file_by_id($fileId);
-        if (!$file) {
-            sb_json_error('FILE_NOT_FOUND', 404);
+        if (!confirm('Удалить сайт #' + id + '?')) {
+            return;
         }
 
-        $ok = sb_disk_delete_file($file);
-        if (!$ok) {
-            sb_json_error('DELETE_FAILED', 500);
-        }
+        api('site.delete', {
+            id: id
+        }, function (res) {
+            if (!res || res.ok !== true) {
+                alert('Не удалось удалить сайт');
+                return;
+            }
 
-        sb_json_ok();
-    } catch (Throwable $e) {
-        sb_json_error('DISK_ERROR', 500, [
-            'message' => $e->getMessage(),
-        ]);
+            loadSites();
+        });
     }
-}
 
-sb_json_error('NOT_MOVED_YET', 501, [
-    'handler' => 'file',
-    'action' => $action,
-]);
+    document.getElementById('createSiteBtn').addEventListener('click', createSite);
+    document.getElementById('reloadBtn').addEventListener('click', loadSites);
 
+    document.addEventListener('click', function (e) {
+        var btn = e.target.closest('.js-delete-site');
+        if (!btn) {
+            return;
+        }
 
----
+        var id = parseInt(btn.getAttribute('data-id'), 10) || 0;
+        deleteSite(id);
+    });
 
-4. Что теперь должно работать
+    window.onerror = function (message, source, lineno, colno, error) {
+        print({
+            jsError: true,
+            message: message,
+            source: source,
+            line: lineno,
+            column: colno,
+            stack: error && error.stack ? error.stack : null
+        });
+    };
 
-После вставки должны работать:
-
-file.list
-
-file.upload
-
-file.delete
-
-
-
----
-
-5. Что происходит при первом file.list
-
-Если у сайта ещё нет diskFolderId, то при первом вызове:
-
-ищется общее Disk-хранилище
-
-в корне ищется папка SiteBuilder
-
-если её нет — создаётся
-
-внутри ищется папка сайта по slug
-
-если её нет — создаётся
-
-diskFolderId записывается в sites.json
-
-
-То есть инициализация идёт автоматически.
+    loadSites();
+})();
+</script>
+</body>
+</html>
 
 
 ---
 
-6. Что проверить руками
+Что должно быть по ссылке
 
-Проверяй в таком порядке:
+Если папка у тебя:
 
-1. file.list
+/local/sitebuilder/
 
-Для сайта должен:
+то открыть нужно:
 
-либо создать папку
-
-либо вернуть пустой список
-
-либо вернуть существующие файлы
-
-
-2. file.upload
-
-Загрузи любой тестовый файл.
-
-3. снова file.list
-
-Должен вернуть уже загруженный файл.
-
-4. file.delete
-
-Удалить этот файл.
+https://ТВОЙ_ДОМЕН/local/sitebuilder/index.php
 
 
 ---
 
-7. Важные нюансы
+Что он уже умеет
 
-Удаление сейчас разрешено только для файлов текущего сайта
+Сразу после открытия:
 
-Проверка идёт по parentId === site.diskFolderId.
+вызовет site.list
 
-Это простой и безопасный вариант.
+покажет карточки сайтов
 
-Подпапки сайта пока не поддержаны
 
-Сейчас всё хранится в одной папке сайта. Это нормально для первого этапа.
+При создании:
 
-Права Disk пока не синхронизируем
+вызовет site.create
 
-То есть сейчас мы подняли рабочую базу file API, но не делали ещё синхронизацию ролей OWNER / ADMIN / EDITOR / VIEWER в права Disk-объектов.
+обновит список
 
-Это лучше добавить отдельным шагом, потому что в разных коробках Bitrix API прав может отличаться.
+
+При удалении:
+
+вызовет site.delete
+
+обновит список
+
 
 
 ---
 
-8. Если на твоей коробке Disk начнёт ругаться
+Что важно
 
-На коробках Bitrix бывают разные сигнатуры методов. Я уже заложил несколько fallback-вариантов, но если увидишь что-то вроде:
+1. Пути
 
-Call to undefined method Bitrix\Disk\Storage::loadByEntity()
+Если папка называется не sitebuilder, а иначе, поменяй здесь:
 
-Argument #2 must be of type array
+$basePath = '/local/sitebuilder';
 
-Too few arguments to function getChildren()
+Например:
 
-Cannot create Disk folder
-
-Cannot upload file to Disk folder
-
-
-тогда просто пришли мне точный текст ошибки, и я подправлю lib/disk.php именно под твою версию коробки.
+$basePath = '/local/sitebuilder_new';
 
 
 ---
 
-9. Что у тебя уже закрыто по API
+2. Ссылки на остальные страницы
 
-На этом этапе у тебя уже есть рабочие ветки:
+Сейчас ссылки уже есть:
 
-site.*
+editor.php
 
-page.*
+layout.php
 
-block.*
+menu.php
 
-menu.*
+files.php
 
-access.*
+settings.php
 
-template.*
-
-layout.*
-
-file.*
+public.php
 
 
-То есть backend-каркас уже собран.
+Но если этих файлов ещё нет или они пустые — это нормально. index.php уже можно проверять отдельно.
 
 
 ---
 
-10. Что делать дальше правильно
+Что делать следующим шагом
 
-Теперь следующий логичный этап уже не в API, а в входных страницах и фронте:
+Теперь логично сделать следующие страницы-оболочки:
 
-1. сделать index.php
-
-
-2. сделать страницу управления страницами/сайтами
+1. editor.php
 
 
-3. сделать editor.php
+2. menu.php
 
 
-4. вынести JS редактора по файлам
+3. files.php
 
 
-5. потом layout.php
+4. settings.php
 
 
-6. потом public.php
+5. layout.php
 
 
 
-Я бы следующим сообщением начал уже с рабочей страницы index.php, которая:
+Я бы следующим сообщением сделал menu.php, потому что он проще редактора и быстро даст рабочую административную страницу.
 
-показывает список сайтов
-
-создаёт сайт
-
-удаляет сайт
-
-открывает editor/layout/menu/files/settings
-
-
-Напиши: давай index.php
+Напиши: давай menu.php
