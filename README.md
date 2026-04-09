@@ -1,224 +1,440 @@
-Отлично. Делаем layout-пакет.
+Отлично. Делаем file / Disk-пакет.
 
-Сейчас закроем:
+Это самый чувствительный участок, поэтому делаем практично и с совместимостью:
 
-layout.get
+file.list
 
-layout.updateSettings
+file.upload
 
-layout.block.list
-
-layout.block.create
-
-layout.block.update
-
-layout.block.delete
-
-layout.block.move
+file.delete
 
 
-Сделаем практично и без переусложнения:
+И выносим Disk-обвязку в отдельный файл:
 
-layout хранится в layouts.json
-
-у каждого сайта одна запись layout
-
-в layout есть:
-
-settings
-
-zones
+lib/disk.php
 
 
-zones:
+Подход такой:
 
-header
+у каждого сайта есть папка в общем Disk-хранилище
 
-footer
+diskFolderId хранится в sites.json
 
-left
+если папки ещё нет — создаём
 
-right
+список файлов отдаём из этой папки
 
+загрузка идёт в эту папку
 
-у каждой зоны свой набор блоков
+удаление разрешаем только файлов из папки этого сайта
 
 
 
 ---
 
-1. Обнови /local/sitebuilder/lib/helpers.php
-
-Добавь в конец файла:
+1. Создай новый файл /local/sitebuilder/lib/disk.php
 
 <?php
 
-if (!function_exists('sb_layout_default_record')) {
-    function sb_layout_default_record(int $siteId): array
+require_once __DIR__ . '/json.php';
+require_once __DIR__ . '/helpers.php';
+
+use Bitrix\Main\Loader;
+use Bitrix\Disk\Driver;
+use Bitrix\Disk\Storage;
+use Bitrix\Disk\Folder;
+use Bitrix\Disk\File;
+use Bitrix\Disk\Security\FakeSecurityContext;
+
+if (!function_exists('sb_disk_require_module')) {
+    function sb_disk_require_module(): void
     {
-        return [
-            'siteId' => $siteId,
-            'settings' => [
-                'showHeader' => true,
-                'showFooter' => true,
-                'showLeft' => false,
-                'showRight' => false,
-                'leftWidth' => 260,
-                'rightWidth' => 260,
-                'leftMode' => 'blocks',
-            ],
-            'zones' => [
-                'header' => [],
-                'footer' => [],
-                'left' => [],
-                'right' => [],
-            ],
+        if (!Loader::includeModule('disk')) {
+            throw new RuntimeException('Disk module is not installed');
+        }
+    }
+}
+
+if (!function_exists('sb_disk_security_context')) {
+    function sb_disk_security_context()
+    {
+        global $USER;
+
+        if (class_exists(FakeSecurityContext::class)) {
+            return new FakeSecurityContext((int)$USER->GetID());
+        }
+
+        return null;
+    }
+}
+
+if (!function_exists('sb_disk_common_storage')) {
+    function sb_disk_common_storage(): ?Storage
+    {
+        sb_disk_require_module();
+
+        if (method_exists(Storage::class, 'loadByEntity')) {
+            $storage = Storage::loadByEntity('common', 0);
+            if ($storage) {
+                return $storage;
+            }
+        }
+
+        if (class_exists(Driver::class)) {
+            $driver = Driver::getInstance();
+
+            if (method_exists($driver, 'getStorageByCommonId')) {
+                $storage = $driver->getStorageByCommonId('shared_files_' . SITE_ID);
+                if ($storage) {
+                    return $storage;
+                }
+            }
+        }
+
+        return null;
+    }
+}
+
+if (!function_exists('sb_disk_root_folder')) {
+    function sb_disk_root_folder(): Folder
+    {
+        $storage = sb_disk_common_storage();
+        if (!$storage) {
+            throw new RuntimeException('Common Disk storage not found');
+        }
+
+        $root = $storage->getRootObject();
+        if (!$root instanceof Folder) {
+            throw new RuntimeException('Common Disk root folder not found');
+        }
+
+        return $root;
+    }
+}
+
+if (!function_exists('sb_disk_get_children')) {
+    function sb_disk_get_children(Folder $folder): array
+    {
+        $securityContext = sb_disk_security_context();
+
+        try {
+            if ($securityContext) {
+                return (array)$folder->getChildren($securityContext);
+            }
+        } catch (Throwable $e) {
+        }
+
+        try {
+            return (array)$folder->getChildren();
+        } catch (Throwable $e) {
+            return [];
+        }
+    }
+}
+
+if (!function_exists('sb_disk_find_child_folder_by_name')) {
+    function sb_disk_find_child_folder_by_name(Folder $parent, string $name): ?Folder
+    {
+        foreach (sb_disk_get_children($parent) as $child) {
+            if ($child instanceof Folder && (string)$child->getName() === $name) {
+                return $child;
+            }
+        }
+        return null;
+    }
+}
+
+if (!function_exists('sb_disk_add_subfolder')) {
+    function sb_disk_add_subfolder(Folder $parent, string $name): Folder
+    {
+        $fields = ['NAME' => $name];
+        $securityContext = sb_disk_security_context();
+
+        try {
+            $created = $parent->addSubFolder($fields, []);
+            if ($created instanceof Folder) {
+                return $created;
+            }
+            if (is_array($created) && isset($created['OBJECT']) && $created['OBJECT'] instanceof Folder) {
+                return $created['OBJECT'];
+            }
+        } catch (Throwable $e) {
+        }
+
+        try {
+            if ($securityContext) {
+                $created = $parent->addSubFolder($fields, $securityContext);
+                if ($created instanceof Folder) {
+                    return $created;
+                }
+                if (is_array($created) && isset($created['OBJECT']) && $created['OBJECT'] instanceof Folder) {
+                    return $created['OBJECT'];
+                }
+            }
+        } catch (Throwable $e) {
+        }
+
+        throw new RuntimeException('Cannot create Disk folder: ' . $name);
+    }
+}
+
+if (!function_exists('sb_disk_get_or_create_sitebuilder_root')) {
+    function sb_disk_get_or_create_sitebuilder_root(): Folder
+    {
+        $root = sb_disk_root_folder();
+
+        $folder = sb_disk_find_child_folder_by_name($root, 'SiteBuilder');
+        if ($folder) {
+            return $folder;
+        }
+
+        return sb_disk_add_subfolder($root, 'SiteBuilder');
+    }
+}
+
+if (!function_exists('sb_disk_load_folder_by_id')) {
+    function sb_disk_load_folder_by_id(int $folderId): ?Folder
+    {
+        if ($folderId <= 0) {
+            return null;
+        }
+
+        sb_disk_require_module();
+
+        $folder = Folder::loadById($folderId);
+        return $folder instanceof Folder ? $folder : null;
+    }
+}
+
+if (!function_exists('sb_disk_load_file_by_id')) {
+    function sb_disk_load_file_by_id(int $fileId): ?File
+    {
+        if ($fileId <= 0) {
+            return null;
+        }
+
+        sb_disk_require_module();
+
+        $file = File::loadById($fileId);
+        return $file instanceof File ? $file : null;
+    }
+}
+
+if (!function_exists('sb_disk_site_folder_name')) {
+    function sb_disk_site_folder_name(array $site): string
+    {
+        $slug = trim((string)($site['slug'] ?? ''));
+        if ($slug !== '') {
+            return $slug;
+        }
+
+        $id = (int)($site['id'] ?? 0);
+        return $id > 0 ? ('site-' . $id) : 'sitebuilder-site';
+    }
+}
+
+if (!function_exists('sb_disk_ensure_site_folder')) {
+    function sb_disk_ensure_site_folder(int $siteId): Folder
+    {
+        $site = sb_find_site($siteId);
+        if (!$site) {
+            throw new RuntimeException('Site not found');
+        }
+
+        $folderId = (int)($site['diskFolderId'] ?? 0);
+        if ($folderId > 0) {
+            $folder = sb_disk_load_folder_by_id($folderId);
+            if ($folder) {
+                return $folder;
+            }
+        }
+
+        $sitebuilderRoot = sb_disk_get_or_create_sitebuilder_root();
+        $folderName = sb_disk_site_folder_name($site);
+
+        $folder = sb_disk_find_child_folder_by_name($sitebuilderRoot, $folderName);
+        if (!$folder) {
+            $folder = sb_disk_add_subfolder($sitebuilderRoot, $folderName);
+        }
+
+        $sites = sb_read_sites();
+        foreach ($sites as &$s) {
+            if ((int)($s['id'] ?? 0) === $siteId) {
+                $s['diskFolderId'] = (int)$folder->getId();
+                $s['updatedAt'] = date('c');
+                break;
+            }
+        }
+        unset($s);
+        sb_write_sites($sites);
+
+        return $folder;
+    }
+}
+
+if (!function_exists('sb_disk_upload_file_to_folder')) {
+    function sb_disk_upload_file_to_folder(Folder $folder, array $fileArray): File
+    {
+        $securityContext = sb_disk_security_context();
+
+        $uploadData = [
+            'NAME' => (string)($fileArray['name'] ?? 'file'),
+            'FILE_SIZE' => (int)($fileArray['size'] ?? 0),
+            'TMP_NAME' => (string)($fileArray['tmp_name'] ?? ''),
+            'TYPE' => (string)($fileArray['type'] ?? 'application/octet-stream'),
         ];
-    }
-}
 
-if (!function_exists('sb_layout_valid_zone')) {
-    function sb_layout_valid_zone(string $zone): bool
-    {
-        return in_array($zone, ['header', 'footer', 'left', 'right'], true);
-    }
-}
-
-if (!function_exists('sb_find_layout')) {
-    function sb_find_layout(int $siteId): ?array
-    {
-        foreach (sb_read_layouts() as $layout) {
-            if ((int)($layout['siteId'] ?? 0) === $siteId) {
-                return $layout;
+        try {
+            $created = $folder->uploadFile($fileArray, []);
+            if ($created instanceof File) {
+                return $created;
             }
-        }
-        return null;
-    }
-}
-
-if (!function_exists('sb_layout_ensure_record')) {
-    function sb_layout_ensure_record(int $siteId): array
-    {
-        $layout = sb_find_layout($siteId);
-        if ($layout) {
-            return sb_normalize_layout_record($layout);
-        }
-
-        $layouts = sb_read_layouts();
-        $layout = sb_layout_default_record($siteId);
-        $layouts[] = $layout;
-        sb_write_layouts($layouts);
-
-        return sb_normalize_layout_record($layout);
-    }
-}
-
-if (!function_exists('sb_normalize_layout_record')) {
-    function sb_normalize_layout_record(array $layout): array
-    {
-        if (!isset($layout['settings']) || !is_array($layout['settings'])) {
-            $layout['settings'] = [];
-        }
-
-        $layout['settings'] = array_merge([
-            'showHeader' => true,
-            'showFooter' => true,
-            'showLeft' => false,
-            'showRight' => false,
-            'leftWidth' => 260,
-            'rightWidth' => 260,
-            'leftMode' => 'blocks',
-        ], $layout['settings']);
-
-        if (!isset($layout['zones']) || !is_array($layout['zones'])) {
-            $layout['zones'] = [];
-        }
-
-        foreach (['header', 'footer', 'left', 'right'] as $zone) {
-            if (!isset($layout['zones'][$zone]) || !is_array($layout['zones'][$zone])) {
-                $layout['zones'][$zone] = [];
+            if (is_array($created) && isset($created['OBJECT']) && $created['OBJECT'] instanceof File) {
+                return $created['OBJECT'];
             }
+        } catch (Throwable $e) {
+        }
 
-            $layout['zones'][$zone] = array_map('sb_normalize_block_record', $layout['zones'][$zone]);
-
-            usort($layout['zones'][$zone], static function ($a, $b) {
-                $sortCmp = (int)($a['sort'] ?? 500) <=> (int)($b['sort'] ?? 500);
-                if ($sortCmp !== 0) {
-                    return $sortCmp;
+        try {
+            if ($securityContext) {
+                $created = $folder->uploadFile($fileArray, $securityContext);
+                if ($created instanceof File) {
+                    return $created;
                 }
-                return (int)($a['id'] ?? 0) <=> (int)($b['id'] ?? 0);
-            });
-        }
-
-        return $layout;
-    }
-}
-
-if (!function_exists('sb_layout_next_block_id')) {
-    function sb_layout_next_block_id(array $layout): int
-    {
-        $maxId = 0;
-
-        $zones = (array)($layout['zones'] ?? []);
-        foreach ($zones as $blocks) {
-            if (!is_array($blocks)) {
-                continue;
-            }
-
-            foreach ($blocks as $block) {
-                $maxId = max($maxId, (int)($block['id'] ?? 0));
-            }
-        }
-
-        return $maxId + 1;
-    }
-}
-
-if (!function_exists('sb_layout_next_block_sort')) {
-    function sb_layout_next_block_sort(array $layout, string $zone): int
-    {
-        $maxSort = 0;
-
-        $blocks = (array)($layout['zones'][$zone] ?? []);
-        foreach ($blocks as $block) {
-            $maxSort = max($maxSort, (int)($block['sort'] ?? 0));
-        }
-
-        return $maxSort + 10;
-    }
-}
-
-if (!function_exists('sb_layout_find_block')) {
-    function sb_layout_find_block(array $layout, int $blockId): ?array
-    {
-        $zones = (array)($layout['zones'] ?? []);
-        foreach ($zones as $zoneName => $blocks) {
-            if (!is_array($blocks)) {
-                continue;
-            }
-
-            foreach ($blocks as $block) {
-                if ((int)($block['id'] ?? 0) === $blockId) {
-                    $block['_zone'] = (string)$zoneName;
-                    return $block;
+                if (is_array($created) && isset($created['OBJECT']) && $created['OBJECT'] instanceof File) {
+                    return $created['OBJECT'];
                 }
             }
+        } catch (Throwable $e) {
         }
 
-        return null;
+        try {
+            $created = $folder->uploadFile($uploadData, []);
+            if ($created instanceof File) {
+                return $created;
+            }
+            if (is_array($created) && isset($created['OBJECT']) && $created['OBJECT'] instanceof File) {
+                return $created['OBJECT'];
+            }
+        } catch (Throwable $e) {
+        }
+
+        throw new RuntimeException('Cannot upload file to Disk folder');
+    }
+}
+
+if (!function_exists('sb_disk_file_belongs_to_site')) {
+    function sb_disk_file_belongs_to_site(int $siteId, int $fileId): bool
+    {
+        $site = sb_find_site($siteId);
+        if (!$site) {
+            return false;
+        }
+
+        $siteFolderId = (int)($site['diskFolderId'] ?? 0);
+        if ($siteFolderId <= 0) {
+            return false;
+        }
+
+        $file = sb_disk_load_file_by_id($fileId);
+        if (!$file) {
+            return false;
+        }
+
+        $parentId = (int)$file->getParentId();
+        return $parentId === $siteFolderId;
+    }
+}
+
+if (!function_exists('sb_disk_delete_file')) {
+    function sb_disk_delete_file(File $file): bool
+    {
+        $securityContext = sb_disk_security_context();
+
+        try {
+            if ($securityContext) {
+                return (bool)$file->delete($securityContext);
+            }
+        } catch (Throwable $e) {
+        }
+
+        try {
+            return (bool)$file->delete();
+        } catch (Throwable $e) {
+            return false;
+        }
+    }
+}
+
+if (!function_exists('sb_disk_file_download_url')) {
+    function sb_disk_file_download_url(File $file): string
+    {
+        $fileId = (int)$file->getId();
+        return '/bitrix/tools/disk/downloadFile.php?objectId=' . $fileId;
     }
 }
 
 
 ---
 
-2. Полностью замени /local/sitebuilder/api/handlers/layout.php
+2. Обнови /local/sitebuilder/api/bootstrap.php
+
+Нужно подключить disk.php.
+
+Полная версия файла:
+
+<?php
+
+define('NO_KEEP_STATISTIC', true);
+define('NO_AGENT_STATISTIC', true);
+define('DisableEventsCheck', true);
+
+require $_SERVER['DOCUMENT_ROOT'] . '/bitrix/modules/main/include/prolog_before.php';
+
+use Bitrix\Main\Loader;
+use Bitrix\Disk\Storage;
+use Bitrix\Disk\Folder;
+use Bitrix\Disk\File;
+use Bitrix\Disk\Driver;
+
+global $USER;
+
+header('Content-Type: application/json; charset=UTF-8');
+
+if (!$USER->IsAuthorized()) {
+    http_response_code(401);
+    echo json_encode(['ok' => false, 'error' => 'NOT_AUTHORIZED'], JSON_UNESCAPED_UNICODE);
+    exit;
+}
+
+if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
+    http_response_code(405);
+    echo json_encode(['ok' => false, 'error' => 'METHOD_NOT_ALLOWED'], JSON_UNESCAPED_UNICODE);
+    exit;
+}
+
+if (!check_bitrix_sessid()) {
+    http_response_code(403);
+    echo json_encode(['ok' => false, 'error' => 'BAD_SESSID'], JSON_UNESCAPED_UNICODE);
+    exit;
+}
+
+require_once $_SERVER['DOCUMENT_ROOT'] . '/local/sitebuilder/lib/json.php';
+require_once $_SERVER['DOCUMENT_ROOT'] . '/local/sitebuilder/lib/response.php';
+require_once $_SERVER['DOCUMENT_ROOT'] . '/local/sitebuilder/lib/access.php';
+require_once $_SERVER['DOCUMENT_ROOT'] . '/local/sitebuilder/lib/helpers.php';
+require_once $_SERVER['DOCUMENT_ROOT'] . '/local/sitebuilder/lib/disk.php';
+
+
+---
+
+3. Полностью замени /local/sitebuilder/api/handlers/file.php
 
 <?php
 
 global $USER;
 
-if ($action === 'layout.get') {
+if ($action === 'file.list') {
     $siteId = (int)($_POST['siteId'] ?? 0);
     if ($siteId <= 0) {
         sb_json_error('SITE_ID_REQUIRED', 422);
@@ -226,668 +442,298 @@ if ($action === 'layout.get') {
 
     sb_require_viewer($siteId);
 
-    $layout = sb_layout_ensure_record($siteId);
-
-    sb_json_ok([
-        'layout' => $layout,
-    ]);
-}
-
-if ($action === 'layout.updateSettings') {
-    $siteId = (int)($_POST['siteId'] ?? 0);
-    if ($siteId <= 0) {
-        sb_json_error('SITE_ID_REQUIRED', 422);
-    }
-
-    sb_require_editor($siteId);
-
-    $settingsRaw = $_POST['settings'] ?? null;
-    if ($settingsRaw === null) {
-        sb_json_error('SETTINGS_REQUIRED', 422);
-    }
-
-    if (is_array($settingsRaw)) {
-        $settings = $settingsRaw;
-    } else {
-        $settings = json_decode((string)$settingsRaw, true);
-        if (!is_array($settings)) {
-            sb_json_error('BAD_SETTINGS_JSON', 422);
-        }
-    }
-
-    $allowedKeys = [
-        'showHeader',
-        'showFooter',
-        'showLeft',
-        'showRight',
-        'leftWidth',
-        'rightWidth',
-        'leftMode',
-    ];
-
-    $filtered = [];
-    foreach ($allowedKeys as $key) {
-        if (array_key_exists($key, $settings)) {
-            $filtered[$key] = $settings[$key];
-        }
-    }
-
-    if (isset($filtered['showHeader'])) {
-        $filtered['showHeader'] = (bool)$filtered['showHeader'];
-    }
-    if (isset($filtered['showFooter'])) {
-        $filtered['showFooter'] = (bool)$filtered['showFooter'];
-    }
-    if (isset($filtered['showLeft'])) {
-        $filtered['showLeft'] = (bool)$filtered['showLeft'];
-    }
-    if (isset($filtered['showRight'])) {
-        $filtered['showRight'] = (bool)$filtered['showRight'];
-    }
-    if (isset($filtered['leftWidth'])) {
-        $filtered['leftWidth'] = max(120, min(800, (int)$filtered['leftWidth']));
-    }
-    if (isset($filtered['rightWidth'])) {
-        $filtered['rightWidth'] = max(120, min(800, (int)$filtered['rightWidth']));
-    }
-    if (isset($filtered['leftMode'])) {
-        $filtered['leftMode'] = in_array((string)$filtered['leftMode'], ['blocks', 'menu'], true)
-            ? (string)$filtered['leftMode']
-            : 'blocks';
-    }
-
-    $layouts = sb_read_layouts();
-    $updated = null;
-    $found = false;
-
-    foreach ($layouts as &$layout) {
-        if ((int)($layout['siteId'] ?? 0) !== $siteId) {
-            continue;
-        }
-
-        $layout = sb_normalize_layout_record($layout);
-        $layout['settings'] = array_merge($layout['settings'], $filtered);
-        $layout['updatedAt'] = date('c');
-        $layout['updatedBy'] = (int)$USER->GetID();
-
-        $updated = $layout;
-        $found = true;
-        break;
-    }
-    unset($layout);
-
-    if (!$found) {
-        $updated = sb_layout_default_record($siteId);
-        $updated['settings'] = array_merge($updated['settings'], $filtered);
-        $updated['createdAt'] = date('c');
-        $updated['createdBy'] = (int)$USER->GetID();
-        $updated['updatedAt'] = date('c');
-        $updated['updatedBy'] = (int)$USER->GetID();
-        $layouts[] = $updated;
-    }
-
-    sb_write_layouts($layouts);
-
-    sb_json_ok([
-        'layout' => sb_normalize_layout_record($updated),
-    ]);
-}
-
-if ($action === 'layout.block.list') {
-    $siteId = (int)($_POST['siteId'] ?? 0);
-    $zone = trim((string)($_POST['zone'] ?? ''));
-
-    if ($siteId <= 0) {
-        sb_json_error('SITE_ID_REQUIRED', 422);
-    }
-    if (!sb_layout_valid_zone($zone)) {
-        sb_json_error('BAD_ZONE', 422);
-    }
-
-    sb_require_viewer($siteId);
-
-    $layout = sb_layout_ensure_record($siteId);
-
-    sb_json_ok([
-        'blocks' => array_values($layout['zones'][$zone] ?? []),
-        'zone' => $zone,
-    ]);
-}
-
-if ($action === 'layout.block.create') {
-    $siteId = (int)($_POST['siteId'] ?? 0);
-    $zone = trim((string)($_POST['zone'] ?? ''));
-    $type = trim((string)($_POST['type'] ?? 'text'));
-
-    if ($siteId <= 0) {
-        sb_json_error('SITE_ID_REQUIRED', 422);
-    }
-    if (!sb_layout_valid_zone($zone)) {
-        sb_json_error('BAD_ZONE', 422);
-    }
-    if ($type === '') {
-        sb_json_error('TYPE_REQUIRED', 422);
-    }
-
-    sb_require_editor($siteId);
-
-    $layouts = sb_read_layouts();
-    $updatedLayout = null;
-    $newBlock = null;
-    $found = false;
-
-    foreach ($layouts as &$layout) {
-        if ((int)($layout['siteId'] ?? 0) !== $siteId) {
-            continue;
-        }
-
-        $layout = sb_normalize_layout_record($layout);
-
-        $newBlock = [
-            'id' => sb_layout_next_block_id($layout),
-            'type' => $type,
-            'sort' => sb_layout_next_block_sort($layout, $zone),
-            'content' => sb_default_block_content($type),
-            'props' => [],
-            'createdBy' => (int)$USER->GetID(),
-            'createdAt' => date('c'),
-            'updatedAt' => date('c'),
-            'updatedBy' => (int)$USER->GetID(),
-        ];
-
-        $layout['zones'][$zone][] = $newBlock;
-        $layout['updatedAt'] = date('c');
-        $layout['updatedBy'] = (int)$USER->GetID();
-
-        $updatedLayout = $layout;
-        $found = true;
-        break;
-    }
-    unset($layout);
-
-    if (!$found) {
-        $updatedLayout = sb_layout_default_record($siteId);
-
-        $newBlock = [
-            'id' => 1,
-            'type' => $type,
-            'sort' => 10,
-            'content' => sb_default_block_content($type),
-            'props' => [],
-            'createdBy' => (int)$USER->GetID(),
-            'createdAt' => date('c'),
-            'updatedAt' => date('c'),
-            'updatedBy' => (int)$USER->GetID(),
-        ];
-
-        $updatedLayout['zones'][$zone][] = $newBlock;
-        $updatedLayout['createdAt'] = date('c');
-        $updatedLayout['createdBy'] = (int)$USER->GetID();
-        $updatedLayout['updatedAt'] = date('c');
-        $updatedLayout['updatedBy'] = (int)$USER->GetID();
-
-        $layouts[] = $updatedLayout;
-    }
-
-    sb_write_layouts($layouts);
-
-    sb_json_ok([
-        'block' => sb_normalize_block_record($newBlock),
-        'zone' => $zone,
-        'layout' => sb_normalize_layout_record($updatedLayout),
-    ]);
-}
-
-if ($action === 'layout.block.update') {
-    $siteId = (int)($_POST['siteId'] ?? 0);
-    $id = (int)($_POST['id'] ?? 0);
-
-    if ($siteId <= 0) {
-        sb_json_error('SITE_ID_REQUIRED', 422);
-    }
-    if ($id <= 0) {
-        sb_json_error('ID_REQUIRED', 422);
-    }
-
-    sb_require_editor($siteId);
-
-    $contentRaw = $_POST['content'] ?? null;
-    $propsRaw = $_POST['props'] ?? null;
-    $typeRaw = $_POST['type'] ?? null;
-
-    $newContent = null;
-    $newProps = null;
-    $newType = null;
-
-    if ($contentRaw !== null) {
-        if (is_array($contentRaw)) {
-            $newContent = $contentRaw;
-        } else {
-            $decoded = json_decode((string)$contentRaw, true);
-            if (!is_array($decoded)) {
-                sb_json_error('BAD_CONTENT_JSON', 422);
-            }
-            $newContent = $decoded;
-        }
-    }
-
-    if ($propsRaw !== null) {
-        if (is_array($propsRaw)) {
-            $newProps = $propsRaw;
-        } else {
-            $decoded = json_decode((string)$propsRaw, true);
-            if (!is_array($decoded)) {
-                sb_json_error('BAD_PROPS_JSON', 422);
-            }
-            $newProps = $decoded;
-        }
-    }
-
-    if ($typeRaw !== null) {
-        $newType = trim((string)$typeRaw);
-        if ($newType === '') {
-            sb_json_error('TYPE_REQUIRED', 422);
-        }
-    }
-
-    $layouts = sb_read_layouts();
-    $updatedBlock = null;
-    $updatedLayout = null;
-    $foundLayout = false;
-    $foundBlock = false;
-
-    foreach ($layouts as &$layout) {
-        if ((int)($layout['siteId'] ?? 0) !== $siteId) {
-            continue;
-        }
-
-        $foundLayout = true;
-        $layout = sb_normalize_layout_record($layout);
-
-        foreach (['header', 'footer', 'left', 'right'] as $zone) {
-            foreach ($layout['zones'][$zone] as &$block) {
-                if ((int)($block['id'] ?? 0) !== $id) {
-                    continue;
-                }
-
-                if ($newType !== null) {
-                    $block['type'] = $newType;
-                }
-                if ($newContent !== null) {
-                    $block['content'] = $newContent;
-                }
-                if ($newProps !== null) {
-                    $block['props'] = $newProps;
-                }
-
-                $block['updatedAt'] = date('c');
-                $block['updatedBy'] = (int)$USER->GetID();
-                $block['_zone'] = $zone;
-
-                $updatedBlock = $block;
-                $foundBlock = true;
-                break 2;
-            }
-            unset($block);
-        }
-
-        if ($foundBlock) {
-            $layout['updatedAt'] = date('c');
-            $layout['updatedBy'] = (int)$USER->GetID();
-            $updatedLayout = $layout;
-            break;
-        }
-    }
-    unset($layout);
-
-    if (!$foundLayout) {
-        sb_json_error('LAYOUT_NOT_FOUND', 404);
-    }
-
-    if (!$foundBlock || !$updatedBlock) {
-        sb_json_error('BLOCK_NOT_FOUND', 404);
-    }
-
-    sb_write_layouts($layouts);
-
-    sb_json_ok([
-        'block' => sb_normalize_block_record($updatedBlock),
-        'layout' => sb_normalize_layout_record($updatedLayout),
-    ]);
-}
-
-if ($action === 'layout.block.delete') {
-    $siteId = (int)($_POST['siteId'] ?? 0);
-    $id = (int)($_POST['id'] ?? 0);
-
-    if ($siteId <= 0) {
-        sb_json_error('SITE_ID_REQUIRED', 422);
-    }
-    if ($id <= 0) {
-        sb_json_error('ID_REQUIRED', 422);
-    }
-
-    sb_require_editor($siteId);
-
-    $layouts = sb_read_layouts();
-    $updatedLayout = null;
-    $foundLayout = false;
-    $foundBlock = false;
-
-    foreach ($layouts as &$layout) {
-        if ((int)($layout['siteId'] ?? 0) !== $siteId) {
-            continue;
-        }
-
-        $foundLayout = true;
-        $layout = sb_normalize_layout_record($layout);
-
-        foreach (['header', 'footer', 'left', 'right'] as $zone) {
-            $before = count($layout['zones'][$zone]);
-            $layout['zones'][$zone] = array_values(array_filter(
-                $layout['zones'][$zone],
-                static function ($block) use ($id) {
-                    return (int)($block['id'] ?? 0) !== $id;
-                }
-            ));
-
-            if (count($layout['zones'][$zone]) !== $before) {
-                $foundBlock = true;
-                $layout['updatedAt'] = date('c');
-                $layout['updatedBy'] = (int)$USER->GetID();
-                $updatedLayout = $layout;
-                break;
-            }
-        }
-
-        if ($foundBlock) {
-            break;
-        }
-    }
-    unset($layout);
-
-    if (!$foundLayout) {
-        sb_json_error('LAYOUT_NOT_FOUND', 404);
-    }
-
-    if (!$foundBlock) {
-        sb_json_error('BLOCK_NOT_FOUND', 404);
-    }
-
-    sb_write_layouts($layouts);
-
-    sb_json_ok([
-        'layout' => sb_normalize_layout_record($updatedLayout),
-    ]);
-}
-
-if ($action === 'layout.block.move') {
-    $siteId = (int)($_POST['siteId'] ?? 0);
-    $id = (int)($_POST['id'] ?? 0);
-    $dir = trim((string)($_POST['dir'] ?? ''));
-
-    if ($siteId <= 0) {
-        sb_json_error('SITE_ID_REQUIRED', 422);
-    }
-    if ($id <= 0) {
-        sb_json_error('ID_REQUIRED', 422);
-    }
-    if ($dir !== 'up' && $dir !== 'down') {
-        sb_json_error('DIR_REQUIRED', 422);
-    }
-
-    sb_require_editor($siteId);
-
-    $layouts = sb_read_layouts();
-    $updatedLayout = null;
-    $foundLayout = false;
-    $foundBlock = false;
-
-    foreach ($layouts as &$layout) {
-        if ((int)($layout['siteId'] ?? 0) !== $siteId) {
-            continue;
-        }
-
-        $foundLayout = true;
-        $layout = sb_normalize_layout_record($layout);
-
-        foreach (['header', 'footer', 'left', 'right'] as $zone) {
-            $siblings = $layout['zones'][$zone];
-
-            $pos = null;
-            for ($i = 0, $cnt = count($siblings); $i < $cnt; $i++) {
-                if ((int)($siblings[$i]['id'] ?? 0) === $id) {
-                    $pos = $i;
-                    break;
-                }
-            }
-
-            if ($pos === null) {
+    try {
+        $folder = sb_disk_ensure_site_folder($siteId);
+        $children = sb_disk_get_children($folder);
+
+        $files = [];
+        foreach ($children as $child) {
+            if (!$child instanceof \Bitrix\Disk\File) {
                 continue;
             }
 
-            $foundBlock = true;
-
-            if ($dir === 'up' && $pos === 0) {
-                $updatedLayout = $layout;
-                break 2;
-            }
-
-            if ($dir === 'down' && $pos === count($siblings) - 1) {
-                $updatedLayout = $layout;
-                break 2;
-            }
-
-            $swapPos = ($dir === 'up') ? $pos - 1 : $pos + 1;
-
-            $sortA = (int)($siblings[$pos]['sort'] ?? 500);
-            $sortB = (int)($siblings[$swapPos]['sort'] ?? 500);
-
-            $layout['zones'][$zone][$pos]['sort'] = $sortB;
-            $layout['zones'][$zone][$pos]['updatedAt'] = date('c');
-            $layout['zones'][$zone][$pos]['updatedBy'] = (int)$USER->GetID();
-
-            $layout['zones'][$zone][$swapPos]['sort'] = $sortA;
-            $layout['zones'][$zone][$swapPos]['updatedAt'] = date('c');
-            $layout['zones'][$zone][$swapPos]['updatedBy'] = (int)$USER->GetID();
-
-            usort($layout['zones'][$zone], static function ($a, $b) {
-                $sortCmp = (int)($a['sort'] ?? 500) <=> (int)($b['sort'] ?? 500);
-                if ($sortCmp !== 0) {
-                    return $sortCmp;
-                }
-                return (int)($a['id'] ?? 0) <=> (int)($b['id'] ?? 0);
-            });
-
-            $layout['updatedAt'] = date('c');
-            $layout['updatedBy'] = (int)$USER->GetID();
-            $updatedLayout = $layout;
-            break 2;
+            $files[] = [
+                'id' => (int)$child->getId(),
+                'name' => (string)$child->getName(),
+                'size' => (int)$child->getSize(),
+                'createTime' => method_exists($child, 'getCreateTime') && $child->getCreateTime()
+                    ? $child->getCreateTime()->format('c')
+                    : '',
+                'updateTime' => method_exists($child, 'getUpdateTime') && $child->getUpdateTime()
+                    ? $child->getUpdateTime()->format('c')
+                    : '',
+                'downloadUrl' => sb_disk_file_download_url($child),
+            ];
         }
+
+        usort($files, static function ($a, $b) {
+            return strcmp((string)$a['name'], (string)$b['name']);
+        });
+
+        sb_json_ok([
+            'files' => $files,
+            'folderId' => (int)$folder->getId(),
+        ]);
+    } catch (Throwable $e) {
+        sb_json_error('DISK_ERROR', 500, [
+            'message' => $e->getMessage(),
+        ]);
     }
-    unset($layout);
+}
 
-    if (!$foundLayout) {
-        sb_json_error('LAYOUT_NOT_FOUND', 404);
+if ($action === 'file.upload') {
+    $siteId = (int)($_POST['siteId'] ?? 0);
+    if ($siteId <= 0) {
+        sb_json_error('SITE_ID_REQUIRED', 422);
     }
 
-    if (!$foundBlock) {
-        sb_json_error('BLOCK_NOT_FOUND', 404);
+    sb_require_editor($siteId);
+
+    if (empty($_FILES['file']) || !is_array($_FILES['file'])) {
+        sb_json_error('FILE_REQUIRED', 422);
     }
 
-    sb_write_layouts($layouts);
+    $upload = $_FILES['file'];
 
-    sb_json_ok([
-        'layout' => sb_normalize_layout_record($updatedLayout),
-    ]);
+    if ((int)($upload['error'] ?? UPLOAD_ERR_NO_FILE) !== UPLOAD_ERR_OK) {
+        sb_json_error('UPLOAD_ERROR', 422, [
+            'phpUploadError' => (int)($upload['error'] ?? UPLOAD_ERR_NO_FILE),
+        ]);
+    }
+
+    if (!is_uploaded_file((string)($upload['tmp_name'] ?? ''))) {
+        sb_json_error('BAD_UPLOADED_FILE', 422);
+    }
+
+    try {
+        $folder = sb_disk_ensure_site_folder($siteId);
+        $file = sb_disk_upload_file_to_folder($folder, $upload);
+
+        sb_json_ok([
+            'file' => [
+                'id' => (int)$file->getId(),
+                'name' => (string)$file->getName(),
+                'size' => (int)$file->getSize(),
+                'downloadUrl' => sb_disk_file_download_url($file),
+            ],
+            'folderId' => (int)$folder->getId(),
+        ]);
+    } catch (Throwable $e) {
+        sb_json_error('DISK_ERROR', 500, [
+            'message' => $e->getMessage(),
+        ]);
+    }
+}
+
+if ($action === 'file.delete') {
+    $siteId = (int)($_POST['siteId'] ?? 0);
+    $fileId = (int)($_POST['fileId'] ?? 0);
+
+    if ($siteId <= 0) {
+        sb_json_error('SITE_ID_REQUIRED', 422);
+    }
+    if ($fileId <= 0) {
+        sb_json_error('FILE_ID_REQUIRED', 422);
+    }
+
+    sb_require_editor($siteId);
+
+    try {
+        if (!sb_disk_file_belongs_to_site($siteId, $fileId)) {
+            sb_json_error('FILE_NOT_IN_SITE', 422);
+        }
+
+        $file = sb_disk_load_file_by_id($fileId);
+        if (!$file) {
+            sb_json_error('FILE_NOT_FOUND', 404);
+        }
+
+        $ok = sb_disk_delete_file($file);
+        if (!$ok) {
+            sb_json_error('DELETE_FAILED', 500);
+        }
+
+        sb_json_ok();
+    } catch (Throwable $e) {
+        sb_json_error('DISK_ERROR', 500, [
+            'message' => $e->getMessage(),
+        ]);
+    }
 }
 
 sb_json_error('NOT_MOVED_YET', 501, [
-    'handler' => 'layout',
+    'handler' => 'file',
     'action' => $action,
 ]);
 
 
 ---
 
-3. Что теперь должно работать
+4. Что теперь должно работать
 
 После вставки должны работать:
 
-layout.get
+file.list
 
-layout.updateSettings
+file.upload
 
-layout.block.list
-
-layout.block.create
-
-layout.block.update
-
-layout.block.delete
-
-layout.block.move
+file.delete
 
 
 
 ---
 
-4. Как сейчас выглядит layout
+5. Что происходит при первом file.list
 
-Пример записи в layouts.json:
+Если у сайта ещё нет diskFolderId, то при первом вызове:
 
-{
-  "siteId": 3,
-  "settings": {
-    "showHeader": true,
-    "showFooter": true,
-    "showLeft": false,
-    "showRight": false,
-    "leftWidth": 260,
-    "rightWidth": 260,
-    "leftMode": "blocks"
-  },
-  "zones": {
-    "header": [],
-    "footer": [],
-    "left": [],
-    "right": []
-  }
-}
+ищется общее Disk-хранилище
+
+в корне ищется папка SiteBuilder
+
+если её нет — создаётся
+
+внутри ищется папка сайта по slug
+
+если её нет — создаётся
+
+diskFolderId записывается в sites.json
 
 
----
-
-5. Формат layout-блоков
-
-По структуре это почти те же блоки, что и page blocks:
-
-{
-  "id": 1,
-  "type": "text",
-  "sort": 10,
-  "content": {
-    "html": "<p>Текст в шапке</p>"
-  },
-  "props": {}
-}
-
-Это хорошо, потому что редактор диалогов можно потом переиспользовать.
+То есть инициализация идёт автоматически.
 
 
 ---
 
 6. Что проверить руками
 
-Проверь по порядку:
+Проверяй в таком порядке:
 
-1. layout.get
+1. file.list
 
+Для сайта должен:
 
-2. layout.updateSettings
+либо создать папку
 
+либо вернуть пустой список
 
-3. layout.block.create для header
-
-
-4. layout.block.list для header
-
-
-5. layout.block.update
+либо вернуть существующие файлы
 
 
-6. layout.block.move
+2. file.upload
 
+Загрузи любой тестовый файл.
 
-7. layout.block.delete
+3. снова file.list
 
+Должен вернуть уже загруженный файл.
 
+4. file.delete
 
-Примеры зон:
-
-header
-
-footer
-
-left
-
-right
-
+Удалить этот файл.
 
 
 ---
 
-7. Что пока сознательно не делал
+7. Важные нюансы
 
-Пока я не добавлял:
+Удаление сейчас разрешено только для файлов текущего сайта
 
-перенос блока между зонами
+Проверка идёт по parentId === site.diskFolderId.
 
-layout.block.reorder
+Это простой и безопасный вариант.
 
-отдельные preset’ы для layout
+Подпапки сайта пока не поддержаны
 
-сложную схему header/footer templates
+Сейчас всё хранится в одной папке сайта. Это нормально для первого этапа.
 
+Права Disk пока не синхронизируем
 
-Почему: сначала нужно поднять стабильную базу.
+То есть сейчас мы подняли рабочую базу file API, но не делали ещё синхронизацию ролей OWNER / ADMIN / EDITOR / VIEWER в права Disk-объектов.
 
-Если понадобится, следующим сообщением можно быстро добавить:
-
-layout.block.reorder
-
-layout.block.setZone
-
+Это лучше добавить отдельным шагом, потому что в разных коробках Bitrix API прав может отличаться.
 
 
 ---
 
-8. Что дальше логичнее всего
+8. Если на твоей коробке Disk начнёт ругаться
 
-Сейчас у тебя уже закрыты:
+На коробках Bitrix бывают разные сигнатуры методов. Я уже заложил несколько fallback-вариантов, но если увидишь что-то вроде:
 
-site
+Call to undefined method Bitrix\Disk\Storage::loadByEntity()
 
-page
+Argument #2 must be of type array
 
-block
+Too few arguments to function getChildren()
 
-menu
+Cannot create Disk folder
 
-access
-
-template
-
-layout
+Cannot upload file to Disk folder
 
 
-Остаётся самый чувствительный кусок:
-
-file / Disk
+тогда просто пришли мне точный текст ошибки, и я подправлю lib/disk.php именно под твою версию коробки.
 
 
-Именно он обычно даёт больше всего проблем в Bitrix24 коробке из-за разных версий API Disk.
+---
 
-Следующий правильный шаг: сделать file-пакет и disk-обвязку отдельно и аккуратно.
+9. Что у тебя уже закрыто по API
 
-Напиши: давай file/disk-пакет
+На этом этапе у тебя уже есть рабочие ветки:
+
+site.*
+
+page.*
+
+block.*
+
+menu.*
+
+access.*
+
+template.*
+
+layout.*
+
+file.*
+
+
+То есть backend-каркас уже собран.
+
+
+---
+
+10. Что делать дальше правильно
+
+Теперь следующий логичный этап уже не в API, а в входных страницах и фронте:
+
+1. сделать index.php
+
+
+2. сделать страницу управления страницами/сайтами
+
+
+3. сделать editor.php
+
+
+4. вынести JS редактора по файлам
+
+
+5. потом layout.php
+
+
+6. потом public.php
+
+
+
+Я бы следующим сообщением начал уже с рабочей страницы index.php, которая:
+
+показывает список сайтов
+
+создаёт сайт
+
+удаляет сайт
+
+открывает editor/layout/menu/files/settings
+
+
+Напиши: давай index.php
