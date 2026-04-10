@@ -1,50 +1,222 @@
-Да, согласен — текущее левое меню выглядит слишком “технически”:
+Согласен, сейчас всё ещё не очень. Проблема уже не в цветах, а в самой модели меню.
 
-кнопки раскрытия живут отдельно от ссылки
+Что сейчас выглядит плохо
 
-вложенность читается, но визуально тяжёлая
+слева дублируется корень: и заголовок Домашняя, и первый пункт Домашняя
 
-много маленьких рамок внутри рамок
+дерево слишком “служебное”, а не навигационное
 
-дерево похоже на debug-ui, а не на нормальную навигацию раздела
+вертикальные линии и стрелки выглядят тяжеловато
 
+активный пункт нормальный, но вся композиция слева всё ещё слабая
 
-Что лучше сделать
-
-Я бы привёл левое меню к такому виду:
-
-одна общая карточка раздела
-
-внутри — чистое дерево
-
-toggle компактный и встроенный в строку
-
-активный пункт выделен мягко
-
-вложенность читается за счёт отступов и тонкой вертикальной линии
-
-без лишних отдельных коробок на каждом уровне
+корень раздела лучше показывать как заголовок группы, а не как первый пункт списка
 
 
-То есть не “кнопка + кнопка + карточка”, а именно sidebar tree navigation.
+Как сделать лучше
+
+Сделаем левое меню как чистую sidebar-навигацию:
+
+сверху заголовок раздела
+
+ниже дерево без дублирования корня
+
+только дочерние страницы корня
+
+у вложенных страниц — аккуратные отступы
+
+toggle маленький и встроенный
+
+без тяжёлых линий
+
+активная страница выделена мягкой плашкой
+
+
+Это уже будет выглядеть ближе к нормальному рабочему сайдбару.
 
 
 ---
 
-Что предлагаю
+Что поменять
 
-Сейчас не трогаем PHP-логику дерева, только меняем визуальную подачу.
+Нужно изменить 2 места:
 
-Нужно заменить стили дерева в:
+1. sb_public_render_section_nav() в lib/public_render.php
+
+
+2. стили дерева в assets/public/public.css
+
+
+
+
+---
+
+1. Замени sb_public_render_section_nav() полностью
+
+Файл:
+
+/local/sitebuilder/lib/public_render.php
+
+Замени функцию sb_public_render_section_nav на эту:
+
+if (!function_exists('sb_public_render_section_nav')) {
+    function sb_public_render_section_nav(array $pages, ?array $currentPage, string $basePath, int $siteId): string
+    {
+        if (!$currentPage) {
+            return '';
+        }
+
+        $sectionRoot = sb_public_section_root($pages, $currentPage);
+        if (!$sectionRoot) {
+            return '';
+        }
+
+        $pageMap = [];
+        foreach ($pages as $page) {
+            $page = sb_normalize_page_record($page);
+            $page['children_nodes'] = [];
+            $pageMap[(int)$page['id']] = $page;
+        }
+
+        foreach ($pageMap as $id => $page) {
+            $parentId = (int)($page['parentId'] ?? 0);
+            if ($parentId > 0 && isset($pageMap[$parentId])) {
+                $pageMap[$parentId]['children_nodes'][] = $id;
+            }
+        }
+
+        $sortTree = function ($pageId) use (&$sortTree, &$pageMap) {
+            if (!isset($pageMap[$pageId])) {
+                return;
+            }
+
+            if (!empty($pageMap[$pageId]['children_nodes'])) {
+                usort($pageMap[$pageId]['children_nodes'], function ($aId, $bId) use (&$pageMap) {
+                    $a = $pageMap[$aId];
+                    $b = $pageMap[$bId];
+
+                    $sortCmp = (int)($a['sort'] ?? 500) <=> (int)($b['sort'] ?? 500);
+                    if ($sortCmp !== 0) {
+                        return $sortCmp;
+                    }
+
+                    return (int)($a['id'] ?? 0) <=> (int)($b['id'] ?? 0);
+                });
+
+                foreach ($pageMap[$pageId]['children_nodes'] as $childId) {
+                    $sortTree($childId);
+                }
+            }
+        };
+
+        $rootId = (int)($sectionRoot['id'] ?? 0);
+        if (!isset($pageMap[$rootId])) {
+            return '';
+        }
+
+        $sortTree($rootId);
+
+        $isInActiveBranch = function ($nodeId) use (&$isInActiveBranch, &$pageMap, $currentPage) {
+            if ((int)$nodeId === (int)($currentPage['id'] ?? 0)) {
+                return true;
+            }
+
+            if (!isset($pageMap[$nodeId]) || empty($pageMap[$nodeId]['children_nodes'])) {
+                return false;
+            }
+
+            foreach ($pageMap[$nodeId]['children_nodes'] as $childId) {
+                if ($isInActiveBranch($childId)) {
+                    return true;
+                }
+            }
+
+            return false;
+        };
+
+        $renderNode = function ($nodeId, $depth) use (&$renderNode, &$pageMap, $currentPage, $basePath, $siteId, $isInActiveBranch) {
+            if (!isset($pageMap[$nodeId])) {
+                return '';
+            }
+
+            $node = $pageMap[$nodeId];
+            $children = $node['children_nodes'] ?? [];
+            $hasChildren = !empty($children);
+            $isActive = (int)($node['id'] ?? 0) === (int)($currentPage['id'] ?? 0);
+            $isOpen = $isInActiveBranch($nodeId);
+
+            $activeClass = $isActive ? ' is-active' : '';
+            $hasChildrenClass = $hasChildren ? ' has-children' : '';
+            $openClass = $isOpen ? ' is-open' : '';
+
+            $url = sb_public_h(sb_public_page_url($basePath, $siteId, (int)$node['id']));
+            $title = sb_public_h((string)($node['title'] ?? 'Страница'));
+            $depth = max(0, (int)$depth);
+
+            $html = '';
+            $html .= '<div class="sb-tree-node' . $hasChildrenClass . $openClass . '" style="--sb-nav-depth:' . $depth . ';">';
+            $html .= '  <div class="sb-tree-node__row">';
+
+            if ($hasChildren) {
+                $html .= '    <button type="button" class="sb-tree-node__toggle" data-role="toggle" aria-expanded="' . ($isOpen ? 'true' : 'false') . '">';
+                $html .= '      <span class="sb-tree-node__toggle-icon"></span>';
+                $html .= '    </button>';
+            } else {
+                $html .= '    <span class="sb-tree-node__toggle sb-tree-node__toggle--empty"></span>';
+            }
+
+            $html .= '    <a class="sb-section-nav__link' . $activeClass . '" href="' . $url . '">';
+            $html .= '      <span class="sb-section-nav__text">' . $title . '</span>';
+            $html .= '    </a>';
+            $html .= '  </div>';
+
+            if ($hasChildren) {
+                $html .= '  <div class="sb-tree-node__children">';
+                foreach ($children as $childId) {
+                    $html .= $renderNode($childId, $depth + 1);
+                }
+                $html .= '  </div>';
+            }
+
+            $html .= '</div>';
+
+            return $html;
+        };
+
+        $html = '<div class="sb-section-nav">';
+        $html .= '<div class="sb-section-nav__title-row">';
+        $html .= '  <a class="sb-section-nav__root-link" href="' . sb_public_h(sb_public_page_url($basePath, $siteId, $rootId)) . '">'
+              . sb_public_h((string)($sectionRoot['title'] ?? 'Раздел')) . '</a>';
+        $html .= '</div>';
+
+        $html .= '<div class="sb-section-nav__tree">';
+
+        $rootChildren = $pageMap[$rootId]['children_nodes'] ?? [];
+        foreach ($rootChildren as $childId) {
+            $html .= $renderNode($childId, 0);
+        }
+
+        $html .= '</div>';
+        $html .= '</div>';
+
+        return $html;
+    }
+}
+
+
+---
+
+2. Замени стили sidebar-дерева
+
+Файл:
 
 /local/sitebuilder/assets/public/public.css
 
+Найди все стили, связанные с:
 
----
+.sb-section-nav
 
-Что заменить в public.css
-
-Найди и удали/замени текущие стили, связанные с:
+.sb-section-nav__title
 
 .sb-section-nav__tree
 
@@ -54,24 +226,16 @@ toggle компактный и встроенный в строку
 
 .sb-tree-node__toggle
 
-.sb-tree-node__toggle--empty
-
 .sb-tree-node__toggle-icon
-
-.sb-tree-node.is-open > .sb-tree-node__row .sb-tree-node__toggle-icon
 
 .sb-tree-node__children
 
-.sb-tree-node.is-open > .sb-tree-node__children
-
 .sb-section-nav__link
-
-.sb-section-nav__link.is-active
 
 .sb-section-nav__text
 
 
-и вставь вместо них вот это:
+И замени их на это:
 
 .sb-section-nav {
     display: flex;
@@ -79,11 +243,22 @@ toggle компактный и встроенный в строку
     gap: 12px;
 }
 
-.sb-section-nav__title {
-    font-size: 13px;
-    font-weight: 700;
+.sb-section-nav__title-row {
+    padding-bottom: 4px;
+    border-bottom: 1px solid #f1f5f9;
+}
+
+.sb-section-nav__root-link {
+    display: inline-flex;
+    align-items: center;
+    text-decoration: none;
     color: #111827;
-    letter-spacing: 0.01em;
+    font-size: 14px;
+    font-weight: 700;
+}
+
+.sb-section-nav__root-link:hover {
+    color: var(--sb-accent);
 }
 
 .sb-section-nav__tree {
@@ -102,39 +277,20 @@ toggle компактный и встроенный в строку
     display: flex;
     align-items: center;
     gap: 8px;
-    padding-left: calc(var(--sb-nav-depth, 0) * 18px);
-    position: relative;
-}
-
-.sb-tree-node__row::before {
-    content: "";
-    position: absolute;
-    left: calc((var(--sb-nav-depth, 0) * 18px) - 9px);
-    top: -4px;
-    bottom: -4px;
-    width: 1px;
-    background: transparent;
-}
-
-.sb-tree-node[style*="--sb-nav-depth:1"] > .sb-tree-node__row::before,
-.sb-tree-node[style*="--sb-nav-depth:2"] > .sb-tree-node__row::before,
-.sb-tree-node[style*="--sb-nav-depth:3"] > .sb-tree-node__row::before,
-.sb-tree-node[style*="--sb-nav-depth:4"] > .sb-tree-node__row::before,
-.sb-tree-node[style*="--sb-nav-depth:5"] > .sb-tree-node__row::before {
-    background: #e5e7eb;
+    padding-left: calc(var(--sb-nav-depth, 0) * 16px);
 }
 
 .sb-tree-node__toggle {
-    width: 20px;
-    min-width: 20px;
-    height: 20px;
+    width: 18px;
+    min-width: 18px;
+    height: 18px;
     border: 0;
-    border-radius: 6px;
+    border-radius: 4px;
     background: transparent;
     cursor: pointer;
     position: relative;
     padding: 0;
-    flex: 0 0 20px;
+    flex: 0 0 18px;
 }
 
 .sb-tree-node__toggle:hover {
@@ -150,8 +306,8 @@ toggle компактный и встроенный в строку
     position: absolute;
     top: 50%;
     left: 50%;
-    width: 7px;
-    height: 7px;
+    width: 6px;
+    height: 6px;
     border-right: 2px solid #64748b;
     border-bottom: 2px solid #64748b;
     transform: translate(-50%, -60%) rotate(45deg);
@@ -175,20 +331,20 @@ toggle компактный и встроенный в строку
 .sb-section-nav__link {
     display: flex;
     align-items: center;
-    min-height: 36px;
+    min-height: 34px;
     width: 100%;
     text-decoration: none;
     color: #374151;
-    padding: 8px 12px;
-    border-radius: 10px;
+    padding: 6px 10px;
+    border-radius: 8px;
     background: transparent;
     border: 1px solid transparent;
-    transition: background .15s ease, border-color .15s ease, color .15s ease;
+    transition: background .15s ease, color .15s ease, border-color .15s ease;
 }
 
 .sb-section-nav__link:hover {
     background: #f8fafc;
-    border-color: #e5e7eb;
+    border-color: #eef2f7;
 }
 
 .sb-section-nav__link.is-active {
@@ -207,43 +363,72 @@ toggle компактный и встроенный в строку
 
 ---
 
-Что это изменит
+Что изменится
 
-После замены меню станет:
+После этого слева будет:
 
-визуально легче
+заголовок раздела: Домашняя
 
-ближе к нормальному sidebar tree
+ниже уже только дочерние страницы, без повторного Домашняя
 
-без ощущения “таблицы внутри таблицы”
+меню станет заметно чище
 
-вложенность будет видна через отступы и тонкие линии
+активная ветка останется
 
-активный пункт останется заметным
-
-toggle станет второстепенным, а не главным элементом
+визуально будет ближе к нормальному sidebar, а не к техническому дереву
 
 
 
 ---
 
-Если хочешь ещё лучше
+Почему это лучше
 
-Следующий шаг, который я бы сделал после этого:
+В твоём скриншоте главный визуальный мусор — это именно повторение корня:
 
-1. убрать заголовок раздела внутри левой карточки, если он дублирует текущую страницу
+хлебные крошки
 
+h1 по центру
 
-2. сделать левую колонку уже, а центральную шире
+заголовок в sidebar
 
-
-3. добавить sticky sidebar, если меню длинное
-
-
-4. показывать только children root-а по умолчанию, а не весь root целиком, если корневая страница и так уже отображается в breadcrumbs и h1
+ещё раз корневой пункт внутри дерева
 
 
+Сейчас мы убираем именно это дублирование.
 
-Сейчас сначала лучше просто применить новые стили и посмотреть визуально.
 
-Если хочешь, следующим сообщением я дам ещё более аккуратный вариант: сделать левое меню похожим на Bitrix/Notion-style sidebar, где активная ветка читается ещё лучше.
+---
+
+Что проверить
+
+На твоём примере ожидаемо должно стать так:
+
+слева:
+
+Домашняя как заголовок
+
+Вложенная
+
+Вложенная2
+
+Вложенная3
+
+
+
+
+А не:
+
+Домашняя
+
+Домашняя
+
+Вложенная
+
+...
+
+
+
+
+---
+
+Следующим шагом я бы ещё сделал левую колонку уже на 240–260px, а центральную шире, потому что сейчас контенту тесновато.
