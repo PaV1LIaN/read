@@ -1,6 +1,6 @@
-Вот полностью готовый files.php под admin.css.
+Тогда дальше — settings.php под admin.css.
 
-Полный файл /local/sitebuilder/files.php
+Полный файл /local/sitebuilder/settings.php
 
 <?php
 require $_SERVER['DOCUMENT_ROOT'] . '/bitrix/modules/main/include/prolog_before.php';
@@ -25,7 +25,7 @@ if ($siteId <= 0) {
     <html lang="ru">
     <head>
         <meta charset="UTF-8">
-        <title>SiteBuilder / Files</title>
+        <title>SiteBuilder / Settings</title>
         <?php $APPLICATION->ShowHead(); ?>
         <link rel="stylesheet" href="<?= htmlspecialchars($basePath, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?>/assets/admin/admin.css">
     </head>
@@ -44,73 +44,67 @@ if ($siteId <= 0) {
 <html lang="ru">
 <head>
     <meta charset="UTF-8">
-    <title>SiteBuilder / Files</title>
+    <title>SiteBuilder / Settings</title>
     <?php $APPLICATION->ShowHead(); ?>
     <link rel="stylesheet" href="<?= htmlspecialchars($basePath, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?>/assets/admin/admin.css">
-    <style>
-        .sb-files-list {
-            display: flex;
-            flex-direction: column;
-            gap: 12px;
-        }
-
-        .sb-file-card {
-            border: 1px solid #e5e7eb;
-            border-radius: 12px;
-            padding: 14px;
-            background: #fafafa;
-        }
-
-        .sb-file-head {
-            display: flex;
-            justify-content: space-between;
-            align-items: flex-start;
-            gap: 12px;
-        }
-
-        .sb-file-title {
-            margin: 0 0 6px;
-            font-size: 15px;
-            font-weight: 700;
-            word-break: break-word;
-        }
-
-        .sb-file-actions {
-            margin-top: 10px;
-            display: flex;
-            flex-wrap: wrap;
-            gap: 8px;
-        }
-
-        .sb-file-upload-input {
-            max-width: 360px;
-        }
-    </style>
 </head>
 <body class="sb-admin-body">
 <div class="sb-page">
     <div class="sb-topbar">
         <div>
             <a class="sb-back-link" href="<?= htmlspecialchars($basePath, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?>/index.php">← К списку сайтов</a>
-            <h1 class="sb-title">Файлы сайта</h1>
+            <h1 class="sb-title">Настройки сайта</h1>
             <p class="sb-subtitle">siteId = <?= (int)$siteId ?></p>
         </div>
     </div>
 
     <div class="sb-panel">
-        <h2 class="sb-panel-title">Загрузка файла</h2>
-        <div class="sb-toolbar">
-            <input class="sb-input sb-file-upload-input" type="file" id="uploadFileInput">
-            <button type="button" class="sb-btn sb-btn-primary" id="uploadBtn">Загрузить</button>
-            <button type="button" class="sb-btn sb-btn-light" id="reloadBtn">Обновить список</button>
-        </div>
-        <div class="sb-meta" id="folderInfo" style="margin-top:12px;">Папка ещё не загружена</div>
-    </div>
+        <h2 class="sb-panel-title">Основные настройки</h2>
 
-    <div class="sb-panel">
-        <h2 class="sb-panel-title">Файлы</h2>
-        <div id="filesContainer" class="sb-files-list">
-            <div class="sb-empty">Загрузка...</div>
+        <div id="settingsEmpty" class="sb-empty">Загрузка...</div>
+
+        <div id="settingsForm" class="sb-hidden">
+            <div class="sb-grid-2">
+                <div class="sb-field">
+                    <label for="siteName">Название сайта</label>
+                    <input class="sb-input" type="text" id="siteName">
+                </div>
+
+                <div class="sb-field">
+                    <label for="siteSlug">Slug</label>
+                    <input class="sb-input" type="text" id="siteSlug">
+                </div>
+
+                <div class="sb-field">
+                    <label for="containerWidth">Ширина контейнера</label>
+                    <input class="sb-input" type="number" id="containerWidth" min="320" max="1920">
+                </div>
+
+                <div class="sb-field">
+                    <label for="accent">Accent color</label>
+                    <input class="sb-input" type="text" id="accent" placeholder="#2563eb">
+                </div>
+
+                <div class="sb-field">
+                    <label for="logoFileId">Logo file ID</label>
+                    <input class="sb-input" type="number" id="logoFileId" min="0">
+                </div>
+
+                <div class="sb-field">
+                    <label for="homePageId">Домашняя страница</label>
+                    <select class="sb-select" id="homePageId"></select>
+                </div>
+
+                <div class="sb-field full">
+                    <label>Служебная информация</label>
+                    <div class="sb-meta" id="siteMeta"></div>
+                </div>
+            </div>
+
+            <div class="sb-toolbar" style="margin-top:16px;">
+                <button type="button" class="sb-btn sb-btn-primary" id="saveSettingsBtn">Сохранить</button>
+                <button type="button" class="sb-btn sb-btn-light" id="reloadBtn">Обновить</button>
+            </div>
         </div>
     </div>
 
@@ -127,13 +121,12 @@ if ($siteId <= 0) {
     var SITE_ID = <?= (int)$siteId ?>;
 
     var output = document.getElementById('output');
-    var filesContainer = document.getElementById('filesContainer');
-    var folderInfo = document.getElementById('folderInfo');
-    var uploadFileInput = document.getElementById('uploadFileInput');
+    var settingsEmpty = document.getElementById('settingsEmpty');
+    var settingsForm = document.getElementById('settingsForm');
 
     var state = {
-        files: [],
-        folderId: 0
+        site: null,
+        pages: []
     };
 
     function print(data) {
@@ -198,149 +191,140 @@ if ($siteId <= 0) {
         });
     }
 
-    function loadFiles() {
-        filesContainer.innerHTML = '<div class="sb-empty">Загрузка...</div>';
-
-        api('file.list', { siteId: SITE_ID }, function (res) {
+    function loadSite(next) {
+        api('site.get', { siteId: SITE_ID }, function (res) {
             if (!res || res.ok !== true) {
-                filesContainer.innerHTML = '<div class="sb-empty">Не удалось загрузить файлы</div>';
-                folderInfo.textContent = 'Ошибка загрузки папки';
+                settingsEmpty.textContent = 'Не удалось загрузить сайт';
                 return;
             }
 
-            state.files = Array.isArray(res.files) ? res.files : [];
-            state.folderId = Number(res.folderId || 0);
+            state.site = res.site || null;
 
-            folderInfo.textContent = 'Disk folder ID: ' + state.folderId;
-            renderFiles();
+            if (typeof next === 'function') {
+                next();
+            }
         });
     }
 
-    function renderFiles() {
-        if (!state.files.length) {
-            filesContainer.innerHTML = '<div class="sb-empty">Файлов пока нет</div>';
-            return;
-        }
-
-        var html = '';
-        for (var i = 0; i < state.files.length; i++) {
-            html += renderFileCard(state.files[i]);
-        }
-        filesContainer.innerHTML = html;
-    }
-
-    function renderFileCard(file) {
-        var id = Number(file.id || 0);
-        var name = escapeHtml(file.name || '');
-        var size = Number(file.size || 0);
-        var createTime = escapeHtml(file.createTime || '');
-        var updateTime = escapeHtml(file.updateTime || '');
-        var downloadUrl = escapeHtml(file.downloadUrl || '#');
-
-        return ''
-            + '<div class="sb-file-card">'
-            + '  <div class="sb-file-head">'
-            + '    <div>'
-            + '      <div class="sb-file-title">' + name + '</div>'
-            + '      <div class="sb-meta">'
-            + '        <div><strong>ID:</strong> ' + id + '</div>'
-            + '        <div><strong>Размер:</strong> ' + size + ' байт</div>'
-            + '        <div><strong>Создан:</strong> ' + createTime + '</div>'
-            + '        <div><strong>Обновлён:</strong> ' + updateTime + '</div>'
-            + '      </div>'
-            + '    </div>'
-            + '    <span class="sb-badge">file</span>'
-            + '  </div>'
-            + '  <div class="sb-file-actions">'
-            + '    <a class="sb-btn sb-btn-light sb-btn-small" href="' + downloadUrl + '" target="_blank">Скачать</a>'
-            + '    <button type="button" class="sb-btn sb-btn-danger sb-btn-small js-delete-file" data-id="' + id + '">Удалить</button>'
-            + '  </div>'
-            + '</div>';
-    }
-
-    function uploadFile() {
-        if (!uploadFileInput.files || !uploadFileInput.files.length) {
-            alert('Выберите файл');
-            return;
-        }
-
-        var file = uploadFileInput.files[0];
-
-        var formData = new FormData();
-        formData.append('action', 'file.upload');
-        formData.append('siteId', String(SITE_ID));
-        formData.append('sessid', getSessid());
-        formData.append('file', file);
-
-        var xhr = new XMLHttpRequest();
-        xhr.open('POST', API_URL, true);
-
-        xhr.onload = function () {
-            var text = xhr.responseText || '';
-            var data = null;
-
-            try {
-                data = JSON.parse(text);
-            } catch (e) {
-                print({
-                    ok: false,
-                    error: 'BAD_JSON',
-                    raw: text
-                });
-                alert('Ответ сервера не является JSON');
-                return;
+    function loadPages(next) {
+        api('page.list', { siteId: SITE_ID }, function (res) {
+            if (res && res.ok === true) {
+                state.pages = Array.isArray(res.pages) ? res.pages : [];
+            } else {
+                state.pages = [];
             }
 
-            print(data);
-
-            if (!data || data.ok !== true) {
-                alert('Не удалось загрузить файл');
-                return;
+            if (typeof next === 'function') {
+                next();
             }
-
-            uploadFileInput.value = '';
-            loadFiles();
-        };
-
-        xhr.onerror = function () {
-            print({
-                ok: false,
-                error: 'XHR_UPLOAD_ERROR'
-            });
-            alert('Ошибка загрузки файла');
-        };
-
-        xhr.send(formData);
+        });
     }
 
-    function deleteFile(fileId) {
-        if (!confirm('Удалить файл #' + fileId + '?')) {
+    function renderHomePageOptions() {
+        var select = document.getElementById('homePageId');
+        var html = '<option value="0">Не выбрана</option>';
+
+        for (var i = 0; i < state.pages.length; i++) {
+            var page = state.pages[i];
+            var id = Number(page.id || 0);
+            var selected = id === Number((state.site && state.site.homePageId) || 0) ? ' selected' : '';
+            html += '<option value="' + id + '"' + selected + '>'
+                + escapeHtml(page.title || ('Страница #' + id))
+                + ' (#' + id + ')</option>';
+        }
+
+        select.innerHTML = html;
+    }
+
+    function renderSite() {
+        if (!state.site) {
+            settingsEmpty.textContent = 'Сайт не найден';
             return;
         }
 
-        api('file.delete', {
+        document.getElementById('siteName').value = state.site.name || '';
+        document.getElementById('siteSlug').value = state.site.slug || '';
+        document.getElementById('containerWidth').value = Number((state.site.settings && state.site.settings.containerWidth) || 1100);
+        document.getElementById('accent').value = (state.site.settings && state.site.settings.accent) || '#2563eb';
+        document.getElementById('logoFileId').value = Number((state.site.settings && state.site.settings.logoFileId) || 0);
+
+        renderHomePageOptions();
+
+        document.getElementById('siteMeta').innerHTML =
+            '<div><strong>ID:</strong> ' + Number(state.site.id || 0) + '</div>'
+            + '<div><strong>Disk folder ID:</strong> ' + Number(state.site.diskFolderId || 0) + '</div>'
+            + '<div><strong>Top menu ID:</strong> ' + Number(state.site.topMenuId || 0) + '</div>'
+            + '<div><strong>Created at:</strong> ' + escapeHtml(state.site.createdAt || '') + '</div>'
+            + '<div><strong>Updated at:</strong> ' + escapeHtml(state.site.updatedAt || '') + '</div>';
+
+        settingsEmpty.classList.add('sb-hidden');
+        settingsForm.classList.remove('sb-hidden');
+    }
+
+    function saveSettings() {
+        if (!state.site) {
+            return;
+        }
+
+        var siteName = (document.getElementById('siteName').value || '').trim();
+        var siteSlug = (document.getElementById('siteSlug').value || '').trim();
+        var containerWidth = parseInt(document.getElementById('containerWidth').value, 10) || 1100;
+        var accent = (document.getElementById('accent').value || '').trim();
+        var logoFileId = parseInt(document.getElementById('logoFileId').value, 10) || 0;
+        var homePageId = parseInt(document.getElementById('homePageId').value, 10) || 0;
+
+        if (!siteName) {
+            alert('Название сайта не может быть пустым');
+            return;
+        }
+
+        api('site.update', {
             siteId: SITE_ID,
-            fileId: fileId
+            name: siteName,
+            slug: siteSlug,
+            containerWidth: containerWidth,
+            accent: accent,
+            logoFileId: logoFileId
         }, function (res) {
             if (!res || res.ok !== true) {
-                alert('Не удалось удалить файл');
+                alert('Не удалось сохранить настройки сайта');
                 return;
             }
 
-            loadFiles();
+            state.site = res.site || state.site;
+
+            if (homePageId > 0) {
+                api('site.setHome', {
+                    siteId: SITE_ID,
+                    pageId: homePageId
+                }, function (res2) {
+                    if (!res2 || res2.ok !== true) {
+                        alert('Основные настройки сохранены, но не удалось установить домашнюю страницу');
+                        loadSite(function () {
+                            loadPages(renderSite);
+                        });
+                        return;
+                    }
+
+                    loadSite(function () {
+                        loadPages(renderSite);
+                    });
+                });
+            } else {
+                var oldSite = state.site || {};
+                oldSite.homePageId = 0;
+                state.site = oldSite;
+                renderSite();
+                alert('Настройки сохранены. Если нужно сбросить home page в API полностью, это можно добавить отдельным action.');
+            }
         });
     }
 
-    document.getElementById('uploadBtn').addEventListener('click', uploadFile);
-    document.getElementById('reloadBtn').addEventListener('click', loadFiles);
-
-    document.addEventListener('click', function (e) {
-        var btn = e.target.closest('.js-delete-file');
-        if (!btn) {
-            return;
-        }
-
-        deleteFile(parseInt(btn.getAttribute('data-id'), 10) || 0);
+    document.getElementById('saveSettingsBtn').addEventListener('click', saveSettings);
+    document.getElementById('reloadBtn').addEventListener('click', function () {
+        loadSite(function () {
+            loadPages(renderSite);
+        });
     });
 
     window.onerror = function (message, source, lineno, colno, error) {
@@ -354,7 +338,9 @@ if ($siteId <= 0) {
         });
     };
 
-    loadFiles();
+    loadSite(function () {
+        loadPages(renderSite);
+    });
 })();
 </script>
 </body>
