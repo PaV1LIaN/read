@@ -1,1113 +1,416 @@
-Да. Давай сделаем это практично: я дам тебе готовый макет новой главной админской страницы под твой проект и сразу распишу:
+Да. Тогда следующий шаг правильный: сначала определить, откуда именно брать статистику, а потом уже подключать её в dashboard.
 
-что создать
-
-куда вставлять
-
-что заменить
-
-что пока можно оставить заглушками
-
-
-Идём без лишней теории.
+Сейчас у тебя есть конструктор сайтов, но нет нормального контура аналитики. Значит нужно добавить свой слой сбора статистики.
 
 
 ---
 
-Что будем делать
+Что именно нужно собирать
 
-Сейчас лучше не пихать весь новый dashboard-стиль внутрь index.php, а вынести его в отдельный css-файл.
+Для dashboard тебе нужны такие данные:
 
-Нужно сделать 2 шага
+По сайту
 
-1. Создать новый файл стилей
+просмотры сайта
 
-/local/sitebuilder/assets/admin/dashboard.css
+уникальные посетители
 
-2. Заменить index.php
+количество сессий
 
-Полностью на новую версию, которая использует:
+средняя длительность сессии
 
-admin.css
+последний визит
 
-dashboard.css
+активность по дням
 
 
+По системе
 
----
+создание сайта
 
-Шаг 1. Создай файл /local/sitebuilder/assets/admin/dashboard.css
+редактирование сайта
 
-Вставь туда вот этот код целиком:
+публикация страницы
 
-:root {
-    --dash-bg: #f6f8fb;
-    --dash-surface: #ffffff;
-    --dash-surface-soft: #f9fbfd;
-    --dash-border: #e6ebf2;
-    --dash-border-strong: #d7dee8;
+изменение layout
 
-    --dash-text: #111827;
-    --dash-text-soft: #5b6472;
-    --dash-text-faint: #8a94a6;
+изменение меню
 
-    --dash-primary: #2563eb;
-    --dash-primary-strong: #1d4ed8;
-    --dash-primary-soft: #eaf1ff;
+загрузка файлов
 
-    --dash-success: #16a34a;
-    --dash-success-soft: #eaf8ee;
-
-    --dash-warning: #d97706;
-    --dash-warning-soft: #fff6e8;
-
-    --dash-danger: #dc2626;
-    --dash-danger-soft: #fdecec;
-
-    --dash-radius-xl: 20px;
-    --dash-radius-lg: 16px;
-    --dash-radius-md: 12px;
-    --dash-radius-pill: 999px;
-
-    --dash-shadow-sm: 0 2px 8px rgba(15, 23, 42, 0.04);
-    --dash-shadow-md: 0 6px 20px rgba(15, 23, 42, 0.05);
-    --dash-shadow-lg: 0 12px 32px rgba(15, 23, 42, 0.06);
-
-    --dash-gap: 20px;
-}
-
-.sb-dashboard {
-    display: flex;
-    flex-direction: column;
-    gap: 24px;
-}
-
-.sb-dashboard-topbar {
-    display: flex;
-    justify-content: space-between;
-    align-items: flex-start;
-    gap: 20px;
-}
-
-.sb-dashboard-topbar__main {
-    min-width: 0;
-}
-
-.sb-dashboard-title {
-    margin: 0 0 6px;
-    font-size: 32px;
-    line-height: 1.1;
-    font-weight: 700;
-    letter-spacing: -0.02em;
-    color: var(--dash-text);
-}
-
-.sb-dashboard-subtitle {
-    margin: 0;
-    font-size: 14px;
-    color: var(--dash-text-soft);
-}
-
-.sb-dashboard-actions {
-    display: flex;
-    gap: 10px;
-    flex-wrap: wrap;
-    justify-content: flex-end;
-}
-
-.sb-dashboard-filter,
-.sb-dashboard-search {
-    height: 42px;
-    border: 1px solid var(--dash-border);
-    border-radius: var(--dash-radius-md);
-    background: var(--dash-surface);
-    padding: 0 14px;
-    font: inherit;
-    color: var(--dash-text);
-    min-width: 180px;
-    outline: none;
-}
-
-.sb-dashboard-filter:focus,
-.sb-dashboard-search:focus {
-    border-color: #bfd2ff;
-    box-shadow: 0 0 0 4px rgba(37, 99, 235, 0.08);
-}
-
-.sb-dashboard-kpis {
-    display: grid;
-    grid-template-columns: repeat(6, 1fr);
-    gap: var(--dash-gap);
-}
-
-.sb-kpi-card {
-    background: var(--dash-surface);
-    border: 1px solid var(--dash-border);
-    border-radius: var(--dash-radius-xl);
-    padding: 18px 20px;
-    box-shadow: var(--dash-shadow-sm);
-}
-
-.sb-kpi-card__label {
-    font-size: 13px;
-    color: var(--dash-text-soft);
-    margin-bottom: 10px;
-}
-
-.sb-kpi-card__value {
-    font-size: 34px;
-    font-weight: 700;
-    line-height: 1;
-    margin-bottom: 8px;
-    letter-spacing: -0.02em;
-    color: var(--dash-text);
-}
-
-.sb-kpi-card__meta {
-    font-size: 13px;
-    color: var(--dash-text-faint);
-}
-
-.sb-kpi-card__meta.success {
-    color: var(--dash-success);
-}
-
-.sb-kpi-card__meta.warning {
-    color: var(--dash-warning);
-}
-
-.sb-dashboard-grid {
-    display: grid;
-    gap: var(--dash-gap);
-}
-
-.sb-dashboard-grid--analytics {
-    grid-template-columns: 2fr 1fr;
-}
-
-.sb-dashboard-grid--bottom {
-    grid-template-columns: 1fr 1fr 1fr;
-}
-
-.sb-dash-card {
-    background: var(--dash-surface);
-    border: 1px solid var(--dash-border);
-    border-radius: var(--dash-radius-xl);
-    padding: 20px;
-    box-shadow: var(--dash-shadow-sm);
-}
-
-.sb-dash-card__head {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    gap: 14px;
-    margin-bottom: 18px;
-}
-
-.sb-dash-card__head h2 {
-    margin: 0;
-    font-size: 20px;
-    font-weight: 700;
-    letter-spacing: -0.01em;
-    color: var(--dash-text);
-}
-
-.sb-dash-toolbar {
-    display: flex;
-    gap: 8px;
-    flex-wrap: wrap;
-}
-
-.sb-chip {
-    height: 32px;
-    padding: 0 12px;
-    border: 1px solid var(--dash-border);
-    border-radius: var(--dash-radius-pill);
-    background: var(--dash-surface);
-    color: var(--dash-text-soft);
-    font: inherit;
-    font-size: 12px;
-    font-weight: 600;
-    cursor: pointer;
-}
-
-.sb-chip.active {
-    background: var(--dash-primary-soft);
-    border-color: #cfe0ff;
-    color: var(--dash-primary);
-}
-
-.sb-chart-placeholder {
-    height: 320px;
-    border: 1px dashed var(--dash-border-strong);
-    border-radius: var(--dash-radius-lg);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    color: var(--dash-text-faint);
-    background: linear-gradient(180deg, #fcfdff 0%, #f8fbff 100%);
-}
-
-.sb-rank-list,
-.sb-activity-list,
-.sb-metric-list {
-    display: flex;
-    flex-direction: column;
-    gap: 12px;
-}
-
-.sb-rank-item,
-.sb-activity-item,
-.sb-metric-row {
-    display: flex;
-    justify-content: space-between;
-    align-items: flex-start;
-    gap: 12px;
-    padding: 12px 0;
-    border-bottom: 1px solid #f0f3f7;
-}
-
-.sb-rank-item:last-child,
-.sb-activity-item:last-child,
-.sb-metric-row:last-child {
-    border-bottom: 0;
-    padding-bottom: 0;
-}
-
-.sb-rank-item__title,
-.sb-activity-item__title {
-    font-size: 14px;
-    font-weight: 600;
-    color: var(--dash-text);
-    margin-bottom: 4px;
-}
-
-.sb-rank-item__meta,
-.sb-activity-item__meta {
-    font-size: 13px;
-    color: var(--dash-text-soft);
-}
-
-.sb-rank-item__value,
-.sb-metric-row__value {
-    font-size: 14px;
-    font-weight: 700;
-    color: var(--dash-text);
-    white-space: nowrap;
-}
-
-.sb-metric-row__label {
-    font-size: 14px;
-    color: var(--dash-text);
-}
-
-.sb-dash-table-wrap {
-    overflow: auto;
-}
-
-.sb-dash-table {
-    width: 100%;
-    border-collapse: collapse;
-    min-width: 1100px;
-}
-
-.sb-dash-table th,
-.sb-dash-table td {
-    padding: 14px 12px;
-    text-align: left;
-    border-bottom: 1px solid #eef2f6;
-    vertical-align: middle;
-    font-size: 14px;
-}
-
-.sb-dash-table th {
-    font-size: 12px;
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
-    color: var(--dash-text-faint);
-    font-weight: 700;
-    background: #fbfcfe;
-}
-
-.sb-site-cell__title {
-    font-size: 14px;
-    font-weight: 700;
-    color: var(--dash-text);
-    margin-bottom: 4px;
-}
-
-.sb-site-cell__meta {
-    font-size: 13px;
-    color: var(--dash-text-soft);
-}
-
-.sb-status-badge {
-    display: inline-flex;
-    align-items: center;
-    min-height: 28px;
-    padding: 0 10px;
-    border-radius: var(--dash-radius-pill);
-    font-size: 12px;
-    font-weight: 700;
-    white-space: nowrap;
-}
-
-.sb-status-badge.success {
-    background: var(--dash-success-soft);
-    color: var(--dash-success);
-}
-
-.sb-status-badge.warning {
-    background: var(--dash-warning-soft);
-    color: var(--dash-warning);
-}
-
-.sb-status-badge.danger {
-    background: var(--dash-danger-soft);
-    color: var(--dash-danger);
-}
-
-.sb-trend {
-    font-size: 13px;
-    font-weight: 700;
-}
-
-.sb-trend.up {
-    color: var(--dash-success);
-}
-
-.sb-trend.down {
-    color: var(--dash-danger);
-}
-
-.sb-system-stats {
-    display: grid;
-    grid-template-columns: repeat(2, 1fr);
-    gap: 12px;
-}
-
-.sb-system-stat {
-    padding: 14px 16px;
-    border: 1px solid var(--dash-border);
-    border-radius: var(--dash-radius-lg);
-    background: #fbfcfe;
-}
-
-.sb-system-stat span {
-    display: block;
-    font-size: 13px;
-    color: var(--dash-text-soft);
-    margin-bottom: 8px;
-}
-
-.sb-system-stat strong {
-    font-size: 22px;
-    line-height: 1;
-    font-weight: 700;
-    color: var(--dash-text);
-}
-
-@media (max-width: 1440px) {
-    .sb-dashboard-kpis {
-        grid-template-columns: repeat(3, 1fr);
-    }
-
-    .sb-dashboard-grid--analytics {
-        grid-template-columns: 1fr;
-    }
-
-    .sb-dashboard-grid--bottom {
-        grid-template-columns: 1fr;
-    }
-}
-
-@media (max-width: 960px) {
-    .sb-dashboard-topbar {
-        flex-direction: column;
-        align-items: stretch;
-    }
-
-    .sb-dashboard-actions {
-        justify-content: flex-start;
-    }
-
-    .sb-dashboard-kpis {
-        grid-template-columns: repeat(2, 1fr);
-    }
-
-    .sb-system-stats {
-        grid-template-columns: 1fr;
-    }
-}
-
-@media (max-width: 640px) {
-    .sb-dashboard-kpis {
-        grid-template-columns: 1fr;
-    }
-
-    .sb-dashboard-title {
-        font-size: 26px;
-    }
-
-    .sb-kpi-card__value {
-        font-size: 28px;
-    }
-}
-
-
----
-
-Шаг 2. Замени index.php
-
-Полностью замени файл:
-
-/local/sitebuilder/index.php
-
-на этот код:
-
-<?php
-require $_SERVER['DOCUMENT_ROOT'] . '/bitrix/modules/main/include/prolog_before.php';
-
-global $APPLICATION, $USER;
-
-if (!$USER->IsAuthorized()) {
-    require $_SERVER['DOCUMENT_ROOT'] . '/auth.php';
-    exit;
-}
-
-CJSCore::Init(['ajax']);
-
-header('Content-Type: text/html; charset=UTF-8');
-
-$basePath = rtrim(str_replace($_SERVER['DOCUMENT_ROOT'], '', __DIR__), '/');
-?>
-<!doctype html>
-<html lang="ru">
-<head>
-    <meta charset="UTF-8">
-    <title>SiteBuilder Dashboard</title>
-    <?php $APPLICATION->ShowHead(); ?>
-    <link rel="stylesheet" href="<?= htmlspecialchars($basePath, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?>/assets/admin/admin.css">
-    <link rel="stylesheet" href="<?= htmlspecialchars($basePath, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?>/assets/admin/dashboard.css">
-</head>
-<body class="sb-admin-body">
-<div class="sb-page">
-    <div class="sb-dashboard">
-        <header class="sb-dashboard-topbar">
-            <div class="sb-dashboard-topbar__main">
-                <h1 class="sb-dashboard-title">Dashboard сайтов</h1>
-                <p class="sb-dashboard-subtitle">
-                    Сводка по всем сайтам конструктора и активности пользователей
-                </p>
-            </div>
-
-            <div class="sb-dashboard-actions">
-                <input class="sb-dashboard-search" type="text" id="dashboardSearch" placeholder="Поиск по сайтам">
-                <select class="sb-dashboard-filter" id="dashboardPeriod">
-                    <option value="7">7 дней</option>
-                    <option value="30" selected>30 дней</option>
-                    <option value="90">90 дней</option>
-                </select>
-                <button class="sb-btn sb-btn-light" type="button" id="exportBtn">Экспорт</button>
-                <button class="sb-btn sb-btn-primary" type="button" id="createSiteQuickBtn">Создать сайт</button>
-            </div>
-        </header>
-
-        <section class="sb-dashboard-kpis">
-            <article class="sb-kpi-card">
-                <div class="sb-kpi-card__label">Всего сайтов</div>
-                <div class="sb-kpi-card__value" id="kpiSitesTotal">0</div>
-                <div class="sb-kpi-card__meta">Все сайты в системе</div>
-            </article>
-
-            <article class="sb-kpi-card">
-                <div class="sb-kpi-card__label">Опубликованные</div>
-                <div class="sb-kpi-card__value" id="kpiPublished">0</div>
-                <div class="sb-kpi-card__meta success">Активные сайты</div>
-            </article>
-
-            <article class="sb-kpi-card">
-                <div class="sb-kpi-card__label">Черновики</div>
-                <div class="sb-kpi-card__value" id="kpiDrafts">0</div>
-                <div class="sb-kpi-card__meta warning">Требуют публикации</div>
-            </article>
-
-            <article class="sb-kpi-card">
-                <div class="sb-kpi-card__label">Всего посещений</div>
-                <div class="sb-kpi-card__value" id="kpiVisits">0</div>
-                <div class="sb-kpi-card__meta">Суммарно по системе</div>
-            </article>
-
-            <article class="sb-kpi-card">
-                <div class="sb-kpi-card__label">Уникальные посетители</div>
-                <div class="sb-kpi-card__value" id="kpiUnique">0</div>
-                <div class="sb-kpi-card__meta">За выбранный период</div>
-            </article>
-
-            <article class="sb-kpi-card">
-                <div class="sb-kpi-card__label">Средняя сессия</div>
-                <div class="sb-kpi-card__value" id="kpiAvgSession">0м</div>
-                <div class="sb-kpi-card__meta">Среднее по сайтам</div>
-            </article>
-        </section>
-
-        <section class="sb-dashboard-grid sb-dashboard-grid--analytics">
-            <article class="sb-dash-card">
-                <div class="sb-dash-card__head">
-                    <h2>Динамика посещаемости</h2>
-                    <div class="sb-dash-toolbar">
-                        <button class="sb-chip active" type="button">Посещения</button>
-                        <button class="sb-chip" type="button">Уникальные</button>
-                    </div>
-                </div>
-                <div class="sb-chart-placeholder">
-                    Здесь будет график посещаемости
-                </div>
-            </article>
-
-            <article class="sb-dash-card">
-                <div class="sb-dash-card__head">
-                    <h2>Популярные сайты</h2>
-                </div>
-                <div class="sb-rank-list" id="popularSitesBlock">
-                    <div class="sb-rank-item">
-                        <div>
-                            <div class="sb-rank-item__title">Нет данных</div>
-                            <div class="sb-rank-item__meta">Список появится после загрузки</div>
-                        </div>
-                        <div class="sb-rank-item__value">—</div>
-                    </div>
-                </div>
-            </article>
-        </section>
-
-        <section class="sb-dash-card">
-            <div class="sb-dash-card__head">
-                <h2>Сайты со статистикой</h2>
-                <div class="sb-dash-toolbar">
-                    <button class="sb-chip active" type="button">Все</button>
-                    <button class="sb-chip" type="button">Published</button>
-                    <button class="sb-chip" type="button">Draft</button>
-                    <button class="sb-btn sb-btn-light sb-btn-small" type="button" id="reloadBtn">Обновить список</button>
-                </div>
-            </div>
-
-            <div class="sb-dash-table-wrap">
-                <table class="sb-dash-table">
-                    <thead>
-                    <tr>
-                        <th>Сайт</th>
-                        <th>Статус</th>
-                        <th>Пользователи</th>
-                        <th>Посещения</th>
-                        <th>Уникальные</th>
-                        <th>Средняя длительность</th>
-                        <th>Активность</th>
-                        <th>Последнее изменение</th>
-                        <th>Действия</th>
-                    </tr>
-                    </thead>
-                    <tbody id="sitesStatsTableBody">
-                    <tr>
-                        <td colspan="9">Загрузка...</td>
-                    </tr>
-                    </tbody>
-                </table>
-            </div>
-        </section>
-
-        <section class="sb-dashboard-grid sb-dashboard-grid--bottom">
-            <article class="sb-dash-card">
-                <div class="sb-dash-card__head">
-                    <h2>Низкая активность</h2>
-                </div>
-                <div class="sb-rank-list" id="lowActivityBlock">
-                    <div class="sb-rank-item">
-                        <div>
-                            <div class="sb-rank-item__title">Нет данных</div>
-                            <div class="sb-rank-item__meta">Список появится после загрузки</div>
-                        </div>
-                        <span class="sb-status-badge warning">—</span>
-                    </div>
-                </div>
-            </article>
-
-            <article class="sb-dash-card">
-                <div class="sb-dash-card__head">
-                    <h2>Последние действия пользователей</h2>
-                </div>
-                <div class="sb-activity-list" id="lastActionsBlock">
-                    <div class="sb-activity-item">
-                        <div>
-                            <div class="sb-activity-item__title">Нет данных</div>
-                            <div class="sb-activity-item__meta">Журнал действий пока пуст</div>
-                        </div>
-                    </div>
-                </div>
-            </article>
-
-            <article class="sb-dash-card">
-                <div class="sb-dash-card__head">
-                    <h2>Сводная активность по системе</h2>
-                </div>
-                <div class="sb-system-stats">
-                    <div class="sb-system-stat">
-                        <span>Редактирования страниц</span>
-                        <strong id="sysEdits">0</strong>
-                    </div>
-                    <div class="sb-system-stat">
-                        <span>Публикации</span>
-                        <strong id="sysPublishes">0</strong>
-                    </div>
-                    <div class="sb-system-stat">
-                        <span>Загрузки файлов</span>
-                        <strong id="sysUploads">0</strong>
-                    </div>
-                    <div class="sb-system-stat">
-                        <span>Входы в админку</span>
-                        <strong id="sysLogins">0</strong>
-                    </div>
-                </div>
-            </article>
-        </section>
-
-        <section class="sb-dash-card">
-            <div class="sb-dash-card__head">
-                <h2>Создать сайт</h2>
-            </div>
-            <div class="sb-form-row align-end">
-                <div class="sb-field">
-                    <label for="siteName">Название сайта</label>
-                    <input class="sb-input" type="text" id="siteName" placeholder="Например: Корпоративный портал">
-                </div>
-                <div class="sb-field">
-                    <label for="siteSlug">Slug</label>
-                    <input class="sb-input" type="text" id="siteSlug" placeholder="Например: corp-portal">
-                </div>
-                <button type="button" class="sb-btn sb-btn-primary" id="createSiteBtn">Создать</button>
-            </div>
-        </section>
-
-        <section class="sb-dash-card">
-            <div class="sb-dash-card__head">
-                <h2>Отладка</h2>
-            </div>
-            <div id="output" class="sb-output">Здесь будут ответы API...</div>
-        </section>
-    </div>
-</div>
-
-<script>
-(function () {
-    var BASE_PATH = '<?= CUtil::JSEscape($basePath) ?>';
-    var API_URL = BASE_PATH + '/api.php';
-
-    var output = document.getElementById('output');
-    var sitesStatsTableBody = document.getElementById('sitesStatsTableBody');
-    var popularSitesBlock = document.getElementById('popularSitesBlock');
-    var lowActivityBlock = document.getElementById('lowActivityBlock');
-    var lastActionsBlock = document.getElementById('lastActionsBlock');
-
-    function print(data) {
-        if (typeof data === 'string') {
-            output.textContent = data;
-            return;
-        }
-        try {
-            output.textContent = JSON.stringify(data, null, 2);
-        } catch (e) {
-            output.textContent = String(data);
-        }
-    }
-
-    function escapeHtml(value) {
-        return String(value)
-            .replace(/&/g, '&amp;')
-            .replace(/</g, '&lt;')
-            .replace(/>/g, '&gt;')
-            .replace(/"/g, '&quot;')
-            .replace(/'/g, '&#039;');
-    }
-
-    function getSessid() {
-        if (typeof window.BX !== 'undefined' && typeof BX.bitrix_sessid === 'function') {
-            return BX.bitrix_sessid();
-        }
-        return '<?= CUtil::JSEscape(bitrix_sessid()) ?>';
-    }
-
-    function api(action, data, onSuccess, onFailure) {
-        if (typeof window.BX === 'undefined' || typeof BX.ajax !== 'function') {
-            print('BX.ajax не загружен');
-            return;
-        }
-
-        BX.ajax({
-            url: API_URL,
-            method: 'POST',
-            dataType: 'json',
-            timeout: 60,
-            data: Object.assign({
-                action: action,
-                sessid: getSessid()
-            }, data || {}),
-            onsuccess: function (res) {
-                print(res);
-                if (typeof onSuccess === 'function') onSuccess(res);
-            },
-            onfailure: function (err) {
-                print({
-                    ok: false,
-                    error: 'AJAX_ERROR',
-                    detail: err
-                });
-                if (typeof onFailure === 'function') onFailure(err);
-            }
-        });
-    }
-
-    function setText(id, value) {
-        var el = document.getElementById(id);
-        if (el) {
-            el.textContent = String(value);
-        }
-    }
-
-    function formatDuration(minutes) {
-        minutes = Number(minutes || 0);
-        if (minutes <= 0) return '0м';
-        var h = Math.floor(minutes / 60);
-        var m = minutes % 60;
-        if (h > 0) {
-            return h + 'ч ' + m + 'м';
-        }
-        return m + 'м';
-    }
-
-    function buildFakeSiteStats(site, index) {
-        var published = !!site.homePageId;
-        var users = 40 + index * 17;
-        var visits = 300 + index * 190;
-        var unique = Math.max(20, Math.round(visits * 0.38));
-        var avgMinutes = 3 + index * 2;
-        var trend = index % 2 === 0 ? '+' + (5 + index * 3) + '%' : '-' + (2 + index) + '%';
-
-        return {
-            id: Number(site.id || 0),
-            name: site.name || '',
-            slug: site.slug || '',
-            status: published ? 'published' : 'draft',
-            users: users,
-            visits: visits,
-            unique: unique,
-            avgMinutes: avgMinutes,
-            trend: trend,
-            updatedAt: site.updatedAt || site.createdAt || '—'
-        };
-    }
-
-    function renderKpis(stats) {
-        setText('kpiSitesTotal', stats.totalSites);
-        setText('kpiPublished', stats.publishedSites);
-        setText('kpiDrafts', stats.draftSites);
-        setText('kpiVisits', stats.totalVisits);
-        setText('kpiUnique', stats.totalUnique);
-        setText('kpiAvgSession', formatDuration(stats.avgSession));
-    }
-
-    function renderSitesTable(siteStats) {
-        if (!siteStats.length) {
-            sitesStatsTableBody.innerHTML = '<tr><td colspan="9">Сайтов пока нет</td></tr>';
-            return;
-        }
-
-        var html = '';
-        for (var i = 0; i < siteStats.length; i++) {
-            var s = siteStats[i];
-            var statusClass = s.status === 'published' ? 'success' : 'warning';
-            var trendClass = String(s.trend).indexOf('-') === 0 ? 'down' : 'up';
-
-            html += ''
-                + '<tr>'
-                + '  <td>'
-                + '    <div class="sb-site-cell">'
-                + '      <div class="sb-site-cell__title">' + escapeHtml(s.name) + '</div>'
-                + '      <div class="sb-site-cell__meta">' + escapeHtml(s.slug) + '</div>'
-                + '    </div>'
-                + '  </td>'
-                + '  <td><span class="sb-status-badge ' + statusClass + '">' + escapeHtml(s.status) + '</span></td>'
-                + '  <td>' + s.users + '</td>'
-                + '  <td>' + s.visits + '</td>'
-                + '  <td>' + s.unique + '</td>'
-                + '  <td>' + formatDuration(s.avgMinutes) + '</td>'
-                + '  <td><span class="sb-trend ' + trendClass + '">' + escapeHtml(s.trend) + '</span></td>'
-                + '  <td>' + escapeHtml(s.updatedAt) + '</td>'
-                + '  <td>'
-                + '    <a class="sb-btn sb-btn-light sb-btn-small" href="' + BASE_PATH + '/editor.php?siteId=' + s.id + '">Открыть</a>'
-                + '  </td>'
-                + '</tr>';
-        }
-
-        sitesStatsTableBody.innerHTML = html;
-    }
-
-    function renderPopular(siteStats) {
-        if (!siteStats.length) {
-            popularSitesBlock.innerHTML = '<div class="sb-rank-item"><div><div class="sb-rank-item__title">Нет данных</div></div><div class="sb-rank-item__value">—</div></div>';
-            return;
-        }
-
-        var sorted = siteStats.slice().sort(function (a, b) {
-            return b.visits - a.visits;
-        }).slice(0, 5);
-
-        var html = '';
-        for (var i = 0; i < sorted.length; i++) {
-            html += ''
-                + '<div class="sb-rank-item">'
-                + '  <div>'
-                + '    <div class="sb-rank-item__title">' + escapeHtml(sorted[i].name) + '</div>'
-                + '    <div class="sb-rank-item__meta">' + sorted[i].visits + ' посещений</div>'
-                + '  </div>'
-                + '  <div class="sb-rank-item__value">' + escapeHtml(sorted[i].trend) + '</div>'
-                + '</div>';
-        }
-        popularSitesBlock.innerHTML = html;
-    }
-
-    function renderLowActivity(siteStats) {
-        if (!siteStats.length) {
-            lowActivityBlock.innerHTML = '<div class="sb-rank-item"><div><div class="sb-rank-item__title">Нет данных</div></div><span class="sb-status-badge warning">—</span></div>';
-            return;
-        }
-
-        var sorted = siteStats.slice().sort(function (a, b) {
-            return a.visits - b.visits;
-        }).slice(0, 5);
-
-        var html = '';
-        for (var i = 0; i < sorted.length; i++) {
-            html += ''
-                + '<div class="sb-rank-item">'
-                + '  <div>'
-                + '    <div class="sb-rank-item__title">' + escapeHtml(sorted[i].name) + '</div>'
-                + '    <div class="sb-rank-item__meta">' + sorted[i].visits + ' посещений</div>'
-                + '  </div>'
-                + '  <span class="sb-status-badge warning">Низкая активность</span>'
-                + '</div>';
-        }
-        lowActivityBlock.innerHTML = html;
-    }
-
-    function renderLastActions(siteStats) {
-        if (!siteStats.length) {
-            lastActionsBlock.innerHTML = '<div class="sb-activity-item"><div><div class="sb-activity-item__title">Нет данных</div></div></div>';
-            return;
-        }
-
-        var html = '';
-        for (var i = 0; i < Math.min(siteStats.length, 5); i++) {
-            html += ''
-                + '<div class="sb-activity-item">'
-                + '  <div>'
-                + '    <div class="sb-activity-item__title">admin обновил сайт "' + escapeHtml(siteStats[i].name) + '"</div>'
-                + '    <div class="sb-activity-item__meta">' + escapeHtml(siteStats[i].updatedAt) + '</div>'
-                + '  </div>'
-                + '</div>';
-        }
-        lastActionsBlock.innerHTML = html;
-    }
-
-    function renderSystemStats(siteStats) {
-        var total = siteStats.length;
-        setText('sysEdits', total * 7);
-        setText('sysPublishes', total * 2);
-        setText('sysUploads', total * 5);
-        setText('sysLogins', total * 13);
-    }
-
-    function buildDashboard(sites) {
-        var siteStats = [];
-        for (var i = 0; i < sites.length; i++) {
-            siteStats.push(buildFakeSiteStats(sites[i], i + 1));
-        }
-
-        var totalSites = siteStats.length;
-        var publishedSites = 0;
-        var draftSites = 0;
-        var totalVisits = 0;
-        var totalUnique = 0;
-        var totalAvg = 0;
-
-        for (var j = 0; j < siteStats.length; j++) {
-            if (siteStats[j].status === 'published') {
-                publishedSites++;
-            } else {
-                draftSites++;
-            }
-            totalVisits += siteStats[j].visits;
-            totalUnique += siteStats[j].unique;
-            totalAvg += siteStats[j].avgMinutes;
-        }
-
-        var avgSession = totalSites ? Math.round(totalAvg / totalSites) : 0;
-
-        renderKpis({
-            totalSites: totalSites,
-            publishedSites: publishedSites,
-            draftSites: draftSites,
-            totalVisits: totalVisits,
-            totalUnique: totalUnique,
-            avgSession: avgSession
-        });
-
-        renderSitesTable(siteStats);
-        renderPopular(siteStats);
-        renderLowActivity(siteStats);
-        renderLastActions(siteStats);
-        renderSystemStats(siteStats);
-    }
-
-    function loadDashboard() {
-        api('site.list', {}, function (res) {
-            if (!res || res.ok !== true) {
-                sitesStatsTableBody.innerHTML = '<tr><td colspan="9">Не удалось загрузить данные</td></tr>';
-                return;
-            }
-
-            buildDashboard(Array.isArray(res.sites) ? res.sites : []);
-        });
-    }
-
-    function createSite() {
-        var nameInput = document.getElementById('siteName');
-        var slugInput = document.getElementById('siteSlug');
-
-        var name = (nameInput.value || '').trim();
-        var slug = (slugInput.value || '').trim();
-
-        if (!name) {
-            alert('Введите название сайта');
-            nameInput.focus();
-            return;
-        }
-
-        api('site.create', {
-            name: name,
-            slug: slug
-        }, function (res) {
-            if (!res || res.ok !== true) {
-                alert('Не удалось создать сайт');
-                return;
-            }
-
-            nameInput.value = '';
-            slugInput.value = '';
-            loadDashboard();
-        });
-    }
-
-    document.getElementById('createSiteBtn').addEventListener('click', createSite);
-    document.getElementById('createSiteQuickBtn').addEventListener('click', function () {
-        document.getElementById('siteName').focus();
-        window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' });
-    });
-    document.getElementById('reloadBtn').addEventListener('click', loadDashboard);
-    document.getElementById('exportBtn').addEventListener('click', function () {
-        alert('Экспорт можно подключить позже');
-    });
-
-    window.onerror = function (message, source, lineno, colno, error) {
-        print({
-            jsError: true,
-            message: message,
-            source: source,
-            line: lineno,
-            column: colno,
-            stack: error && error.stack ? error.stack : null
-        });
-    };
-
-    loadDashboard();
-})();
-</script>
-</body>
-</html>
-
-
----
-
-Что ты получишь после замены
-
-После этого:
-
-index.php станет dashboard-страницей
-
-сверху будут KPI
-
-будет зона под график
-
-будет таблица сайтов со статистикой
-
-будет блок популярных сайтов
-
-будет блок низкой активности
-
-будет блок последних действий
-
-будет сводная активность
-
-всё уже будет в единой стилистике
+входы в админку
 
 
 
 ---
 
-Что важно сейчас понимать
+Как сделать правильно в твоём проекте
 
-Сейчас часть данных будет демо-расчётной, потому что у тебя пока нет реальной аналитики посещаемости и журналов действий в нужном виде.
+Так как проект у тебя лежит в /local, без модулей и без усложнения, я бы делал так:
 
-То есть:
+1. Добавить отдельное хранилище аналитики
 
-реальные сайты берутся из site.list
+Не мешать это с sites.json, pages.json и т.д.
 
-а посещения, уникальные, средняя сессия, последние действия — пока считаются mock-логикой в JS
+Сделать отдельные файлы в /upload/sitebuilder/:
 
-
-Это нормально для этапа дизайна и сборки интерфейса.
-
-
----
-
-Что делать после внедрения
-
-1. Создай файл
-
-/local/sitebuilder/assets/admin/dashboard.css
-
-2. Вставь туда CSS из шага 1
-
-3. Полностью замени
-
-/local/sitebuilder/index.php
-
-на код из шага 2
-
-4. Обнови страницу
-
-/local/sitebuilder/index.php
+site_stats.json
+site_daily_stats.json
+activity_log.json
 
 
 ---
 
-Что делать дальше
+Какие файлы для чего
 
-Когда этот dashboard встанет, следующим шагом уже можно:
+/upload/sitebuilder/site_stats.json
 
-или подключить реальную статистику
+Агрегированная статистика по сайту:
 
-или привести editor.php к такому же уровню дизайна
+[
+  {
+    "siteId": 1,
+    "visits": 1200,
+    "uniqueVisitors": 430,
+    "sessions": 580,
+    "avgSessionSeconds": 312,
+    "lastVisitAt": "2026-04-10T12:30:00+03:00"
+  }
+]
+
+/upload/sitebuilder/site_daily_stats.json
+
+Динамика по дням:
+
+[
+  {
+    "siteId": 1,
+    "date": "2026-04-10",
+    "visits": 120,
+    "uniqueVisitors": 54,
+    "sessions": 68,
+    "avgSessionSeconds": 298
+  }
+]
+
+/upload/sitebuilder/activity_log.json
+
+Журнал действий:
+
+[
+  {
+    "id": 1,
+    "type": "page.update",
+    "siteId": 1,
+    "userId": 1,
+    "userLogin": "admin",
+    "message": "Обновлена страница Главная",
+    "createdAt": "2026-04-10T12:31:00+03:00"
+  }
+]
 
 
-Если хочешь, следующим сообщением я сделаю тебе dashboard-версию editor.php в том же визуальном стиле.
+---
+
+Откуда брать посещаемость
+
+Есть 2 варианта.
+
+Вариант А — правильный для твоего текущего проекта
+
+Собирать посещаемость через public.php.
+
+То есть каждый раз, когда кто-то открывает:
+
+/local/sitebuilder/public.php?siteId=...
+
+мы:
+
+фиксируем визит
+
+считаем уникальность
+
+считаем сессию
+
+обновляем daily stats
+
+
+Это самый простой и реалистичный путь.
+
+Вариант Б
+
+Если позже будут красивые URL и реальные сайты вне public.php, тогда статистику надо будет вешать на публичный роутинг/шаблон сайта. Но это следующий этап.
+
+Сейчас бери вариант А.
+
+
+---
+
+Как считать уникального посетителя
+
+Без излишней сложности:
+
+Минимально рабочий вариант
+
+Использовать ключ:
+
+IP
+
+User-Agent
+
+date
+
+siteId
+
+
+Например hash:
+
+sha1($siteId . '|' . $ip . '|' . $userAgent . '|' . date('Y-m-d'))
+
+Тогда один пользователь в рамках дня считается уникальным один раз.
+
+Это не идеальная аналитика, но для внутреннего конструктора нормально.
+
+
+---
+
+Как считать сессию
+
+Тоже без лишней магии:
+
+Упрощённый вариант
+
+Использовать cookie:
+
+SB_SITE_SESSION_<siteId>
+
+
+Если cookie нет — новая сессия
+Если есть и прошло больше 30 минут — новая сессия
+Иначе продолжаем текущую
+
+Среднюю длительность можно считать грубо:
+
+сохранять startedAt
+
+сохранять lastSeenAt
+
+потом добавлять разницу
+
+
+На первом этапе можно даже сделать проще:
+
+считать только visits / unique / sessions
+
+avgSessionSeconds пока брать из накопленного расчёта по cookie-based session tracking
+
+
+
+---
+
+Как подключить журнал действий
+
+Очень важно: у тебя уже куча action-ов в API.
+Значит нужно просто логировать их централизованно.
+
+Например логировать:
+
+site.create
+
+site.update
+
+page.create
+
+page.updateMeta
+
+page.setStatus
+
+menu.create
+
+menu.update
+
+layout.updateSettings
+
+block.create
+
+block.update
+
+file.upload
+
+file.delete
+
+
+Это даст блок:
+
+“Последние действия пользователей”
+
+“Сводная активность по системе”
+
+
+
+---
+
+Практическая структура в проекте
+
+Я бы добавил так:
+
+/local/sitebuilder/lib/stats.php
+/local/sitebuilder/lib/activity.php
+
+
+---
+
+Что будет в stats.php
+
+Там функции типа:
+
+sb_read_site_stats()
+sb_write_site_stats()
+sb_read_site_daily_stats()
+sb_write_site_daily_stats()
+
+sb_stats_track_visit(int $siteId): void
+sb_stats_get_dashboard_summary(): array
+sb_stats_get_site_rows(): array
+sb_stats_get_popular_sites(): array
+sb_stats_get_low_activity_sites(): array
+sb_stats_get_daily_chart(int $days = 30): array
+
+
+---
+
+Что будет в activity.php
+
+sb_read_activity_log()
+sb_write_activity_log()
+sb_activity_log(string $type, int $siteId, string $message, array $extra = []): void
+sb_activity_last(int $limit = 10): array
+sb_activity_summary(): array
+
+
+---
+
+Как подключать это в код
+
+1. В public.php
+
+После определения siteId вызывать:
+
+sb_stats_track_visit($siteId);
+
+2. В API handler-ах
+
+После успешного действия вызывать:
+
+sb_activity_log('page.create', $siteId, 'Создана страница ...');
+
+
+---
+
+Как отдавать статистику в dashboard
+
+Лучше не тянуть это из site.list, а сделать отдельный action:
+
+dashboard.stats
+
+И отдельный handler:
+
+/local/sitebuilder/api/handlers/dashboard.php
+
+Он будет возвращать всё одним ответом:
+
+{
+  "ok": true,
+  "summary": {
+    "sitesTotal": 4,
+    "publishedTotal": 3,
+    "draftTotal": 1,
+    "visitsTotal": 1540,
+    "uniqueVisitorsTotal": 532,
+    "avgSessionSeconds": 284
+  },
+  "chart": [
+    {"date":"2026-04-01","visits":40,"uniqueVisitors":20},
+    {"date":"2026-04-02","visits":55,"uniqueVisitors":23}
+  ],
+  "sites": [
+    {
+      "siteId": 1,
+      "name": "Тестовый сайт",
+      "slug": "test-site",
+      "status": "published",
+      "usersCount": 54,
+      "visits": 420,
+      "uniqueVisitors": 130,
+      "avgSessionSeconds": 312,
+      "lastActivityAt": "2026-04-10T12:30:00+03:00"
+    }
+  ],
+  "popularSites": [],
+  "lowActivitySites": [],
+  "lastActions": [],
+  "activitySummary": {
+    "pageEdits": 12,
+    "publishes": 4,
+    "uploads": 8,
+    "adminLogins": 3
+  }
+}
+
+
+---
+
+Что я рекомендую делать по шагам
+
+Шаг 1
+
+Добавить backend сбора статистики:
+
+lib/stats.php
+
+lib/activity.php
+
+
+Шаг 2
+
+Подключить tracking визитов в public.php
+
+Шаг 3
+
+Подключить логирование действий в API handlers
+
+Шаг 4
+
+Добавить dashboard.stats
+
+Шаг 5
+
+Переделать index.php, чтобы он брал реальные данные из dashboard.stats, а не mock
+
+
+---
+
+Самый правильный следующий практический шаг
+
+Не распыляться.
+Сначала сделать backend статистики и логирования, иначе dashboard останется декоративным.
+
+Значит дальше я должен прислать тебе пакетом:
+
+1. lib/stats.php
+
+
+2. lib/activity.php
+
+
+3. что добавить в public.php
+
+
+4. как расширить api/index.php и сделать dashboard.stats
+
+
+5. готовый api/handlers/dashboard.php
+
+
+
+Напиши: давай backend статистики пакетом
