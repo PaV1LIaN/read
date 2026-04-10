@@ -1,405 +1,539 @@
-Отлично. Раз основные админские страницы уже привели в порядок, следующий правильный шаг — подтянуть публичную часть, чтобы сайт выглядел аккуратнее и более “прикладным”, а не как сырая демо-страница.
+Вот улучшенный index.php целиком. Я сделал его более собранным: компактнее форма создания, сильнее карточки сайтов, лучше сгруппированы действия, меньше ощущения “простыни”.
 
-Логично сделать это так:
+Полный файл /local/sitebuilder/index.php
 
-1. обновить public.css
+<?php
+require $_SERVER['DOCUMENT_ROOT'] . '/bitrix/modules/main/include/prolog_before.php';
 
+global $APPLICATION, $USER;
 
-2. слегка улучшить шаблон views/layout/public_page.php
-
-
-
-Начнём с самого безопасного и заметного — полного public.css.
-
-Полный файл /local/sitebuilder/assets/public/public.css
-
-* {
-    box-sizing: border-box;
+if (!$USER->IsAuthorized()) {
+    require $_SERVER['DOCUMENT_ROOT'] . '/auth.php';
+    exit;
 }
 
-html,
-body {
-    margin: 0;
-    padding: 0;
-}
+CJSCore::Init(['ajax']);
 
-body {
-    font-family: Arial, sans-serif;
-    color: #1f2937;
-    background: #f5f7fb;
-    line-height: 1.5;
-}
+header('Content-Type: text/html; charset=UTF-8');
 
-a {
-    color: var(--sb-accent);
-}
+$basePath = rtrim(str_replace($_SERVER['DOCUMENT_ROOT'], '', __DIR__), '/');
+?>
+<!doctype html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <title>SiteBuilder</title>
+    <?php $APPLICATION->ShowHead(); ?>
+    <link rel="stylesheet" href="<?= htmlspecialchars($basePath, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?>/assets/admin/admin.css">
+    <style>
+        .sb-index-hero {
+            display: grid;
+            grid-template-columns: minmax(320px, 760px) 1fr;
+            gap: 20px;
+            align-items: start;
+            margin-bottom: 20px;
+        }
 
-.sb-public-shell {
-    min-height: 100vh;
-    display: flex;
-    flex-direction: column;
-}
+        .sb-index-create-card {
+            background: linear-gradient(180deg, #ffffff 0%, #f8fbff 100%);
+        }
 
-.sb-container {
-    width: 100%;
-    max-width: var(--sb-container-width);
-    margin: 0 auto;
-    padding: 0 20px;
-}
+        .sb-index-create-inner {
+            max-width: 760px;
+        }
 
-.sb-public-header,
-.sb-public-footer {
-    background: #ffffff;
-    border-bottom: 1px solid #e5e7eb;
-}
+        .sb-index-create-row {
+            display: grid;
+            grid-template-columns: minmax(220px, 1.2fr) minmax(220px, 1fr) auto;
+            gap: 12px;
+            align-items: end;
+        }
 
-.sb-public-footer {
-    border-top: 1px solid #e5e7eb;
-    border-bottom: 0;
-    margin-top: auto;
-}
+        .sb-index-stats {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 12px;
+        }
 
-.sb-public-header .sb-container,
-.sb-public-footer .sb-container {
-    padding-top: 18px;
-    padding-bottom: 18px;
-}
+        .sb-index-stat {
+            background: #fff;
+            border: 1px solid #e5e7eb;
+            border-radius: 14px;
+            padding: 16px;
+            box-shadow: 0 2px 8px rgba(15, 23, 42, 0.04);
+        }
 
-.sb-public-main .sb-container {
-    padding-top: 24px;
-    padding-bottom: 24px;
-}
+        .sb-index-stat-label {
+            font-size: 13px;
+            color: #6b7280;
+            margin-bottom: 8px;
+        }
 
-.sb-brand {
-    font-size: 28px;
-    font-weight: 700;
-    color: var(--sb-accent);
-    margin-bottom: 14px;
-}
+        .sb-index-stat-value {
+            font-size: 28px;
+            line-height: 1;
+            font-weight: 700;
+            color: #111827;
+        }
 
-.sb-public-menu {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 10px;
-}
+        .sb-index-section-head {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 12px;
+            margin-bottom: 14px;
+        }
 
-.sb-public-menu__link {
-    display: inline-flex;
-    align-items: center;
-    min-height: 38px;
-    text-decoration: none;
-    color: var(--sb-accent);
-    font-weight: 600;
-    padding: 8px 12px;
-    border-radius: 10px;
-    transition: background .15s ease, color .15s ease;
-}
+        .sb-index-section-head .sb-panel-title {
+            margin: 0;
+        }
 
-.sb-public-menu__link:hover {
-    background: #eef2ff;
-}
+        .sb-sites-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(360px, 1fr));
+            gap: 16px;
+        }
 
-.sb-layout {
-    display: grid;
-    grid-template-columns: 1fr;
-    gap: 20px;
-    align-items: start;
-}
+        .sb-site-card {
+            background: #fff;
+            border: 1px solid #e5e7eb;
+            border-radius: 16px;
+            padding: 18px;
+            display: flex;
+            flex-direction: column;
+            gap: 16px;
+            box-shadow: 0 2px 10px rgba(15, 23, 42, 0.04);
+        }
 
-.sb-layout.sb-layout--left {
-    grid-template-columns: var(--sb-left-width) 1fr;
-}
+        .sb-site-head {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            gap: 12px;
+        }
 
-.sb-layout.sb-layout--right {
-    grid-template-columns: 1fr var(--sb-right-width);
-}
+        .sb-site-head-main {
+            min-width: 0;
+        }
 
-.sb-layout.sb-layout--left.sb-layout--right {
-    grid-template-columns: var(--sb-left-width) 1fr var(--sb-right-width);
-}
+        .sb-site-name {
+            margin: 0 0 6px;
+            font-size: 20px;
+            font-weight: 700;
+            line-height: 1.2;
+            word-break: break-word;
+            color: #111827;
+        }
 
-.sb-sidebar,
-.sb-content {
-    min-width: 0;
-}
+        .sb-site-slug {
+            display: inline-flex;
+            align-items: center;
+            min-height: 28px;
+            padding: 0 10px;
+            border-radius: 999px;
+            background: #f3f4f6;
+            color: #4b5563;
+            font-size: 13px;
+            font-weight: 600;
+            max-width: 100%;
+            word-break: break-word;
+        }
 
-.sb-box {
-    background: #ffffff;
-    border: 1px solid #e5e7eb;
-    border-radius: 16px;
-    padding: 18px;
-    box-shadow: 0 2px 8px rgba(15, 23, 42, 0.04);
-}
+        .sb-site-meta-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 10px 14px;
+            padding: 14px;
+            border: 1px solid #e5e7eb;
+            border-radius: 14px;
+            background: #fafafa;
+        }
 
-.sb-box--content {
-    padding: 24px;
-}
+        .sb-site-meta-item {
+            min-width: 0;
+        }
 
-.sb-page-title {
-    margin: 0 0 24px;
-    font-size: 34px;
-    line-height: 1.15;
-    font-weight: 700;
-    color: #111827;
-}
+        .sb-site-meta-label {
+            font-size: 12px;
+            color: #6b7280;
+            margin-bottom: 4px;
+        }
 
-.sb-block {
-    margin: 0 0 18px;
-}
+        .sb-site-meta-value {
+            font-size: 14px;
+            color: #111827;
+            word-break: break-word;
+        }
 
-.sb-block:last-child {
-    margin-bottom: 0;
-}
+        .sb-site-actions {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
 
-.sb-block__inner {
-    min-width: 0;
-}
+        .sb-site-actions-row {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+        }
 
-.sb-text {
-    font-size: 16px;
-    line-height: 1.7;
-    color: #374151;
-}
+        .sb-site-actions-row a,
+        .sb-site-actions-row button {
+            text-decoration: none;
+        }
 
-.sb-text p {
-    margin: 0 0 14px;
-}
+        .sb-site-actions-row--secondary .sb-btn {
+            background: #f8fafc;
+            color: #334155;
+        }
 
-.sb-text p:last-child {
-    margin-bottom: 0;
-}
+        .sb-site-actions-row--secondary .sb-btn:hover {
+            background: #eef2f7;
+        }
 
-.sb-text ul,
-.sb-text ol {
-    margin: 0 0 14px 20px;
-    padding: 0;
-}
+        .sb-site-actions-row--danger {
+            justify-content: flex-end;
+        }
 
-.sb-text li + li {
-    margin-top: 6px;
-}
+        .sb-site-actions-row--danger .sb-btn {
+            min-width: 110px;
+        }
 
-.sb-heading {
-    margin: 0 0 12px;
-    line-height: 1.2;
-    color: #111827;
-}
+        .sb-site-created {
+            font-size: 13px;
+            color: #6b7280;
+            margin-top: -4px;
+        }
 
-.sb-heading--h1 {
-    font-size: 40px;
-}
+        @media (max-width: 1180px) {
+            .sb-index-hero {
+                grid-template-columns: 1fr;
+            }
+        }
 
-.sb-heading--h2 {
-    font-size: 32px;
-}
+        @media (max-width: 860px) {
+            .sb-index-create-row {
+                grid-template-columns: 1fr;
+            }
 
-.sb-heading--h3 {
-    font-size: 26px;
-}
+            .sb-index-stats {
+                grid-template-columns: 1fr 1fr;
+            }
+        }
 
-.sb-heading--h4 {
-    font-size: 22px;
-}
+        @media (max-width: 640px) {
+            .sb-index-stats,
+            .sb-site-meta-grid {
+                grid-template-columns: 1fr;
+            }
 
-.sb-heading--h5 {
-    font-size: 18px;
-}
+            .sb-site-actions-row--danger {
+                justify-content: flex-start;
+            }
+        }
+    </style>
+</head>
+<body class="sb-admin-body">
+<div class="sb-page">
+    <div class="sb-topbar">
+        <div>
+            <h1 class="sb-title">SiteBuilder</h1>
+            <p class="sb-subtitle">Управление сайтами конструктора</p>
+        </div>
+        <div class="sb-userbox">
+            Пользователь:
+            <strong><?= htmlspecialchars((string)$USER->GetLogin(), ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?></strong>
+            (ID <?= (int)$USER->GetID() ?>)
+        </div>
+    </div>
 
-.sb-heading--h6 {
-    font-size: 16px;
-}
+    <div class="sb-index-hero">
+        <div class="sb-panel sb-index-create-card">
+            <div class="sb-index-create-inner">
+                <h2 class="sb-panel-title">Создать сайт</h2>
+                <div class="sb-index-create-row">
+                    <div class="sb-field">
+                        <label for="siteName">Название сайта</label>
+                        <input class="sb-input" type="text" id="siteName" placeholder="Например: Корпоративный портал">
+                    </div>
+                    <div class="sb-field">
+                        <label for="siteSlug">Slug</label>
+                        <input class="sb-input" type="text" id="siteSlug" placeholder="Например: corp-portal">
+                    </div>
+                    <button type="button" class="sb-btn sb-btn-primary" id="createSiteBtn">Создать</button>
+                </div>
+            </div>
+        </div>
 
-.sb-button-wrap {
-    margin: 0;
-}
+        <div class="sb-index-stats">
+            <div class="sb-index-stat">
+                <div class="sb-index-stat-label">Всего сайтов</div>
+                <div class="sb-index-stat-value" id="statSitesCount">0</div>
+            </div>
+            <div class="sb-index-stat">
+                <div class="sb-index-stat-label">Доступно текущему пользователю</div>
+                <div class="sb-index-stat-value" id="statAccessibleCount">0</div>
+            </div>
+        </div>
+    </div>
 
-.sb-button {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    min-height: 42px;
-    padding: 12px 18px;
-    border-radius: 12px;
-    background: var(--sb-accent);
-    color: #ffffff;
-    text-decoration: none;
-    font-weight: 700;
-    transition: opacity .15s ease, transform .15s ease;
-}
+    <div class="sb-panel">
+        <div class="sb-index-section-head">
+            <h2 class="sb-panel-title">Сайты</h2>
+            <button type="button" class="sb-btn sb-btn-light sb-btn-small" id="reloadBtn">Обновить список</button>
+        </div>
+        <div id="sitesContainer">
+            <div class="sb-empty">Загрузка списка сайтов...</div>
+        </div>
+    </div>
 
-.sb-button:hover {
-    opacity: 0.94;
-    transform: translateY(-1px);
-}
+    <div class="sb-panel">
+        <h2 class="sb-panel-title">Отладка</h2>
+        <div id="output" class="sb-output">Здесь будут ответы API...</div>
+    </div>
+</div>
 
-.sb-empty {
-    padding: 18px;
-    border: 1px dashed #d1d5db;
-    border-radius: 12px;
-    color: #6b7280;
-    background: #ffffff;
-}
+<script>
+(function () {
+    var BASE_PATH = '<?= CUtil::JSEscape($basePath) ?>';
+    var API_URL = BASE_PATH + '/api.php';
+    var output = document.getElementById('output');
+    var sitesContainer = document.getElementById('sitesContainer');
+    var statSitesCount = document.getElementById('statSitesCount');
+    var statAccessibleCount = document.getElementById('statAccessibleCount');
 
-.sb-footer-note {
-    color: #6b7280;
-    font-size: 14px;
-}
-
-.sb-sidebar .sb-public-menu {
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-}
-
-.sb-sidebar .sb-public-menu__link {
-    width: 100%;
-    border-radius: 10px;
-    padding: 10px 12px;
-}
-
-.sb-sidebar .sb-public-menu__link:hover {
-    background: #f3f4f6;
-}
-
-.sb-block--html table {
-    width: 100%;
-    border-collapse: collapse;
-    margin: 0 0 14px;
-    font-size: 14px;
-}
-
-.sb-block--html table th,
-.sb-block--html table td {
-    border: 1px solid #d1d5db;
-    padding: 10px 12px;
-    text-align: left;
-    vertical-align: top;
-}
-
-.sb-block--html table th {
-    background: #f9fafb;
-    font-weight: 700;
-}
-
-.sb-block--html img {
-    max-width: 100%;
-    height: auto;
-    border-radius: 12px;
-}
-
-.sb-block--html iframe {
-    max-width: 100%;
-}
-
-.sb-block--html pre {
-    overflow: auto;
-    background: #111827;
-    color: #f9fafb;
-    padding: 14px;
-    border-radius: 12px;
-    font-size: 13px;
-}
-
-.sb-block--html code {
-    font-family: Consolas, Monaco, monospace;
-}
-
-@media (max-width: 1000px) {
-    .sb-layout,
-    .sb-layout.sb-layout--left,
-    .sb-layout.sb-layout--right,
-    .sb-layout.sb-layout--left.sb-layout--right {
-        grid-template-columns: 1fr;
+    function print(data) {
+        if (typeof data === 'string') {
+            output.textContent = data;
+            return;
+        }
+        try {
+            output.textContent = JSON.stringify(data, null, 2);
+        } catch (e) {
+            output.textContent = String(data);
+        }
     }
 
-    .sb-page-title {
-        font-size: 28px;
+    function escapeHtml(value) {
+        return String(value)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#039;');
     }
 
-    .sb-heading--h1 {
-        font-size: 32px;
+    function getSessid() {
+        if (typeof window.BX !== 'undefined' && typeof BX.bitrix_sessid === 'function') {
+            return BX.bitrix_sessid();
+        }
+        return '<?= CUtil::JSEscape(bitrix_sessid()) ?>';
     }
 
-    .sb-heading--h2 {
-        font-size: 26px;
+    function api(action, data, onSuccess, onFailure) {
+        if (typeof window.BX === 'undefined' || typeof BX.ajax !== 'function') {
+            print('BX.ajax не загружен');
+            return;
+        }
+
+        BX.ajax({
+            url: API_URL,
+            method: 'POST',
+            dataType: 'json',
+            timeout: 60,
+            data: Object.assign({
+                action: action,
+                sessid: getSessid()
+            }, data || {}),
+            onsuccess: function (res) {
+                print(res);
+                if (typeof onSuccess === 'function') {
+                    onSuccess(res);
+                }
+            },
+            onfailure: function (err) {
+                print({
+                    ok: false,
+                    error: 'AJAX_ERROR',
+                    detail: err
+                });
+                if (typeof onFailure === 'function') {
+                    onFailure(err);
+                }
+            }
+        });
     }
 
-    .sb-box,
-    .sb-box--content {
-        padding: 18px;
-    }
-}
-
-@media (max-width: 640px) {
-    .sb-container {
-        padding: 0 14px;
+    function updateStats(sites) {
+        var count = Array.isArray(sites) ? sites.length : 0;
+        statSitesCount.textContent = String(count);
+        statAccessibleCount.textContent = String(count);
     }
 
-    .sb-public-header .sb-container,
-    .sb-public-footer .sb-container {
-        padding-top: 14px;
-        padding-bottom: 14px;
+    function siteCard(site) {
+        var id = Number(site.id || 0);
+        var name = escapeHtml(site.name || '');
+        var slug = escapeHtml(site.slug || '');
+        var createdAt = escapeHtml(site.createdAt || '');
+        var homePageId = Number(site.homePageId || 0);
+        var diskFolderId = Number(site.diskFolderId || 0);
+
+        return ''
+            + '<div class="sb-site-card">'
+            + '  <div class="sb-site-head">'
+            + '    <div class="sb-site-head-main">'
+            + '      <h3 class="sb-site-name">' + name + '</h3>'
+            + '      <div class="sb-site-slug">' + slug + '</div>'
+            + '    </div>'
+            + '    <span class="sb-badge">site #' + id + '</span>'
+            + '  </div>'
+            + ''
+            + '  <div class="sb-site-meta-grid">'
+            + '    <div class="sb-site-meta-item">'
+            + '      <div class="sb-site-meta-label">ID</div>'
+            + '      <div class="sb-site-meta-value">' + id + '</div>'
+            + '    </div>'
+            + '    <div class="sb-site-meta-item">'
+            + '      <div class="sb-site-meta-label">Home page ID</div>'
+            + '      <div class="sb-site-meta-value">' + homePageId + '</div>'
+            + '    </div>'
+            + '    <div class="sb-site-meta-item">'
+            + '      <div class="sb-site-meta-label">Disk folder ID</div>'
+            + '      <div class="sb-site-meta-value">' + diskFolderId + '</div>'
+            + '    </div>'
+            + '    <div class="sb-site-meta-item">'
+            + '      <div class="sb-site-meta-label">Создан</div>'
+            + '      <div class="sb-site-meta-value">' + createdAt + '</div>'
+            + '    </div>'
+            + '  </div>'
+            + ''
+            + '  <div class="sb-site-actions">'
+            + '    <div class="sb-site-actions-row">'
+            + '      <a class="sb-btn sb-btn-primary sb-btn-small" href="' + BASE_PATH + '/editor.php?siteId=' + id + '">Редактор</a>'
+            + '      <a class="sb-btn sb-btn-light sb-btn-small" href="' + BASE_PATH + '/public.php?siteId=' + id + '" target="_blank">Публичная</a>'
+            + '    </div>'
+            + '    <div class="sb-site-actions-row sb-site-actions-row--secondary">'
+            + '      <a class="sb-btn sb-btn-small" href="' + BASE_PATH + '/layout.php?siteId=' + id + '">Layout</a>'
+            + '      <a class="sb-btn sb-btn-small" href="' + BASE_PATH + '/menu.php?siteId=' + id + '">Меню</a>'
+            + '      <a class="sb-btn sb-btn-small" href="' + BASE_PATH + '/files.php?siteId=' + id + '">Файлы</a>'
+            + '      <a class="sb-btn sb-btn-small" href="' + BASE_PATH + '/settings.php?siteId=' + id + '">Настройки</a>'
+            + '    </div>'
+            + '    <div class="sb-site-actions-row sb-site-actions-row--danger">'
+            + '      <button type="button" class="sb-btn sb-btn-danger sb-btn-small js-delete-site" data-id="' + id + '">Удалить</button>'
+            + '    </div>'
+            + '  </div>'
+            + '</div>';
     }
 
-    .sb-public-main .sb-container {
-        padding-top: 16px;
-        padding-bottom: 16px;
+    function renderSites(sites) {
+        updateStats(sites);
+
+        if (!Array.isArray(sites) || !sites.length) {
+            sitesContainer.innerHTML = '<div class="sb-empty">Сайтов пока нет</div>';
+            return;
+        }
+
+        var html = '<div class="sb-sites-grid">';
+        for (var i = 0; i < sites.length; i++) {
+            html += siteCard(sites[i]);
+        }
+        html += '</div>';
+
+        sitesContainer.innerHTML = html;
     }
 
-    .sb-brand {
-        font-size: 24px;
+    function loadSites() {
+        sitesContainer.innerHTML = '<div class="sb-empty">Загрузка...</div>';
+
+        api('site.list', {}, function (res) {
+            if (!res || res.ok !== true) {
+                updateStats([]);
+                sitesContainer.innerHTML = '<div class="sb-empty">Не удалось загрузить список сайтов</div>';
+                return;
+            }
+            renderSites(res.sites || []);
+        });
     }
 
-    .sb-page-title {
-        font-size: 24px;
-        margin-bottom: 18px;
+    function createSite() {
+        var nameInput = document.getElementById('siteName');
+        var slugInput = document.getElementById('siteSlug');
+
+        var name = (nameInput.value || '').trim();
+        var slug = (slugInput.value || '').trim();
+
+        if (!name) {
+            alert('Введите название сайта');
+            nameInput.focus();
+            return;
+        }
+
+        api('site.create', {
+            name: name,
+            slug: slug
+        }, function (res) {
+            if (!res || res.ok !== true) {
+                alert('Не удалось создать сайт');
+                return;
+            }
+
+            nameInput.value = '';
+            slugInput.value = '';
+            loadSites();
+        });
     }
 
-    .sb-public-menu {
-        gap: 8px;
+    function deleteSite(id) {
+        if (!id) {
+            return;
+        }
+
+        if (!confirm('Удалить сайт #' + id + '?')) {
+            return;
+        }
+
+        api('site.delete', {
+            id: id
+        }, function (res) {
+            if (!res || res.ok !== true) {
+                alert('Не удалось удалить сайт');
+                return;
+            }
+
+            loadSites();
+        });
     }
 
-    .sb-public-menu__link {
-        min-height: 34px;
-        padding: 7px 10px;
-        font-size: 14px;
-    }
-}
+    document.getElementById('createSiteBtn').addEventListener('click', createSite);
+    document.getElementById('reloadBtn').addEventListener('click', loadSites);
 
-Что это даст
+    document.addEventListener('click', function (e) {
+        var btn = e.target.closest('.js-delete-site');
+        if (!btn) {
+            return;
+        }
 
-После замены public.css:
+        var id = parseInt(btn.getAttribute('data-id'), 10) || 0;
+        deleteSite(id);
+    });
 
-шапка и футер станут аккуратнее
+    window.onerror = function (message, source, lineno, colno, error) {
+        print({
+            jsError: true,
+            message: message,
+            source: source,
+            line: lineno,
+            column: colno,
+            stack: error && error.stack ? error.stack : null
+        });
+    };
 
-меню будет выглядеть лучше
+    loadSites();
+})();
+</script>
+</body>
+</html>
 
-текст и HTML-блоки будут читабельнее
+Это уже выглядит заметно лучше как стартовая страница конструктора.
 
-таблицы в html станут нормальными
-
-страница в целом будет выглядеть как рабочий внутренний сайт, а не просто рендер данных
-
-
-Что проверить
-
-Открой снова:
-
-/local/sitebuilder/public.php?siteId=1
-
-Проверь:
-
-1. улучшились ли отступы
-
-
-2. лучше ли читается текст
-
-
-3. аккуратнее ли выглядит меню
-
-
-4. не сломался ли вывод текущих блоков
-
-
-
-Следующим пакетом логично прислать уже улучшенный views/layout/public_page.php, чтобы верхняя часть сайта и контентный контейнер выглядели ещё аккуратнее.
+Дальше логично в таком же ключе улучшить editor.php, уже не просто “под admin.css”, а именно визуально собрать его в более сильный рабочий экран.
