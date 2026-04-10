@@ -1,26 +1,25 @@
-Отлично. Тогда следующий шаг — settings.php.
+Отлично. Тогда идём дальше и подключаем layout.*, чтобы заработала страница layout.php.
 
-Сделаем рабочую страницу настроек сайта, без красоты “финальной версии”, но уже полезную:
+Сейчас сделаем:
 
-загрузка сайта
-
-редактирование name
-
-редактирование slug
-
-containerWidth
-
-accent
-
-logoFileId
-
-homePageId
-
-сохранение через API
+1. роутер для layout.*
 
 
-Но сейчас есть один важный момент: у нас ещё нет action site.update в живом роутере и handler-е.
-Поэтому сначала добавим его, а потом саму страницу.
+2. проверим handler
+
+
+3. соберём рабочую страницу управления зонами:
+
+header
+
+footer
+
+left
+
+right
+
+
+
 
 
 ---
@@ -103,6 +102,19 @@ if (
     exit;
 }
 
+if (
+    $action === 'layout.get' ||
+    $action === 'layout.updateSettings' ||
+    $action === 'layout.block.list' ||
+    $action === 'layout.block.create' ||
+    $action === 'layout.block.update' ||
+    $action === 'layout.block.delete' ||
+    $action === 'layout.block.move'
+) {
+    require __DIR__ . '/handlers/layout.php';
+    exit;
+}
+
 sb_json_error('UNKNOWN_ACTION', 400, [
     'action' => $action,
     'file' => __FILE__,
@@ -111,46 +123,15 @@ sb_json_error('UNKNOWN_ACTION', 400, [
 
 ---
 
-2. Обнови /local/sitebuilder/api/handlers/site.php
+2. Проверь /local/sitebuilder/api/handlers/layout.php
 
-Замени файл целиком на этот вариант:
+Если не уверен, просто замени целиком на этот вариант:
 
 <?php
 
 global $USER;
 
-if ($action === 'site.list') {
-    $sites = sb_read_sites();
-    $myCode = sb_user_access_code();
-
-    $access = sb_read_access();
-    $allowedSiteIds = [];
-
-    foreach ($access as $r) {
-        if ((string)($r['accessCode'] ?? '') === $myCode) {
-            $sid = (int)($r['siteId'] ?? 0);
-            if ($sid > 0) {
-                $allowedSiteIds[$sid] = true;
-            }
-        }
-    }
-
-    $sites = array_values(array_filter($sites, static function ($s) use ($allowedSiteIds) {
-        return isset($allowedSiteIds[(int)($s['id'] ?? 0)]);
-    }));
-
-    usort($sites, static function ($a, $b) {
-        return (int)($a['id'] ?? 0) <=> (int)($b['id'] ?? 0);
-    });
-
-    sb_json_ok([
-        'sites' => $sites,
-        'handler' => 'site',
-        'file' => __FILE__,
-    ]);
-}
-
-if ($action === 'site.get') {
+if ($action === 'layout.get') {
     $siteId = (int)($_POST['siteId'] ?? 0);
     if ($siteId <= 0) {
         sb_json_error('SITE_ID_REQUIRED', 422);
@@ -158,97 +139,16 @@ if ($action === 'site.get') {
 
     sb_require_viewer($siteId);
 
-    $site = sb_find_site($siteId);
-    if (!$site) {
-        sb_json_error('SITE_NOT_FOUND', 404);
-    }
+    $layout = sb_layout_ensure_record($siteId);
 
     sb_json_ok([
-        'site' => $site,
-        'handler' => 'site',
+        'layout' => $layout,
+        'handler' => 'layout',
         'file' => __FILE__,
     ]);
 }
 
-if ($action === 'site.create') {
-    $name = trim((string)($_POST['name'] ?? ''));
-    if ($name === '') {
-        sb_json_error('NAME_REQUIRED', 422);
-    }
-
-    $sites = sb_read_sites();
-
-    $maxId = 0;
-    foreach ($sites as $s) {
-        $maxId = max($maxId, (int)($s['id'] ?? 0));
-    }
-    $id = $maxId + 1;
-
-    $slug = trim((string)($_POST['slug'] ?? ''));
-    $slug = $slug === '' ? sb_slugify($name) : sb_slugify($slug);
-
-    $existing = array_map(static function ($x) {
-        return (string)($x['slug'] ?? '');
-    }, $sites);
-
-    $base = $slug !== '' ? $slug : 'site';
-    $slug = $base;
-    $i = 2;
-    while (in_array($slug, $existing, true)) {
-        $slug = $base . '-' . $i;
-        $i++;
-    }
-
-    $site = [
-        'id' => $id,
-        'name' => $name,
-        'slug' => $slug,
-        'createdBy' => (int)$USER->GetID(),
-        'createdAt' => date('c'),
-        'updatedAt' => date('c'),
-        'updatedBy' => (int)$USER->GetID(),
-        'homePageId' => 0,
-        'diskFolderId' => 0,
-        'topMenuId' => 0,
-        'settings' => [
-            'containerWidth' => 1100,
-            'accent' => '#2563eb',
-            'logoFileId' => 0,
-        ],
-        'layout' => [
-            'showHeader' => true,
-            'showFooter' => true,
-            'showLeft' => false,
-            'showRight' => false,
-            'leftWidth' => 260,
-            'rightWidth' => 260,
-            'leftMode' => 'blocks',
-        ],
-    ];
-
-    $sites[] = $site;
-    sb_write_sites($sites);
-
-    $access = sb_read_access();
-    $access[] = [
-        'siteId' => $id,
-        'accessCode' => 'U' . (int)$USER->GetID(),
-        'role' => 'OWNER',
-        'createdBy' => (int)$USER->GetID(),
-        'createdAt' => date('c'),
-        'updatedAt' => date('c'),
-        'updatedBy' => (int)$USER->GetID(),
-    ];
-    sb_write_access($access);
-
-    sb_json_ok([
-        'site' => $site,
-        'handler' => 'site',
-        'file' => __FILE__,
-    ]);
-}
-
-if ($action === 'site.update') {
+if ($action === 'layout.updateSettings') {
     $siteId = (int)($_POST['siteId'] ?? 0);
     if ($siteId <= 0) {
         sb_json_error('SITE_ID_REQUIRED', 422);
@@ -256,208 +156,501 @@ if ($action === 'site.update') {
 
     sb_require_editor($siteId);
 
-    $site = sb_find_site($siteId);
-    if (!$site) {
-        sb_json_error('SITE_NOT_FOUND', 404);
+    $settingsRaw = $_POST['settings'] ?? null;
+    if ($settingsRaw === null) {
+        sb_json_error('SETTINGS_REQUIRED', 422);
     }
 
-    $name = trim((string)($_POST['name'] ?? ''));
-    $slug = trim((string)($_POST['slug'] ?? ''));
-    $containerWidth = (int)($_POST['containerWidth'] ?? 0);
-    $accent = trim((string)($_POST['accent'] ?? ''));
-    $logoFileId = (int)($_POST['logoFileId'] ?? 0);
-
-    if ($name === '') {
-        $name = (string)($site['name'] ?? '');
+    if (is_array($settingsRaw)) {
+        $settings = $settingsRaw;
+    } else {
+        $settings = json_decode((string)$settingsRaw, true);
+        if (!is_array($settings)) {
+            sb_json_error('BAD_SETTINGS_JSON', 422);
+        }
     }
 
-    if ($slug === '') {
-        $slug = (string)($site['slug'] ?? '');
-    }
-    $slug = sb_slugify($slug);
-    if ($slug === '') {
-        $slug = 'site-' . $siteId;
-    }
+    $allowedKeys = [
+        'showHeader',
+        'showFooter',
+        'showLeft',
+        'showRight',
+        'leftWidth',
+        'rightWidth',
+        'leftMode',
+    ];
 
-    $sites = sb_read_sites();
-
-    $existing = array_map(
-        static function ($x) {
-            return (string)($x['slug'] ?? '');
-        },
-        array_filter($sites, static function ($s) use ($siteId) {
-            return (int)($s['id'] ?? 0) !== $siteId;
-        })
-    );
-
-    $base = $slug;
-    $i = 2;
-    while (in_array($slug, $existing, true)) {
-        $slug = $base . '-' . $i;
-        $i++;
+    $filtered = [];
+    foreach ($allowedKeys as $key) {
+        if (array_key_exists($key, $settings)) {
+            $filtered[$key] = $settings[$key];
+        }
     }
 
-    if ($containerWidth <= 0) {
-        $containerWidth = (int)($site['settings']['containerWidth'] ?? 1100);
+    if (isset($filtered['showHeader'])) {
+        $filtered['showHeader'] = (bool)$filtered['showHeader'];
     }
-    $containerWidth = max(320, min(1920, $containerWidth));
-
-    if ($accent === '') {
-        $accent = (string)($site['settings']['accent'] ?? '#2563eb');
+    if (isset($filtered['showFooter'])) {
+        $filtered['showFooter'] = (bool)$filtered['showFooter'];
+    }
+    if (isset($filtered['showLeft'])) {
+        $filtered['showLeft'] = (bool)$filtered['showLeft'];
+    }
+    if (isset($filtered['showRight'])) {
+        $filtered['showRight'] = (bool)$filtered['showRight'];
+    }
+    if (isset($filtered['leftWidth'])) {
+        $filtered['leftWidth'] = max(120, min(800, (int)$filtered['leftWidth']));
+    }
+    if (isset($filtered['rightWidth'])) {
+        $filtered['rightWidth'] = max(120, min(800, (int)$filtered['rightWidth']));
+    }
+    if (isset($filtered['leftMode'])) {
+        $filtered['leftMode'] = in_array((string)$filtered['leftMode'], ['blocks', 'menu'], true)
+            ? (string)$filtered['leftMode']
+            : 'blocks';
     }
 
-    if (!preg_match('/^#[0-9a-fA-F]{6}$/', $accent)) {
-        $accent = '#2563eb';
-    }
-
+    $layouts = sb_read_layouts();
     $updated = null;
+    $found = false;
 
-    foreach ($sites as &$s) {
-        if ((int)($s['id'] ?? 0) !== $siteId) {
+    foreach ($layouts as &$layout) {
+        if ((int)($layout['siteId'] ?? 0) !== $siteId) {
             continue;
         }
 
-        $settings = isset($s['settings']) && is_array($s['settings']) ? $s['settings'] : [];
-        $settings['containerWidth'] = $containerWidth;
-        $settings['accent'] = $accent;
-        $settings['logoFileId'] = $logoFileId;
+        $layout = sb_normalize_layout_record($layout);
+        $layout['settings'] = array_merge($layout['settings'], $filtered);
+        $layout['updatedAt'] = date('c');
+        $layout['updatedBy'] = (int)$USER->GetID();
 
-        $s['name'] = $name;
-        $s['slug'] = $slug;
-        $s['settings'] = $settings;
-        $s['updatedAt'] = date('c');
-        $s['updatedBy'] = (int)$USER->GetID();
-
-        $updated = $s;
+        $updated = $layout;
+        $found = true;
         break;
     }
-    unset($s);
+    unset($layout);
 
-    if (!$updated) {
-        sb_json_error('SITE_NOT_FOUND', 404);
+    if (!$found) {
+        $updated = sb_layout_default_record($siteId);
+        $updated['settings'] = array_merge($updated['settings'], $filtered);
+        $updated['createdAt'] = date('c');
+        $updated['createdBy'] = (int)$USER->GetID();
+        $updated['updatedAt'] = date('c');
+        $updated['updatedBy'] = (int)$USER->GetID();
+        $layouts[] = $updated;
     }
 
-    sb_write_sites($sites);
-
-    sb_json_ok([
-        'site' => $updated,
-        'handler' => 'site',
-        'file' => __FILE__,
-    ]);
-}
-
-if ($action === 'site.delete') {
-    $id = (int)($_POST['id'] ?? 0);
-    if ($id <= 0) {
-        sb_json_error('ID_REQUIRED', 422);
-    }
-
-    sb_require_owner($id);
-
-    $sites = sb_read_sites();
-    $before = count($sites);
-
-    $sites = array_values(array_filter($sites, static function ($s) use ($id) {
-        return (int)($s['id'] ?? 0) !== $id;
-    }));
-
-    if (count($sites) === $before) {
-        sb_json_error('NOT_FOUND', 404);
-    }
-
-    sb_write_sites($sites);
-
-    $pages = sb_read_pages();
-    $deletedPageIds = [];
-    foreach ($pages as $p) {
-        if ((int)($p['siteId'] ?? 0) === $id) {
-            $deletedPageIds[(int)($p['id'] ?? 0)] = true;
-        }
-    }
-
-    $pages = array_values(array_filter($pages, static function ($p) use ($id) {
-        return (int)($p['siteId'] ?? 0) !== $id;
-    }));
-    sb_write_pages($pages);
-
-    $blocks = sb_read_blocks();
-    $blocks = array_values(array_filter($blocks, static function ($b) use ($deletedPageIds) {
-        return !isset($deletedPageIds[(int)($b['pageId'] ?? 0)]);
-    }));
-    sb_write_blocks($blocks);
-
-    $access = sb_read_access();
-    $access = array_values(array_filter($access, static function ($r) use ($id) {
-        return (int)($r['siteId'] ?? 0) !== $id;
-    }));
-    sb_write_access($access);
-
-    $menus = sb_read_menus();
-    $menus = array_values(array_filter($menus, static function ($m) use ($id) {
-        return (int)($m['siteId'] ?? 0) !== $id;
-    }));
-    sb_write_menus($menus);
-
-    $templates = sb_read_templates();
-    $templates = array_values(array_filter($templates, static function ($tpl) use ($id) {
-        return (int)($tpl['siteId'] ?? 0) !== $id;
-    }));
-    sb_write_templates($templates);
-
-    $layouts = sb_read_layouts();
-    $layouts = array_values(array_filter($layouts, static function ($layout) use ($id) {
-        return (int)($layout['siteId'] ?? 0) !== $id;
-    }));
     sb_write_layouts($layouts);
 
     sb_json_ok([
-        'handler' => 'site',
+        'layout' => sb_normalize_layout_record($updated),
+        'handler' => 'layout',
         'file' => __FILE__,
     ]);
 }
 
-if ($action === 'site.setHome') {
+if ($action === 'layout.block.list') {
     $siteId = (int)($_POST['siteId'] ?? 0);
-    $pageId = (int)($_POST['pageId'] ?? 0);
+    $zone = trim((string)($_POST['zone'] ?? ''));
 
-    if ($siteId <= 0 || $pageId <= 0) {
-        sb_json_error('SITE_PAGE_REQUIRED', 422);
+    if ($siteId <= 0) {
+        sb_json_error('SITE_ID_REQUIRED', 422);
+    }
+    if (!sb_layout_valid_zone($zone)) {
+        sb_json_error('BAD_ZONE', 422);
+    }
+
+    sb_require_viewer($siteId);
+
+    $layout = sb_layout_ensure_record($siteId);
+
+    sb_json_ok([
+        'blocks' => array_values($layout['zones'][$zone] ?? []),
+        'zone' => $zone,
+        'handler' => 'layout',
+        'file' => __FILE__,
+    ]);
+}
+
+if ($action === 'layout.block.create') {
+    $siteId = (int)($_POST['siteId'] ?? 0);
+    $zone = trim((string)($_POST['zone'] ?? ''));
+    $type = trim((string)($_POST['type'] ?? 'text'));
+
+    if ($siteId <= 0) {
+        sb_json_error('SITE_ID_REQUIRED', 422);
+    }
+    if (!sb_layout_valid_zone($zone)) {
+        sb_json_error('BAD_ZONE', 422);
+    }
+    if ($type === '') {
+        sb_json_error('TYPE_REQUIRED', 422);
     }
 
     sb_require_editor($siteId);
 
-    $page = sb_find_page($pageId);
-    if (!$page || (int)($page['siteId'] ?? 0) !== $siteId) {
-        sb_json_error('PAGE_NOT_IN_SITE', 422);
-    }
-
-    $sites = sb_read_sites();
+    $layouts = sb_read_layouts();
+    $updatedLayout = null;
+    $newBlock = null;
     $found = false;
 
-    foreach ($sites as $i => $s) {
-        if ((int)($s['id'] ?? 0) === $siteId) {
-            $sites[$i]['homePageId'] = $pageId;
-            $sites[$i]['updatedAt'] = date('c');
-            $sites[$i]['updatedBy'] = (int)$USER->GetID();
-            $found = true;
-            break;
+    foreach ($layouts as &$layout) {
+        if ((int)($layout['siteId'] ?? 0) !== $siteId) {
+            continue;
+        }
+
+        $layout = sb_normalize_layout_record($layout);
+
+        $newBlock = [
+            'id' => sb_layout_next_block_id($layout),
+            'type' => $type,
+            'sort' => sb_layout_next_block_sort($layout, $zone),
+            'content' => sb_default_block_content($type),
+            'props' => [],
+            'createdBy' => (int)$USER->GetID(),
+            'createdAt' => date('c'),
+            'updatedAt' => date('c'),
+            'updatedBy' => (int)$USER->GetID(),
+        ];
+
+        $layout['zones'][$zone][] = $newBlock;
+        $layout['updatedAt'] = date('c');
+        $layout['updatedBy'] = (int)$USER->GetID();
+
+        $updatedLayout = $layout;
+        $found = true;
+        break;
+    }
+    unset($layout);
+
+    if (!$found) {
+        $updatedLayout = sb_layout_default_record($siteId);
+
+        $newBlock = [
+            'id' => 1,
+            'type' => $type,
+            'sort' => 10,
+            'content' => sb_default_block_content($type),
+            'props' => [],
+            'createdBy' => (int)$USER->GetID(),
+            'createdAt' => date('c'),
+            'updatedAt' => date('c'),
+            'updatedBy' => (int)$USER->GetID(),
+        ];
+
+        $updatedLayout['zones'][$zone][] = $newBlock;
+        $updatedLayout['createdAt'] = date('c');
+        $updatedLayout['createdBy'] = (int)$USER->GetID();
+        $updatedLayout['updatedAt'] = date('c');
+        $updatedLayout['updatedBy'] = (int)$USER->GetID();
+
+        $layouts[] = $updatedLayout;
+    }
+
+    sb_write_layouts($layouts);
+
+    sb_json_ok([
+        'block' => sb_normalize_block_record($newBlock),
+        'zone' => $zone,
+        'layout' => sb_normalize_layout_record($updatedLayout),
+        'handler' => 'layout',
+        'file' => __FILE__,
+    ]);
+}
+
+if ($action === 'layout.block.update') {
+    $siteId = (int)($_POST['siteId'] ?? 0);
+    $id = (int)($_POST['id'] ?? 0);
+
+    if ($siteId <= 0) {
+        sb_json_error('SITE_ID_REQUIRED', 422);
+    }
+    if ($id <= 0) {
+        sb_json_error('ID_REQUIRED', 422);
+    }
+
+    sb_require_editor($siteId);
+
+    $contentRaw = $_POST['content'] ?? null;
+    $propsRaw = $_POST['props'] ?? null;
+    $typeRaw = $_POST['type'] ?? null;
+
+    $newContent = null;
+    $newProps = null;
+    $newType = null;
+
+    if ($contentRaw !== null) {
+        if (is_array($contentRaw)) {
+            $newContent = $contentRaw;
+        } else {
+            $decoded = json_decode((string)$contentRaw, true);
+            if (!is_array($decoded)) {
+                sb_json_error('BAD_CONTENT_JSON', 422);
+            }
+            $newContent = $decoded;
         }
     }
 
-    if (!$found) {
-        sb_json_error('SITE_NOT_FOUND', 404);
+    if ($propsRaw !== null) {
+        if (is_array($propsRaw)) {
+            $newProps = $propsRaw;
+        } else {
+            $decoded = json_decode((string)$propsRaw, true);
+            if (!is_array($decoded)) {
+                sb_json_error('BAD_PROPS_JSON', 422);
+            }
+            $newProps = $decoded;
+        }
     }
 
-    sb_write_sites($sites);
+    if ($typeRaw !== null) {
+        $newType = trim((string)$typeRaw);
+        if ($newType === '') {
+            sb_json_error('TYPE_REQUIRED', 422);
+        }
+    }
+
+    $layouts = sb_read_layouts();
+    $updatedBlock = null;
+    $updatedLayout = null;
+    $foundLayout = false;
+    $foundBlock = false;
+
+    foreach ($layouts as &$layout) {
+        if ((int)($layout['siteId'] ?? 0) !== $siteId) {
+            continue;
+        }
+
+        $foundLayout = true;
+        $layout = sb_normalize_layout_record($layout);
+
+        foreach (['header', 'footer', 'left', 'right'] as $zone) {
+            foreach ($layout['zones'][$zone] as &$block) {
+                if ((int)($block['id'] ?? 0) !== $id) {
+                    continue;
+                }
+
+                if ($newType !== null) {
+                    $block['type'] = $newType;
+                }
+                if ($newContent !== null) {
+                    $block['content'] = $newContent;
+                }
+                if ($newProps !== null) {
+                    $block['props'] = $newProps;
+                }
+
+                $block['updatedAt'] = date('c');
+                $block['updatedBy'] = (int)$USER->GetID();
+                $block['_zone'] = $zone;
+
+                $updatedBlock = $block;
+                $foundBlock = true;
+                break 2;
+            }
+            unset($block);
+        }
+
+        if ($foundBlock) {
+            $layout['updatedAt'] = date('c');
+            $layout['updatedBy'] = (int)$USER->GetID();
+            $updatedLayout = $layout;
+            break;
+        }
+    }
+    unset($layout);
+
+    if (!$foundLayout) {
+        sb_json_error('LAYOUT_NOT_FOUND', 404);
+    }
+
+    if (!$foundBlock || !$updatedBlock) {
+        sb_json_error('BLOCK_NOT_FOUND', 404);
+    }
+
+    sb_write_layouts($layouts);
 
     sb_json_ok([
-        'handler' => 'site',
+        'block' => sb_normalize_block_record($updatedBlock),
+        'layout' => sb_normalize_layout_record($updatedLayout),
+        'handler' => 'layout',
+        'file' => __FILE__,
+    ]);
+}
+
+if ($action === 'layout.block.delete') {
+    $siteId = (int)($_POST['siteId'] ?? 0);
+    $id = (int)($_POST['id'] ?? 0);
+
+    if ($siteId <= 0) {
+        sb_json_error('SITE_ID_REQUIRED', 422);
+    }
+    if ($id <= 0) {
+        sb_json_error('ID_REQUIRED', 422);
+    }
+
+    sb_require_editor($siteId);
+
+    $layouts = sb_read_layouts();
+    $updatedLayout = null;
+    $foundLayout = false;
+    $foundBlock = false;
+
+    foreach ($layouts as &$layout) {
+        if ((int)($layout['siteId'] ?? 0) !== $siteId) {
+            continue;
+        }
+
+        $foundLayout = true;
+        $layout = sb_normalize_layout_record($layout);
+
+        foreach (['header', 'footer', 'left', 'right'] as $zone) {
+            $before = count($layout['zones'][$zone]);
+            $layout['zones'][$zone] = array_values(array_filter(
+                $layout['zones'][$zone],
+                static function ($block) use ($id) {
+                    return (int)($block['id'] ?? 0) !== $id;
+                }
+            ));
+
+            if (count($layout['zones'][$zone]) !== $before) {
+                $foundBlock = true;
+                $layout['updatedAt'] = date('c');
+                $layout['updatedBy'] = (int)$USER->GetID();
+                $updatedLayout = $layout;
+                break;
+            }
+        }
+
+        if ($foundBlock) {
+            break;
+        }
+    }
+    unset($layout);
+
+    if (!$foundLayout) {
+        sb_json_error('LAYOUT_NOT_FOUND', 404);
+    }
+
+    if (!$foundBlock) {
+        sb_json_error('BLOCK_NOT_FOUND', 404);
+    }
+
+    sb_write_layouts($layouts);
+
+    sb_json_ok([
+        'layout' => sb_normalize_layout_record($updatedLayout),
+        'handler' => 'layout',
+        'file' => __FILE__,
+    ]);
+}
+
+if ($action === 'layout.block.move') {
+    $siteId = (int)($_POST['siteId'] ?? 0);
+    $id = (int)($_POST['id'] ?? 0);
+    $dir = trim((string)($_POST['dir'] ?? ''));
+
+    if ($siteId <= 0) {
+        sb_json_error('SITE_ID_REQUIRED', 422);
+    }
+    if ($id <= 0) {
+        sb_json_error('ID_REQUIRED', 422);
+    }
+    if ($dir !== 'up' && $dir !== 'down') {
+        sb_json_error('DIR_REQUIRED', 422);
+    }
+
+    sb_require_editor($siteId);
+
+    $layouts = sb_read_layouts();
+    $updatedLayout = null;
+    $foundLayout = false;
+    $foundBlock = false;
+
+    foreach ($layouts as &$layout) {
+        if ((int)($layout['siteId'] ?? 0) !== $siteId) {
+            continue;
+        }
+
+        $foundLayout = true;
+        $layout = sb_normalize_layout_record($layout);
+
+        foreach (['header', 'footer', 'left', 'right'] as $zone) {
+            $siblings = $layout['zones'][$zone];
+
+            $pos = null;
+            for ($i = 0, $cnt = count($siblings); $i < $cnt; $i++) {
+                if ((int)($siblings[$i]['id'] ?? 0) === $id) {
+                    $pos = $i;
+                    break;
+                }
+            }
+
+            if ($pos === null) {
+                continue;
+            }
+
+            $foundBlock = true;
+
+            if ($dir === 'up' && $pos === 0) {
+                $updatedLayout = $layout;
+                break 2;
+            }
+
+            if ($dir === 'down' && $pos === count($siblings) - 1) {
+                $updatedLayout = $layout;
+                break 2;
+            }
+
+            $swapPos = ($dir === 'up') ? $pos - 1 : $pos + 1;
+
+            $sortA = (int)($siblings[$pos]['sort'] ?? 500);
+            $sortB = (int)($siblings[$swapPos]['sort'] ?? 500);
+
+            $layout['zones'][$zone][$pos]['sort'] = $sortB;
+            $layout['zones'][$zone][$pos]['updatedAt'] = date('c');
+            $layout['zones'][$zone][$pos]['updatedBy'] = (int)$USER->GetID();
+
+            $layout['zones'][$zone][$swapPos]['sort'] = $sortA;
+            $layout['zones'][$zone][$swapPos]['updatedAt'] = date('c');
+            $layout['zones'][$zone][$swapPos]['updatedBy'] = (int)$USER->GetID();
+
+            usort($layout['zones'][$zone], static function ($a, $b) {
+                $sortCmp = (int)($a['sort'] ?? 500) <=> (int)($b['sort'] ?? 500);
+                if ($sortCmp !== 0) {
+                    return $sortCmp;
+                }
+                return (int)($a['id'] ?? 0) <=> (int)($b['id'] ?? 0);
+            });
+
+            $layout['updatedAt'] = date('c');
+            $layout['updatedBy'] = (int)$USER->GetID();
+            $updatedLayout = $layout;
+            break 2;
+        }
+    }
+    unset($layout);
+
+    if (!$foundLayout) {
+        sb_json_error('LAYOUT_NOT_FOUND', 404);
+    }
+
+    if (!$foundBlock) {
+        sb_json_error('BLOCK_NOT_FOUND', 404);
+    }
+
+    sb_write_layouts($layouts);
+
+    sb_json_ok([
+        'layout' => sb_normalize_layout_record($updatedLayout),
+        'handler' => 'layout',
         'file' => __FILE__,
     ]);
 }
 
 sb_json_error('NOT_MOVED_YET', 501, [
-    'handler' => 'site',
+    'handler' => 'layout',
     'action' => $action,
     'file' => __FILE__,
 ]);
@@ -465,7 +658,7 @@ sb_json_error('NOT_MOVED_YET', 501, [
 
 ---
 
-3. Создай /local/sitebuilder/settings.php
+3. Создай /local/sitebuilder/layout.php
 
 <?php
 require $_SERVER['DOCUMENT_ROOT'] . '/bitrix/modules/main/include/prolog_before.php';
@@ -490,7 +683,7 @@ if ($siteId <= 0) {
     <html lang="ru">
     <head>
         <meta charset="UTF-8">
-        <title>SiteBuilder / Settings</title>
+        <title>SiteBuilder / Layout</title>
         <?php $APPLICATION->ShowHead(); ?>
     </head>
     <body style="font-family:Arial,sans-serif;padding:20px;">
@@ -506,7 +699,7 @@ if ($siteId <= 0) {
 <html lang="ru">
 <head>
     <meta charset="UTF-8">
-    <title>SiteBuilder / Settings</title>
+    <title>SiteBuilder / Layout</title>
     <?php $APPLICATION->ShowHead(); ?>
     <style>
         * { box-sizing: border-box; }
@@ -517,7 +710,7 @@ if ($siteId <= 0) {
             color: #1f2937;
         }
         .page {
-            max-width: 980px;
+            max-width: 1480px;
             margin: 0 auto;
             padding: 24px;
         }
@@ -554,18 +747,15 @@ if ($siteId <= 0) {
             font-size: 18px;
             font-weight: 700;
         }
-        .form-grid {
+        .settings-grid {
             display: grid;
-            grid-template-columns: 1fr 1fr;
+            grid-template-columns: repeat(4, 1fr);
             gap: 14px;
         }
         .field {
             display: flex;
             flex-direction: column;
             gap: 6px;
-        }
-        .field.full {
-            grid-column: 1 / -1;
         }
         .field label {
             font-size: 13px;
@@ -581,15 +771,39 @@ if ($siteId <= 0) {
             outline: none;
             background: #fff;
         }
-        .field input:focus,
-        .field select:focus {
-            border-color: #2563eb;
+        .zones-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 16px;
+        }
+        .zone-card {
+            border: 1px solid #e5e7eb;
+            border-radius: 14px;
+            background: #fff;
+            overflow: hidden;
+        }
+        .zone-head {
+            padding: 14px 16px;
+            border-bottom: 1px solid #e5e7eb;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 12px;
+        }
+        .zone-title {
+            margin: 0;
+            font-size: 16px;
+            font-weight: 700;
+            text-transform: capitalize;
+        }
+        .zone-body {
+            padding: 16px;
         }
         .toolbar {
             display: flex;
-            gap: 10px;
+            gap: 8px;
             flex-wrap: wrap;
-            margin-top: 16px;
+            margin-bottom: 12px;
         }
         .btn {
             height: 40px;
@@ -598,6 +812,11 @@ if ($siteId <= 0) {
             padding: 0 16px;
             cursor: pointer;
             font-weight: 600;
+        }
+        .btn-small {
+            height: 34px;
+            padding: 0 12px;
+            font-size: 13px;
         }
         .btn-primary {
             background: #2563eb;
@@ -613,10 +832,83 @@ if ($siteId <= 0) {
         .btn-light:hover {
             background: #e0e7ff;
         }
+        .btn-danger {
+            background: #dc2626;
+            color: #fff;
+        }
+        .btn-danger:hover {
+            background: #b91c1c;
+        }
+        .btn-gray {
+            background: #f3f4f6;
+            color: #374151;
+        }
+        .btn-gray:hover {
+            background: #e5e7eb;
+        }
+        .layout-blocks {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+        .layout-block {
+            border: 1px solid #e5e7eb;
+            border-radius: 12px;
+            background: #fafafa;
+            padding: 12px;
+        }
+        .layout-block-head {
+            display: flex;
+            justify-content: space-between;
+            gap: 12px;
+            align-items: flex-start;
+        }
+        .block-title {
+            margin: 0 0 6px;
+            font-size: 15px;
+            font-weight: 700;
+        }
         .meta {
             font-size: 13px;
             color: #6b7280;
-            line-height: 1.6;
+            line-height: 1.5;
+        }
+        .actions {
+            margin-top: 10px;
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+        }
+        .badge {
+            display: inline-flex;
+            align-items: center;
+            background: #f3f4f6;
+            color: #374151;
+            border-radius: 999px;
+            padding: 4px 10px;
+            font-size: 12px;
+            white-space: nowrap;
+        }
+        .editor-box {
+            margin-top: 20px;
+        }
+        .editor-empty {
+            padding: 20px;
+            text-align: center;
+            color: #6b7280;
+            border: 1px dashed #d1d5db;
+            border-radius: 12px;
+            background: #fff;
+        }
+        textarea {
+            width: 100%;
+            min-height: 120px;
+            padding: 10px 12px;
+            border: 1px solid #d1d5db;
+            border-radius: 10px;
+            outline: none;
+            resize: vertical;
+            font: inherit;
         }
         .output {
             white-space: pre-wrap;
@@ -629,16 +921,12 @@ if ($siteId <= 0) {
             font-size: 13px;
             overflow: auto;
         }
-        .empty {
-            padding: 20px;
-            text-align: center;
-            color: #6b7280;
-            border: 1px dashed #d1d5db;
-            border-radius: 12px;
-            background: #fff;
+        .hidden {
+            display: none !important;
         }
-        @media (max-width: 800px) {
-            .form-grid {
+        @media (max-width: 1200px) {
+            .settings-grid,
+            .zones-grid {
                 grid-template-columns: 1fr;
             }
         }
@@ -648,56 +936,102 @@ if ($siteId <= 0) {
 <div class="page">
     <div class="topbar">
         <a class="back-link" href="<?= htmlspecialchars($basePath, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?>/index.php">← К списку сайтов</a>
-        <h1 class="title">Настройки сайта</h1>
+        <h1 class="title">Layout сайта</h1>
         <p class="subtitle">siteId = <?= (int)$siteId ?></p>
     </div>
 
     <div class="panel">
-        <h2 class="panel-title">Основные настройки</h2>
+        <h2 class="panel-title">Настройки layout</h2>
 
-        <div id="settingsEmpty" class="empty">Загрузка...</div>
+        <div class="settings-grid">
+            <div class="field">
+                <label for="showHeader">Show header</label>
+                <select id="showHeader">
+                    <option value="1">Да</option>
+                    <option value="0">Нет</option>
+                </select>
+            </div>
 
-        <div id="settingsForm" style="display:none;">
-            <div class="form-grid">
-                <div class="field">
-                    <label for="siteName">Название сайта</label>
-                    <input type="text" id="siteName">
-                </div>
+            <div class="field">
+                <label for="showFooter">Show footer</label>
+                <select id="showFooter">
+                    <option value="1">Да</option>
+                    <option value="0">Нет</option>
+                </select>
+            </div>
 
-                <div class="field">
-                    <label for="siteSlug">Slug</label>
-                    <input type="text" id="siteSlug">
-                </div>
+            <div class="field">
+                <label for="showLeft">Show left</label>
+                <select id="showLeft">
+                    <option value="1">Да</option>
+                    <option value="0">Нет</option>
+                </select>
+            </div>
 
-                <div class="field">
-                    <label for="containerWidth">Ширина контейнера</label>
-                    <input type="number" id="containerWidth" min="320" max="1920">
-                </div>
+            <div class="field">
+                <label for="showRight">Show right</label>
+                <select id="showRight">
+                    <option value="1">Да</option>
+                    <option value="0">Нет</option>
+                </select>
+            </div>
 
-                <div class="field">
-                    <label for="accent">Accent color</label>
-                    <input type="text" id="accent" placeholder="#2563eb">
-                </div>
+            <div class="field">
+                <label for="leftWidth">Left width</label>
+                <input type="number" id="leftWidth" min="120" max="800">
+            </div>
 
-                <div class="field">
-                    <label for="logoFileId">Logo file ID</label>
-                    <input type="number" id="logoFileId" min="0">
-                </div>
+            <div class="field">
+                <label for="rightWidth">Right width</label>
+                <input type="number" id="rightWidth" min="120" max="800">
+            </div>
 
-                <div class="field">
-                    <label for="homePageId">Домашняя страница</label>
-                    <select id="homePageId"></select>
-                </div>
+            <div class="field">
+                <label for="leftMode">Left mode</label>
+                <select id="leftMode">
+                    <option value="blocks">blocks</option>
+                    <option value="menu">menu</option>
+                </select>
+            </div>
+        </div>
 
-                <div class="field full">
-                    <label>Служебная информация</label>
-                    <div class="meta" id="siteMeta"></div>
-                </div>
+        <div class="toolbar" style="margin-top:16px;">
+            <button type="button" class="btn btn-primary" id="saveSettingsBtn">Сохранить layout settings</button>
+            <button type="button" class="btn btn-light" id="reloadBtn">Обновить</button>
+        </div>
+    </div>
+
+    <div class="zones-grid" id="zonesContainer"></div>
+
+    <div class="panel editor-box">
+        <h2 class="panel-title">Редактор layout-блока</h2>
+
+        <div id="layoutBlockEditorEmpty" class="editor-empty">Выберите блок для редактирования</div>
+
+        <div id="layoutBlockEditorForm" class="hidden">
+            <div class="field" style="margin-bottom:12px;">
+                <label for="editLayoutBlockZone">Zone</label>
+                <input type="text" id="editLayoutBlockZone" readonly>
+            </div>
+
+            <div class="field" style="margin-bottom:12px;">
+                <label for="editLayoutBlockType">Тип</label>
+                <input type="text" id="editLayoutBlockType" readonly>
+            </div>
+
+            <div class="field" style="margin-bottom:12px;">
+                <label for="editLayoutBlockContent">Content / JSON</label>
+                <textarea id="editLayoutBlockContent"></textarea>
+            </div>
+
+            <div class="field" style="margin-bottom:12px;">
+                <label for="editLayoutBlockProps">Props / JSON</label>
+                <textarea id="editLayoutBlockProps">{}</textarea>
             </div>
 
             <div class="toolbar">
-                <button type="button" class="btn btn-primary" id="saveSettingsBtn">Сохранить</button>
-                <button type="button" class="btn btn-light" id="reloadBtn">Обновить</button>
+                <button type="button" class="btn btn-primary" id="saveLayoutBlockBtn">Сохранить</button>
+                <button type="button" class="btn btn-danger" id="deleteLayoutBlockBtn">Удалить</button>
             </div>
         </div>
     </div>
@@ -715,13 +1049,15 @@ if ($siteId <= 0) {
     var SITE_ID = <?= (int)$siteId ?>;
 
     var output = document.getElementById('output');
-    var settingsEmpty = document.getElementById('settingsEmpty');
-    var settingsForm = document.getElementById('settingsForm');
+    var zonesContainer = document.getElementById('zonesContainer');
 
     var state = {
-        site: null,
-        pages: []
+        layout: null,
+        currentBlockId: 0,
+        currentZone: ''
     };
+
+    var ZONES = ['header', 'footer', 'left', 'right'];
 
     function print(data) {
         if (typeof data === 'string') {
@@ -785,140 +1121,338 @@ if ($siteId <= 0) {
         });
     }
 
-    function loadSite(next) {
-        api('site.get', { siteId: SITE_ID }, function (res) {
+    function loadLayout() {
+        api('layout.get', { siteId: SITE_ID }, function (res) {
             if (!res || res.ok !== true) {
-                settingsEmpty.textContent = 'Не удалось загрузить сайт';
+                zonesContainer.innerHTML = '<div class="editor-empty">Не удалось загрузить layout</div>';
                 return;
             }
 
-            state.site = res.site || null;
-
-            if (typeof next === 'function') {
-                next();
-            }
+            state.layout = res.layout || null;
+            renderSettings();
+            renderZones();
         });
     }
 
-    function loadPages(next) {
-        api('page.list', { siteId: SITE_ID }, function (res) {
-            if (res && res.ok === true) {
-                state.pages = Array.isArray(res.pages) ? res.pages : [];
-            } else {
-                state.pages = [];
+    function renderSettings() {
+        if (!state.layout || !state.layout.settings) {
+            return;
+        }
+
+        var s = state.layout.settings;
+        document.getElementById('showHeader').value = s.showHeader ? '1' : '0';
+        document.getElementById('showFooter').value = s.showFooter ? '1' : '0';
+        document.getElementById('showLeft').value = s.showLeft ? '1' : '0';
+        document.getElementById('showRight').value = s.showRight ? '1' : '0';
+        document.getElementById('leftWidth').value = Number(s.leftWidth || 260);
+        document.getElementById('rightWidth').value = Number(s.rightWidth || 260);
+        document.getElementById('leftMode').value = s.leftMode || 'blocks';
+    }
+
+    function renderZones() {
+        if (!state.layout || !state.layout.zones) {
+            zonesContainer.innerHTML = '<div class="editor-empty">Нет layout-зон</div>';
+            return;
+        }
+
+        var html = '';
+        for (var i = 0; i < ZONES.length; i++) {
+            html += renderZoneCard(ZONES[i], state.layout.zones[ZONES[i]] || []);
+        }
+        zonesContainer.innerHTML = html;
+    }
+
+    function renderZoneCard(zone, blocks) {
+        var html = ''
+            + '<div class="zone-card">'
+            + '  <div class="zone-head">'
+            + '    <h3 class="zone-title">' + escapeHtml(zone) + '</h3>'
+            + '    <span class="badge">' + blocks.length + ' блок(ов)</span>'
+            + '  </div>'
+            + '  <div class="zone-body">'
+            + '    <div class="toolbar">'
+            + '      <button type="button" class="btn btn-light btn-small js-add-layout-block" data-zone="' + zone + '" data-type="text">+ Text</button>'
+            + '      <button type="button" class="btn btn-light btn-small js-add-layout-block" data-zone="' + zone + '" data-type="heading">+ Heading</button>'
+            + '      <button type="button" class="btn btn-light btn-small js-add-layout-block" data-zone="' + zone + '" data-type="button">+ Button</button>'
+            + '      <button type="button" class="btn btn-light btn-small js-add-layout-block" data-zone="' + zone + '" data-type="html">+ HTML</button>'
+            + '    </div>';
+
+        if (!blocks.length) {
+            html += '<div class="editor-empty">Блоков нет</div>';
+        } else {
+            html += '<div class="layout-blocks">';
+            for (var i = 0; i < blocks.length; i++) {
+                html += renderLayoutBlock(zone, blocks[i], i, blocks.length);
             }
+            html += '</div>';
+        }
 
-            if (typeof next === 'function') {
-                next();
-            }
-        });
+        html += '</div></div>';
+        return html;
     }
 
-    function renderHomePageOptions() {
-        var select = document.getElementById('homePageId');
-        var html = '<option value="0">Не выбрана</option>';
+    function renderLayoutBlock(zone, block, index, total) {
+        var id = Number(block.id || 0);
+        var type = escapeHtml(block.type || '');
+        var preview = escapeHtml(buildPreviewText(block));
 
-        for (var i = 0; i < state.pages.length; i++) {
-            var page = state.pages[i];
-            var id = Number(page.id || 0);
-            var selected = id === Number((state.site && state.site.homePageId) || 0) ? ' selected' : '';
-            html += '<option value="' + id + '"' + selected + '>'
-                + escapeHtml(page.title || ('Страница #' + id))
-                + ' (#' + id + ')</option>';
-        }
-
-        select.innerHTML = html;
+        return ''
+            + '<div class="layout-block">'
+            + '  <div class="layout-block-head">'
+            + '    <div>'
+            + '      <div class="block-title">' + type + ' #' + id + '</div>'
+            + '      <div class="meta">'
+            + '        <div><strong>Zone:</strong> ' + escapeHtml(zone) + '</div>'
+            + '        <div><strong>Sort:</strong> ' + Number(block.sort || 0) + '</div>'
+            + '      </div>'
+            + '    </div>'
+            + '    <span class="badge">layout block</span>'
+            + '  </div>'
+            + '  <div class="meta" style="margin-top:8px;">' + preview + '</div>'
+            + '  <div class="actions">'
+            + '    <button type="button" class="btn btn-light btn-small js-edit-layout-block" data-zone="' + zone + '" data-id="' + id + '">Редактировать</button>'
+            + '    <button type="button" class="btn btn-gray btn-small js-move-layout-block-up" data-id="' + id + '"' + (index === 0 ? ' disabled' : '') + '>↑</button>'
+            + '    <button type="button" class="btn btn-gray btn-small js-move-layout-block-down" data-id="' + id + '"' + (index === total - 1 ? ' disabled' : '') + '>↓</button>'
+            + '    <button type="button" class="btn btn-danger btn-small js-delete-layout-block" data-id="' + id + '">Удалить</button>'
+            + '  </div>'
+            + '</div>';
     }
 
-    function renderSite() {
-        if (!state.site) {
-            settingsEmpty.textContent = 'Сайт не найден';
-            return;
+    function buildPreviewText(block) {
+        var type = String(block.type || '');
+        var content = block.content || {};
+
+        if (type === 'text') {
+            return String(content.html || '').replace(/<[^>]*>/g, ' ').trim() || '[text]';
+        }
+        if (type === 'heading') {
+            return String(content.text || '') || '[heading]';
+        }
+        if (type === 'button') {
+            return (content.text || '[button]') + ' → ' + (content.href || '');
+        }
+        if (type === 'html') {
+            return String(content.html || '').replace(/<[^>]*>/g, ' ').trim() || '[html]';
         }
 
-        document.getElementById('siteName').value = state.site.name || '';
-        document.getElementById('siteSlug').value = state.site.slug || '';
-        document.getElementById('containerWidth').value = Number((state.site.settings && state.site.settings.containerWidth) || 1100);
-        document.getElementById('accent').value = (state.site.settings && state.site.settings.accent) || '#2563eb';
-        document.getElementById('logoFileId').value = Number((state.site.settings && state.site.settings.logoFileId) || 0);
-
-        renderHomePageOptions();
-
-        document.getElementById('siteMeta').innerHTML =
-            '<div><strong>ID:</strong> ' + Number(state.site.id || 0) + '</div>'
-            + '<div><strong>Disk folder ID:</strong> ' + Number(state.site.diskFolderId || 0) + '</div>'
-            + '<div><strong>Top menu ID:</strong> ' + Number(state.site.topMenuId || 0) + '</div>'
-            + '<div><strong>Created at:</strong> ' + escapeHtml(state.site.createdAt || '') + '</div>'
-            + '<div><strong>Updated at:</strong> ' + escapeHtml(state.site.updatedAt || '') + '</div>';
-
-        settingsEmpty.style.display = 'none';
-        settingsForm.style.display = '';
+        return JSON.stringify(content);
     }
 
-    function saveSettings() {
-        if (!state.site) {
-            return;
-        }
+    function saveLayoutSettings() {
+        var settings = {
+            showHeader: document.getElementById('showHeader').value === '1',
+            showFooter: document.getElementById('showFooter').value === '1',
+            showLeft: document.getElementById('showLeft').value === '1',
+            showRight: document.getElementById('showRight').value === '1',
+            leftWidth: parseInt(document.getElementById('leftWidth').value, 10) || 260,
+            rightWidth: parseInt(document.getElementById('rightWidth').value, 10) || 260,
+            leftMode: document.getElementById('leftMode').value || 'blocks'
+        };
 
-        var siteName = (document.getElementById('siteName').value || '').trim();
-        var siteSlug = (document.getElementById('siteSlug').value || '').trim();
-        var containerWidth = parseInt(document.getElementById('containerWidth').value, 10) || 1100;
-        var accent = (document.getElementById('accent').value || '').trim();
-        var logoFileId = parseInt(document.getElementById('logoFileId').value, 10) || 0;
-        var homePageId = parseInt(document.getElementById('homePageId').value, 10) || 0;
-
-        if (!siteName) {
-            alert('Название сайта не может быть пустым');
-            return;
-        }
-
-        api('site.update', {
+        api('layout.updateSettings', {
             siteId: SITE_ID,
-            name: siteName,
-            slug: siteSlug,
-            containerWidth: containerWidth,
-            accent: accent,
-            logoFileId: logoFileId
+            settings: JSON.stringify(settings)
         }, function (res) {
             if (!res || res.ok !== true) {
-                alert('Не удалось сохранить настройки сайта');
+                alert('Не удалось сохранить layout settings');
                 return;
             }
 
-            state.site = res.site || state.site;
-
-            if (homePageId > 0) {
-                api('site.setHome', {
-                    siteId: SITE_ID,
-                    pageId: homePageId
-                }, function (res2) {
-                    if (!res2 || res2.ok !== true) {
-                        alert('Основные настройки сохранены, но не удалось установить домашнюю страницу');
-                        loadSite(function () {
-                            loadPages(renderSite);
-                        });
-                        return;
-                    }
-
-                    loadSite(function () {
-                        loadPages(renderSite);
-                    });
-                });
-            } else {
-                var oldSite = state.site || {};
-                oldSite.homePageId = 0;
-                state.site = oldSite;
-                renderSite();
-                alert('Настройки сохранены. Если нужно сбросить home page в API полностью, это можно добавить отдельным action.');
-            }
+            state.layout = res.layout || state.layout;
+            renderSettings();
+            renderZones();
         });
     }
 
-    document.getElementById('saveSettingsBtn').addEventListener('click', saveSettings);
-    document.getElementById('reloadBtn').addEventListener('click', function () {
-        loadSite(function () {
-            loadPages(renderSite);
+    function addLayoutBlock(zone, type) {
+        api('layout.block.create', {
+            siteId: SITE_ID,
+            zone: zone,
+            type: type
+        }, function (res) {
+            if (!res || res.ok !== true) {
+                alert('Не удалось создать layout block');
+                return;
+            }
+
+            state.layout = res.layout || state.layout;
+            renderZones();
         });
+    }
+
+    function findLayoutBlock(blockId) {
+        if (!state.layout || !state.layout.zones) {
+            return null;
+        }
+
+        for (var i = 0; i < ZONES.length; i++) {
+            var zone = ZONES[i];
+            var blocks = state.layout.zones[zone] || [];
+            for (var j = 0; j < blocks.length; j++) {
+                if (Number(blocks[j].id || 0) === Number(blockId || 0)) {
+                    return {
+                        zone: zone,
+                        block: blocks[j]
+                    };
+                }
+            }
+        }
+
+        return null;
+    }
+
+    function editLayoutBlock(zone, blockId) {
+        var found = findLayoutBlock(blockId);
+        if (!found) {
+            alert('Блок не найден');
+            return;
+        }
+
+        state.currentBlockId = Number(blockId || 0);
+        state.currentZone = zone;
+
+        document.getElementById('layoutBlockEditorEmpty').classList.add('hidden');
+        document.getElementById('layoutBlockEditorForm').classList.remove('hidden');
+        document.getElementById('editLayoutBlockZone').value = zone;
+        document.getElementById('editLayoutBlockType').value = found.block.type || '';
+        document.getElementById('editLayoutBlockContent').value = JSON.stringify(found.block.content || {}, null, 2);
+        document.getElementById('editLayoutBlockProps').value = JSON.stringify(found.block.props || {}, null, 2);
+    }
+
+    function clearLayoutBlockEditor() {
+        state.currentBlockId = 0;
+        state.currentZone = '';
+        document.getElementById('layoutBlockEditorEmpty').classList.remove('hidden');
+        document.getElementById('layoutBlockEditorForm').classList.add('hidden');
+        document.getElementById('editLayoutBlockZone').value = '';
+        document.getElementById('editLayoutBlockType').value = '';
+        document.getElementById('editLayoutBlockContent').value = '';
+        document.getElementById('editLayoutBlockProps').value = '{}';
+    }
+
+    function saveLayoutBlock() {
+        if (!state.currentBlockId) {
+            return;
+        }
+
+        var contentText = document.getElementById('editLayoutBlockContent').value || '{}';
+        var propsText = document.getElementById('editLayoutBlockProps').value || '{}';
+
+        try {
+            JSON.parse(contentText);
+        } catch (e) {
+            alert('Content должен быть валидным JSON');
+            return;
+        }
+
+        try {
+            JSON.parse(propsText);
+        } catch (e) {
+            alert('Props должен быть валидным JSON');
+            return;
+        }
+
+        api('layout.block.update', {
+            siteId: SITE_ID,
+            id: state.currentBlockId,
+            content: contentText,
+            props: propsText
+        }, function (res) {
+            if (!res || res.ok !== true) {
+                alert('Не удалось сохранить layout block');
+                return;
+            }
+
+            state.layout = res.layout || state.layout;
+            renderZones();
+        });
+    }
+
+    function deleteLayoutBlock(blockId) {
+        if (!confirm('Удалить layout block #' + blockId + '?')) {
+            return;
+        }
+
+        api('layout.block.delete', {
+            siteId: SITE_ID,
+            id: blockId
+        }, function (res) {
+            if (!res || res.ok !== true) {
+                alert('Не удалось удалить layout block');
+                return;
+            }
+
+            state.layout = res.layout || state.layout;
+
+            if (Number(state.currentBlockId || 0) === Number(blockId || 0)) {
+                clearLayoutBlockEditor();
+            }
+
+            renderZones();
+        });
+    }
+
+    function moveLayoutBlock(blockId, dir) {
+        api('layout.block.move', {
+            siteId: SITE_ID,
+            id: blockId,
+            dir: dir
+        }, function (res) {
+            if (!res || res.ok !== true) {
+                alert('Не удалось переместить layout block');
+                return;
+            }
+
+            state.layout = res.layout || state.layout;
+            renderZones();
+        });
+    }
+
+    document.getElementById('saveSettingsBtn').addEventListener('click', saveLayoutSettings);
+    document.getElementById('reloadBtn').addEventListener('click', loadLayout);
+    document.getElementById('saveLayoutBlockBtn').addEventListener('click', saveLayoutBlock);
+    document.getElementById('deleteLayoutBlockBtn').addEventListener('click', function () {
+        if (state.currentBlockId) {
+            deleteLayoutBlock(state.currentBlockId);
+        }
+    });
+
+    document.addEventListener('click', function (e) {
+        var addBtn = e.target.closest('.js-add-layout-block');
+        if (addBtn) {
+            addLayoutBlock(
+                addBtn.getAttribute('data-zone') || '',
+                addBtn.getAttribute('data-type') || 'text'
+            );
+            return;
+        }
+
+        var editBtn = e.target.closest('.js-edit-layout-block');
+        if (editBtn) {
+            editLayoutBlock(
+                editBtn.getAttribute('data-zone') || '',
+                parseInt(editBtn.getAttribute('data-id'), 10) || 0
+            );
+            return;
+        }
+
+        var delBtn = e.target.closest('.js-delete-layout-block');
+        if (delBtn) {
+            deleteLayoutBlock(parseInt(delBtn.getAttribute('data-id'), 10) || 0);
+            return;
+        }
+
+        var upBtn = e.target.closest('.js-move-layout-block-up');
+        if (upBtn) {
+            moveLayoutBlock(parseInt(upBtn.getAttribute('data-id'), 10) || 0, 'up');
+            return;
+        }
+
+        var downBtn = e.target.closest('.js-move-layout-block-down');
+        if (downBtn) {
+            moveLayoutBlock(parseInt(downBtn.getAttribute('data-id'), 10) || 0, 'down');
+            return;
+        }
     });
 
     window.onerror = function (message, source, lineno, colno, error) {
@@ -932,9 +1466,7 @@ if ($siteId <= 0) {
         });
     };
 
-    loadSite(function () {
-        loadPages(renderSite);
-    });
+    loadLayout();
 })();
 </script>
 </body>
@@ -945,7 +1477,7 @@ if ($siteId <= 0) {
 
 4. Сбрось opcache
 
-Открой один раз:
+Открой:
 
 /local/sitebuilder/opcache_reset.php
 
@@ -956,63 +1488,52 @@ if ($siteId <= 0) {
 
 Открывай:
 
-/local/sitebuilder/settings.php?siteId=1
+/local/sitebuilder/layout.php?siteId=1
 
-Проверь:
+Проверь по шагам:
 
-1. грузится ли сайт
-
-
-2. меняется ли name
+1. грузятся layout settings
 
 
-3. меняется ли slug
+2. сохраняются settings
 
 
-4. сохраняется ли containerWidth
+3. добавляется блок в header
 
 
-5. сохраняется ли accent
+4. добавляется блок в footer
 
 
-6. сохраняется ли logoFileId
+5. редактируется content/props
 
 
-7. устанавливается ли home page
+6. блок двигается вверх/вниз
+
+
+7. блок удаляется
 
 
 
 
 ---
 
-Что важно знать сейчас
+Что дальше
 
-Сейчас homePageId = 0 через UI не отправляется отдельным action на сброс, я это специально оставил простым, чтобы не ломать текущую схему. Если захочешь — следующим сообщением добавим site.clearHome.
+Если layout.php оживёт, у тебя уже будет рабочий каркас почти всего проекта:
 
+index.php
 
----
+editor.php
 
-Куда идём дальше
+menu.php
 
-После settings.php логично:
+files.php
 
-1. вернуть layout.* в роутер
+settings.php
 
-
-2. проверить layout.php
-
-
-3. потом уже перейти к “сделать красиво”:
-
-разрезать JS
-
-вынести CSS
-
-нормальные диалоги
-
-prettier UI
+layout.php
 
 
+И после этого можно будет переходить к следующему этапу: приводить всё в красивую структуру и выносить CSS/JS по файлам.
 
-
-Напиши, как отработал settings.php, и следующим сообщением я дам уже рабочий пакет для layout.php.
+Напиши, как отработал layout.php.
