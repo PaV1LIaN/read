@@ -1,6 +1,6 @@
-Вот полностью готовый menu.php под admin.css.
+Вот полностью готовый files.php под admin.css.
 
-Полный файл /local/sitebuilder/menu.php
+Полный файл /local/sitebuilder/files.php
 
 <?php
 require $_SERVER['DOCUMENT_ROOT'] . '/bitrix/modules/main/include/prolog_before.php';
@@ -25,7 +25,7 @@ if ($siteId <= 0) {
     <html lang="ru">
     <head>
         <meta charset="UTF-8">
-        <title>SiteBuilder / Menu</title>
+        <title>SiteBuilder / Files</title>
         <?php $APPLICATION->ShowHead(); ?>
         <link rel="stylesheet" href="<?= htmlspecialchars($basePath, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?>/assets/admin/admin.css">
     </head>
@@ -44,135 +44,46 @@ if ($siteId <= 0) {
 <html lang="ru">
 <head>
     <meta charset="UTF-8">
-    <title>SiteBuilder / Menu</title>
+    <title>SiteBuilder / Files</title>
     <?php $APPLICATION->ShowHead(); ?>
     <link rel="stylesheet" href="<?= htmlspecialchars($basePath, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?>/assets/admin/admin.css">
     <style>
-        .sb-menus-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fill, minmax(420px, 1fr));
-            gap: 16px;
-        }
-
-        .sb-menu-card {
-            border: 1px solid #e5e7eb;
-            border-radius: 14px;
-            background: #fff;
-            overflow: hidden;
-        }
-
-        .sb-menu-card-top {
-            padding: 16px;
-            border-bottom: 1px solid #e5e7eb;
+        .sb-files-list {
             display: flex;
-            align-items: flex-start;
-            justify-content: space-between;
+            flex-direction: column;
             gap: 12px;
         }
 
-        .sb-menu-name {
-            margin: 0 0 8px;
-            font-size: 18px;
+        .sb-file-card {
+            border: 1px solid #e5e7eb;
+            border-radius: 12px;
+            padding: 14px;
+            background: #fafafa;
+        }
+
+        .sb-file-head {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            gap: 12px;
+        }
+
+        .sb-file-title {
+            margin: 0 0 6px;
+            font-size: 15px;
             font-weight: 700;
             word-break: break-word;
         }
 
-        .sb-menu-actions {
-            padding: 12px 16px;
-            border-bottom: 1px solid #e5e7eb;
+        .sb-file-actions {
+            margin-top: 10px;
             display: flex;
             flex-wrap: wrap;
             gap: 8px;
         }
 
-        .sb-menu-items {
-            padding: 16px;
-        }
-
-        .sb-menu-items-header {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            gap: 12px;
-            margin-bottom: 12px;
-        }
-
-        .sb-items-title {
-            font-size: 15px;
-            font-weight: 700;
-            margin: 0;
-        }
-
-        .sb-item-list {
-            display: flex;
-            flex-direction: column;
-            gap: 10px;
-        }
-
-        .sb-menu-item-card {
-            border: 1px solid #e5e7eb;
-            border-radius: 12px;
-            padding: 12px;
-            background: #fafafa;
-        }
-
-        .sb-menu-item-head {
-            display: flex;
-            justify-content: space-between;
-            gap: 12px;
-            align-items: flex-start;
-        }
-
-        .sb-menu-item-title {
-            font-size: 15px;
-            font-weight: 700;
-            margin: 0 0 6px;
-        }
-
-        .sb-dialog-backdrop {
-            position: fixed;
-            inset: 0;
-            background: rgba(15, 23, 42, 0.5);
-            display: none;
-            align-items: center;
-            justify-content: center;
-            padding: 20px;
-            z-index: 1000;
-        }
-
-        .sb-dialog {
-            width: 100%;
-            max-width: 640px;
-            background: #fff;
-            border-radius: 16px;
-            border: 1px solid #e5e7eb;
-            box-shadow: 0 20px 60px rgba(15, 23, 42, 0.2);
-            overflow: hidden;
-        }
-
-        .sb-dialog-head {
-            padding: 16px 18px;
-            border-bottom: 1px solid #e5e7eb;
-            font-size: 18px;
-            font-weight: 700;
-        }
-
-        .sb-dialog-body {
-            padding: 18px;
-        }
-
-        .sb-dialog-actions {
-            padding: 16px 18px;
-            border-top: 1px solid #e5e7eb;
-            display: flex;
-            justify-content: flex-end;
-            gap: 10px;
-        }
-
-        @media (max-width: 900px) {
-            .sb-menus-grid {
-                grid-template-columns: 1fr;
-            }
+        .sb-file-upload-input {
+            max-width: 360px;
         }
     </style>
 </head>
@@ -181,26 +92,24 @@ if ($siteId <= 0) {
     <div class="sb-topbar">
         <div>
             <a class="sb-back-link" href="<?= htmlspecialchars($basePath, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?>/index.php">← К списку сайтов</a>
-            <h1 class="sb-title">Меню сайта</h1>
+            <h1 class="sb-title">Файлы сайта</h1>
             <p class="sb-subtitle">siteId = <?= (int)$siteId ?></p>
         </div>
     </div>
 
     <div class="sb-panel">
-        <h2 class="sb-panel-title">Создать меню</h2>
-        <div class="sb-form-row align-end">
-            <div class="sb-field">
-                <label for="newMenuName">Название меню</label>
-                <input class="sb-input" type="text" id="newMenuName" placeholder="Например: Верхнее меню">
-            </div>
-            <button type="button" class="sb-btn sb-btn-primary" id="createMenuBtn">Создать меню</button>
-            <button type="button" class="sb-btn sb-btn-light" id="reloadBtn">Обновить</button>
+        <h2 class="sb-panel-title">Загрузка файла</h2>
+        <div class="sb-toolbar">
+            <input class="sb-input sb-file-upload-input" type="file" id="uploadFileInput">
+            <button type="button" class="sb-btn sb-btn-primary" id="uploadBtn">Загрузить</button>
+            <button type="button" class="sb-btn sb-btn-light" id="reloadBtn">Обновить список</button>
         </div>
+        <div class="sb-meta" id="folderInfo" style="margin-top:12px;">Папка ещё не загружена</div>
     </div>
 
     <div class="sb-panel">
-        <h2 class="sb-panel-title">Меню сайта</h2>
-        <div id="menusContainer">
+        <h2 class="sb-panel-title">Файлы</h2>
+        <div id="filesContainer" class="sb-files-list">
             <div class="sb-empty">Загрузка...</div>
         </div>
     </div>
@@ -211,67 +120,20 @@ if ($siteId <= 0) {
     </div>
 </div>
 
-<div class="sb-dialog-backdrop" id="itemDialogBackdrop">
-    <div class="sb-dialog">
-        <div class="sb-dialog-head" id="itemDialogTitle">Пункт меню</div>
-        <div class="sb-dialog-body">
-            <div class="sb-form-row align-end">
-                <div class="sb-field">
-                    <label for="itemTitle">Название</label>
-                    <input class="sb-input" type="text" id="itemTitle" placeholder="Например: Главная">
-                </div>
-                <div class="sb-field">
-                    <label for="itemType">Тип</label>
-                    <select class="sb-select" id="itemType">
-                        <option value="page">Страница</option>
-                        <option value="url">Ссылка</option>
-                    </select>
-                </div>
-            </div>
-
-            <div class="sb-form-row align-end" style="margin-top:12px;">
-                <div class="sb-field" id="itemPageField">
-                    <label for="itemPageId">Страница</label>
-                    <select class="sb-select" id="itemPageId"></select>
-                </div>
-                <div class="sb-field" id="itemUrlField" style="display:none;">
-                    <label for="itemUrl">URL</label>
-                    <input class="sb-input" type="text" id="itemUrl" placeholder="https://example.com">
-                </div>
-                <div class="sb-field">
-                    <label for="itemTarget">Target</label>
-                    <select class="sb-select" id="itemTarget">
-                        <option value="_self">_self</option>
-                        <option value="_blank">_blank</option>
-                    </select>
-                </div>
-            </div>
-        </div>
-        <div class="sb-dialog-actions">
-            <button type="button" class="sb-btn sb-btn-gray" id="itemDialogCancel">Отмена</button>
-            <button type="button" class="sb-btn sb-btn-primary" id="itemDialogSave">Сохранить</button>
-        </div>
-    </div>
-</div>
-
 <script>
 (function () {
     var BASE_PATH = '<?= CUtil::JSEscape($basePath) ?>';
     var API_URL = BASE_PATH + '/api.php';
     var SITE_ID = <?= (int)$siteId ?>;
+
     var output = document.getElementById('output');
-    var menusContainer = document.getElementById('menusContainer');
+    var filesContainer = document.getElementById('filesContainer');
+    var folderInfo = document.getElementById('folderInfo');
+    var uploadFileInput = document.getElementById('uploadFileInput');
 
     var state = {
-        menus: [],
-        pages: [],
-        topMenuId: 0,
-        itemDialog: {
-            open: false,
-            mode: 'create',
-            menuId: 0,
-            itemId: 0
-        }
+        files: [],
+        folderId: 0
     };
 
     function print(data) {
@@ -336,472 +198,149 @@ if ($siteId <= 0) {
         });
     }
 
-    function loadPages(next) {
-        api('page.list', { siteId: SITE_ID }, function (res) {
-            if (res && res.ok === true) {
-                state.pages = Array.isArray(res.pages) ? res.pages : [];
-            } else {
-                state.pages = [];
-            }
-            if (typeof next === 'function') {
-                next();
-            }
-        });
-    }
+    function loadFiles() {
+        filesContainer.innerHTML = '<div class="sb-empty">Загрузка...</div>';
 
-    function loadMenus() {
-        menusContainer.innerHTML = '<div class="sb-empty">Загрузка...</div>';
-
-        api('menu.list', { siteId: SITE_ID }, function (res) {
+        api('file.list', { siteId: SITE_ID }, function (res) {
             if (!res || res.ok !== true) {
-                menusContainer.innerHTML = '<div class="sb-empty">Не удалось загрузить меню</div>';
+                filesContainer.innerHTML = '<div class="sb-empty">Не удалось загрузить файлы</div>';
+                folderInfo.textContent = 'Ошибка загрузки папки';
                 return;
             }
 
-            state.menus = Array.isArray(res.menus) ? res.menus : [];
-            state.topMenuId = Number(res.topMenuId || 0);
-            renderMenus();
+            state.files = Array.isArray(res.files) ? res.files : [];
+            state.folderId = Number(res.folderId || 0);
+
+            folderInfo.textContent = 'Disk folder ID: ' + state.folderId;
+            renderFiles();
         });
     }
 
-    function renderMenus() {
-        if (!state.menus.length) {
-            menusContainer.innerHTML = '<div class="sb-empty">Меню пока нет</div>';
+    function renderFiles() {
+        if (!state.files.length) {
+            filesContainer.innerHTML = '<div class="sb-empty">Файлов пока нет</div>';
             return;
         }
 
-        var html = '<div class="sb-menus-grid">';
-        for (var i = 0; i < state.menus.length; i++) {
-            html += renderMenuCard(state.menus[i]);
+        var html = '';
+        for (var i = 0; i < state.files.length; i++) {
+            html += renderFileCard(state.files[i]);
         }
-        html += '</div>';
-
-        menusContainer.innerHTML = html;
+        filesContainer.innerHTML = html;
     }
 
-    function renderMenuCard(menu) {
-        var id = Number(menu.id || 0);
-        var isTop = id === Number(state.topMenuId || 0);
-        var items = Array.isArray(menu.items) ? menu.items : [];
-
-        var html = ''
-            + '<div class="sb-menu-card">'
-            + '  <div class="sb-menu-card-top">'
-            + '    <div>'
-            + '      <h3 class="sb-menu-name">' + escapeHtml(menu.name || '') + '</h3>'
-            + '      <div class="sb-meta">'
-            + '        <div><strong>ID:</strong> ' + id + '</div>'
-            + '        <div><strong>Пунктов:</strong> ' + items.length + '</div>'
-            + '      </div>'
-            + '    </div>'
-            + '    <div>'
-            +      (isTop ? '<span class="sb-badge sb-badge-green">TOP MENU</span>' : '<span class="sb-badge">menu #' + id + '</span>')
-            + '    </div>'
-            + '  </div>';
-
-        html += ''
-            + '<div class="sb-menu-actions">'
-            + '  <button type="button" class="sb-btn sb-btn-light sb-btn-small js-rename-menu" data-id="' + id + '">Переименовать</button>'
-            + '  <button type="button" class="sb-btn sb-btn-light sb-btn-small js-set-top-menu" data-id="' + id + '">Сделать верхним</button>'
-            + '  <button type="button" class="sb-btn sb-btn-light sb-btn-small js-add-item" data-id="' + id + '">Добавить пункт</button>'
-            + '  <button type="button" class="sb-btn sb-btn-danger sb-btn-small js-delete-menu" data-id="' + id + '">Удалить</button>'
-            + '</div>';
-
-        html += '<div class="sb-menu-items">';
-        html += '<div class="sb-menu-items-header"><h4 class="sb-items-title">Пункты меню</h4></div>';
-
-        if (!items.length) {
-            html += '<div class="sb-empty">Пунктов пока нет</div>';
-        } else {
-            html += '<div class="sb-item-list">';
-            for (var j = 0; j < items.length; j++) {
-                html += renderItemCard(id, items[j], j, items.length);
-            }
-            html += '</div>';
-        }
-
-        html += '</div></div>';
-
-        return html;
-    }
-
-    function renderItemCard(menuId, item, index, total) {
-        var itemId = Number(item.id || 0);
-        var type = String(item.type || '');
-        var title = escapeHtml(item.title || '');
-        var target = escapeHtml(item.target || '_self');
-        var pageId = Number(item.pageId || 0);
-        var url = escapeHtml(item.url || '');
-
-        var details = '';
-        if (type === 'page') {
-            details += '<div><strong>Тип:</strong> page</div>';
-            details += '<div><strong>Page ID:</strong> ' + pageId + '</div>';
-        } else {
-            details += '<div><strong>Тип:</strong> url</div>';
-            details += '<div><strong>URL:</strong> ' + url + '</div>';
-        }
-        details += '<div><strong>Target:</strong> ' + target + '</div>';
-        details += '<div><strong>Sort:</strong> ' + Number(item.sort || 0) + '</div>';
+    function renderFileCard(file) {
+        var id = Number(file.id || 0);
+        var name = escapeHtml(file.name || '');
+        var size = Number(file.size || 0);
+        var createTime = escapeHtml(file.createTime || '');
+        var updateTime = escapeHtml(file.updateTime || '');
+        var downloadUrl = escapeHtml(file.downloadUrl || '#');
 
         return ''
-            + '<div class="sb-menu-item-card">'
-            + '  <div class="sb-menu-item-head">'
+            + '<div class="sb-file-card">'
+            + '  <div class="sb-file-head">'
             + '    <div>'
-            + '      <div class="sb-menu-item-title">' + title + '</div>'
-            + '      <div class="sb-meta">' + details + '</div>'
+            + '      <div class="sb-file-title">' + name + '</div>'
+            + '      <div class="sb-meta">'
+            + '        <div><strong>ID:</strong> ' + id + '</div>'
+            + '        <div><strong>Размер:</strong> ' + size + ' байт</div>'
+            + '        <div><strong>Создан:</strong> ' + createTime + '</div>'
+            + '        <div><strong>Обновлён:</strong> ' + updateTime + '</div>'
+            + '      </div>'
             + '    </div>'
-            + '    <span class="sb-badge">item #' + itemId + '</span>'
+            + '    <span class="sb-badge">file</span>'
             + '  </div>'
-            + '  <div class="sb-actions" style="margin-top:10px;">'
-            + '    <button type="button" class="sb-btn sb-btn-light sb-btn-small js-edit-item" data-menu-id="' + menuId + '" data-item-id="' + itemId + '">Редактировать</button>'
-            + '    <button type="button" class="sb-btn sb-btn-gray sb-btn-small js-move-item-up" data-menu-id="' + menuId + '" data-item-id="' + itemId + '"' + (index === 0 ? ' disabled' : '') + '>↑</button>'
-            + '    <button type="button" class="sb-btn sb-btn-gray sb-btn-small js-move-item-down" data-menu-id="' + menuId + '" data-item-id="' + itemId + '"' + (index === total - 1 ? ' disabled' : '') + '>↓</button>'
-            + '    <button type="button" class="sb-btn sb-btn-danger sb-btn-small js-delete-item" data-menu-id="' + menuId + '" data-item-id="' + itemId + '">Удалить</button>'
+            + '  <div class="sb-file-actions">'
+            + '    <a class="sb-btn sb-btn-light sb-btn-small" href="' + downloadUrl + '" target="_blank">Скачать</a>'
+            + '    <button type="button" class="sb-btn sb-btn-danger sb-btn-small js-delete-file" data-id="' + id + '">Удалить</button>'
             + '  </div>'
             + '</div>';
     }
 
-    function createMenu() {
-        var input = document.getElementById('newMenuName');
-        var name = (input.value || '').trim();
-
-        if (!name) {
-            alert('Введите название меню');
-            input.focus();
+    function uploadFile() {
+        if (!uploadFileInput.files || !uploadFileInput.files.length) {
+            alert('Выберите файл');
             return;
         }
 
-        api('menu.create', {
-            siteId: SITE_ID,
-            name: name
-        }, function (res) {
-            if (!res || res.ok !== true) {
-                alert('Не удалось создать меню');
+        var file = uploadFileInput.files[0];
+
+        var formData = new FormData();
+        formData.append('action', 'file.upload');
+        formData.append('siteId', String(SITE_ID));
+        formData.append('sessid', getSessid());
+        formData.append('file', file);
+
+        var xhr = new XMLHttpRequest();
+        xhr.open('POST', API_URL, true);
+
+        xhr.onload = function () {
+            var text = xhr.responseText || '';
+            var data = null;
+
+            try {
+                data = JSON.parse(text);
+            } catch (e) {
+                print({
+                    ok: false,
+                    error: 'BAD_JSON',
+                    raw: text
+                });
+                alert('Ответ сервера не является JSON');
                 return;
             }
 
-            input.value = '';
-            loadMenus();
-        });
-    }
+            print(data);
 
-    function renameMenu(menuId) {
-        var menu = findMenu(menuId);
-        if (!menu) {
-            alert('Меню не найдено');
-            return;
-        }
-
-        var name = prompt('Новое название меню:', menu.name || '');
-        if (name === null) {
-            return;
-        }
-
-        name = name.trim();
-        if (!name) {
-            alert('Название не может быть пустым');
-            return;
-        }
-
-        api('menu.update', {
-            id: menuId,
-            name: name
-        }, function (res) {
-            if (!res || res.ok !== true) {
-                alert('Не удалось переименовать меню');
+            if (!data || data.ok !== true) {
+                alert('Не удалось загрузить файл');
                 return;
             }
 
-            loadMenus();
-        });
-    }
-
-    function deleteMenu(menuId) {
-        if (!confirm('Удалить меню #' + menuId + '?')) {
-            return;
-        }
-
-        api('menu.delete', {
-            id: menuId
-        }, function (res) {
-            if (!res || res.ok !== true) {
-                alert('Не удалось удалить меню');
-                return;
-            }
-
-            loadMenus();
-        });
-    }
-
-    function setTopMenu(menuId) {
-        api('menu.setTop', {
-            siteId: SITE_ID,
-            menuId: menuId
-        }, function (res) {
-            if (!res || res.ok !== true) {
-                alert('Не удалось назначить верхнее меню');
-                return;
-            }
-
-            loadMenus();
-        });
-    }
-
-    function findMenu(menuId) {
-        for (var i = 0; i < state.menus.length; i++) {
-            if (Number(state.menus[i].id || 0) === Number(menuId || 0)) {
-                return state.menus[i];
-            }
-        }
-        return null;
-    }
-
-    function findItem(menuId, itemId) {
-        var menu = findMenu(menuId);
-        if (!menu || !Array.isArray(menu.items)) {
-            return null;
-        }
-
-        for (var i = 0; i < menu.items.length; i++) {
-            if (Number(menu.items[i].id || 0) === Number(itemId || 0)) {
-                return menu.items[i];
-            }
-        }
-        return null;
-    }
-
-    function fillPageOptions(selectedPageId) {
-        var select = document.getElementById('itemPageId');
-        var html = '<option value="">Выберите страницу</option>';
-
-        for (var i = 0; i < state.pages.length; i++) {
-            var page = state.pages[i];
-            var pid = Number(page.id || 0);
-            var title = escapeHtml(page.title || ('Страница #' + pid));
-            var selected = pid === Number(selectedPageId || 0) ? ' selected' : '';
-            html += '<option value="' + pid + '"' + selected + '>' + title + ' (#' + pid + ')</option>';
-        }
-
-        select.innerHTML = html;
-    }
-
-    function toggleItemFields() {
-        var type = document.getElementById('itemType').value;
-        document.getElementById('itemPageField').style.display = type === 'page' ? '' : 'none';
-        document.getElementById('itemUrlField').style.display = type === 'url' ? '' : 'none';
-    }
-
-    function openItemDialog(mode, menuId, itemId) {
-        state.itemDialog.open = true;
-        state.itemDialog.mode = mode;
-        state.itemDialog.menuId = Number(menuId || 0);
-        state.itemDialog.itemId = Number(itemId || 0);
-
-        var backdrop = document.getElementById('itemDialogBackdrop');
-        var title = document.getElementById('itemDialogTitle');
-        var itemTitle = document.getElementById('itemTitle');
-        var itemType = document.getElementById('itemType');
-        var itemPageId = document.getElementById('itemPageId');
-        var itemUrl = document.getElementById('itemUrl');
-        var itemTarget = document.getElementById('itemTarget');
-
-        if (mode === 'create') {
-            title.textContent = 'Добавить пункт меню';
-            itemTitle.value = '';
-            itemType.value = 'page';
-            fillPageOptions(0);
-            itemPageId.value = '';
-            itemUrl.value = '';
-            itemTarget.value = '_self';
-        } else {
-            var item = findItem(menuId, itemId);
-            if (!item) {
-                alert('Пункт меню не найден');
-                return;
-            }
-
-            title.textContent = 'Редактировать пункт меню';
-            itemTitle.value = item.title || '';
-            itemType.value = item.type || 'page';
-            fillPageOptions(Number(item.pageId || 0));
-            itemPageId.value = String(item.pageId || '');
-            itemUrl.value = item.url || '';
-            itemTarget.value = item.target || '_self';
-        }
-
-        toggleItemFields();
-        backdrop.style.display = 'flex';
-    }
-
-    function closeItemDialog() {
-        state.itemDialog.open = false;
-        document.getElementById('itemDialogBackdrop').style.display = 'none';
-    }
-
-    function saveItemDialog() {
-        var menuId = state.itemDialog.menuId;
-        var mode = state.itemDialog.mode;
-        var itemId = state.itemDialog.itemId;
-
-        var title = (document.getElementById('itemTitle').value || '').trim();
-        var type = document.getElementById('itemType').value;
-        var pageId = parseInt(document.getElementById('itemPageId').value, 10) || 0;
-        var url = (document.getElementById('itemUrl').value || '').trim();
-        var target = document.getElementById('itemTarget').value;
-
-        if (!title) {
-            alert('Введите название пункта');
-            return;
-        }
-
-        if (type === 'page' && !pageId) {
-            alert('Выберите страницу');
-            return;
-        }
-
-        if (type === 'url' && !url) {
-            alert('Введите URL');
-            return;
-        }
-
-        var data = {
-            menuId: menuId,
-            title: title,
-            type: type,
-            pageId: pageId,
-            url: url,
-            target: target
+            uploadFileInput.value = '';
+            loadFiles();
         };
 
-        var action = 'menu.item.add';
-        if (mode === 'edit') {
-            action = 'menu.item.update';
-            data.itemId = itemId;
-        }
+        xhr.onerror = function () {
+            print({
+                ok: false,
+                error: 'XHR_UPLOAD_ERROR'
+            });
+            alert('Ошибка загрузки файла');
+        };
 
-        api(action, data, function (res) {
-            if (!res || res.ok !== true) {
-                alert(mode === 'edit' ? 'Не удалось обновить пункт' : 'Не удалось добавить пункт');
-                return;
-            }
-
-            closeItemDialog();
-            loadMenus();
-        });
+        xhr.send(formData);
     }
 
-    function deleteItem(menuId, itemId) {
-        if (!confirm('Удалить пункт меню #' + itemId + '?')) {
+    function deleteFile(fileId) {
+        if (!confirm('Удалить файл #' + fileId + '?')) {
             return;
         }
 
-        api('menu.item.delete', {
-            menuId: menuId,
-            itemId: itemId
+        api('file.delete', {
+            siteId: SITE_ID,
+            fileId: fileId
         }, function (res) {
             if (!res || res.ok !== true) {
-                alert('Не удалось удалить пункт');
+                alert('Не удалось удалить файл');
                 return;
             }
 
-            loadMenus();
+            loadFiles();
         });
     }
 
-    function moveItem(menuId, itemId, dir) {
-        api('menu.item.move', {
-            menuId: menuId,
-            itemId: itemId,
-            dir: dir
-        }, function (res) {
-            if (!res || res.ok !== true) {
-                alert('Не удалось переместить пункт');
-                return;
-            }
-
-            loadMenus();
-        });
-    }
-
-    document.getElementById('createMenuBtn').addEventListener('click', createMenu);
-    document.getElementById('reloadBtn').addEventListener('click', function () {
-        loadPages(loadMenus);
-    });
-
-    document.getElementById('itemType').addEventListener('change', toggleItemFields);
-    document.getElementById('itemDialogCancel').addEventListener('click', closeItemDialog);
-    document.getElementById('itemDialogSave').addEventListener('click', saveItemDialog);
-
-    document.getElementById('itemDialogBackdrop').addEventListener('click', function (e) {
-        if (e.target === this) {
-            closeItemDialog();
-        }
-    });
+    document.getElementById('uploadBtn').addEventListener('click', uploadFile);
+    document.getElementById('reloadBtn').addEventListener('click', loadFiles);
 
     document.addEventListener('click', function (e) {
-        var renameBtn = e.target.closest('.js-rename-menu');
-        if (renameBtn) {
-            renameMenu(parseInt(renameBtn.getAttribute('data-id'), 10) || 0);
+        var btn = e.target.closest('.js-delete-file');
+        if (!btn) {
             return;
         }
 
-        var deleteMenuBtn = e.target.closest('.js-delete-menu');
-        if (deleteMenuBtn) {
-            deleteMenu(parseInt(deleteMenuBtn.getAttribute('data-id'), 10) || 0);
-            return;
-        }
-
-        var setTopBtn = e.target.closest('.js-set-top-menu');
-        if (setTopBtn) {
-            setTopMenu(parseInt(setTopBtn.getAttribute('data-id'), 10) || 0);
-            return;
-        }
-
-        var addItemBtn = e.target.closest('.js-add-item');
-        if (addItemBtn) {
-            openItemDialog('create', parseInt(addItemBtn.getAttribute('data-id'), 10) || 0, 0);
-            return;
-        }
-
-        var editItemBtn = e.target.closest('.js-edit-item');
-        if (editItemBtn) {
-            openItemDialog(
-                'edit',
-                parseInt(editItemBtn.getAttribute('data-menu-id'), 10) || 0,
-                parseInt(editItemBtn.getAttribute('data-item-id'), 10) || 0
-            );
-            return;
-        }
-
-        var deleteItemBtn = e.target.closest('.js-delete-item');
-        if (deleteItemBtn) {
-            deleteItem(
-                parseInt(deleteItemBtn.getAttribute('data-menu-id'), 10) || 0,
-                parseInt(deleteItemBtn.getAttribute('data-item-id'), 10) || 0
-            );
-            return;
-        }
-
-        var moveUpBtn = e.target.closest('.js-move-item-up');
-        if (moveUpBtn) {
-            moveItem(
-                parseInt(moveUpBtn.getAttribute('data-menu-id'), 10) || 0,
-                parseInt(moveUpBtn.getAttribute('data-item-id'), 10) || 0,
-                'up'
-            );
-            return;
-        }
-
-        var moveDownBtn = e.target.closest('.js-move-item-down');
-        if (moveDownBtn) {
-            moveItem(
-                parseInt(moveDownBtn.getAttribute('data-menu-id'), 10) || 0,
-                parseInt(moveDownBtn.getAttribute('data-item-id'), 10) || 0,
-                'down'
-            );
-            return;
-        }
+        deleteFile(parseInt(btn.getAttribute('data-id'), 10) || 0);
     });
 
     window.onerror = function (message, source, lineno, colno, error) {
@@ -815,7 +354,7 @@ if ($siteId <= 0) {
         });
     };
 
-    loadPages(loadMenus);
+    loadFiles();
 })();
 </script>
 </body>
