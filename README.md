@@ -1,25 +1,614 @@
-Хорошо, статистику пока откладываем.
+Давай. Реально внедрим дерево страниц на parentId без отдельной сущности section.
 
-Тогда идём дальше по editor.php и дожимаем его как основной рабочий экран. Ниже — ещё более собранная версия с упором на:
+Сделаем так:
 
-кликабельный левый список страниц
-
-более понятный центр
-
-компактную правую панель
-
-меньше пустоты
-
-лучшее выделение активной страницы и выбранного блока
+1. backend: нормализуем page-handler, чтобы можно было задавать parentId
 
 
-Что заменить
+2. frontend: в editor.php
+
+добавим выбор родителя при создании
+
+добавим смену родителя у существующей страницы
+
+отрисуем дерево страниц вместо плоского списка
+
+
+
+
+Ниже даю пакетом, что заменить.
+
+
+---
+
+1. Замени api/handlers/page.php
+
+Полностью замени файл:
+
+/local/sitebuilder/api/handlers/page.php
+
+на этот код:
+
+<?php
+
+if ($action === 'page.list') {
+    $siteId = (int)($_POST['siteId'] ?? 0);
+    if ($siteId <= 0) {
+        sb_json_error('SITE_ID_REQUIRED', 422);
+    }
+
+    sb_require_viewer($siteId);
+
+    $pages = array_values(array_filter(sb_read_pages(), static function ($p) use ($siteId) {
+        return (int)($p['siteId'] ?? 0) === $siteId;
+    }));
+
+    usort($pages, static function ($a, $b) {
+        $parentCmp = (int)($a['parentId'] ?? 0) <=> (int)($b['parentId'] ?? 0);
+        if ($parentCmp !== 0) {
+            return $parentCmp;
+        }
+
+        $sortCmp = (int)($a['sort'] ?? 500) <=> (int)($b['sort'] ?? 500);
+        if ($sortCmp !== 0) {
+            return $sortCmp;
+        }
+
+        return (int)($a['id'] ?? 0) <=> (int)($b['id'] ?? 0);
+    });
+
+    sb_json_ok([
+        'pages' => array_values(array_map('sb_normalize_page_record', $pages)),
+    ]);
+}
+
+if ($action === 'page.create') {
+    $siteId = (int)($_POST['siteId'] ?? 0);
+    $title = trim((string)($_POST['title'] ?? ''));
+    $slug = trim((string)($_POST['slug'] ?? ''));
+    $parentId = (int)($_POST['parentId'] ?? 0);
+
+    if ($siteId <= 0) {
+        sb_json_error('SITE_ID_REQUIRED', 422);
+    }
+
+    if ($title === '') {
+        sb_json_error('TITLE_REQUIRED', 422);
+    }
+
+    sb_require_editor($siteId);
+
+    if ($slug === '') {
+        $slug = sb_slugify($title);
+    }
+
+    $pages = sb_read_pages();
+
+    if ($parentId > 0) {
+        $parent = null;
+        foreach ($pages as $p) {
+            if ((int)($p['id'] ?? 0) === $parentId && (int)($p['siteId'] ?? 0) === $siteId) {
+                $parent = $p;
+                break;
+            }
+        }
+
+        if (!$parent) {
+            sb_json_error('PARENT_PAGE_NOT_FOUND', 404);
+        }
+    }
+
+    $maxSort = 0;
+    foreach ($pages as $p) {
+        if (
+            (int)($p['siteId'] ?? 0) === $siteId &&
+            (int)($p['parentId'] ?? 0) === $parentId
+        ) {
+            $maxSort = max($maxSort, (int)($p['sort'] ?? 0));
+        }
+    }
+
+    $id = sb_next_id($pages, 'id');
+
+    $page = sb_normalize_page_record([
+        'id' => $id,
+        'siteId' => $siteId,
+        'title' => $title,
+        'slug' => $slug,
+        'parentId' => $parentId,
+        'sort' => $maxSort > 0 ? ($maxSort + 10) : 10,
+        'status' => 'draft',
+        'publishedAt' => null,
+        'createdAt' => date('c'),
+        'updatedAt' => date('c'),
+    ]);
+
+    $pages[] = $page;
+    sb_write_pages($pages);
+
+    sb_json_ok([
+        'page' => $page,
+    ]);
+}
+
+if ($action === 'page.updateMeta') {
+    $id = (int)($_POST['id'] ?? 0);
+    $title = trim((string)($_POST['title'] ?? ''));
+    $slug = trim((string)($_POST['slug'] ?? ''));
+    $parentId = isset($_POST['parentId']) ? (int)$_POST['parentId'] : null;
+
+    if ($id <= 0) {
+        sb_json_error('PAGE_ID_REQUIRED', 422);
+    }
+
+    if ($title === '') {
+        sb_json_error('TITLE_REQUIRED', 422);
+    }
+
+    $pages = sb_read_pages();
+    $index = null;
+    $page = null;
+
+    foreach ($pages as $k => $p) {
+        if ((int)($p['id'] ?? 0) === $id) {
+            $index = $k;
+            $page = $p;
+            break;
+        }
+    }
+
+    if ($index === null || !$page) {
+        sb_json_error('PAGE_NOT_FOUND', 404);
+    }
+
+    $siteId = (int)($page['siteId'] ?? 0);
+    sb_require_editor($siteId);
+
+    if ($slug === '') {
+        $slug = sb_slugify($title);
+    }
+
+    if ($parentId !== null) {
+        if ($parentId === $id) {
+            sb_json_error('PAGE_CANNOT_BE_OWN_PARENT', 422);
+        }
+
+        if ($parentId > 0) {
+            $parent = null;
+            foreach ($pages as $p) {
+                if ((int)($p['id'] ?? 0) === $parentId && (int)($p['siteId'] ?? 0) === $siteId) {
+                    $parent = $p;
+                    break;
+                }
+            }
+
+            if (!$parent) {
+                sb_json_error('PARENT_PAGE_NOT_FOUND', 404);
+            }
+
+            $cursor = $parent;
+            $safety = 0;
+            while ($cursor && $safety < 1000) {
+                $cursorParentId = (int)($cursor['parentId'] ?? 0);
+                if ($cursorParentId === 0) {
+                    break;
+                }
+                if ($cursorParentId === $id) {
+                    sb_json_error('CYCLIC_PARENT_RELATION', 422);
+                }
+
+                $next = null;
+                foreach ($pages as $p) {
+                    if ((int)($p['id'] ?? 0) === $cursorParentId && (int)($p['siteId'] ?? 0) === $siteId) {
+                        $next = $p;
+                        break;
+                    }
+                }
+                $cursor = $next;
+                $safety++;
+            }
+        }
+    }
+
+    $page['title'] = $title;
+    $page['slug'] = $slug;
+    if ($parentId !== null) {
+        $page['parentId'] = $parentId;
+    }
+    $page['updatedAt'] = date('c');
+
+    $pages[$index] = sb_normalize_page_record($page);
+    sb_write_pages($pages);
+
+    sb_json_ok([
+        'page' => $pages[$index],
+    ]);
+}
+
+if ($action === 'page.setParent') {
+    $id = (int)($_POST['id'] ?? 0);
+    $parentId = (int)($_POST['parentId'] ?? 0);
+
+    if ($id <= 0) {
+        sb_json_error('PAGE_ID_REQUIRED', 422);
+    }
+
+    $pages = sb_read_pages();
+    $index = null;
+    $page = null;
+
+    foreach ($pages as $k => $p) {
+        if ((int)($p['id'] ?? 0) === $id) {
+            $index = $k;
+            $page = $p;
+            break;
+        }
+    }
+
+    if ($index === null || !$page) {
+        sb_json_error('PAGE_NOT_FOUND', 404);
+    }
+
+    $siteId = (int)($page['siteId'] ?? 0);
+    sb_require_editor($siteId);
+
+    if ($parentId === $id) {
+        sb_json_error('PAGE_CANNOT_BE_OWN_PARENT', 422);
+    }
+
+    if ($parentId > 0) {
+        $parent = null;
+        foreach ($pages as $p) {
+            if ((int)($p['id'] ?? 0) === $parentId && (int)($p['siteId'] ?? 0) === $siteId) {
+                $parent = $p;
+                break;
+            }
+        }
+
+        if (!$parent) {
+            sb_json_error('PARENT_PAGE_NOT_FOUND', 404);
+        }
+
+        $cursor = $parent;
+        $safety = 0;
+        while ($cursor && $safety < 1000) {
+            $cursorParentId = (int)($cursor['parentId'] ?? 0);
+            if ($cursorParentId === 0) {
+                break;
+            }
+            if ($cursorParentId === $id) {
+                sb_json_error('CYCLIC_PARENT_RELATION', 422);
+            }
+
+            $next = null;
+            foreach ($pages as $p) {
+                if ((int)($p['id'] ?? 0) === $cursorParentId && (int)($p['siteId'] ?? 0) === $siteId) {
+                    $next = $p;
+                    break;
+                }
+            }
+            $cursor = $next;
+            $safety++;
+        }
+    }
+
+    $page['parentId'] = $parentId;
+    $page['updatedAt'] = date('c');
+    $pages[$index] = sb_normalize_page_record($page);
+
+    sb_write_pages($pages);
+
+    sb_json_ok([
+        'page' => $pages[$index],
+    ]);
+}
+
+if ($action === 'page.setStatus') {
+    $id = (int)($_POST['id'] ?? 0);
+    $status = trim((string)($_POST['status'] ?? ''));
+
+    if ($id <= 0) {
+        sb_json_error('PAGE_ID_REQUIRED', 422);
+    }
+
+    if (!in_array($status, ['draft', 'published'], true)) {
+        sb_json_error('INVALID_STATUS', 422);
+    }
+
+    $pages = sb_read_pages();
+    $index = null;
+    $page = null;
+
+    foreach ($pages as $k => $p) {
+        if ((int)($p['id'] ?? 0) === $id) {
+            $index = $k;
+            $page = $p;
+            break;
+        }
+    }
+
+    if ($index === null || !$page) {
+        sb_json_error('PAGE_NOT_FOUND', 404);
+    }
+
+    $siteId = (int)($page['siteId'] ?? 0);
+    sb_require_editor($siteId);
+
+    $page['status'] = $status;
+    $page['publishedAt'] = $status === 'published' ? date('c') : null;
+    $page['updatedAt'] = date('c');
+
+    $pages[$index] = sb_normalize_page_record($page);
+    sb_write_pages($pages);
+
+    sb_json_ok([
+        'page' => $pages[$index],
+    ]);
+}
+
+if ($action === 'page.move') {
+    $id = (int)($_POST['id'] ?? 0);
+    $dir = trim((string)($_POST['dir'] ?? ''));
+
+    if ($id <= 0) {
+        sb_json_error('PAGE_ID_REQUIRED', 422);
+    }
+
+    if (!in_array($dir, ['up', 'down'], true)) {
+        sb_json_error('INVALID_DIR', 422);
+    }
+
+    $pages = sb_read_pages();
+    $page = null;
+
+    foreach ($pages as $p) {
+        if ((int)($p['id'] ?? 0) === $id) {
+            $page = $p;
+            break;
+        }
+    }
+
+    if (!$page) {
+        sb_json_error('PAGE_NOT_FOUND', 404);
+    }
+
+    $siteId = (int)($page['siteId'] ?? 0);
+    $parentId = (int)($page['parentId'] ?? 0);
+
+    sb_require_editor($siteId);
+
+    $siblings = [];
+    foreach ($pages as $k => $p) {
+        if (
+            (int)($p['siteId'] ?? 0) === $siteId &&
+            (int)($p['parentId'] ?? 0) === $parentId
+        ) {
+            $siblings[] = [
+                'index' => $k,
+                'row' => $p,
+            ];
+        }
+    }
+
+    usort($siblings, static function ($a, $b) {
+        $sortCmp = (int)($a['row']['sort'] ?? 500) <=> (int)($b['row']['sort'] ?? 500);
+        if ($sortCmp !== 0) {
+            return $sortCmp;
+        }
+        return (int)($a['row']['id'] ?? 0) <=> (int)($b['row']['id'] ?? 0);
+    });
+
+    $pos = null;
+    for ($i = 0; $i < count($siblings); $i++) {
+        if ((int)($siblings[$i]['row']['id'] ?? 0) === $id) {
+            $pos = $i;
+            break;
+        }
+    }
+
+    if ($pos === null) {
+        sb_json_error('PAGE_NOT_FOUND_IN_SIBLINGS', 404);
+    }
+
+    $swapPos = $dir === 'up' ? $pos - 1 : $pos + 1;
+    if (!isset($siblings[$swapPos])) {
+        sb_json_ok(['moved' => false]);
+    }
+
+    $aIndex = $siblings[$pos]['index'];
+    $bIndex = $siblings[$swapPos]['index'];
+
+    $aSort = (int)($pages[$aIndex]['sort'] ?? 500);
+    $bSort = (int)($pages[$bIndex]['sort'] ?? 500);
+
+    $pages[$aIndex]['sort'] = $bSort;
+    $pages[$aIndex]['updatedAt'] = date('c');
+
+    $pages[$bIndex]['sort'] = $aSort;
+    $pages[$bIndex]['updatedAt'] = date('c');
+
+    $pages[$aIndex] = sb_normalize_page_record($pages[$aIndex]);
+    $pages[$bIndex] = sb_normalize_page_record($pages[$bIndex]);
+
+    sb_write_pages($pages);
+
+    sb_json_ok(['moved' => true]);
+}
+
+if ($action === 'page.delete') {
+    $id = (int)($_POST['id'] ?? 0);
+
+    if ($id <= 0) {
+        sb_json_error('PAGE_ID_REQUIRED', 422);
+    }
+
+    $pages = sb_read_pages();
+    $page = null;
+
+    foreach ($pages as $p) {
+        if ((int)($p['id'] ?? 0) === $id) {
+            $page = $p;
+            break;
+        }
+    }
+
+    if (!$page) {
+        sb_json_error('PAGE_NOT_FOUND', 404);
+    }
+
+    $siteId = (int)($page['siteId'] ?? 0);
+    sb_require_editor($siteId);
+
+    $idsToDelete = [$id => true];
+    $changed = true;
+    $safety = 0;
+
+    while ($changed && $safety < 1000) {
+        $changed = false;
+        foreach ($pages as $p) {
+            $pid = (int)($p['id'] ?? 0);
+            $parentId = (int)($p['parentId'] ?? 0);
+            if ($pid > 0 && !isset($idsToDelete[$pid]) && isset($idsToDelete[$parentId])) {
+                $idsToDelete[$pid] = true;
+                $changed = true;
+            }
+        }
+        $safety++;
+    }
+
+    $pages = array_values(array_filter($pages, static function ($p) use ($idsToDelete) {
+        return !isset($idsToDelete[(int)($p['id'] ?? 0)]);
+    }));
+    sb_write_pages($pages);
+
+    $blocks = sb_read_blocks();
+    $blocks = array_values(array_filter($blocks, static function ($b) use ($idsToDelete) {
+        return !isset($idsToDelete[(int)($b['pageId'] ?? 0)]);
+    }));
+    sb_write_blocks($blocks);
+
+    sb_json_ok([
+        'deleted' => true,
+        'deletedPageIds' => array_map('intval', array_keys($idsToDelete)),
+    ]);
+}
+
+if ($action === 'page.duplicate') {
+    $id = (int)($_POST['id'] ?? 0);
+
+    if ($id <= 0) {
+        sb_json_error('PAGE_ID_REQUIRED', 422);
+    }
+
+    $pages = sb_read_pages();
+    $source = null;
+
+    foreach ($pages as $p) {
+        if ((int)($p['id'] ?? 0) === $id) {
+            $source = $p;
+            break;
+        }
+    }
+
+    if (!$source) {
+        sb_json_error('PAGE_NOT_FOUND', 404);
+    }
+
+    $siteId = (int)($source['siteId'] ?? 0);
+    sb_require_editor($siteId);
+
+    $newId = sb_next_id($pages, 'id');
+
+    $maxSort = 0;
+    foreach ($pages as $p) {
+        if (
+            (int)($p['siteId'] ?? 0) === $siteId &&
+            (int)($p['parentId'] ?? 0) === (int)($source['parentId'] ?? 0)
+        ) {
+            $maxSort = max($maxSort, (int)($p['sort'] ?? 0));
+        }
+    }
+
+    $copy = sb_normalize_page_record([
+        'id' => $newId,
+        'siteId' => $siteId,
+        'title' => (string)($source['title'] ?? '') . ' (копия)',
+        'slug' => sb_slugify((string)($source['slug'] ?? 'page') . '-' . $newId),
+        'parentId' => (int)($source['parentId'] ?? 0),
+        'sort' => $maxSort > 0 ? ($maxSort + 10) : ((int)($source['sort'] ?? 10) + 10),
+        'status' => 'draft',
+        'publishedAt' => null,
+        'createdAt' => date('c'),
+        'updatedAt' => date('c'),
+    ]);
+
+    $pages[] = $copy;
+    sb_write_pages($pages);
+
+    $blocks = sb_read_blocks();
+    $sourceBlocks = array_values(array_filter($blocks, static function ($b) use ($id) {
+        return (int)($b['pageId'] ?? 0) === $id;
+    }));
+
+    foreach ($sourceBlocks as $b) {
+        $newBlockId = sb_next_id($blocks, 'id');
+        $newBlock = sb_normalize_block_record([
+            'id' => $newBlockId,
+            'pageId' => $newId,
+            'type' => (string)($b['type'] ?? 'text'),
+            'sort' => (int)($b['sort'] ?? 500),
+            'content' => is_array($b['content'] ?? null) ? $b['content'] : [],
+            'props' => is_array($b['props'] ?? null) ? $b['props'] : [],
+            'createdAt' => date('c'),
+            'updatedAt' => date('c'),
+        ]);
+        $blocks[] = $newBlock;
+    }
+
+    sb_write_blocks($blocks);
+
+    sb_json_ok([
+        'page' => $copy,
+    ]);
+}
+
+sb_json_error('NOT_MOVED_YET', 501, [
+    'handler' => 'page',
+    'action' => $action,
+]);
+
+
+---
+
+2. Что ещё нужно проверить в api/index.php
+
+В файле:
+
+/local/sitebuilder/api/index.php
+
+должен быть роут на page.php.
+
+Если у тебя уже есть что-то вроде:
+
+if (strpos($action, 'page.') === 0) {
+    require __DIR__ . '/handlers/page.php';
+    exit;
+}
+
+то ничего не делай.
+
+Если нет — добавь этот блок.
+
+
+---
+
+3. Теперь замени editor.php
 
 Полностью замени файл:
 
 /local/sitebuilder/editor.php
 
-на этот код:
+на этот:
 
 <?php
 require $_SERVER['DOCUMENT_ROOT'] . '/bitrix/modules/main/include/prolog_before.php';
@@ -91,7 +680,7 @@ if ($siteId <= 0) {
 
         .sb-editor-main {
             display: grid;
-            grid-template-columns: 330px minmax(0, 1fr) 350px;
+            grid-template-columns: 360px minmax(0, 1fr) 360px;
             gap: 18px;
             align-items: start;
         }
@@ -150,6 +739,21 @@ if ($siteId <= 0) {
             box-shadow: 0 4px 14px rgba(37, 99, 235, 0.12);
         }
 
+        .sb-editor-page-card.has-children .sb-editor-page-title::after {
+            content: 'section';
+            display: inline-flex;
+            align-items: center;
+            margin-left: 8px;
+            min-height: 20px;
+            padding: 0 8px;
+            border-radius: 999px;
+            background: #eef2ff;
+            color: #3730a3;
+            font-size: 11px;
+            font-weight: 700;
+            vertical-align: middle;
+        }
+
         .sb-editor-block-card.selected {
             border-color: #2563eb;
             background: #f8fbff;
@@ -183,6 +787,24 @@ if ($siteId <= 0) {
             color: #4b5563;
             font-size: 12px;
             font-weight: 600;
+        }
+
+        .sb-editor-page-tree-line {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-bottom: 8px;
+        }
+
+        .sb-editor-page-indent {
+            width: var(--indent-width, 0px);
+            flex: 0 0 var(--indent-width, 0px);
+        }
+
+        .sb-editor-page-branch {
+            color: #94a3b8;
+            font-size: 12px;
+            font-weight: 700;
         }
 
         .sb-editor-page-meta {
@@ -314,7 +936,7 @@ if ($siteId <= 0) {
 
         @media (max-width: 1380px) {
             .sb-editor-main {
-                grid-template-columns: 320px 1fr;
+                grid-template-columns: 340px 1fr;
             }
 
             .sb-editor-main > .sb-panel:last-child {
@@ -364,7 +986,7 @@ if ($siteId <= 0) {
 
     <div class="sb-editor-topline">
         <p class="sb-editor-topline-note">
-            Создавай страницы, управляй их порядком и редактируй блоки. Справа — JSON-редактор выбранного блока.
+            Создавай страницы, выстраивай дерево разделов через parentId и редактируй блоки. Если у страницы есть дочерние страницы — она работает как section.
         </p>
         <div class="sb-editor-topline-actions">
             <a class="sb-btn sb-btn-light sb-btn-small" href="<?= htmlspecialchars($basePath, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?>/public.php?siteId=<?= (int)$siteId ?>" target="_blank">Открыть публичную</a>
@@ -389,6 +1011,15 @@ if ($siteId <= 0) {
                     <div class="sb-field">
                         <label for="newPageSlug">Slug</label>
                         <input class="sb-input" type="text" id="newPageSlug" placeholder="Например: home">
+                    </div>
+                </div>
+
+                <div class="sb-form-row align-end" style="margin-top:12px;">
+                    <div class="sb-field">
+                        <label for="newPageParentId">Родительская страница</label>
+                        <select class="sb-select" id="newPageParentId">
+                            <option value="0">Без родителя</option>
+                        </select>
                     </div>
                     <button type="button" class="sb-btn sb-btn-primary" id="createPageBtn">Создать</button>
                 </div>
@@ -429,8 +1060,19 @@ if ($siteId <= 0) {
         </div>
 
         <div class="sb-panel sb-editor-panel-sticky">
-            <h2 class="sb-panel-title">Редактор блока</h2>
-            <div class="sb-editor-side-note">Редактирование content и props выполняется через JSON.</div>
+            <h2 class="sb-panel-title">Редактор страницы / блока</h2>
+            <div class="sb-editor-side-note">Можно менять родителя страницы и редактировать JSON выбранного блока.</div>
+
+            <div class="sb-field" style="margin-bottom:12px;">
+                <label for="editPageParentId">Родитель текущей страницы</label>
+                <select class="sb-select" id="editPageParentId">
+                    <option value="0">Без родителя</option>
+                </select>
+            </div>
+
+            <div class="sb-form-row" style="margin-bottom:16px;">
+                <button type="button" class="sb-btn sb-btn-light" id="savePageParentBtn">Сохранить parent</button>
+            </div>
 
             <div id="blockEditorEmpty" class="sb-empty sb-editor-side-empty">
                 <span class="sb-editor-tip">Подсказка</span>
@@ -485,6 +1127,8 @@ if ($siteId <= 0) {
     var currentPageCardTitle = document.querySelector('#currentPageCard .sb-editor-current-page-title');
     var pagesCount = document.getElementById('pagesCount');
     var blocksCount = document.getElementById('blocksCount');
+    var newPageParentId = document.getElementById('newPageParentId');
+    var editPageParentId = document.getElementById('editPageParentId');
 
     var state = {
         site: null,
@@ -561,6 +1205,104 @@ if ($siteId <= 0) {
         blocksCount.textContent = String(Array.isArray(state.blocks) ? state.blocks.length : 0);
     }
 
+    function findPage(pageId) {
+        for (var i = 0; i < state.pages.length; i++) {
+            if (Number(state.pages[i].id || 0) === Number(pageId || 0)) {
+                return state.pages[i];
+            }
+        }
+        return null;
+    }
+
+    function findBlock(blockId) {
+        for (var i = 0; i < state.blocks.length; i++) {
+            if (Number(state.blocks[i].id || 0) === Number(blockId || 0)) {
+                return state.blocks[i];
+            }
+        }
+        return null;
+    }
+
+    function buildPageTree(pages) {
+        var map = {};
+        var roots = [];
+
+        for (var i = 0; i < pages.length; i++) {
+            var page = Object.assign({}, pages[i]);
+            page.children = [];
+            map[Number(page.id || 0)] = page;
+        }
+
+        for (var j = 0; j < pages.length; j++) {
+            var current = map[Number(pages[j].id || 0)];
+            var parentId = Number(current.parentId || 0);
+
+            if (parentId > 0 && map[parentId]) {
+                map[parentId].children.push(current);
+            } else {
+                roots.push(current);
+            }
+        }
+
+        function sortNodes(nodes) {
+            nodes.sort(function (a, b) {
+                var sortCmp = Number(a.sort || 0) - Number(b.sort || 0);
+                if (sortCmp !== 0) return sortCmp;
+                return Number(a.id || 0) - Number(b.id || 0);
+            });
+
+            for (var k = 0; k < nodes.length; k++) {
+                sortNodes(nodes[k].children);
+            }
+        }
+
+        sortNodes(roots);
+        return roots;
+    }
+
+    function flattenTree(nodes, depth, out) {
+        depth = depth || 0;
+        out = out || [];
+
+        for (var i = 0; i < nodes.length; i++) {
+            nodes[i]._depth = depth;
+            nodes[i]._hasChildren = Array.isArray(nodes[i].children) && nodes[i].children.length > 0;
+            out.push(nodes[i]);
+            if (nodes[i].children && nodes[i].children.length) {
+                flattenTree(nodes[i].children, depth + 1, out);
+            }
+        }
+
+        return out;
+    }
+
+    function fillParentSelect(selectEl, excludePageId, selectedParentId) {
+        var tree = buildPageTree(state.pages);
+        var flat = flattenTree(tree, 0, []);
+        var html = '<option value="0">Без родителя</option>';
+
+        for (var i = 0; i < flat.length; i++) {
+            var page = flat[i];
+            var pid = Number(page.id || 0);
+
+            if (excludePageId > 0 && pid === excludePageId) {
+                continue;
+            }
+
+            var prefix = '';
+            for (var d = 0; d < Number(page._depth || 0); d++) {
+                prefix += '— ';
+            }
+
+            var selected = pid === Number(selectedParentId || 0) ? ' selected' : '';
+            html += '<option value="' + pid + '"' + selected + '>'
+                + escapeHtml(prefix + (page.title || ('Страница #' + pid)))
+                + '</option>';
+        }
+
+        selectEl.innerHTML = html;
+    }
+
     function loadSite(next) {
         api('site.get', { siteId: SITE_ID }, function (res) {
             if (res && res.ok === true) {
@@ -600,6 +1342,11 @@ if ($siteId <= 0) {
                 state.currentPageId = state.pages.length ? Number(state.pages[0].id || 0) : 0;
             }
 
+            fillParentSelect(newPageParentId, 0, 0);
+
+            var currentPage = findPage(state.currentPageId);
+            fillParentSelect(editPageParentId, state.currentPageId, currentPage ? Number(currentPage.parentId || 0) : 0);
+
             renderPages();
             updateStats();
 
@@ -618,9 +1365,12 @@ if ($siteId <= 0) {
             return;
         }
 
+        var tree = buildPageTree(state.pages);
+        var flat = flattenTree(tree, 0, []);
+
         var html = '';
-        for (var i = 0; i < state.pages.length; i++) {
-            html += renderPageCard(state.pages[i]);
+        for (var i = 0; i < flat.length; i++) {
+            html += renderPageCard(flat[i]);
         }
         pagesContainer.innerHTML = html;
     }
@@ -628,19 +1378,29 @@ if ($siteId <= 0) {
     function renderPageCard(page) {
         var id = Number(page.id || 0);
         var active = id === Number(state.currentPageId || 0) ? ' active' : '';
+        var hasChildren = page._hasChildren ? ' has-children' : '';
         var isPublished = String(page.status || '') === 'published';
         var badge = isPublished
             ? '<span class="sb-badge sb-badge-green">published</span>'
             : '<span class="sb-badge sb-badge-yellow">draft</span>';
 
+        var depth = Number(page._depth || 0);
+        var indentWidth = depth * 18;
+
         return ''
-            + '<div class="sb-editor-page-card' + active + ' js-page-card" data-id="' + id + '">'
-            + '  <div class="sb-editor-page-head">'
-            + '    <div>'
-            + '      <div class="sb-editor-page-title">' + escapeHtml(page.title || '') + '</div>'
-            + '      <div class="sb-editor-page-slug">' + escapeHtml(page.slug || '') + '</div>'
+            + '<div class="sb-editor-page-card' + active + hasChildren + ' js-page-card" data-id="' + id + '">'
+            + '  <div class="sb-editor-page-tree-line">'
+            + '    <span class="sb-editor-page-indent" style="--indent-width:' + indentWidth + 'px;"></span>'
+            + '    <span class="sb-editor-page-branch">' + (depth > 0 ? '└' : '') + '</span>'
+            + '    <div style="min-width:0; width:100%;">'
+            + '      <div class="sb-editor-page-head">'
+            + '        <div>'
+            + '          <div class="sb-editor-page-title">' + escapeHtml(page.title || '') + '</div>'
+            + '          <div class="sb-editor-page-slug">' + escapeHtml(page.slug || '') + '</div>'
+            + '        </div>'
+            + '        ' + badge
+            + '      </div>'
             + '    </div>'
-            + '    ' + badge
             + '  </div>'
             + '  <div class="sb-editor-page-meta">'
             + '    <div class="sb-editor-page-meta-item">'
@@ -677,6 +1437,7 @@ if ($siteId <= 0) {
     function createPage() {
         var titleInput = document.getElementById('newPageTitle');
         var slugInput = document.getElementById('newPageSlug');
+        var parentId = parseInt(newPageParentId.value, 10) || 0;
 
         var title = (titleInput.value || '').trim();
         var slug = (slugInput.value || '').trim();
@@ -690,7 +1451,8 @@ if ($siteId <= 0) {
         api('page.create', {
             siteId: SITE_ID,
             title: title,
-            slug: slug
+            slug: slug,
+            parentId: parentId
         }, function (res) {
             if (!res || res.ok !== true) {
                 alert('Не удалось создать страницу');
@@ -699,15 +1461,43 @@ if ($siteId <= 0) {
 
             titleInput.value = '';
             slugInput.value = '';
+            newPageParentId.value = '0';
 
             state.currentPageId = Number((res.page && res.page.id) || 0);
             loadPages(loadBlocks);
         });
     }
 
+    function saveCurrentPageParent() {
+        if (!state.currentPageId) {
+            alert('Сначала выберите страницу');
+            return;
+        }
+
+        var parentId = parseInt(editPageParentId.value, 10) || 0;
+
+        api('page.setParent', {
+            id: state.currentPageId,
+            parentId: parentId
+        }, function (res) {
+            if (!res || res.ok !== true) {
+                alert('Не удалось изменить parent');
+                return;
+            }
+
+            loadPages(function () {
+                loadBlocks();
+            });
+        });
+    }
+
     function openPage(pageId) {
         state.currentPageId = Number(pageId || 0);
         state.currentBlockId = 0;
+
+        var currentPage = findPage(state.currentPageId);
+        fillParentSelect(editPageParentId, state.currentPageId, currentPage ? Number(currentPage.parentId || 0) : 0);
+
         renderPages();
         loadBlocks();
         clearBlockEditor();
@@ -739,7 +1529,8 @@ if ($siteId <= 0) {
         api('page.updateMeta', {
             id: pageId,
             title: title,
-            slug: slug
+            slug: slug,
+            parentId: Number(page.parentId || 0)
         }, function (res) {
             if (!res || res.ok !== true) {
                 alert('Не удалось обновить страницу');
@@ -793,7 +1584,7 @@ if ($siteId <= 0) {
     }
 
     function deletePage(pageId) {
-        if (!confirm('Удалить страницу #' + pageId + '?')) {
+        if (!confirm('Удалить страницу #' + pageId + ' и все её дочерние страницы?')) {
             return;
         }
 
@@ -829,7 +1620,10 @@ if ($siteId <= 0) {
             currentPageInfo.innerHTML =
                 '<strong>ID:</strong> ' + Number(page.id || 0)
                 + ' &nbsp;·&nbsp; <strong>Slug:</strong> ' + escapeHtml(page.slug || '')
-                + ' &nbsp;·&nbsp; <strong>Status:</strong> ' + escapeHtml(page.status || 'draft');
+                + ' &nbsp;·&nbsp; <strong>Status:</strong> ' + escapeHtml(page.status || 'draft')
+                + ' &nbsp;·&nbsp; <strong>Parent:</strong> ' + Number(page.parentId || 0);
+
+            fillParentSelect(editPageParentId, state.currentPageId, Number(page.parentId || 0));
         }
 
         blocksContainer.innerHTML = '<div class="sb-empty">Загрузка блоков...</div>';
@@ -1036,24 +1830,6 @@ if ($siteId <= 0) {
         });
     }
 
-    function findPage(pageId) {
-        for (var i = 0; i < state.pages.length; i++) {
-            if (Number(state.pages[i].id || 0) === Number(pageId || 0)) {
-                return state.pages[i];
-            }
-        }
-        return null;
-    }
-
-    function findBlock(blockId) {
-        for (var i = 0; i < state.blocks.length; i++) {
-            if (Number(state.blocks[i].id || 0) === Number(blockId || 0)) {
-                return state.blocks[i];
-            }
-        }
-        return null;
-    }
-
     function formatCurrentJson() {
         var contentEl = document.getElementById('editBlockContentText');
         var propsEl = document.getElementById('editBlockPropsText');
@@ -1072,6 +1848,7 @@ if ($siteId <= 0) {
     }
 
     document.getElementById('createPageBtn').addEventListener('click', createPage);
+    document.getElementById('savePageParentBtn').addEventListener('click', saveCurrentPageParent);
     document.getElementById('reloadBlocksBtn').addEventListener('click', loadBlocks);
     document.getElementById('saveBlockBtn').addEventListener('click', saveBlock);
     document.getElementById('deleteBlockBtn').addEventListener('click', function () {
@@ -1196,27 +1973,95 @@ if ($siteId <= 0) {
 </body>
 </html>
 
-Что проверить
 
-После замены проверь по порядку:
+---
 
-1. карточка страницы слева выбирается кликом по самой карточке
+4. Что теперь появится
 
+После этого у тебя будет:
 
-2. выделение активной страницы видно сильнее
+выбор родителя при создании страницы
 
+редактирование parentId у текущей страницы
 
-3. правая панель не выглядит слишком пустой
+дерево страниц по parentId
 
+вложенность через отступы
 
-4. блоки в центре читаются лучше
+страница с дочерними страницами будет визуально помечаться как section
 
-
-5. редактирование блока всё ещё работает
-
-
-6. создание, удаление, дублирование страниц и блоков не сломалось
+удаление страницы будет удалять и дочерние страницы
 
 
 
-Если всё ок, следующим шагом лучше довести menu.php до того же уровня визуально и по UX.
+---
+
+5. Что проверить после замены
+
+Проверь по шагам:
+
+Создание
+
+1. создай страницу без родителя
+
+
+2. создай вторую страницу с родителем = первая
+
+
+3. создай третью страницу с родителем = вторая
+
+
+
+Ожидание:
+
+слева появится дерево с вложенностью
+
+
+Переназначение
+
+1. выбери страницу
+
+
+2. справа поменяй Родитель текущей страницы
+
+
+3. нажми Сохранить parent
+
+
+
+Ожидание:
+
+страница переедет в другое место дерева
+
+
+Section
+
+Если у страницы появились дочерние страницы:
+
+возле заголовка карточки появится метка section
+
+
+Удаление
+
+Если удалить родительскую страницу:
+
+удалятся и её дочерние страницы
+
+удалятся и блоки этих страниц
+
+
+
+---
+
+6. Что дальше
+
+После этого следующим шагом уже логично делать:
+
+breadcrumbs в public.php
+
+левую навигацию по разделу
+
+иерархию страниц в menu.php
+
+
+Если хочешь, следующим сообщением я дам пакет на breadcrumbs + section navigation в public.php.
