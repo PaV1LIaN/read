@@ -1,75 +1,39 @@
-Да, вижу обе проблемы.
+Да, это следующий правильный шаг.
 
-Что сейчас не так
+Сейчас дерево уже есть, теперь добавим:
 
-1. По центру блок Разделы лишний
+раскрытие/сворачивание дочерних страниц
 
-Ты прав — если слева уже есть section navigation, то в центре повторно выводить дочерние страницы не надо. Это визуальный мусор.
+авто-раскрытие активной ветки
 
-2. Слева дерево режется до 2 уровней по смыслу
-
-Сейчас слева показывается:
-
-корень раздела
-
-его прямые дети
+нормальные toggles слева
 
 
-Но не показывается вся вложенная цепочка глубже.
+Сделаем это без усложнения:
 
-3. Не видно, что один пункт вложен в другой
+немного поменяем sb_public_render_section_nav() в public_render.php
 
-Ссылки слева сейчас плоские. Нет:
+добавим CSS в public.css
 
-отступов по уровню
-
-визуальной структуры дерева
-
-понимания, что Вложенная2 лежит внутри Вложенная
+добавим маленький JS в public_page.php
 
 
 
 ---
 
-Как правильно сделать
+Что поменять
 
-Нужно поправить только public_render.php.
-
-Сделаем так:
-
-уберём вывод child pages по центру
-
-слева построим полноценное дерево раздела любой глубины
-
-добавим уровни вложенности через отступы
-
-активную страницу сохраним
-
-
-
----
-
-Что заменить
+1. Замени sb_public_render_section_nav() в lib/public_render.php
 
 Открой файл:
 
 /local/sitebuilder/lib/public_render.php
 
-И замени в нём только две функции:
+Найди функцию:
 
-1. sb_public_render_section_nav
+sb_public_render_section_nav(...)
 
-
-2. sb_public_render_child_pages
-
-
-
-
----
-
-1. Замени sb_public_render_section_nav(...)
-
-Найди старую функцию sb_public_render_section_nav и замени её полностью на это:
+И замени её полностью на эту:
 
 if (!function_exists('sb_public_render_section_nav')) {
     function sb_public_render_section_nav(array $pages, ?array $currentPage, string $basePath, int $siteId): string
@@ -97,9 +61,13 @@ if (!function_exists('sb_public_render_section_nav')) {
             }
         }
 
-        $sortChildren = function (&$node) use (&$pageMap, &$sortChildren) {
-            if (!empty($node['children_nodes'])) {
-                usort($node['children_nodes'], function ($aId, $bId) use (&$pageMap) {
+        $sortTree = function ($pageId) use (&$sortTree, &$pageMap) {
+            if (!isset($pageMap[$pageId])) {
+                return;
+            }
+
+            if (!empty($pageMap[$pageId]['children_nodes'])) {
+                usort($pageMap[$pageId]['children_nodes'], function ($aId, $bId) use (&$pageMap) {
                     $a = $pageMap[$aId];
                     $b = $pageMap[$bId];
 
@@ -111,10 +79,8 @@ if (!function_exists('sb_public_render_section_nav')) {
                     return (int)($a['id'] ?? 0) <=> (int)($b['id'] ?? 0);
                 });
 
-                foreach ($node['children_nodes'] as $childId) {
-                    $child = $pageMap[$childId];
-                    $sortChildren($child);
-                    $pageMap[$childId] = $child;
+                foreach ($pageMap[$pageId]['children_nodes'] as $childId) {
+                    $sortTree($childId);
                 }
             }
         };
@@ -124,38 +90,78 @@ if (!function_exists('sb_public_render_section_nav')) {
             return '';
         }
 
-        $rootNode = $pageMap[$rootId];
-        $sortChildren($rootNode);
-        $pageMap[$rootId] = $rootNode;
+        $sortTree($rootId);
 
-        $renderNode = function ($pageId, $depth) use (&$renderNode, &$pageMap, $currentPage, $basePath, $siteId) {
-            if (!isset($pageMap[$pageId])) {
+        $isInActiveBranch = function ($nodeId) use (&$isInActiveBranch, &$pageMap, $currentPage) {
+            if ((int)$nodeId === (int)($currentPage['id'] ?? 0)) {
+                return true;
+            }
+
+            if (!isset($pageMap[$nodeId]) || empty($pageMap[$nodeId]['children_nodes'])) {
+                return false;
+            }
+
+            foreach ($pageMap[$nodeId]['children_nodes'] as $childId) {
+                if ($isInActiveBranch($childId)) {
+                    return true;
+                }
+            }
+
+            return false;
+        };
+
+        $renderNode = function ($nodeId, $depth) use (&$renderNode, &$pageMap, $currentPage, $basePath, $siteId, $isInActiveBranch) {
+            if (!isset($pageMap[$nodeId])) {
                 return '';
             }
 
-            $node = $pageMap[$pageId];
-            $active = (int)($node['id'] ?? 0) === (int)($currentPage['id'] ?? 0) ? ' is-active' : '';
+            $node = $pageMap[$nodeId];
+            $children = $node['children_nodes'] ?? [];
+            $hasChildren = !empty($children);
+            $isActive = (int)($node['id'] ?? 0) === (int)($currentPage['id'] ?? 0);
+            $isOpen = $isInActiveBranch($nodeId);
+
+            $activeClass = $isActive ? ' is-active' : '';
+            $hasChildrenClass = $hasChildren ? ' has-children' : '';
+            $openClass = $isOpen ? ' is-open' : '';
+
             $url = sb_public_h(sb_public_page_url($basePath, $siteId, (int)$node['id']));
             $title = sb_public_h((string)($node['title'] ?? 'Страница'));
             $depth = max(0, (int)$depth);
 
             $html = '';
-            $html .= '<a class="sb-section-nav__link' . $active . '" href="' . $url . '" style="--sb-nav-depth:' . $depth . ';">';
-            $html .= '<span class="sb-section-nav__text">' . $title . '</span>';
-            $html .= '</a>';
+            $html .= '<div class="sb-tree-node' . $hasChildrenClass . $openClass . '" data-node-id="' . (int)$node['id'] . '" style="--sb-nav-depth:' . $depth . ';">';
+            $html .= '  <div class="sb-tree-node__row">';
 
-            if (!empty($node['children_nodes'])) {
-                foreach ($node['children_nodes'] as $childId) {
+            if ($hasChildren) {
+                $html .= '    <button type="button" class="sb-tree-node__toggle" data-role="toggle" aria-expanded="' . ($isOpen ? 'true' : 'false') . '">';
+                $html .= '      <span class="sb-tree-node__toggle-icon"></span>';
+                $html .= '    </button>';
+            } else {
+                $html .= '    <span class="sb-tree-node__toggle sb-tree-node__toggle--empty"></span>';
+            }
+
+            $html .= '    <a class="sb-section-nav__link' . $activeClass . '" href="' . $url . '">';
+            $html .= '      <span class="sb-section-nav__text">' . $title . '</span>';
+            $html .= '    </a>';
+            $html .= '  </div>';
+
+            if ($hasChildren) {
+                $html .= '  <div class="sb-tree-node__children">';
+                foreach ($children as $childId) {
                     $html .= $renderNode($childId, $depth + 1);
                 }
+                $html .= '  </div>';
             }
+
+            $html .= '</div>';
 
             return $html;
         };
 
         $html = '<div class="sb-section-nav">';
         $html .= '<div class="sb-section-nav__title">' . sb_public_h((string)($sectionRoot['title'] ?? 'Раздел')) . '</div>';
-        $html .= '<div class="sb-section-nav__list">';
+        $html .= '<div class="sb-section-nav__tree">';
         $html .= $renderNode($rootId, 0);
         $html .= '</div>';
         $html .= '</div>';
@@ -167,64 +173,92 @@ if (!function_exists('sb_public_render_section_nav')) {
 
 ---
 
-2. Замени sb_public_render_child_pages(...)
+2. Добавь стили в assets/public/public.css
 
-Найди функцию sb_public_render_child_pages и замени её полностью на это:
-
-if (!function_exists('sb_public_render_child_pages')) {
-    function sb_public_render_child_pages(array $pages, ?array $currentPage, string $basePath, int $siteId): string
-    {
-        return '';
-    }
-}
-
-Это полностью уберёт блок Разделы из центра.
-
-
----
-
-3. Добавь стили для вложенности слева
-
-Теперь нужно немного подкрутить CSS.
-
-Открой файл:
+В конец файла:
 
 /local/sitebuilder/assets/public/public.css
 
-Найди блок стилей для:
+добавь это:
 
-.sb-section-nav__title
-
-.sb-section-nav__list
-
-.sb-section-nav__link
-
-
-И замени его полностью на это:
-
-.sb-section-nav__title {
-    font-size: 14px;
-    font-weight: 700;
-    margin-bottom: 12px;
-    color: #111827;
-}
-
-.sb-section-nav__list {
+.sb-section-nav__tree {
     display: flex;
     flex-direction: column;
     gap: 8px;
 }
 
+.sb-tree-node {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.sb-tree-node__row {
+    display: flex;
+    align-items: stretch;
+    gap: 8px;
+    padding-left: calc(var(--sb-nav-depth, 0) * 18px);
+}
+
+.sb-tree-node__toggle {
+    width: 28px;
+    min-width: 28px;
+    height: 42px;
+    border: 1px solid #e5e7eb;
+    border-radius: 10px;
+    background: #f9fafb;
+    cursor: pointer;
+    position: relative;
+    padding: 0;
+}
+
+.sb-tree-node__toggle:hover {
+    background: #f3f4f6;
+}
+
+.sb-tree-node__toggle--empty {
+    border-color: transparent;
+    background: transparent;
+    cursor: default;
+}
+
+.sb-tree-node__toggle-icon {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 8px;
+    height: 8px;
+    border-right: 2px solid #64748b;
+    border-bottom: 2px solid #64748b;
+    transform: translate(-50%, -60%) rotate(45deg);
+    transition: transform .15s ease;
+}
+
+.sb-tree-node.is-open > .sb-tree-node__row .sb-tree-node__toggle-icon {
+    transform: translate(-50%, -40%) rotate(225deg);
+}
+
+.sb-tree-node__children {
+    display: none;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.sb-tree-node.is-open > .sb-tree-node__children {
+    display: flex;
+}
+
 .sb-section-nav__link {
-    display: block;
+    display: flex;
+    align-items: center;
+    min-height: 42px;
+    width: 100%;
     text-decoration: none;
     color: #374151;
     padding: 10px 12px;
-    padding-left: calc(12px + (var(--sb-nav-depth, 0) * 18px));
     border-radius: 10px;
     background: #f9fafb;
     border: 1px solid #e5e7eb;
-    position: relative;
 }
 
 .sb-section-nav__link.is-active {
@@ -234,53 +268,96 @@ if (!function_exists('sb_public_render_child_pages')) {
     font-weight: 600;
 }
 
-.sb-section-nav__link .sb-section-nav__text {
+.sb-section-nav__text {
     display: inline-block;
-}
-
-.sb-section-nav__link[style*="--sb-nav-depth:1"]::before,
-.sb-section-nav__link[style*="--sb-nav-depth:2"]::before,
-.sb-section-nav__link[style*="--sb-nav-depth:3"]::before,
-.sb-section-nav__link[style*="--sb-nav-depth:4"]::before,
-.sb-section-nav__link[style*="--sb-nav-depth:5"]::before {
-    content: "↳";
-    position: absolute;
-    left: calc(12px + ((var(--sb-nav-depth, 0) - 1) * 18px));
-    top: 50%;
-    transform: translateY(-50%);
-    color: #94a3b8;
-    font-size: 12px;
-    font-weight: 700;
 }
 
 
 ---
 
-Что получится после этого
+3. Добавь JS в views/layout/public_page.php
 
-В центре
+Открой файл:
 
-блок Разделы исчезнет
+/local/sitebuilder/views/layout/public_page.php
+
+И перед закрывающим </body> добавь этот скрипт:
+
+<script>
+document.addEventListener('click', function (e) {
+    var toggle = e.target.closest('[data-role="toggle"]');
+    if (!toggle) {
+        return;
+    }
+
+    var node = toggle.closest('.sb-tree-node');
+    if (!node) {
+        return;
+    }
+
+    var isOpen = node.classList.contains('is-open');
+    node.classList.toggle('is-open', !isOpen);
+    toggle.setAttribute('aria-expanded', !isOpen ? 'true' : 'false');
+});
+</script>
+
+То есть получится примерно так:
+
+<?php if ($vm['showFooter']): ?>
+        <footer class="sb-public-footer">
+            <div class="sb-container">
+                <?= $footerHtml !== '' ? $footerHtml : '<div class="sb-footer-note">© ' . date('Y') . ' ' . sb_public_h((string)($site['name'] ?? 'SiteBuilder')) . '</div>' ?>
+            </div>
+        </footer>
+    <?php endif; ?>
+</div>
+
+<script>
+document.addEventListener('click', function (e) {
+    var toggle = e.target.closest('[data-role="toggle"]');
+    if (!toggle) {
+        return;
+    }
+
+    var node = toggle.closest('.sb-tree-node');
+    if (!node) {
+        return;
+    }
+
+    var isOpen = node.classList.contains('is-open');
+    node.classList.toggle('is-open', !isOpen);
+    toggle.setAttribute('aria-expanded', !isOpen ? 'true' : 'false');
+});
+</script>
+</body>
+</html>
 
 
-Слева
+---
 
-будет полноценное дерево:
+Что получится
 
-корневая страница
+Теперь слева будет дерево такого вида:
 
-дочерняя
+Домашняя [toggle]
 
-дочерняя дочерней
+Вложенная [toggle]
 
-и так дальше
+Вложенная2
+
+Вложенная3
 
 
-И будет видно вложенность:
 
-за счёт отступов
 
-за счёт ↳
+
+И:
+
+ветки можно раскрывать и закрывать
+
+активная ветка будет открыта автоматически
+
+остальные можно вручную свернуть
 
 
 
@@ -288,36 +365,17 @@ if (!function_exists('sb_public_render_child_pages')) {
 
 Что проверить
 
-С твоим кейсом из 3 уровней:
-
-например:
-
-Домашняя
-
-Вложенная
-
-Вложенная2
+1. у страницы с детьми появилась кнопка-toggle
 
 
+2. по нажатию дочерние элементы скрываются и показываются
 
 
-Ожидаемый результат слева:
-
-Домашняя
-
-с отступом Вложенная
-
-с ещё большим отступом Вложенная2
+3. активная ветка открыта при загрузке
 
 
-И активная страница должна выделяться.
+4. глубокая вложенность видна корректно
 
 
----
 
-Важный момент
-
-Сейчас слева будет строиться дерево от корневого раздела, а не просто список прямых детей.
-То есть проблема “показывает только 2” должна уйти.
-
-Если после этого всё равно покажет не всю цепочку, значит проблема уже не в рендере, а в самих parentId у страниц. Тогда нужно будет посмотреть JSON страниц.
+Если хочешь, следующим сообщением можно сделать ещё аккуратнее: добавить запоминание раскрытых веток в localStorage, чтобы после перезагрузки страницы дерево оставалось в том же состоянии.
