@@ -1,215 +1,140 @@
-Да, это следующий правильный шаг.
+Да, согласен — текущее левое меню выглядит слишком “технически”:
 
-Сейчас дерево уже есть, теперь добавим:
+кнопки раскрытия живут отдельно от ссылки
 
-раскрытие/сворачивание дочерних страниц
+вложенность читается, но визуально тяжёлая
 
-авто-раскрытие активной ветки
+много маленьких рамок внутри рамок
 
-нормальные toggles слева
-
-
-Сделаем это без усложнения:
-
-немного поменяем sb_public_render_section_nav() в public_render.php
-
-добавим CSS в public.css
-
-добавим маленький JS в public_page.php
+дерево похоже на debug-ui, а не на нормальную навигацию раздела
 
 
+Что лучше сделать
 
----
+Я бы привёл левое меню к такому виду:
 
-Что поменять
+одна общая карточка раздела
 
-1. Замени sb_public_render_section_nav() в lib/public_render.php
+внутри — чистое дерево
 
-Открой файл:
+toggle компактный и встроенный в строку
 
-/local/sitebuilder/lib/public_render.php
+активный пункт выделен мягко
 
-Найди функцию:
+вложенность читается за счёт отступов и тонкой вертикальной линии
 
-sb_public_render_section_nav(...)
+без лишних отдельных коробок на каждом уровне
 
-И замени её полностью на эту:
 
-if (!function_exists('sb_public_render_section_nav')) {
-    function sb_public_render_section_nav(array $pages, ?array $currentPage, string $basePath, int $siteId): string
-    {
-        if (!$currentPage) {
-            return '';
-        }
-
-        $sectionRoot = sb_public_section_root($pages, $currentPage);
-        if (!$sectionRoot) {
-            return '';
-        }
-
-        $pageMap = [];
-        foreach ($pages as $page) {
-            $page = sb_normalize_page_record($page);
-            $page['children_nodes'] = [];
-            $pageMap[(int)$page['id']] = $page;
-        }
-
-        foreach ($pageMap as $id => $page) {
-            $parentId = (int)($page['parentId'] ?? 0);
-            if ($parentId > 0 && isset($pageMap[$parentId])) {
-                $pageMap[$parentId]['children_nodes'][] = $id;
-            }
-        }
-
-        $sortTree = function ($pageId) use (&$sortTree, &$pageMap) {
-            if (!isset($pageMap[$pageId])) {
-                return;
-            }
-
-            if (!empty($pageMap[$pageId]['children_nodes'])) {
-                usort($pageMap[$pageId]['children_nodes'], function ($aId, $bId) use (&$pageMap) {
-                    $a = $pageMap[$aId];
-                    $b = $pageMap[$bId];
-
-                    $sortCmp = (int)($a['sort'] ?? 500) <=> (int)($b['sort'] ?? 500);
-                    if ($sortCmp !== 0) {
-                        return $sortCmp;
-                    }
-
-                    return (int)($a['id'] ?? 0) <=> (int)($b['id'] ?? 0);
-                });
-
-                foreach ($pageMap[$pageId]['children_nodes'] as $childId) {
-                    $sortTree($childId);
-                }
-            }
-        };
-
-        $rootId = (int)($sectionRoot['id'] ?? 0);
-        if (!isset($pageMap[$rootId])) {
-            return '';
-        }
-
-        $sortTree($rootId);
-
-        $isInActiveBranch = function ($nodeId) use (&$isInActiveBranch, &$pageMap, $currentPage) {
-            if ((int)$nodeId === (int)($currentPage['id'] ?? 0)) {
-                return true;
-            }
-
-            if (!isset($pageMap[$nodeId]) || empty($pageMap[$nodeId]['children_nodes'])) {
-                return false;
-            }
-
-            foreach ($pageMap[$nodeId]['children_nodes'] as $childId) {
-                if ($isInActiveBranch($childId)) {
-                    return true;
-                }
-            }
-
-            return false;
-        };
-
-        $renderNode = function ($nodeId, $depth) use (&$renderNode, &$pageMap, $currentPage, $basePath, $siteId, $isInActiveBranch) {
-            if (!isset($pageMap[$nodeId])) {
-                return '';
-            }
-
-            $node = $pageMap[$nodeId];
-            $children = $node['children_nodes'] ?? [];
-            $hasChildren = !empty($children);
-            $isActive = (int)($node['id'] ?? 0) === (int)($currentPage['id'] ?? 0);
-            $isOpen = $isInActiveBranch($nodeId);
-
-            $activeClass = $isActive ? ' is-active' : '';
-            $hasChildrenClass = $hasChildren ? ' has-children' : '';
-            $openClass = $isOpen ? ' is-open' : '';
-
-            $url = sb_public_h(sb_public_page_url($basePath, $siteId, (int)$node['id']));
-            $title = sb_public_h((string)($node['title'] ?? 'Страница'));
-            $depth = max(0, (int)$depth);
-
-            $html = '';
-            $html .= '<div class="sb-tree-node' . $hasChildrenClass . $openClass . '" data-node-id="' . (int)$node['id'] . '" style="--sb-nav-depth:' . $depth . ';">';
-            $html .= '  <div class="sb-tree-node__row">';
-
-            if ($hasChildren) {
-                $html .= '    <button type="button" class="sb-tree-node__toggle" data-role="toggle" aria-expanded="' . ($isOpen ? 'true' : 'false') . '">';
-                $html .= '      <span class="sb-tree-node__toggle-icon"></span>';
-                $html .= '    </button>';
-            } else {
-                $html .= '    <span class="sb-tree-node__toggle sb-tree-node__toggle--empty"></span>';
-            }
-
-            $html .= '    <a class="sb-section-nav__link' . $activeClass . '" href="' . $url . '">';
-            $html .= '      <span class="sb-section-nav__text">' . $title . '</span>';
-            $html .= '    </a>';
-            $html .= '  </div>';
-
-            if ($hasChildren) {
-                $html .= '  <div class="sb-tree-node__children">';
-                foreach ($children as $childId) {
-                    $html .= $renderNode($childId, $depth + 1);
-                }
-                $html .= '  </div>';
-            }
-
-            $html .= '</div>';
-
-            return $html;
-        };
-
-        $html = '<div class="sb-section-nav">';
-        $html .= '<div class="sb-section-nav__title">' . sb_public_h((string)($sectionRoot['title'] ?? 'Раздел')) . '</div>';
-        $html .= '<div class="sb-section-nav__tree">';
-        $html .= $renderNode($rootId, 0);
-        $html .= '</div>';
-        $html .= '</div>';
-
-        return $html;
-    }
-}
+То есть не “кнопка + кнопка + карточка”, а именно sidebar tree navigation.
 
 
 ---
 
-2. Добавь стили в assets/public/public.css
+Что предлагаю
 
-В конец файла:
+Сейчас не трогаем PHP-логику дерева, только меняем визуальную подачу.
+
+Нужно заменить стили дерева в:
 
 /local/sitebuilder/assets/public/public.css
 
-добавь это:
+
+---
+
+Что заменить в public.css
+
+Найди и удали/замени текущие стили, связанные с:
+
+.sb-section-nav__tree
+
+.sb-tree-node
+
+.sb-tree-node__row
+
+.sb-tree-node__toggle
+
+.sb-tree-node__toggle--empty
+
+.sb-tree-node__toggle-icon
+
+.sb-tree-node.is-open > .sb-tree-node__row .sb-tree-node__toggle-icon
+
+.sb-tree-node__children
+
+.sb-tree-node.is-open > .sb-tree-node__children
+
+.sb-section-nav__link
+
+.sb-section-nav__link.is-active
+
+.sb-section-nav__text
+
+
+и вставь вместо них вот это:
+
+.sb-section-nav {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.sb-section-nav__title {
+    font-size: 13px;
+    font-weight: 700;
+    color: #111827;
+    letter-spacing: 0.01em;
+}
 
 .sb-section-nav__tree {
     display: flex;
     flex-direction: column;
-    gap: 8px;
+    gap: 4px;
 }
 
 .sb-tree-node {
     display: flex;
     flex-direction: column;
-    gap: 8px;
+    gap: 4px;
 }
 
 .sb-tree-node__row {
     display: flex;
-    align-items: stretch;
+    align-items: center;
     gap: 8px;
     padding-left: calc(var(--sb-nav-depth, 0) * 18px);
+    position: relative;
+}
+
+.sb-tree-node__row::before {
+    content: "";
+    position: absolute;
+    left: calc((var(--sb-nav-depth, 0) * 18px) - 9px);
+    top: -4px;
+    bottom: -4px;
+    width: 1px;
+    background: transparent;
+}
+
+.sb-tree-node[style*="--sb-nav-depth:1"] > .sb-tree-node__row::before,
+.sb-tree-node[style*="--sb-nav-depth:2"] > .sb-tree-node__row::before,
+.sb-tree-node[style*="--sb-nav-depth:3"] > .sb-tree-node__row::before,
+.sb-tree-node[style*="--sb-nav-depth:4"] > .sb-tree-node__row::before,
+.sb-tree-node[style*="--sb-nav-depth:5"] > .sb-tree-node__row::before {
+    background: #e5e7eb;
 }
 
 .sb-tree-node__toggle {
-    width: 28px;
-    min-width: 28px;
-    height: 42px;
-    border: 1px solid #e5e7eb;
-    border-radius: 10px;
-    background: #f9fafb;
+    width: 20px;
+    min-width: 20px;
+    height: 20px;
+    border: 0;
+    border-radius: 6px;
+    background: transparent;
     cursor: pointer;
     position: relative;
     padding: 0;
+    flex: 0 0 20px;
 }
 
 .sb-tree-node__toggle:hover {
@@ -217,17 +142,16 @@ if (!function_exists('sb_public_render_section_nav')) {
 }
 
 .sb-tree-node__toggle--empty {
-    border-color: transparent;
-    background: transparent;
     cursor: default;
+    pointer-events: none;
 }
 
 .sb-tree-node__toggle-icon {
     position: absolute;
     top: 50%;
     left: 50%;
-    width: 8px;
-    height: 8px;
+    width: 7px;
+    height: 7px;
     border-right: 2px solid #64748b;
     border-bottom: 2px solid #64748b;
     transform: translate(-50%, -60%) rotate(45deg);
@@ -241,7 +165,7 @@ if (!function_exists('sb_public_render_section_nav')) {
 .sb-tree-node__children {
     display: none;
     flex-direction: column;
-    gap: 8px;
+    gap: 4px;
 }
 
 .sb-tree-node.is-open > .sb-tree-node__children {
@@ -251,14 +175,20 @@ if (!function_exists('sb_public_render_section_nav')) {
 .sb-section-nav__link {
     display: flex;
     align-items: center;
-    min-height: 42px;
+    min-height: 36px;
     width: 100%;
     text-decoration: none;
     color: #374151;
-    padding: 10px 12px;
+    padding: 8px 12px;
     border-radius: 10px;
-    background: #f9fafb;
-    border: 1px solid #e5e7eb;
+    background: transparent;
+    border: 1px solid transparent;
+    transition: background .15s ease, border-color .15s ease, color .15s ease;
+}
+
+.sb-section-nav__link:hover {
+    background: #f8fafc;
+    border-color: #e5e7eb;
 }
 
 .sb-section-nav__link.is-active {
@@ -270,112 +200,50 @@ if (!function_exists('sb_public_render_section_nav')) {
 
 .sb-section-nav__text {
     display: inline-block;
+    font-size: 14px;
+    line-height: 1.35;
 }
 
 
 ---
 
-3. Добавь JS в views/layout/public_page.php
+Что это изменит
 
-Открой файл:
+После замены меню станет:
 
-/local/sitebuilder/views/layout/public_page.php
+визуально легче
 
-И перед закрывающим </body> добавь этот скрипт:
+ближе к нормальному sidebar tree
 
-<script>
-document.addEventListener('click', function (e) {
-    var toggle = e.target.closest('[data-role="toggle"]');
-    if (!toggle) {
-        return;
-    }
+без ощущения “таблицы внутри таблицы”
 
-    var node = toggle.closest('.sb-tree-node');
-    if (!node) {
-        return;
-    }
+вложенность будет видна через отступы и тонкие линии
 
-    var isOpen = node.classList.contains('is-open');
-    node.classList.toggle('is-open', !isOpen);
-    toggle.setAttribute('aria-expanded', !isOpen ? 'true' : 'false');
-});
-</script>
+активный пункт останется заметным
 
-То есть получится примерно так:
-
-<?php if ($vm['showFooter']): ?>
-        <footer class="sb-public-footer">
-            <div class="sb-container">
-                <?= $footerHtml !== '' ? $footerHtml : '<div class="sb-footer-note">© ' . date('Y') . ' ' . sb_public_h((string)($site['name'] ?? 'SiteBuilder')) . '</div>' ?>
-            </div>
-        </footer>
-    <?php endif; ?>
-</div>
-
-<script>
-document.addEventListener('click', function (e) {
-    var toggle = e.target.closest('[data-role="toggle"]');
-    if (!toggle) {
-        return;
-    }
-
-    var node = toggle.closest('.sb-tree-node');
-    if (!node) {
-        return;
-    }
-
-    var isOpen = node.classList.contains('is-open');
-    node.classList.toggle('is-open', !isOpen);
-    toggle.setAttribute('aria-expanded', !isOpen ? 'true' : 'false');
-});
-</script>
-</body>
-</html>
-
-
----
-
-Что получится
-
-Теперь слева будет дерево такого вида:
-
-Домашняя [toggle]
-
-Вложенная [toggle]
-
-Вложенная2
-
-Вложенная3
-
-
-
-
-
-И:
-
-ветки можно раскрывать и закрывать
-
-активная ветка будет открыта автоматически
-
-остальные можно вручную свернуть
+toggle станет второстепенным, а не главным элементом
 
 
 
 ---
 
-Что проверить
+Если хочешь ещё лучше
 
-1. у страницы с детьми появилась кнопка-toggle
+Следующий шаг, который я бы сделал после этого:
 
-
-2. по нажатию дочерние элементы скрываются и показываются
-
-
-3. активная ветка открыта при загрузке
+1. убрать заголовок раздела внутри левой карточки, если он дублирует текущую страницу
 
 
-4. глубокая вложенность видна корректно
+2. сделать левую колонку уже, а центральную шире
+
+
+3. добавить sticky sidebar, если меню длинное
+
+
+4. показывать только children root-а по умолчанию, а не весь root целиком, если корневая страница и так уже отображается в breadcrumbs и h1
 
 
 
-Если хочешь, следующим сообщением можно сделать ещё аккуратнее: добавить запоминание раскрытых веток в localStorage, чтобы после перезагрузки страницы дерево оставалось в том же состоянии.
+Сейчас сначала лучше просто применить новые стили и посмотреть визуально.
+
+Если хочешь, следующим сообщением я дам ещё более аккуратный вариант: сделать левое меню похожим на Bitrix/Notion-style sidebar, где активная ветка читается ещё лучше.
