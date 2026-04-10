@@ -1,14 +1,16 @@
-Вот улучшенный editor.php целиком. Я сделал его более рабочим и собранным:
+Делаю вторую итерацию сразу с исправлением выбора страницы.
 
-сильнее левая колонка страниц
+Причина бага: сейчас страница открывается только по кнопке Открыть, а сама карточка слева не кликабельна. Я исправил это так:
 
-понятнее центральная колонка блоков
+вся карточка страницы теперь выбирается по клику
 
-справа редактор блока уже как нормальная рабочая панель
+у активной страницы сильнее выделение
 
-текущая страница и выбранный блок читаются лучше
+правая колонка стала уже и полезнее
 
-добавлены небольшие UX-улучшения без ломки логики
+центр стал главным рабочим блоком
+
+левая колонка стала компактнее
 
 
 Полный файл /local/sitebuilder/editor.php
@@ -59,50 +61,50 @@ if ($siteId <= 0) {
     <?php $APPLICATION->ShowHead(); ?>
     <link rel="stylesheet" href="<?= htmlspecialchars($basePath, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?>/assets/admin/admin.css">
     <style>
-        .sb-editor-hero {
-            display: grid;
-            grid-template-columns: minmax(320px, 1fr) auto;
+        .sb-editor-topline {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
             gap: 16px;
-            align-items: stretch;
-            margin-bottom: 20px;
+            margin-bottom: 16px;
         }
 
-        .sb-editor-hero-card {
-            background: linear-gradient(180deg, #ffffff 0%, #f8fbff 100%);
-            border-color: #dbe7ff;
-        }
-
-        .sb-editor-hero-title {
-            margin: 0 0 6px;
-            font-size: 22px;
-            font-weight: 700;
-            color: #111827;
-        }
-
-        .sb-editor-hero-note {
+        .sb-editor-topline-note {
             margin: 0;
-            font-size: 14px;
             color: #6b7280;
+            font-size: 14px;
+            max-width: 760px;
         }
 
-        .sb-editor-hero-actions {
+        .sb-editor-topline-actions {
             display: flex;
             flex-wrap: wrap;
-            gap: 10px;
-            align-items: flex-start;
+            gap: 8px;
             justify-content: flex-end;
         }
 
         .sb-editor-main {
             display: grid;
-            grid-template-columns: 360px minmax(420px, 1fr) 430px;
-            gap: 20px;
+            grid-template-columns: 340px minmax(480px, 1fr) 360px;
+            gap: 18px;
             align-items: start;
         }
 
         .sb-editor-panel-sticky {
             position: sticky;
             top: 16px;
+        }
+
+        .sb-editor-subhead {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 12px;
+            margin-bottom: 14px;
+        }
+
+        .sb-editor-subhead .sb-panel-title {
+            margin: 0;
         }
 
         .sb-editor-create-page {
@@ -115,22 +117,37 @@ if ($siteId <= 0) {
         .sb-editor-blocks-list {
             display: flex;
             flex-direction: column;
-            gap: 12px;
+            gap: 10px;
         }
 
         .sb-editor-page-card,
         .sb-editor-block-card {
             border: 1px solid #e5e7eb;
             border-radius: 14px;
-            padding: 14px;
+            padding: 12px;
             background: #fafafa;
-            transition: border-color .15s ease, box-shadow .15s ease, background .15s ease;
+            transition: border-color .15s ease, box-shadow .15s ease, background .15s ease, transform .15s ease;
+        }
+
+        .sb-editor-page-card {
+            cursor: pointer;
+        }
+
+        .sb-editor-page-card:hover {
+            border-color: #c7d2fe;
+            background: #fcfcff;
         }
 
         .sb-editor-page-card.active {
             border-color: #2563eb;
             background: #eff6ff;
-            box-shadow: 0 2px 10px rgba(37, 99, 235, 0.10);
+            box-shadow: 0 4px 14px rgba(37, 99, 235, 0.12);
+        }
+
+        .sb-editor-block-card.selected {
+            border-color: #2563eb;
+            background: #f8fbff;
+            box-shadow: 0 4px 14px rgba(37, 99, 235, 0.12);
         }
 
         .sb-editor-page-head,
@@ -153,8 +170,8 @@ if ($siteId <= 0) {
         .sb-editor-page-slug {
             display: inline-flex;
             align-items: center;
-            min-height: 26px;
-            padding: 0 10px;
+            min-height: 24px;
+            padding: 0 8px;
             border-radius: 999px;
             background: #f3f4f6;
             color: #4b5563;
@@ -162,15 +179,13 @@ if ($siteId <= 0) {
             font-weight: 600;
         }
 
-        .sb-editor-page-meta-grid {
+        .sb-editor-page-meta {
             display: grid;
             grid-template-columns: repeat(2, 1fr);
-            gap: 8px 12px;
-            margin-top: 12px;
-            padding: 12px;
-            border: 1px solid #e5e7eb;
-            border-radius: 12px;
-            background: #fff;
+            gap: 8px 10px;
+            margin-top: 10px;
+            padding-top: 10px;
+            border-top: 1px dashed #e5e7eb;
         }
 
         .sb-editor-page-meta-item {
@@ -178,16 +193,31 @@ if ($siteId <= 0) {
         }
 
         .sb-editor-page-meta-label {
-            font-size: 12px;
+            font-size: 11px;
             color: #6b7280;
-            margin-bottom: 4px;
+            margin-bottom: 2px;
         }
 
         .sb-editor-page-meta-value {
             font-size: 13px;
             color: #111827;
-            line-height: 1.35;
+            line-height: 1.3;
             word-break: break-word;
+        }
+
+        .sb-editor-page-actions,
+        .sb-editor-block-actions {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            margin-top: 12px;
+        }
+
+        .sb-editor-page-actions .sb-btn,
+        .sb-editor-block-actions .sb-btn {
+            height: 30px;
+            padding: 0 10px;
+            font-size: 12px;
         }
 
         .sb-editor-current-page-card {
@@ -199,10 +229,29 @@ if ($siteId <= 0) {
         }
 
         .sb-editor-current-page-title {
-            margin: 0 0 8px;
+            margin: 0 0 6px;
             font-size: 18px;
             font-weight: 700;
             color: #111827;
+        }
+
+        .sb-editor-statbar {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            margin-bottom: 14px;
+        }
+
+        .sb-editor-stat {
+            display: inline-flex;
+            align-items: center;
+            min-height: 30px;
+            padding: 0 10px;
+            border-radius: 999px;
+            background: #f3f4f6;
+            color: #374151;
+            font-size: 12px;
+            font-weight: 600;
         }
 
         .sb-editor-block-toolbar {
@@ -223,17 +272,31 @@ if ($siteId <= 0) {
             min-height: 48px;
         }
 
-        .sb-editor-block-selected {
-            border-color: #2563eb;
-            box-shadow: 0 2px 10px rgba(37, 99, 235, 0.10);
-            background: #f8fbff;
-        }
-
         .sb-editor-side-note {
             font-size: 13px;
             color: #6b7280;
             margin-top: -2px;
             margin-bottom: 12px;
+        }
+
+        .sb-editor-side-empty {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            align-items: flex-start;
+            text-align: left;
+        }
+
+        .sb-editor-tip {
+            display: inline-flex;
+            align-items: center;
+            min-height: 28px;
+            padding: 0 10px;
+            border-radius: 999px;
+            background: #eef2ff;
+            color: #3730a3;
+            font-size: 12px;
+            font-weight: 600;
         }
 
         .sb-editor-json-actions {
@@ -243,26 +306,7 @@ if ($siteId <= 0) {
             margin-top: 12px;
         }
 
-        .sb-editor-statbar {
-            display: flex;
-            flex-wrap: wrap;
-            gap: 10px;
-            margin-bottom: 14px;
-        }
-
-        .sb-editor-stat {
-            display: inline-flex;
-            align-items: center;
-            min-height: 32px;
-            padding: 0 12px;
-            border-radius: 999px;
-            background: #f3f4f6;
-            color: #374151;
-            font-size: 13px;
-            font-weight: 600;
-        }
-
-        @media (max-width: 1360px) {
+        @media (max-width: 1380px) {
             .sb-editor-main {
                 grid-template-columns: 320px 1fr;
             }
@@ -276,16 +320,27 @@ if ($siteId <= 0) {
             }
         }
 
-        @media (max-width: 980px) {
-            .sb-editor-hero {
-                grid-template-columns: 1fr;
+        @media (max-width: 960px) {
+            .sb-editor-topline {
+                flex-direction: column;
+                align-items: stretch;
+            }
+
+            .sb-editor-topline-actions {
+                justify-content: flex-start;
             }
 
             .sb-editor-main {
                 grid-template-columns: 1fr;
             }
 
-            .sb-editor-page-meta-grid {
+            .sb-editor-page-meta {
+                grid-template-columns: 1fr 1fr;
+            }
+        }
+
+        @media (max-width: 640px) {
+            .sb-editor-page-meta {
                 grid-template-columns: 1fr;
             }
         }
@@ -301,22 +356,23 @@ if ($siteId <= 0) {
         </div>
     </div>
 
-    <div class="sb-editor-hero">
-        <div class="sb-panel sb-editor-hero-card">
-            <h2 class="sb-editor-hero-title">Страницы и блоки сайта</h2>
-            <p class="sb-editor-hero-note">Создавай страницы, настраивай их структуру и редактируй блоки. Справа — JSON-редактор выбранного блока.</p>
-        </div>
-
-        <div class="sb-editor-hero-actions">
-            <a class="sb-btn sb-btn-light" href="<?= htmlspecialchars($basePath, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?>/public.php?siteId=<?= (int)$siteId ?>" target="_blank">Открыть публичную</a>
-            <a class="sb-btn sb-btn-light" href="<?= htmlspecialchars($basePath, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?>/layout.php?siteId=<?= (int)$siteId ?>">Layout</a>
-            <a class="sb-btn sb-btn-light" href="<?= htmlspecialchars($basePath, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?>/menu.php?siteId=<?= (int)$siteId ?>">Меню</a>
+    <div class="sb-editor-topline">
+        <p class="sb-editor-topline-note">
+            Создавай страницы, управляй их порядком и редактируй блоки. Справа — JSON-редактор выбранного блока.
+        </p>
+        <div class="sb-editor-topline-actions">
+            <a class="sb-btn sb-btn-light sb-btn-small" href="<?= htmlspecialchars($basePath, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?>/public.php?siteId=<?= (int)$siteId ?>" target="_blank">Открыть публичную</a>
+            <a class="sb-btn sb-btn-light sb-btn-small" href="<?= htmlspecialchars($basePath, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?>/layout.php?siteId=<?= (int)$siteId ?>">Layout</a>
+            <a class="sb-btn sb-btn-light sb-btn-small" href="<?= htmlspecialchars($basePath, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?>/menu.php?siteId=<?= (int)$siteId ?>">Меню</a>
         </div>
     </div>
 
     <div class="sb-editor-main">
         <div class="sb-panel">
-            <h2 class="sb-panel-title">Страницы</h2>
+            <div class="sb-editor-subhead">
+                <h2 class="sb-panel-title">Страницы</h2>
+                <span class="sb-badge">siteId <?= (int)$siteId ?></span>
+            </div>
 
             <div class="sb-editor-create-page">
                 <div class="sb-form-row align-end">
@@ -338,8 +394,8 @@ if ($siteId <= 0) {
         </div>
 
         <div class="sb-panel">
-            <div style="display:flex; justify-content:space-between; align-items:center; gap:12px; margin-bottom:14px;">
-                <h2 class="sb-panel-title" style="margin:0;">Блоки страницы</h2>
+            <div class="sb-editor-subhead">
+                <h2 class="sb-panel-title">Блоки страницы</h2>
                 <button type="button" class="sb-btn sb-btn-light sb-btn-small" id="reloadBlocksBtn">Обновить</button>
             </div>
 
@@ -368,9 +424,12 @@ if ($siteId <= 0) {
 
         <div class="sb-panel sb-editor-panel-sticky">
             <h2 class="sb-panel-title">Редактор блока</h2>
-            <div class="sb-editor-side-note">Содержимое и props редактируются в JSON. После сохранения блок сразу обновится в списке.</div>
+            <div class="sb-editor-side-note">Редактирование content и props выполняется через JSON.</div>
 
-            <div id="blockEditorEmpty" class="sb-empty">Выберите блок для редактирования</div>
+            <div id="blockEditorEmpty" class="sb-empty sb-editor-side-empty">
+                <span class="sb-editor-tip">Подсказка</span>
+                <div>Выберите блок в центральной колонке. После этого справа откроется его JSON-редактор.</div>
+            </div>
 
             <div id="blockEditorForm" class="sb-hidden">
                 <div class="sb-field" style="margin-bottom:12px;">
@@ -411,6 +470,8 @@ if ($siteId <= 0) {
 (function () {
     var BASE_PATH = '<?= CUtil::JSEscape($basePath) ?>';
     var API_URL = BASE_PATH + '/api.php';
+    var SITE_ID = <?= (int)$siteId ?>;
+
     var output = document.getElementById('output');
     var pagesContainer = document.getElementById('pagesContainer');
     var blocksContainer = document.getElementById('blocksContainer');
@@ -495,7 +556,7 @@ if ($siteId <= 0) {
     }
 
     function loadSite(next) {
-        api('site.get', { siteId: <?= (int)$siteId ?> }, function (res) {
+        api('site.get', { siteId: SITE_ID }, function (res) {
             if (res && res.ok === true) {
                 state.site = res.site || null;
             }
@@ -508,7 +569,7 @@ if ($siteId <= 0) {
     function loadPages(next) {
         pagesContainer.innerHTML = '<div class="sb-empty">Загрузка страниц...</div>';
 
-        api('page.list', { siteId: <?= (int)$siteId ?> }, function (res) {
+        api('page.list', { siteId: SITE_ID }, function (res) {
             if (!res || res.ok !== true) {
                 pagesContainer.innerHTML = '<div class="sb-empty">Не удалось загрузить страницы</div>';
                 updateStats();
@@ -567,7 +628,7 @@ if ($siteId <= 0) {
             : '<span class="sb-badge sb-badge-yellow">draft</span>';
 
         return ''
-            + '<div class="sb-editor-page-card' + active + '">'
+            + '<div class="sb-editor-page-card' + active + ' js-page-card" data-id="' + id + '">'
             + '  <div class="sb-editor-page-head">'
             + '    <div>'
             + '      <div class="sb-editor-page-title">' + escapeHtml(page.title || '') + '</div>'
@@ -575,7 +636,7 @@ if ($siteId <= 0) {
             + '    </div>'
             + '    ' + badge
             + '  </div>'
-            + '  <div class="sb-editor-page-meta-grid">'
+            + '  <div class="sb-editor-page-meta">'
             + '    <div class="sb-editor-page-meta-item">'
             + '      <div class="sb-editor-page-meta-label">ID</div>'
             + '      <div class="sb-editor-page-meta-value">' + id + '</div>'
@@ -593,16 +654,16 @@ if ($siteId <= 0) {
             + '      <div class="sb-editor-page-meta-value">' + escapeHtml(page.publishedAt || '—') + '</div>'
             + '    </div>'
             + '  </div>'
-            + '  <div class="sb-actions" style="margin-top:12px;">'
-            + '    <button type="button" class="sb-btn sb-btn-primary sb-btn-small js-open-page" data-id="' + id + '">Открыть</button>'
-            + '    <button type="button" class="sb-btn sb-btn-light sb-btn-small js-rename-page" data-id="' + id + '">Meta</button>'
-            + '    <button type="button" class="sb-btn sb-btn-light sb-btn-small js-duplicate-page" data-id="' + id + '">Дублировать</button>'
-            + '    <button type="button" class="sb-btn sb-btn-light sb-btn-small js-toggle-status" data-id="' + id + '" data-status="' + escapeHtml(page.status || 'draft') + '">'
+            + '  <div class="sb-editor-page-actions">'
+            + '    <button type="button" class="sb-btn sb-btn-primary js-open-page" data-id="' + id + '">Открыть</button>'
+            + '    <button type="button" class="sb-btn sb-btn-light js-rename-page" data-id="' + id + '">Meta</button>'
+            + '    <button type="button" class="sb-btn sb-btn-light js-duplicate-page" data-id="' + id + '">Дублировать</button>'
+            + '    <button type="button" class="sb-btn sb-btn-light js-toggle-status" data-id="' + id + '" data-status="' + escapeHtml(page.status || 'draft') + '">'
             +         (isPublished ? 'В draft' : 'Опубликовать')
             + '    </button>'
-            + '    <button type="button" class="sb-btn sb-btn-gray sb-btn-small js-move-page-up" data-id="' + id + '">↑</button>'
-            + '    <button type="button" class="sb-btn sb-btn-gray sb-btn-small js-move-page-down" data-id="' + id + '">↓</button>'
-            + '    <button type="button" class="sb-btn sb-btn-danger sb-btn-small js-delete-page" data-id="' + id + '">Удалить</button>'
+            + '    <button type="button" class="sb-btn sb-btn-gray js-move-page-up" data-id="' + id + '">↑</button>'
+            + '    <button type="button" class="sb-btn sb-btn-gray js-move-page-down" data-id="' + id + '">↓</button>'
+            + '    <button type="button" class="sb-btn sb-btn-danger js-delete-page" data-id="' + id + '">Удалить</button>'
             + '  </div>'
             + '</div>';
     }
@@ -621,7 +682,7 @@ if ($siteId <= 0) {
         }
 
         api('page.create', {
-            siteId: <?= (int)$siteId ?>,
+            siteId: SITE_ID,
             title: title,
             slug: slug
         }, function (res) {
@@ -798,7 +859,7 @@ if ($siteId <= 0) {
         var id = Number(block.id || 0);
         var type = escapeHtml(block.type || '');
         var preview = escapeHtml(buildPreviewText(block));
-        var selected = id === Number(state.currentBlockId || 0) ? ' sb-editor-block-selected' : '';
+        var selected = id === Number(state.currentBlockId || 0) ? ' selected' : '';
 
         return ''
             + '<div class="sb-editor-block-card' + selected + '">'
@@ -810,12 +871,12 @@ if ($siteId <= 0) {
             + '    <span class="sb-badge">block</span>'
             + '  </div>'
             + '  <div class="sb-editor-block-preview">' + preview + '</div>'
-            + '  <div class="sb-actions" style="margin-top:12px;">'
-            + '    <button type="button" class="sb-btn sb-btn-primary sb-btn-small js-edit-block" data-id="' + id + '">Редактировать</button>'
-            + '    <button type="button" class="sb-btn sb-btn-light sb-btn-small js-duplicate-block" data-id="' + id + '">Дублировать</button>'
-            + '    <button type="button" class="sb-btn sb-btn-gray sb-btn-small js-move-block-up" data-id="' + id + '"' + (index === 0 ? ' disabled' : '') + '>↑</button>'
-            + '    <button type="button" class="sb-btn sb-btn-gray sb-btn-small js-move-block-down" data-id="' + id + '"' + (index === state.blocks.length - 1 ? ' disabled' : '') + '>↓</button>'
-            + '    <button type="button" class="sb-btn sb-btn-danger sb-btn-small js-delete-block" data-id="' + id + '">Удалить</button>'
+            + '  <div class="sb-editor-block-actions">'
+            + '    <button type="button" class="sb-btn sb-btn-primary js-edit-block" data-id="' + id + '">Редактировать</button>'
+            + '    <button type="button" class="sb-btn sb-btn-light js-duplicate-block" data-id="' + id + '">Дублировать</button>'
+            + '    <button type="button" class="sb-btn sb-btn-gray js-move-block-up" data-id="' + id + '"' + (index === 0 ? ' disabled' : '') + '>↑</button>'
+            + '    <button type="button" class="sb-btn sb-btn-gray js-move-block-down" data-id="' + id + '"' + (index === state.blocks.length - 1 ? ' disabled' : '') + '>↓</button>'
+            + '    <button type="button" class="sb-btn sb-btn-danger js-delete-block" data-id="' + id + '">Удалить</button>'
             + '  </div>'
             + '</div>';
     }
@@ -1016,6 +1077,12 @@ if ($siteId <= 0) {
     document.getElementById('resetPropsBtn').addEventListener('click', resetProps);
 
     document.addEventListener('click', function (e) {
+        var pageCard = e.target.closest('.js-page-card');
+        if (pageCard && !e.target.closest('button, a')) {
+            openPage(parseInt(pageCard.getAttribute('data-id'), 10) || 0);
+            return;
+        }
+
         var addBlockBtn = e.target.closest('.js-add-block');
         if (addBlockBtn) {
             addBlock(addBlockBtn.getAttribute('data-type') || 'text');
@@ -1123,6 +1190,17 @@ if ($siteId <= 0) {
 </body>
 </html>
 
-После замены editor.php уже должен смотреться заметно сильнее и удобнее в работе.
+Что изменилось по сути:
 
-Следующим шагом логично будет так же дожать menu.php визуально до того же уровня.
+карточка страницы слева теперь выбирается кликом
+
+колонки сбалансированы лучше
+
+правая панель уже и полезнее
+
+центр сильнее выделен
+
+страница и блоки читаются лучше
+
+
+После этого уже можно переходить к следующему экрану. Логично — menu.php до такого же уровня.
