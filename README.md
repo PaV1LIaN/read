@@ -1,4 +1,21 @@
-Вот улучшенный index.php целиком. Я сделал его более собранным: компактнее форма создания, сильнее карточки сайтов, лучше сгруппированы действия, меньше ощущения “простыни”.
+Отлично. Тогда добиваем index.php до максимально аккуратного базового состояния.
+
+Что я улучшил в этой версии:
+
+более собран верхний блок
+
+форма создания выглядит как главный action
+
+статистика визуально чище
+
+карточки сайтов плотнее и ровнее
+
+вторичные действия стали аккуратнее
+
+удаление вынесено понятнее
+
+уменьшена рыхлость и лишний воздух
+
 
 Полный файл /local/sitebuilder/index.php
 
@@ -28,18 +45,32 @@ $basePath = rtrim(str_replace($_SERVER['DOCUMENT_ROOT'], '', __DIR__), '/');
     <style>
         .sb-index-hero {
             display: grid;
-            grid-template-columns: minmax(320px, 760px) 1fr;
+            grid-template-columns: minmax(360px, 820px) minmax(260px, 1fr);
             gap: 20px;
-            align-items: start;
+            align-items: stretch;
             margin-bottom: 20px;
         }
 
         .sb-index-create-card {
             background: linear-gradient(180deg, #ffffff 0%, #f8fbff 100%);
+            border-color: #dbe7ff;
         }
 
-        .sb-index-create-inner {
-            max-width: 760px;
+        .sb-index-create-head {
+            margin-bottom: 14px;
+        }
+
+        .sb-index-create-title {
+            margin: 0 0 6px;
+            font-size: 22px;
+            font-weight: 700;
+            color: #111827;
+        }
+
+        .sb-index-create-note {
+            margin: 0;
+            font-size: 14px;
+            color: #6b7280;
         }
 
         .sb-index-create-row {
@@ -49,28 +80,36 @@ $basePath = rtrim(str_replace($_SERVER['DOCUMENT_ROOT'], '', __DIR__), '/');
             align-items: end;
         }
 
+        .sb-index-create-btn {
+            min-width: 132px;
+        }
+
         .sb-index-stats {
             display: grid;
-            grid-template-columns: repeat(2, 1fr);
+            grid-template-columns: 1fr;
             gap: 12px;
         }
 
         .sb-index-stat {
             background: #fff;
             border: 1px solid #e5e7eb;
-            border-radius: 14px;
-            padding: 16px;
-            box-shadow: 0 2px 8px rgba(15, 23, 42, 0.04);
+            border-radius: 16px;
+            padding: 18px;
+            box-shadow: 0 2px 10px rgba(15, 23, 42, 0.04);
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            min-height: 112px;
         }
 
         .sb-index-stat-label {
             font-size: 13px;
             color: #6b7280;
-            margin-bottom: 8px;
+            margin-bottom: 10px;
         }
 
         .sb-index-stat-value {
-            font-size: 28px;
+            font-size: 34px;
             line-height: 1;
             font-weight: 700;
             color: #111827;
@@ -81,7 +120,7 @@ $basePath = rtrim(str_replace($_SERVER['DOCUMENT_ROOT'], '', __DIR__), '/');
             justify-content: space-between;
             align-items: center;
             gap: 12px;
-            margin-bottom: 14px;
+            margin-bottom: 16px;
         }
 
         .sb-index-section-head .sb-panel-title {
@@ -97,11 +136,11 @@ $basePath = rtrim(str_replace($_SERVER['DOCUMENT_ROOT'], '', __DIR__), '/');
         .sb-site-card {
             background: #fff;
             border: 1px solid #e5e7eb;
-            border-radius: 16px;
+            border-radius: 18px;
             padding: 18px;
             display: flex;
             flex-direction: column;
-            gap: 16px;
+            gap: 14px;
             box-shadow: 0 2px 10px rgba(15, 23, 42, 0.04);
         }
 
@@ -117,10 +156,10 @@ $basePath = rtrim(str_replace($_SERVER['DOCUMENT_ROOT'], '', __DIR__), '/');
         }
 
         .sb-site-name {
-            margin: 0 0 6px;
-            font-size: 20px;
+            margin: 0 0 8px;
+            font-size: 22px;
             font-weight: 700;
-            line-height: 1.2;
+            line-height: 1.15;
             word-break: break-word;
             color: #111827;
         }
@@ -128,7 +167,7 @@ $basePath = rtrim(str_replace($_SERVER['DOCUMENT_ROOT'], '', __DIR__), '/');
         .sb-site-slug {
             display: inline-flex;
             align-items: center;
-            min-height: 28px;
+            min-height: 30px;
             padding: 0 10px;
             border-radius: 999px;
             background: #f3f4f6;
@@ -137,6 +176,16 @@ $basePath = rtrim(str_replace($_SERVER['DOCUMENT_ROOT'], '', __DIR__), '/');
             font-weight: 600;
             max-width: 100%;
             word-break: break-word;
+        }
+
+        .sb-site-head-right {
+            flex: 0 0 auto;
+        }
+
+        .sb-site-id-badge {
+            background: #f8fafc;
+            color: #475569;
+            border: 1px solid #e2e8f0;
         }
 
         .sb-site-meta-grid {
@@ -163,12 +212,14 @@ $basePath = rtrim(str_replace($_SERVER['DOCUMENT_ROOT'], '', __DIR__), '/');
             font-size: 14px;
             color: #111827;
             word-break: break-word;
+            line-height: 1.35;
         }
 
         .sb-site-actions {
             display: flex;
             flex-direction: column;
             gap: 10px;
+            margin-top: 2px;
         }
 
         .sb-site-actions-row {
@@ -183,8 +234,12 @@ $basePath = rtrim(str_replace($_SERVER['DOCUMENT_ROOT'], '', __DIR__), '/');
         }
 
         .sb-site-actions-row--secondary .sb-btn {
+            height: 32px;
+            padding: 0 10px;
+            font-size: 12px;
             background: #f8fafc;
             color: #334155;
+            border: 1px solid #e2e8f0;
         }
 
         .sb-site-actions-row--secondary .sb-btn:hover {
@@ -193,21 +248,29 @@ $basePath = rtrim(str_replace($_SERVER['DOCUMENT_ROOT'], '', __DIR__), '/');
 
         .sb-site-actions-row--danger {
             justify-content: flex-end;
+            padding-top: 4px;
+            border-top: 1px dashed #e5e7eb;
         }
 
         .sb-site-actions-row--danger .sb-btn {
-            min-width: 110px;
+            min-width: 112px;
         }
 
-        .sb-site-created {
-            font-size: 13px;
-            color: #6b7280;
-            margin-top: -4px;
+        .sb-site-primary-link {
+            min-width: 118px;
+        }
+
+        .sb-index-empty {
+            padding: 28px;
         }
 
         @media (max-width: 1180px) {
             .sb-index-hero {
                 grid-template-columns: 1fr;
+            }
+
+            .sb-index-stats {
+                grid-template-columns: repeat(2, 1fr);
             }
         }
 
@@ -216,17 +279,17 @@ $basePath = rtrim(str_replace($_SERVER['DOCUMENT_ROOT'], '', __DIR__), '/');
                 grid-template-columns: 1fr;
             }
 
-            .sb-index-stats {
-                grid-template-columns: 1fr 1fr;
+            .sb-index-create-btn {
+                width: 100%;
             }
-        }
 
-        @media (max-width: 640px) {
             .sb-index-stats,
             .sb-site-meta-grid {
                 grid-template-columns: 1fr;
             }
+        }
 
+        @media (max-width: 640px) {
             .sb-site-actions-row--danger {
                 justify-content: flex-start;
             }
@@ -249,19 +312,21 @@ $basePath = rtrim(str_replace($_SERVER['DOCUMENT_ROOT'], '', __DIR__), '/');
 
     <div class="sb-index-hero">
         <div class="sb-panel sb-index-create-card">
-            <div class="sb-index-create-inner">
-                <h2 class="sb-panel-title">Создать сайт</h2>
-                <div class="sb-index-create-row">
-                    <div class="sb-field">
-                        <label for="siteName">Название сайта</label>
-                        <input class="sb-input" type="text" id="siteName" placeholder="Например: Корпоративный портал">
-                    </div>
-                    <div class="sb-field">
-                        <label for="siteSlug">Slug</label>
-                        <input class="sb-input" type="text" id="siteSlug" placeholder="Например: corp-portal">
-                    </div>
-                    <button type="button" class="sb-btn sb-btn-primary" id="createSiteBtn">Создать</button>
+            <div class="sb-index-create-head">
+                <h2 class="sb-index-create-title">Создать сайт</h2>
+                <p class="sb-index-create-note">Новый сайт сразу появится в списке и будет доступен для настройки, страниц, меню, файлов и layout.</p>
+            </div>
+
+            <div class="sb-index-create-row">
+                <div class="sb-field">
+                    <label for="siteName">Название сайта</label>
+                    <input class="sb-input" type="text" id="siteName" placeholder="Например: Корпоративный портал">
                 </div>
+                <div class="sb-field">
+                    <label for="siteSlug">Slug</label>
+                    <input class="sb-input" type="text" id="siteSlug" placeholder="Например: corp-portal">
+                </div>
+                <button type="button" class="sb-btn sb-btn-primary sb-index-create-btn" id="createSiteBtn">Создать</button>
             </div>
         </div>
 
@@ -283,7 +348,7 @@ $basePath = rtrim(str_replace($_SERVER['DOCUMENT_ROOT'], '', __DIR__), '/');
             <button type="button" class="sb-btn sb-btn-light sb-btn-small" id="reloadBtn">Обновить список</button>
         </div>
         <div id="sitesContainer">
-            <div class="sb-empty">Загрузка списка сайтов...</div>
+            <div class="sb-empty sb-index-empty">Загрузка списка сайтов...</div>
         </div>
     </div>
 
@@ -385,7 +450,9 @@ $basePath = rtrim(str_replace($_SERVER['DOCUMENT_ROOT'], '', __DIR__), '/');
             + '      <h3 class="sb-site-name">' + name + '</h3>'
             + '      <div class="sb-site-slug">' + slug + '</div>'
             + '    </div>'
-            + '    <span class="sb-badge">site #' + id + '</span>'
+            + '    <div class="sb-site-head-right">'
+            + '      <span class="sb-badge sb-site-id-badge">site #' + id + '</span>'
+            + '    </div>'
             + '  </div>'
             + ''
             + '  <div class="sb-site-meta-grid">'
@@ -409,8 +476,8 @@ $basePath = rtrim(str_replace($_SERVER['DOCUMENT_ROOT'], '', __DIR__), '/');
             + ''
             + '  <div class="sb-site-actions">'
             + '    <div class="sb-site-actions-row">'
-            + '      <a class="sb-btn sb-btn-primary sb-btn-small" href="' + BASE_PATH + '/editor.php?siteId=' + id + '">Редактор</a>'
-            + '      <a class="sb-btn sb-btn-light sb-btn-small" href="' + BASE_PATH + '/public.php?siteId=' + id + '" target="_blank">Публичная</a>'
+            + '      <a class="sb-btn sb-btn-primary sb-btn-small sb-site-primary-link" href="' + BASE_PATH + '/editor.php?siteId=' + id + '">Редактор</a>'
+            + '      <a class="sb-btn sb-btn-light sb-btn-small sb-site-primary-link" href="' + BASE_PATH + '/public.php?siteId=' + id + '" target="_blank">Публичная</a>'
             + '    </div>'
             + '    <div class="sb-site-actions-row sb-site-actions-row--secondary">'
             + '      <a class="sb-btn sb-btn-small" href="' + BASE_PATH + '/layout.php?siteId=' + id + '">Layout</a>'
@@ -429,7 +496,7 @@ $basePath = rtrim(str_replace($_SERVER['DOCUMENT_ROOT'], '', __DIR__), '/');
         updateStats(sites);
 
         if (!Array.isArray(sites) || !sites.length) {
-            sitesContainer.innerHTML = '<div class="sb-empty">Сайтов пока нет</div>';
+            sitesContainer.innerHTML = '<div class="sb-empty sb-index-empty">Сайтов пока нет</div>';
             return;
         }
 
@@ -443,12 +510,12 @@ $basePath = rtrim(str_replace($_SERVER['DOCUMENT_ROOT'], '', __DIR__), '/');
     }
 
     function loadSites() {
-        sitesContainer.innerHTML = '<div class="sb-empty">Загрузка...</div>';
+        sitesContainer.innerHTML = '<div class="sb-empty sb-index-empty">Загрузка...</div>';
 
         api('site.list', {}, function (res) {
             if (!res || res.ok !== true) {
                 updateStats([]);
-                sitesContainer.innerHTML = '<div class="sb-empty">Не удалось загрузить список сайтов</div>';
+                sitesContainer.innerHTML = '<div class="sb-empty sb-index-empty">Не удалось загрузить список сайтов</div>';
                 return;
             }
             renderSites(res.sites || []);
@@ -534,6 +601,17 @@ $basePath = rtrim(str_replace($_SERVER['DOCUMENT_ROOT'], '', __DIR__), '/');
 </body>
 </html>
 
-Это уже выглядит заметно лучше как стартовая страница конструктора.
+Сейчас index.php уже можно считать в хорошем рабочем состоянии.
 
-Дальше логично в таком же ключе улучшить editor.php, уже не просто “под admin.css”, а именно визуально собрать его в более сильный рабочий экран.
+Следующий логичный шаг — точно так же улучшить editor.php уже не просто технически, а визуально и по UX:
+
+сделать левую колонку страниц сильнее
+
+блоки страницы удобнее
+
+редактор блока компактнее и понятнее
+
+лучше выделить текущую страницу и текущий блок
+
+
+Напиши: давай дожмём editor.php
