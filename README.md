@@ -1,19 +1,470 @@
-Делаю вторую итерацию сразу с исправлением выбора страницы.
+Да. Давай сделаем это практично: я дам тебе готовый макет новой главной админской страницы под твой проект и сразу распишу:
 
-Причина бага: сейчас страница открывается только по кнопке Открыть, а сама карточка слева не кликабельна. Я исправил это так:
+что создать
 
-вся карточка страницы теперь выбирается по клику
+куда вставлять
 
-у активной страницы сильнее выделение
+что заменить
 
-правая колонка стала уже и полезнее
-
-центр стал главным рабочим блоком
-
-левая колонка стала компактнее
+что пока можно оставить заглушками
 
 
-Полный файл /local/sitebuilder/editor.php
+Идём без лишней теории.
+
+
+---
+
+Что будем делать
+
+Сейчас лучше не пихать весь новый dashboard-стиль внутрь index.php, а вынести его в отдельный css-файл.
+
+Нужно сделать 2 шага
+
+1. Создать новый файл стилей
+
+/local/sitebuilder/assets/admin/dashboard.css
+
+2. Заменить index.php
+
+Полностью на новую версию, которая использует:
+
+admin.css
+
+dashboard.css
+
+
+
+---
+
+Шаг 1. Создай файл /local/sitebuilder/assets/admin/dashboard.css
+
+Вставь туда вот этот код целиком:
+
+:root {
+    --dash-bg: #f6f8fb;
+    --dash-surface: #ffffff;
+    --dash-surface-soft: #f9fbfd;
+    --dash-border: #e6ebf2;
+    --dash-border-strong: #d7dee8;
+
+    --dash-text: #111827;
+    --dash-text-soft: #5b6472;
+    --dash-text-faint: #8a94a6;
+
+    --dash-primary: #2563eb;
+    --dash-primary-strong: #1d4ed8;
+    --dash-primary-soft: #eaf1ff;
+
+    --dash-success: #16a34a;
+    --dash-success-soft: #eaf8ee;
+
+    --dash-warning: #d97706;
+    --dash-warning-soft: #fff6e8;
+
+    --dash-danger: #dc2626;
+    --dash-danger-soft: #fdecec;
+
+    --dash-radius-xl: 20px;
+    --dash-radius-lg: 16px;
+    --dash-radius-md: 12px;
+    --dash-radius-pill: 999px;
+
+    --dash-shadow-sm: 0 2px 8px rgba(15, 23, 42, 0.04);
+    --dash-shadow-md: 0 6px 20px rgba(15, 23, 42, 0.05);
+    --dash-shadow-lg: 0 12px 32px rgba(15, 23, 42, 0.06);
+
+    --dash-gap: 20px;
+}
+
+.sb-dashboard {
+    display: flex;
+    flex-direction: column;
+    gap: 24px;
+}
+
+.sb-dashboard-topbar {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 20px;
+}
+
+.sb-dashboard-topbar__main {
+    min-width: 0;
+}
+
+.sb-dashboard-title {
+    margin: 0 0 6px;
+    font-size: 32px;
+    line-height: 1.1;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    color: var(--dash-text);
+}
+
+.sb-dashboard-subtitle {
+    margin: 0;
+    font-size: 14px;
+    color: var(--dash-text-soft);
+}
+
+.sb-dashboard-actions {
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+}
+
+.sb-dashboard-filter,
+.sb-dashboard-search {
+    height: 42px;
+    border: 1px solid var(--dash-border);
+    border-radius: var(--dash-radius-md);
+    background: var(--dash-surface);
+    padding: 0 14px;
+    font: inherit;
+    color: var(--dash-text);
+    min-width: 180px;
+    outline: none;
+}
+
+.sb-dashboard-filter:focus,
+.sb-dashboard-search:focus {
+    border-color: #bfd2ff;
+    box-shadow: 0 0 0 4px rgba(37, 99, 235, 0.08);
+}
+
+.sb-dashboard-kpis {
+    display: grid;
+    grid-template-columns: repeat(6, 1fr);
+    gap: var(--dash-gap);
+}
+
+.sb-kpi-card {
+    background: var(--dash-surface);
+    border: 1px solid var(--dash-border);
+    border-radius: var(--dash-radius-xl);
+    padding: 18px 20px;
+    box-shadow: var(--dash-shadow-sm);
+}
+
+.sb-kpi-card__label {
+    font-size: 13px;
+    color: var(--dash-text-soft);
+    margin-bottom: 10px;
+}
+
+.sb-kpi-card__value {
+    font-size: 34px;
+    font-weight: 700;
+    line-height: 1;
+    margin-bottom: 8px;
+    letter-spacing: -0.02em;
+    color: var(--dash-text);
+}
+
+.sb-kpi-card__meta {
+    font-size: 13px;
+    color: var(--dash-text-faint);
+}
+
+.sb-kpi-card__meta.success {
+    color: var(--dash-success);
+}
+
+.sb-kpi-card__meta.warning {
+    color: var(--dash-warning);
+}
+
+.sb-dashboard-grid {
+    display: grid;
+    gap: var(--dash-gap);
+}
+
+.sb-dashboard-grid--analytics {
+    grid-template-columns: 2fr 1fr;
+}
+
+.sb-dashboard-grid--bottom {
+    grid-template-columns: 1fr 1fr 1fr;
+}
+
+.sb-dash-card {
+    background: var(--dash-surface);
+    border: 1px solid var(--dash-border);
+    border-radius: var(--dash-radius-xl);
+    padding: 20px;
+    box-shadow: var(--dash-shadow-sm);
+}
+
+.sb-dash-card__head {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 14px;
+    margin-bottom: 18px;
+}
+
+.sb-dash-card__head h2 {
+    margin: 0;
+    font-size: 20px;
+    font-weight: 700;
+    letter-spacing: -0.01em;
+    color: var(--dash-text);
+}
+
+.sb-dash-toolbar {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+.sb-chip {
+    height: 32px;
+    padding: 0 12px;
+    border: 1px solid var(--dash-border);
+    border-radius: var(--dash-radius-pill);
+    background: var(--dash-surface);
+    color: var(--dash-text-soft);
+    font: inherit;
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+}
+
+.sb-chip.active {
+    background: var(--dash-primary-soft);
+    border-color: #cfe0ff;
+    color: var(--dash-primary);
+}
+
+.sb-chart-placeholder {
+    height: 320px;
+    border: 1px dashed var(--dash-border-strong);
+    border-radius: var(--dash-radius-lg);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--dash-text-faint);
+    background: linear-gradient(180deg, #fcfdff 0%, #f8fbff 100%);
+}
+
+.sb-rank-list,
+.sb-activity-list,
+.sb-metric-list {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.sb-rank-item,
+.sb-activity-item,
+.sb-metric-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 12px;
+    padding: 12px 0;
+    border-bottom: 1px solid #f0f3f7;
+}
+
+.sb-rank-item:last-child,
+.sb-activity-item:last-child,
+.sb-metric-row:last-child {
+    border-bottom: 0;
+    padding-bottom: 0;
+}
+
+.sb-rank-item__title,
+.sb-activity-item__title {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--dash-text);
+    margin-bottom: 4px;
+}
+
+.sb-rank-item__meta,
+.sb-activity-item__meta {
+    font-size: 13px;
+    color: var(--dash-text-soft);
+}
+
+.sb-rank-item__value,
+.sb-metric-row__value {
+    font-size: 14px;
+    font-weight: 700;
+    color: var(--dash-text);
+    white-space: nowrap;
+}
+
+.sb-metric-row__label {
+    font-size: 14px;
+    color: var(--dash-text);
+}
+
+.sb-dash-table-wrap {
+    overflow: auto;
+}
+
+.sb-dash-table {
+    width: 100%;
+    border-collapse: collapse;
+    min-width: 1100px;
+}
+
+.sb-dash-table th,
+.sb-dash-table td {
+    padding: 14px 12px;
+    text-align: left;
+    border-bottom: 1px solid #eef2f6;
+    vertical-align: middle;
+    font-size: 14px;
+}
+
+.sb-dash-table th {
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--dash-text-faint);
+    font-weight: 700;
+    background: #fbfcfe;
+}
+
+.sb-site-cell__title {
+    font-size: 14px;
+    font-weight: 700;
+    color: var(--dash-text);
+    margin-bottom: 4px;
+}
+
+.sb-site-cell__meta {
+    font-size: 13px;
+    color: var(--dash-text-soft);
+}
+
+.sb-status-badge {
+    display: inline-flex;
+    align-items: center;
+    min-height: 28px;
+    padding: 0 10px;
+    border-radius: var(--dash-radius-pill);
+    font-size: 12px;
+    font-weight: 700;
+    white-space: nowrap;
+}
+
+.sb-status-badge.success {
+    background: var(--dash-success-soft);
+    color: var(--dash-success);
+}
+
+.sb-status-badge.warning {
+    background: var(--dash-warning-soft);
+    color: var(--dash-warning);
+}
+
+.sb-status-badge.danger {
+    background: var(--dash-danger-soft);
+    color: var(--dash-danger);
+}
+
+.sb-trend {
+    font-size: 13px;
+    font-weight: 700;
+}
+
+.sb-trend.up {
+    color: var(--dash-success);
+}
+
+.sb-trend.down {
+    color: var(--dash-danger);
+}
+
+.sb-system-stats {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 12px;
+}
+
+.sb-system-stat {
+    padding: 14px 16px;
+    border: 1px solid var(--dash-border);
+    border-radius: var(--dash-radius-lg);
+    background: #fbfcfe;
+}
+
+.sb-system-stat span {
+    display: block;
+    font-size: 13px;
+    color: var(--dash-text-soft);
+    margin-bottom: 8px;
+}
+
+.sb-system-stat strong {
+    font-size: 22px;
+    line-height: 1;
+    font-weight: 700;
+    color: var(--dash-text);
+}
+
+@media (max-width: 1440px) {
+    .sb-dashboard-kpis {
+        grid-template-columns: repeat(3, 1fr);
+    }
+
+    .sb-dashboard-grid--analytics {
+        grid-template-columns: 1fr;
+    }
+
+    .sb-dashboard-grid--bottom {
+        grid-template-columns: 1fr;
+    }
+}
+
+@media (max-width: 960px) {
+    .sb-dashboard-topbar {
+        flex-direction: column;
+        align-items: stretch;
+    }
+
+    .sb-dashboard-actions {
+        justify-content: flex-start;
+    }
+
+    .sb-dashboard-kpis {
+        grid-template-columns: repeat(2, 1fr);
+    }
+
+    .sb-system-stats {
+        grid-template-columns: 1fr;
+    }
+}
+
+@media (max-width: 640px) {
+    .sb-dashboard-kpis {
+        grid-template-columns: 1fr;
+    }
+
+    .sb-dashboard-title {
+        font-size: 26px;
+    }
+
+    .sb-kpi-card__value {
+        font-size: 28px;
+    }
+}
+
+
+---
+
+Шаг 2. Замени index.php
+
+Полностью замени файл:
+
+/local/sitebuilder/index.php
+
+на этот код:
 
 <?php
 require $_SERVER['DOCUMENT_ROOT'] . '/bitrix/modules/main/include/prolog_before.php';
@@ -30,439 +481,220 @@ CJSCore::Init(['ajax']);
 header('Content-Type: text/html; charset=UTF-8');
 
 $basePath = rtrim(str_replace($_SERVER['DOCUMENT_ROOT'], '', __DIR__), '/');
-$siteId = (int)($_GET['siteId'] ?? 0);
-
-if ($siteId <= 0) {
-    ?>
-    <!doctype html>
-    <html lang="ru">
-    <head>
-        <meta charset="UTF-8">
-        <title>SiteBuilder / Editor</title>
-        <?php $APPLICATION->ShowHead(); ?>
-        <link rel="stylesheet" href="<?= htmlspecialchars($basePath, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?>/assets/admin/admin.css">
-    </head>
-    <body class="sb-admin-body">
-        <div class="sb-page">
-            <h1 class="sb-title">Не передан siteId</h1>
-            <p><a class="sb-back-link" href="<?= htmlspecialchars($basePath, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?>/index.php">Вернуться к списку сайтов</a></p>
-        </div>
-    </body>
-    </html>
-    <?php
-    exit;
-}
 ?>
 <!doctype html>
 <html lang="ru">
 <head>
     <meta charset="UTF-8">
-    <title>SiteBuilder / Editor</title>
+    <title>SiteBuilder Dashboard</title>
     <?php $APPLICATION->ShowHead(); ?>
     <link rel="stylesheet" href="<?= htmlspecialchars($basePath, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?>/assets/admin/admin.css">
-    <style>
-        .sb-editor-topline {
-            display: flex;
-            justify-content: space-between;
-            align-items: flex-start;
-            gap: 16px;
-            margin-bottom: 16px;
-        }
-
-        .sb-editor-topline-note {
-            margin: 0;
-            color: #6b7280;
-            font-size: 14px;
-            max-width: 760px;
-        }
-
-        .sb-editor-topline-actions {
-            display: flex;
-            flex-wrap: wrap;
-            gap: 8px;
-            justify-content: flex-end;
-        }
-
-        .sb-editor-main {
-            display: grid;
-            grid-template-columns: 340px minmax(480px, 1fr) 360px;
-            gap: 18px;
-            align-items: start;
-        }
-
-        .sb-editor-panel-sticky {
-            position: sticky;
-            top: 16px;
-        }
-
-        .sb-editor-subhead {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            gap: 12px;
-            margin-bottom: 14px;
-        }
-
-        .sb-editor-subhead .sb-panel-title {
-            margin: 0;
-        }
-
-        .sb-editor-create-page {
-            margin-bottom: 14px;
-            padding-bottom: 14px;
-            border-bottom: 1px solid #eef2f7;
-        }
-
-        .sb-editor-pages-list,
-        .sb-editor-blocks-list {
-            display: flex;
-            flex-direction: column;
-            gap: 10px;
-        }
-
-        .sb-editor-page-card,
-        .sb-editor-block-card {
-            border: 1px solid #e5e7eb;
-            border-radius: 14px;
-            padding: 12px;
-            background: #fafafa;
-            transition: border-color .15s ease, box-shadow .15s ease, background .15s ease, transform .15s ease;
-        }
-
-        .sb-editor-page-card {
-            cursor: pointer;
-        }
-
-        .sb-editor-page-card:hover {
-            border-color: #c7d2fe;
-            background: #fcfcff;
-        }
-
-        .sb-editor-page-card.active {
-            border-color: #2563eb;
-            background: #eff6ff;
-            box-shadow: 0 4px 14px rgba(37, 99, 235, 0.12);
-        }
-
-        .sb-editor-block-card.selected {
-            border-color: #2563eb;
-            background: #f8fbff;
-            box-shadow: 0 4px 14px rgba(37, 99, 235, 0.12);
-        }
-
-        .sb-editor-page-head,
-        .sb-editor-block-head {
-            display: flex;
-            justify-content: space-between;
-            gap: 12px;
-            align-items: flex-start;
-        }
-
-        .sb-editor-page-title,
-        .sb-editor-block-title {
-            margin: 0 0 6px;
-            font-size: 16px;
-            font-weight: 700;
-            line-height: 1.2;
-            color: #111827;
-        }
-
-        .sb-editor-page-slug {
-            display: inline-flex;
-            align-items: center;
-            min-height: 24px;
-            padding: 0 8px;
-            border-radius: 999px;
-            background: #f3f4f6;
-            color: #4b5563;
-            font-size: 12px;
-            font-weight: 600;
-        }
-
-        .sb-editor-page-meta {
-            display: grid;
-            grid-template-columns: repeat(2, 1fr);
-            gap: 8px 10px;
-            margin-top: 10px;
-            padding-top: 10px;
-            border-top: 1px dashed #e5e7eb;
-        }
-
-        .sb-editor-page-meta-item {
-            min-width: 0;
-        }
-
-        .sb-editor-page-meta-label {
-            font-size: 11px;
-            color: #6b7280;
-            margin-bottom: 2px;
-        }
-
-        .sb-editor-page-meta-value {
-            font-size: 13px;
-            color: #111827;
-            line-height: 1.3;
-            word-break: break-word;
-        }
-
-        .sb-editor-page-actions,
-        .sb-editor-block-actions {
-            display: flex;
-            flex-wrap: wrap;
-            gap: 8px;
-            margin-top: 12px;
-        }
-
-        .sb-editor-page-actions .sb-btn,
-        .sb-editor-block-actions .sb-btn {
-            height: 30px;
-            padding: 0 10px;
-            font-size: 12px;
-        }
-
-        .sb-editor-current-page-card {
-            margin-bottom: 14px;
-            padding: 14px;
-            border: 1px solid #dbe7ff;
-            border-radius: 14px;
-            background: linear-gradient(180deg, #ffffff 0%, #f8fbff 100%);
-        }
-
-        .sb-editor-current-page-title {
-            margin: 0 0 6px;
-            font-size: 18px;
-            font-weight: 700;
-            color: #111827;
-        }
-
-        .sb-editor-statbar {
-            display: flex;
-            flex-wrap: wrap;
-            gap: 8px;
-            margin-bottom: 14px;
-        }
-
-        .sb-editor-stat {
-            display: inline-flex;
-            align-items: center;
-            min-height: 30px;
-            padding: 0 10px;
-            border-radius: 999px;
-            background: #f3f4f6;
-            color: #374151;
-            font-size: 12px;
-            font-weight: 600;
-        }
-
-        .sb-editor-block-toolbar {
-            display: flex;
-            flex-wrap: wrap;
-            gap: 8px;
-            margin-bottom: 14px;
-        }
-
-        .sb-editor-block-preview {
-            margin-top: 12px;
-            padding: 12px;
-            border-radius: 12px;
-            background: #fff;
-            border: 1px solid #e5e7eb;
-            color: #374151;
-            line-height: 1.5;
-            min-height: 48px;
-        }
-
-        .sb-editor-side-note {
-            font-size: 13px;
-            color: #6b7280;
-            margin-top: -2px;
-            margin-bottom: 12px;
-        }
-
-        .sb-editor-side-empty {
-            display: flex;
-            flex-direction: column;
-            gap: 10px;
-            align-items: flex-start;
-            text-align: left;
-        }
-
-        .sb-editor-tip {
-            display: inline-flex;
-            align-items: center;
-            min-height: 28px;
-            padding: 0 10px;
-            border-radius: 999px;
-            background: #eef2ff;
-            color: #3730a3;
-            font-size: 12px;
-            font-weight: 600;
-        }
-
-        .sb-editor-json-actions {
-            display: flex;
-            gap: 8px;
-            flex-wrap: wrap;
-            margin-top: 12px;
-        }
-
-        @media (max-width: 1380px) {
-            .sb-editor-main {
-                grid-template-columns: 320px 1fr;
-            }
-
-            .sb-editor-main > .sb-panel:last-child {
-                grid-column: 1 / -1;
-            }
-
-            .sb-editor-panel-sticky {
-                position: static;
-            }
-        }
-
-        @media (max-width: 960px) {
-            .sb-editor-topline {
-                flex-direction: column;
-                align-items: stretch;
-            }
-
-            .sb-editor-topline-actions {
-                justify-content: flex-start;
-            }
-
-            .sb-editor-main {
-                grid-template-columns: 1fr;
-            }
-
-            .sb-editor-page-meta {
-                grid-template-columns: 1fr 1fr;
-            }
-        }
-
-        @media (max-width: 640px) {
-            .sb-editor-page-meta {
-                grid-template-columns: 1fr;
-            }
-        }
-    </style>
+    <link rel="stylesheet" href="<?= htmlspecialchars($basePath, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?>/assets/admin/dashboard.css">
 </head>
 <body class="sb-admin-body">
 <div class="sb-page">
-    <div class="sb-topbar">
-        <div class="sb-topbar-left">
-            <a class="sb-back-link" href="<?= htmlspecialchars($basePath, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?>/index.php">← К списку сайтов</a>
-            <h1 class="sb-title">Редактор сайта</h1>
-            <p class="sb-subtitle">siteId = <?= (int)$siteId ?></p>
-        </div>
-    </div>
-
-    <div class="sb-editor-topline">
-        <p class="sb-editor-topline-note">
-            Создавай страницы, управляй их порядком и редактируй блоки. Справа — JSON-редактор выбранного блока.
-        </p>
-        <div class="sb-editor-topline-actions">
-            <a class="sb-btn sb-btn-light sb-btn-small" href="<?= htmlspecialchars($basePath, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?>/public.php?siteId=<?= (int)$siteId ?>" target="_blank">Открыть публичную</a>
-            <a class="sb-btn sb-btn-light sb-btn-small" href="<?= htmlspecialchars($basePath, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?>/layout.php?siteId=<?= (int)$siteId ?>">Layout</a>
-            <a class="sb-btn sb-btn-light sb-btn-small" href="<?= htmlspecialchars($basePath, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?>/menu.php?siteId=<?= (int)$siteId ?>">Меню</a>
-        </div>
-    </div>
-
-    <div class="sb-editor-main">
-        <div class="sb-panel">
-            <div class="sb-editor-subhead">
-                <h2 class="sb-panel-title">Страницы</h2>
-                <span class="sb-badge">siteId <?= (int)$siteId ?></span>
+    <div class="sb-dashboard">
+        <header class="sb-dashboard-topbar">
+            <div class="sb-dashboard-topbar__main">
+                <h1 class="sb-dashboard-title">Dashboard сайтов</h1>
+                <p class="sb-dashboard-subtitle">
+                    Сводка по всем сайтам конструктора и активности пользователей
+                </p>
             </div>
 
-            <div class="sb-editor-create-page">
-                <div class="sb-form-row align-end">
-                    <div class="sb-field">
-                        <label for="newPageTitle">Название страницы</label>
-                        <input class="sb-input" type="text" id="newPageTitle" placeholder="Например: Главная">
+            <div class="sb-dashboard-actions">
+                <input class="sb-dashboard-search" type="text" id="dashboardSearch" placeholder="Поиск по сайтам">
+                <select class="sb-dashboard-filter" id="dashboardPeriod">
+                    <option value="7">7 дней</option>
+                    <option value="30" selected>30 дней</option>
+                    <option value="90">90 дней</option>
+                </select>
+                <button class="sb-btn sb-btn-light" type="button" id="exportBtn">Экспорт</button>
+                <button class="sb-btn sb-btn-primary" type="button" id="createSiteQuickBtn">Создать сайт</button>
+            </div>
+        </header>
+
+        <section class="sb-dashboard-kpis">
+            <article class="sb-kpi-card">
+                <div class="sb-kpi-card__label">Всего сайтов</div>
+                <div class="sb-kpi-card__value" id="kpiSitesTotal">0</div>
+                <div class="sb-kpi-card__meta">Все сайты в системе</div>
+            </article>
+
+            <article class="sb-kpi-card">
+                <div class="sb-kpi-card__label">Опубликованные</div>
+                <div class="sb-kpi-card__value" id="kpiPublished">0</div>
+                <div class="sb-kpi-card__meta success">Активные сайты</div>
+            </article>
+
+            <article class="sb-kpi-card">
+                <div class="sb-kpi-card__label">Черновики</div>
+                <div class="sb-kpi-card__value" id="kpiDrafts">0</div>
+                <div class="sb-kpi-card__meta warning">Требуют публикации</div>
+            </article>
+
+            <article class="sb-kpi-card">
+                <div class="sb-kpi-card__label">Всего посещений</div>
+                <div class="sb-kpi-card__value" id="kpiVisits">0</div>
+                <div class="sb-kpi-card__meta">Суммарно по системе</div>
+            </article>
+
+            <article class="sb-kpi-card">
+                <div class="sb-kpi-card__label">Уникальные посетители</div>
+                <div class="sb-kpi-card__value" id="kpiUnique">0</div>
+                <div class="sb-kpi-card__meta">За выбранный период</div>
+            </article>
+
+            <article class="sb-kpi-card">
+                <div class="sb-kpi-card__label">Средняя сессия</div>
+                <div class="sb-kpi-card__value" id="kpiAvgSession">0м</div>
+                <div class="sb-kpi-card__meta">Среднее по сайтам</div>
+            </article>
+        </section>
+
+        <section class="sb-dashboard-grid sb-dashboard-grid--analytics">
+            <article class="sb-dash-card">
+                <div class="sb-dash-card__head">
+                    <h2>Динамика посещаемости</h2>
+                    <div class="sb-dash-toolbar">
+                        <button class="sb-chip active" type="button">Посещения</button>
+                        <button class="sb-chip" type="button">Уникальные</button>
                     </div>
-                    <div class="sb-field">
-                        <label for="newPageSlug">Slug</label>
-                        <input class="sb-input" type="text" id="newPageSlug" placeholder="Например: home">
+                </div>
+                <div class="sb-chart-placeholder">
+                    Здесь будет график посещаемости
+                </div>
+            </article>
+
+            <article class="sb-dash-card">
+                <div class="sb-dash-card__head">
+                    <h2>Популярные сайты</h2>
+                </div>
+                <div class="sb-rank-list" id="popularSitesBlock">
+                    <div class="sb-rank-item">
+                        <div>
+                            <div class="sb-rank-item__title">Нет данных</div>
+                            <div class="sb-rank-item__meta">Список появится после загрузки</div>
+                        </div>
+                        <div class="sb-rank-item__value">—</div>
                     </div>
-                    <button type="button" class="sb-btn sb-btn-primary" id="createPageBtn">Создать</button>
+                </div>
+            </article>
+        </section>
+
+        <section class="sb-dash-card">
+            <div class="sb-dash-card__head">
+                <h2>Сайты со статистикой</h2>
+                <div class="sb-dash-toolbar">
+                    <button class="sb-chip active" type="button">Все</button>
+                    <button class="sb-chip" type="button">Published</button>
+                    <button class="sb-chip" type="button">Draft</button>
+                    <button class="sb-btn sb-btn-light sb-btn-small" type="button" id="reloadBtn">Обновить список</button>
                 </div>
             </div>
 
-            <div id="pagesContainer" class="sb-editor-pages-list">
-                <div class="sb-empty">Загрузка страниц...</div>
+            <div class="sb-dash-table-wrap">
+                <table class="sb-dash-table">
+                    <thead>
+                    <tr>
+                        <th>Сайт</th>
+                        <th>Статус</th>
+                        <th>Пользователи</th>
+                        <th>Посещения</th>
+                        <th>Уникальные</th>
+                        <th>Средняя длительность</th>
+                        <th>Активность</th>
+                        <th>Последнее изменение</th>
+                        <th>Действия</th>
+                    </tr>
+                    </thead>
+                    <tbody id="sitesStatsTableBody">
+                    <tr>
+                        <td colspan="9">Загрузка...</td>
+                    </tr>
+                    </tbody>
+                </table>
             </div>
-        </div>
+        </section>
 
-        <div class="sb-panel">
-            <div class="sb-editor-subhead">
-                <h2 class="sb-panel-title">Блоки страницы</h2>
-                <button type="button" class="sb-btn sb-btn-light sb-btn-small" id="reloadBlocksBtn">Обновить</button>
-            </div>
-
-            <div id="currentPageCard" class="sb-editor-current-page-card">
-                <h3 class="sb-editor-current-page-title">Страница не выбрана</h3>
-                <div id="currentPageInfo" class="sb-meta">Выберите страницу слева, чтобы увидеть её блоки.</div>
-            </div>
-
-            <div class="sb-editor-statbar">
-                <div class="sb-editor-stat">Страниц: <span id="pagesCount" style="margin-left:6px;">0</span></div>
-                <div class="sb-editor-stat">Блоков: <span id="blocksCount" style="margin-left:6px;">0</span></div>
-            </div>
-
-            <div class="sb-editor-block-toolbar">
-                <button type="button" class="sb-btn sb-btn-light sb-btn-small js-add-block" data-type="text">+ Text</button>
-                <button type="button" class="sb-btn sb-btn-light sb-btn-small js-add-block" data-type="heading">+ Heading</button>
-                <button type="button" class="sb-btn sb-btn-light sb-btn-small js-add-block" data-type="button">+ Button</button>
-                <button type="button" class="sb-btn sb-btn-light sb-btn-small js-add-block" data-type="html">+ HTML</button>
-                <button type="button" class="sb-btn sb-btn-light sb-btn-small js-add-block" data-type="spacer">+ Spacer</button>
-            </div>
-
-            <div id="blocksContainer" class="sb-editor-blocks-list">
-                <div class="sb-empty">Выберите страницу</div>
-            </div>
-        </div>
-
-        <div class="sb-panel sb-editor-panel-sticky">
-            <h2 class="sb-panel-title">Редактор блока</h2>
-            <div class="sb-editor-side-note">Редактирование content и props выполняется через JSON.</div>
-
-            <div id="blockEditorEmpty" class="sb-empty sb-editor-side-empty">
-                <span class="sb-editor-tip">Подсказка</span>
-                <div>Выберите блок в центральной колонке. После этого справа откроется его JSON-редактор.</div>
-            </div>
-
-            <div id="blockEditorForm" class="sb-hidden">
-                <div class="sb-field" style="margin-bottom:12px;">
-                    <label for="editBlockType">Тип</label>
-                    <input class="sb-input" type="text" id="editBlockType" readonly>
+        <section class="sb-dashboard-grid sb-dashboard-grid--bottom">
+            <article class="sb-dash-card">
+                <div class="sb-dash-card__head">
+                    <h2>Низкая активность</h2>
                 </div>
-
-                <div class="sb-field" style="margin-bottom:12px;">
-                    <label for="editBlockContentText">Content / JSON</label>
-                    <textarea class="sb-textarea" id="editBlockContentText"></textarea>
+                <div class="sb-rank-list" id="lowActivityBlock">
+                    <div class="sb-rank-item">
+                        <div>
+                            <div class="sb-rank-item__title">Нет данных</div>
+                            <div class="sb-rank-item__meta">Список появится после загрузки</div>
+                        </div>
+                        <span class="sb-status-badge warning">—</span>
+                    </div>
                 </div>
+            </article>
 
-                <div class="sb-field" style="margin-bottom:12px;">
-                    <label for="editBlockPropsText">Props / JSON</label>
-                    <textarea class="sb-textarea" id="editBlockPropsText">{}</textarea>
+            <article class="sb-dash-card">
+                <div class="sb-dash-card__head">
+                    <h2>Последние действия пользователей</h2>
                 </div>
+                <div class="sb-activity-list" id="lastActionsBlock">
+                    <div class="sb-activity-item">
+                        <div>
+                            <div class="sb-activity-item__title">Нет данных</div>
+                            <div class="sb-activity-item__meta">Журнал действий пока пуст</div>
+                        </div>
+                    </div>
+                </div>
+            </article>
 
-                <div class="sb-form-row">
-                    <button type="button" class="sb-btn sb-btn-primary" id="saveBlockBtn">Сохранить блок</button>
-                    <button type="button" class="sb-btn sb-btn-danger" id="deleteBlockBtn">Удалить блок</button>
+            <article class="sb-dash-card">
+                <div class="sb-dash-card__head">
+                    <h2>Сводная активность по системе</h2>
                 </div>
+                <div class="sb-system-stats">
+                    <div class="sb-system-stat">
+                        <span>Редактирования страниц</span>
+                        <strong id="sysEdits">0</strong>
+                    </div>
+                    <div class="sb-system-stat">
+                        <span>Публикации</span>
+                        <strong id="sysPublishes">0</strong>
+                    </div>
+                    <div class="sb-system-stat">
+                        <span>Загрузки файлов</span>
+                        <strong id="sysUploads">0</strong>
+                    </div>
+                    <div class="sb-system-stat">
+                        <span>Входы в админку</span>
+                        <strong id="sysLogins">0</strong>
+                    </div>
+                </div>
+            </article>
+        </section>
 
-                <div class="sb-editor-json-actions">
-                    <button type="button" class="sb-btn sb-btn-gray sb-btn-small" id="formatJsonBtn">Форматировать JSON</button>
-                    <button type="button" class="sb-btn sb-btn-gray sb-btn-small" id="resetPropsBtn">Сбросить props</button>
-                </div>
+        <section class="sb-dash-card">
+            <div class="sb-dash-card__head">
+                <h2>Создать сайт</h2>
             </div>
-        </div>
-    </div>
+            <div class="sb-form-row align-end">
+                <div class="sb-field">
+                    <label for="siteName">Название сайта</label>
+                    <input class="sb-input" type="text" id="siteName" placeholder="Например: Корпоративный портал">
+                </div>
+                <div class="sb-field">
+                    <label for="siteSlug">Slug</label>
+                    <input class="sb-input" type="text" id="siteSlug" placeholder="Например: corp-portal">
+                </div>
+                <button type="button" class="sb-btn sb-btn-primary" id="createSiteBtn">Создать</button>
+            </div>
+        </section>
 
-    <div class="sb-panel" style="margin-top:20px;">
-        <h2 class="sb-panel-title">Отладка</h2>
-        <div id="output" class="sb-output">Здесь будут ответы API...</div>
+        <section class="sb-dash-card">
+            <div class="sb-dash-card__head">
+                <h2>Отладка</h2>
+            </div>
+            <div id="output" class="sb-output">Здесь будут ответы API...</div>
+        </section>
     </div>
 </div>
 
@@ -470,23 +702,12 @@ if ($siteId <= 0) {
 (function () {
     var BASE_PATH = '<?= CUtil::JSEscape($basePath) ?>';
     var API_URL = BASE_PATH + '/api.php';
-    var SITE_ID = <?= (int)$siteId ?>;
 
     var output = document.getElementById('output');
-    var pagesContainer = document.getElementById('pagesContainer');
-    var blocksContainer = document.getElementById('blocksContainer');
-    var currentPageInfo = document.getElementById('currentPageInfo');
-    var currentPageCardTitle = document.querySelector('#currentPageCard .sb-editor-current-page-title');
-    var pagesCount = document.getElementById('pagesCount');
-    var blocksCount = document.getElementById('blocksCount');
-
-    var state = {
-        site: null,
-        pages: [],
-        blocks: [],
-        currentPageId: 0,
-        currentBlockId: 0
-    };
+    var sitesStatsTableBody = document.getElementById('sitesStatsTableBody');
+    var popularSitesBlock = document.getElementById('popularSitesBlock');
+    var lowActivityBlock = document.getElementById('lowActivityBlock');
+    var lastActionsBlock = document.getElementById('lastActionsBlock');
 
     function print(data) {
         if (typeof data === 'string') {
@@ -533,9 +754,7 @@ if ($siteId <= 0) {
             }, data || {}),
             onsuccess: function (res) {
                 print(res);
-                if (typeof onSuccess === 'function') {
-                    onSuccess(res);
-                }
+                if (typeof onSuccess === 'function') onSuccess(res);
             },
             onfailure: function (err) {
                 print({
@@ -543,626 +762,260 @@ if ($siteId <= 0) {
                     error: 'AJAX_ERROR',
                     detail: err
                 });
-                if (typeof onFailure === 'function') {
-                    onFailure(err);
-                }
+                if (typeof onFailure === 'function') onFailure(err);
             }
         });
     }
 
-    function updateStats() {
-        pagesCount.textContent = String(Array.isArray(state.pages) ? state.pages.length : 0);
-        blocksCount.textContent = String(Array.isArray(state.blocks) ? state.blocks.length : 0);
+    function setText(id, value) {
+        var el = document.getElementById(id);
+        if (el) {
+            el.textContent = String(value);
+        }
     }
 
-    function loadSite(next) {
-        api('site.get', { siteId: SITE_ID }, function (res) {
-            if (res && res.ok === true) {
-                state.site = res.site || null;
-            }
-            if (typeof next === 'function') {
-                next();
-            }
-        });
+    function formatDuration(minutes) {
+        minutes = Number(minutes || 0);
+        if (minutes <= 0) return '0м';
+        var h = Math.floor(minutes / 60);
+        var m = minutes % 60;
+        if (h > 0) {
+            return h + 'ч ' + m + 'м';
+        }
+        return m + 'м';
     }
 
-    function loadPages(next) {
-        pagesContainer.innerHTML = '<div class="sb-empty">Загрузка страниц...</div>';
+    function buildFakeSiteStats(site, index) {
+        var published = !!site.homePageId;
+        var users = 40 + index * 17;
+        var visits = 300 + index * 190;
+        var unique = Math.max(20, Math.round(visits * 0.38));
+        var avgMinutes = 3 + index * 2;
+        var trend = index % 2 === 0 ? '+' + (5 + index * 3) + '%' : '-' + (2 + index) + '%';
 
-        api('page.list', { siteId: SITE_ID }, function (res) {
-            if (!res || res.ok !== true) {
-                pagesContainer.innerHTML = '<div class="sb-empty">Не удалось загрузить страницы</div>';
-                updateStats();
-                return;
-            }
-
-            state.pages = Array.isArray(res.pages) ? res.pages : [];
-
-            if (!state.currentPageId && state.pages.length) {
-                state.currentPageId = Number(state.pages[0].id || 0);
-            }
-
-            var hasCurrent = false;
-            for (var i = 0; i < state.pages.length; i++) {
-                if (Number(state.pages[i].id || 0) === Number(state.currentPageId || 0)) {
-                    hasCurrent = true;
-                    break;
-                }
-            }
-
-            if (!hasCurrent) {
-                state.currentPageId = state.pages.length ? Number(state.pages[0].id || 0) : 0;
-            }
-
-            renderPages();
-            updateStats();
-
-            if (typeof next === 'function') {
-                next();
-            }
-        });
+        return {
+            id: Number(site.id || 0),
+            name: site.name || '',
+            slug: site.slug || '',
+            status: published ? 'published' : 'draft',
+            users: users,
+            visits: visits,
+            unique: unique,
+            avgMinutes: avgMinutes,
+            trend: trend,
+            updatedAt: site.updatedAt || site.createdAt || '—'
+        };
     }
 
-    function renderPages() {
-        if (!state.pages.length) {
-            pagesContainer.innerHTML = '<div class="sb-empty">Страниц пока нет</div>';
-            currentPageCardTitle.textContent = 'Страница не выбрана';
-            currentPageInfo.textContent = 'Создайте первую страницу, чтобы начать редактирование.';
-            blocksContainer.innerHTML = '<div class="sb-empty">Выберите страницу</div>';
+    function renderKpis(stats) {
+        setText('kpiSitesTotal', stats.totalSites);
+        setText('kpiPublished', stats.publishedSites);
+        setText('kpiDrafts', stats.draftSites);
+        setText('kpiVisits', stats.totalVisits);
+        setText('kpiUnique', stats.totalUnique);
+        setText('kpiAvgSession', formatDuration(stats.avgSession));
+    }
+
+    function renderSitesTable(siteStats) {
+        if (!siteStats.length) {
+            sitesStatsTableBody.innerHTML = '<tr><td colspan="9">Сайтов пока нет</td></tr>';
             return;
         }
 
         var html = '';
-        for (var i = 0; i < state.pages.length; i++) {
-            html += renderPageCard(state.pages[i]);
+        for (var i = 0; i < siteStats.length; i++) {
+            var s = siteStats[i];
+            var statusClass = s.status === 'published' ? 'success' : 'warning';
+            var trendClass = String(s.trend).indexOf('-') === 0 ? 'down' : 'up';
+
+            html += ''
+                + '<tr>'
+                + '  <td>'
+                + '    <div class="sb-site-cell">'
+                + '      <div class="sb-site-cell__title">' + escapeHtml(s.name) + '</div>'
+                + '      <div class="sb-site-cell__meta">' + escapeHtml(s.slug) + '</div>'
+                + '    </div>'
+                + '  </td>'
+                + '  <td><span class="sb-status-badge ' + statusClass + '">' + escapeHtml(s.status) + '</span></td>'
+                + '  <td>' + s.users + '</td>'
+                + '  <td>' + s.visits + '</td>'
+                + '  <td>' + s.unique + '</td>'
+                + '  <td>' + formatDuration(s.avgMinutes) + '</td>'
+                + '  <td><span class="sb-trend ' + trendClass + '">' + escapeHtml(s.trend) + '</span></td>'
+                + '  <td>' + escapeHtml(s.updatedAt) + '</td>'
+                + '  <td>'
+                + '    <a class="sb-btn sb-btn-light sb-btn-small" href="' + BASE_PATH + '/editor.php?siteId=' + s.id + '">Открыть</a>'
+                + '  </td>'
+                + '</tr>';
         }
-        pagesContainer.innerHTML = html;
+
+        sitesStatsTableBody.innerHTML = html;
     }
 
-    function renderPageCard(page) {
-        var id = Number(page.id || 0);
-        var active = id === Number(state.currentPageId || 0) ? ' active' : '';
-        var isPublished = String(page.status || '') === 'published';
-        var badge = isPublished
-            ? '<span class="sb-badge sb-badge-green">published</span>'
-            : '<span class="sb-badge sb-badge-yellow">draft</span>';
+    function renderPopular(siteStats) {
+        if (!siteStats.length) {
+            popularSitesBlock.innerHTML = '<div class="sb-rank-item"><div><div class="sb-rank-item__title">Нет данных</div></div><div class="sb-rank-item__value">—</div></div>';
+            return;
+        }
 
-        return ''
-            + '<div class="sb-editor-page-card' + active + ' js-page-card" data-id="' + id + '">'
-            + '  <div class="sb-editor-page-head">'
-            + '    <div>'
-            + '      <div class="sb-editor-page-title">' + escapeHtml(page.title || '') + '</div>'
-            + '      <div class="sb-editor-page-slug">' + escapeHtml(page.slug || '') + '</div>'
-            + '    </div>'
-            + '    ' + badge
-            + '  </div>'
-            + '  <div class="sb-editor-page-meta">'
-            + '    <div class="sb-editor-page-meta-item">'
-            + '      <div class="sb-editor-page-meta-label">ID</div>'
-            + '      <div class="sb-editor-page-meta-value">' + id + '</div>'
-            + '    </div>'
-            + '    <div class="sb-editor-page-meta-item">'
-            + '      <div class="sb-editor-page-meta-label">Parent ID</div>'
-            + '      <div class="sb-editor-page-meta-value">' + Number(page.parentId || 0) + '</div>'
-            + '    </div>'
-            + '    <div class="sb-editor-page-meta-item">'
-            + '      <div class="sb-editor-page-meta-label">Sort</div>'
-            + '      <div class="sb-editor-page-meta-value">' + Number(page.sort || 0) + '</div>'
-            + '    </div>'
-            + '    <div class="sb-editor-page-meta-item">'
-            + '      <div class="sb-editor-page-meta-label">Published</div>'
-            + '      <div class="sb-editor-page-meta-value">' + escapeHtml(page.publishedAt || '—') + '</div>'
-            + '    </div>'
-            + '  </div>'
-            + '  <div class="sb-editor-page-actions">'
-            + '    <button type="button" class="sb-btn sb-btn-primary js-open-page" data-id="' + id + '">Открыть</button>'
-            + '    <button type="button" class="sb-btn sb-btn-light js-rename-page" data-id="' + id + '">Meta</button>'
-            + '    <button type="button" class="sb-btn sb-btn-light js-duplicate-page" data-id="' + id + '">Дублировать</button>'
-            + '    <button type="button" class="sb-btn sb-btn-light js-toggle-status" data-id="' + id + '" data-status="' + escapeHtml(page.status || 'draft') + '">'
-            +         (isPublished ? 'В draft' : 'Опубликовать')
-            + '    </button>'
-            + '    <button type="button" class="sb-btn sb-btn-gray js-move-page-up" data-id="' + id + '">↑</button>'
-            + '    <button type="button" class="sb-btn sb-btn-gray js-move-page-down" data-id="' + id + '">↓</button>'
-            + '    <button type="button" class="sb-btn sb-btn-danger js-delete-page" data-id="' + id + '">Удалить</button>'
-            + '  </div>'
-            + '</div>';
+        var sorted = siteStats.slice().sort(function (a, b) {
+            return b.visits - a.visits;
+        }).slice(0, 5);
+
+        var html = '';
+        for (var i = 0; i < sorted.length; i++) {
+            html += ''
+                + '<div class="sb-rank-item">'
+                + '  <div>'
+                + '    <div class="sb-rank-item__title">' + escapeHtml(sorted[i].name) + '</div>'
+                + '    <div class="sb-rank-item__meta">' + sorted[i].visits + ' посещений</div>'
+                + '  </div>'
+                + '  <div class="sb-rank-item__value">' + escapeHtml(sorted[i].trend) + '</div>'
+                + '</div>';
+        }
+        popularSitesBlock.innerHTML = html;
     }
 
-    function createPage() {
-        var titleInput = document.getElementById('newPageTitle');
-        var slugInput = document.getElementById('newPageSlug');
+    function renderLowActivity(siteStats) {
+        if (!siteStats.length) {
+            lowActivityBlock.innerHTML = '<div class="sb-rank-item"><div><div class="sb-rank-item__title">Нет данных</div></div><span class="sb-status-badge warning">—</span></div>';
+            return;
+        }
 
-        var title = (titleInput.value || '').trim();
+        var sorted = siteStats.slice().sort(function (a, b) {
+            return a.visits - b.visits;
+        }).slice(0, 5);
+
+        var html = '';
+        for (var i = 0; i < sorted.length; i++) {
+            html += ''
+                + '<div class="sb-rank-item">'
+                + '  <div>'
+                + '    <div class="sb-rank-item__title">' + escapeHtml(sorted[i].name) + '</div>'
+                + '    <div class="sb-rank-item__meta">' + sorted[i].visits + ' посещений</div>'
+                + '  </div>'
+                + '  <span class="sb-status-badge warning">Низкая активность</span>'
+                + '</div>';
+        }
+        lowActivityBlock.innerHTML = html;
+    }
+
+    function renderLastActions(siteStats) {
+        if (!siteStats.length) {
+            lastActionsBlock.innerHTML = '<div class="sb-activity-item"><div><div class="sb-activity-item__title">Нет данных</div></div></div>';
+            return;
+        }
+
+        var html = '';
+        for (var i = 0; i < Math.min(siteStats.length, 5); i++) {
+            html += ''
+                + '<div class="sb-activity-item">'
+                + '  <div>'
+                + '    <div class="sb-activity-item__title">admin обновил сайт "' + escapeHtml(siteStats[i].name) + '"</div>'
+                + '    <div class="sb-activity-item__meta">' + escapeHtml(siteStats[i].updatedAt) + '</div>'
+                + '  </div>'
+                + '</div>';
+        }
+        lastActionsBlock.innerHTML = html;
+    }
+
+    function renderSystemStats(siteStats) {
+        var total = siteStats.length;
+        setText('sysEdits', total * 7);
+        setText('sysPublishes', total * 2);
+        setText('sysUploads', total * 5);
+        setText('sysLogins', total * 13);
+    }
+
+    function buildDashboard(sites) {
+        var siteStats = [];
+        for (var i = 0; i < sites.length; i++) {
+            siteStats.push(buildFakeSiteStats(sites[i], i + 1));
+        }
+
+        var totalSites = siteStats.length;
+        var publishedSites = 0;
+        var draftSites = 0;
+        var totalVisits = 0;
+        var totalUnique = 0;
+        var totalAvg = 0;
+
+        for (var j = 0; j < siteStats.length; j++) {
+            if (siteStats[j].status === 'published') {
+                publishedSites++;
+            } else {
+                draftSites++;
+            }
+            totalVisits += siteStats[j].visits;
+            totalUnique += siteStats[j].unique;
+            totalAvg += siteStats[j].avgMinutes;
+        }
+
+        var avgSession = totalSites ? Math.round(totalAvg / totalSites) : 0;
+
+        renderKpis({
+            totalSites: totalSites,
+            publishedSites: publishedSites,
+            draftSites: draftSites,
+            totalVisits: totalVisits,
+            totalUnique: totalUnique,
+            avgSession: avgSession
+        });
+
+        renderSitesTable(siteStats);
+        renderPopular(siteStats);
+        renderLowActivity(siteStats);
+        renderLastActions(siteStats);
+        renderSystemStats(siteStats);
+    }
+
+    function loadDashboard() {
+        api('site.list', {}, function (res) {
+            if (!res || res.ok !== true) {
+                sitesStatsTableBody.innerHTML = '<tr><td colspan="9">Не удалось загрузить данные</td></tr>';
+                return;
+            }
+
+            buildDashboard(Array.isArray(res.sites) ? res.sites : []);
+        });
+    }
+
+    function createSite() {
+        var nameInput = document.getElementById('siteName');
+        var slugInput = document.getElementById('siteSlug');
+
+        var name = (nameInput.value || '').trim();
         var slug = (slugInput.value || '').trim();
 
-        if (!title) {
-            alert('Введите название страницы');
-            titleInput.focus();
+        if (!name) {
+            alert('Введите название сайта');
+            nameInput.focus();
             return;
         }
 
-        api('page.create', {
-            siteId: SITE_ID,
-            title: title,
+        api('site.create', {
+            name: name,
             slug: slug
         }, function (res) {
             if (!res || res.ok !== true) {
-                alert('Не удалось создать страницу');
+                alert('Не удалось создать сайт');
                 return;
             }
 
-            titleInput.value = '';
+            nameInput.value = '';
             slugInput.value = '';
-
-            state.currentPageId = Number((res.page && res.page.id) || 0);
-            loadPages(loadBlocks);
+            loadDashboard();
         });
     }
 
-    function openPage(pageId) {
-        state.currentPageId = Number(pageId || 0);
-        state.currentBlockId = 0;
-        renderPages();
-        loadBlocks();
-        clearBlockEditor();
-    }
-
-    function renamePage(pageId) {
-        var page = findPage(pageId);
-        if (!page) {
-            alert('Страница не найдена');
-            return;
-        }
-
-        var title = prompt('Название страницы:', page.title || '');
-        if (title === null) {
-            return;
-        }
-        title = title.trim();
-        if (!title) {
-            alert('Название не может быть пустым');
-            return;
-        }
-
-        var slug = prompt('Slug страницы:', page.slug || '');
-        if (slug === null) {
-            return;
-        }
-        slug = slug.trim();
-
-        api('page.updateMeta', {
-            id: pageId,
-            title: title,
-            slug: slug
-        }, function (res) {
-            if (!res || res.ok !== true) {
-                alert('Не удалось обновить страницу');
-                return;
-            }
-
-            loadPages();
-        });
-    }
-
-    function duplicatePage(pageId) {
-        api('page.duplicate', { id: pageId }, function (res) {
-            if (!res || res.ok !== true) {
-                alert('Не удалось дублировать страницу');
-                return;
-            }
-
-            state.currentPageId = Number((res.page && res.page.id) || 0);
-            loadPages(loadBlocks);
-        });
-    }
-
-    function togglePageStatus(pageId, currentStatus) {
-        var nextStatus = currentStatus === 'published' ? 'draft' : 'published';
-
-        api('page.setStatus', {
-            id: pageId,
-            status: nextStatus
-        }, function (res) {
-            if (!res || res.ok !== true) {
-                alert('Не удалось изменить статус');
-                return;
-            }
-
-            loadPages();
-        });
-    }
-
-    function movePage(pageId, dir) {
-        api('page.move', {
-            id: pageId,
-            dir: dir
-        }, function (res) {
-            if (!res || res.ok !== true) {
-                alert('Не удалось переместить страницу');
-                return;
-            }
-
-            loadPages();
-        });
-    }
-
-    function deletePage(pageId) {
-        if (!confirm('Удалить страницу #' + pageId + '?')) {
-            return;
-        }
-
-        api('page.delete', { id: pageId }, function (res) {
-            if (!res || res.ok !== true) {
-                alert('Не удалось удалить страницу');
-                return;
-            }
-
-            if (Number(state.currentPageId || 0) === Number(pageId || 0)) {
-                state.currentPageId = 0;
-                state.currentBlockId = 0;
-                clearBlockEditor();
-            }
-
-            loadPages(loadBlocks);
-        });
-    }
-
-    function loadBlocks() {
-        if (!state.currentPageId) {
-            currentPageCardTitle.textContent = 'Страница не выбрана';
-            currentPageInfo.textContent = 'Выберите страницу слева.';
-            blocksContainer.innerHTML = '<div class="sb-empty">Выберите страницу</div>';
-            state.blocks = [];
-            updateStats();
-            return;
-        }
-
-        var page = findPage(state.currentPageId);
-        if (page) {
-            currentPageCardTitle.textContent = page.title || 'Страница';
-            currentPageInfo.innerHTML =
-                '<strong>ID:</strong> ' + Number(page.id || 0)
-                + ' &nbsp;·&nbsp; <strong>Slug:</strong> ' + escapeHtml(page.slug || '')
-                + ' &nbsp;·&nbsp; <strong>Status:</strong> ' + escapeHtml(page.status || 'draft');
-        }
-
-        blocksContainer.innerHTML = '<div class="sb-empty">Загрузка блоков...</div>';
-
-        api('block.list', { pageId: state.currentPageId }, function (res) {
-            if (!res || res.ok !== true) {
-                blocksContainer.innerHTML = '<div class="sb-empty">Не удалось загрузить блоки</div>';
-                state.blocks = [];
-                updateStats();
-                return;
-            }
-
-            state.blocks = Array.isArray(res.blocks) ? res.blocks : [];
-            renderBlocks();
-            updateStats();
-        });
-    }
-
-    function renderBlocks() {
-        if (!state.blocks.length) {
-            blocksContainer.innerHTML = '<div class="sb-empty">Блоков пока нет</div>';
-            return;
-        }
-
-        var html = '';
-        for (var i = 0; i < state.blocks.length; i++) {
-            html += renderBlockCard(state.blocks[i], i);
-        }
-        blocksContainer.innerHTML = html;
-    }
-
-    function renderBlockCard(block, index) {
-        var id = Number(block.id || 0);
-        var type = escapeHtml(block.type || '');
-        var preview = escapeHtml(buildPreviewText(block));
-        var selected = id === Number(state.currentBlockId || 0) ? ' selected' : '';
-
-        return ''
-            + '<div class="sb-editor-block-card' + selected + '">'
-            + '  <div class="sb-editor-block-head">'
-            + '    <div>'
-            + '      <div class="sb-editor-block-title">' + type + ' #' + id + '</div>'
-            + '      <div class="sb-meta"><strong>Sort:</strong> ' + Number(block.sort || 0) + '</div>'
-            + '    </div>'
-            + '    <span class="sb-badge">block</span>'
-            + '  </div>'
-            + '  <div class="sb-editor-block-preview">' + preview + '</div>'
-            + '  <div class="sb-editor-block-actions">'
-            + '    <button type="button" class="sb-btn sb-btn-primary js-edit-block" data-id="' + id + '">Редактировать</button>'
-            + '    <button type="button" class="sb-btn sb-btn-light js-duplicate-block" data-id="' + id + '">Дублировать</button>'
-            + '    <button type="button" class="sb-btn sb-btn-gray js-move-block-up" data-id="' + id + '"' + (index === 0 ? ' disabled' : '') + '>↑</button>'
-            + '    <button type="button" class="sb-btn sb-btn-gray js-move-block-down" data-id="' + id + '"' + (index === state.blocks.length - 1 ? ' disabled' : '') + '>↓</button>'
-            + '    <button type="button" class="sb-btn sb-btn-danger js-delete-block" data-id="' + id + '">Удалить</button>'
-            + '  </div>'
-            + '</div>';
-    }
-
-    function buildPreviewText(block) {
-        var type = String(block.type || '');
-        var content = block.content || {};
-
-        if (type === 'text') {
-            return String(content.html || '').replace(/<[^>]*>/g, ' ').trim() || '[text]';
-        }
-        if (type === 'heading') {
-            return String(content.text || '') || '[heading]';
-        }
-        if (type === 'button') {
-            return (content.text || '[button]') + ' → ' + (content.href || '');
-        }
-        if (type === 'html') {
-            return String(content.html || '').replace(/<[^>]*>/g, ' ').trim() || '[html]';
-        }
-        if (type === 'spacer') {
-            return 'height: ' + String(content.height || 0);
-        }
-
-        return JSON.stringify(content);
-    }
-
-    function addBlock(type) {
-        if (!state.currentPageId) {
-            alert('Сначала выберите страницу');
-            return;
-        }
-
-        api('block.create', {
-            pageId: state.currentPageId,
-            type: type
-        }, function (res) {
-            if (!res || res.ok !== true) {
-                alert('Не удалось создать блок');
-                return;
-            }
-
-            loadBlocks();
-        });
-    }
-
-    function editBlock(blockId) {
-        var block = findBlock(blockId);
-        if (!block) {
-            alert('Блок не найден');
-            return;
-        }
-
-        state.currentBlockId = Number(blockId || 0);
-        renderBlocks();
-
-        document.getElementById('blockEditorEmpty').classList.add('sb-hidden');
-        document.getElementById('blockEditorForm').classList.remove('sb-hidden');
-        document.getElementById('editBlockType').value = block.type || '';
-        document.getElementById('editBlockContentText').value = JSON.stringify(block.content || {}, null, 2);
-        document.getElementById('editBlockPropsText').value = JSON.stringify(block.props || {}, null, 2);
-    }
-
-    function clearBlockEditor() {
-        state.currentBlockId = 0;
-        renderBlocks();
-        document.getElementById('blockEditorEmpty').classList.remove('sb-hidden');
-        document.getElementById('blockEditorForm').classList.add('sb-hidden');
-        document.getElementById('editBlockType').value = '';
-        document.getElementById('editBlockContentText').value = '';
-        document.getElementById('editBlockPropsText').value = '{}';
-    }
-
-    function saveBlock() {
-        if (!state.currentBlockId) {
-            return;
-        }
-
-        var contentText = document.getElementById('editBlockContentText').value || '{}';
-        var propsText = document.getElementById('editBlockPropsText').value || '{}';
-
-        try {
-            JSON.parse(contentText);
-        } catch (e) {
-            alert('Content должен быть валидным JSON');
-            return;
-        }
-
-        try {
-            JSON.parse(propsText);
-        } catch (e) {
-            alert('Props должен быть валидным JSON');
-            return;
-        }
-
-        api('block.update', {
-            id: state.currentBlockId,
-            content: contentText,
-            props: propsText
-        }, function (res) {
-            if (!res || res.ok !== true) {
-                alert('Не удалось сохранить блок');
-                return;
-            }
-
-            loadBlocks();
-        });
-    }
-
-    function deleteBlock(blockId) {
-        if (!confirm('Удалить блок #' + blockId + '?')) {
-            return;
-        }
-
-        api('block.delete', { id: blockId }, function (res) {
-            if (!res || res.ok !== true) {
-                alert('Не удалось удалить блок');
-                return;
-            }
-
-            if (Number(state.currentBlockId || 0) === Number(blockId || 0)) {
-                clearBlockEditor();
-            }
-
-            loadBlocks();
-        });
-    }
-
-    function duplicateBlock(blockId) {
-        api('block.duplicate', { id: blockId }, function (res) {
-            if (!res || res.ok !== true) {
-                alert('Не удалось дублировать блок');
-                return;
-            }
-
-            loadBlocks();
-        });
-    }
-
-    function moveBlock(blockId, dir) {
-        api('block.move', {
-            id: blockId,
-            dir: dir
-        }, function (res) {
-            if (!res || res.ok !== true) {
-                alert('Не удалось переместить блок');
-                return;
-            }
-
-            loadBlocks();
-        });
-    }
-
-    function findPage(pageId) {
-        for (var i = 0; i < state.pages.length; i++) {
-            if (Number(state.pages[i].id || 0) === Number(pageId || 0)) {
-                return state.pages[i];
-            }
-        }
-        return null;
-    }
-
-    function findBlock(blockId) {
-        for (var i = 0; i < state.blocks.length; i++) {
-            if (Number(state.blocks[i].id || 0) === Number(blockId || 0)) {
-                return state.blocks[i];
-            }
-        }
-        return null;
-    }
-
-    function formatCurrentJson() {
-        var contentEl = document.getElementById('editBlockContentText');
-        var propsEl = document.getElementById('editBlockPropsText');
-
-        try {
-            contentEl.value = JSON.stringify(JSON.parse(contentEl.value || '{}'), null, 2);
-        } catch (e) {}
-
-        try {
-            propsEl.value = JSON.stringify(JSON.parse(propsEl.value || '{}'), null, 2);
-        } catch (e) {}
-    }
-
-    function resetProps() {
-        document.getElementById('editBlockPropsText').value = '{}';
-    }
-
-    document.getElementById('createPageBtn').addEventListener('click', createPage);
-    document.getElementById('reloadBlocksBtn').addEventListener('click', loadBlocks);
-    document.getElementById('saveBlockBtn').addEventListener('click', saveBlock);
-    document.getElementById('deleteBlockBtn').addEventListener('click', function () {
-        if (state.currentBlockId) {
-            deleteBlock(state.currentBlockId);
-        }
+    document.getElementById('createSiteBtn').addEventListener('click', createSite);
+    document.getElementById('createSiteQuickBtn').addEventListener('click', function () {
+        document.getElementById('siteName').focus();
+        window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' });
     });
-    document.getElementById('formatJsonBtn').addEventListener('click', formatCurrentJson);
-    document.getElementById('resetPropsBtn').addEventListener('click', resetProps);
-
-    document.addEventListener('click', function (e) {
-        var pageCard = e.target.closest('.js-page-card');
-        if (pageCard && !e.target.closest('button, a')) {
-            openPage(parseInt(pageCard.getAttribute('data-id'), 10) || 0);
-            return;
-        }
-
-        var addBlockBtn = e.target.closest('.js-add-block');
-        if (addBlockBtn) {
-            addBlock(addBlockBtn.getAttribute('data-type') || 'text');
-            return;
-        }
-
-        var openPageBtn = e.target.closest('.js-open-page');
-        if (openPageBtn) {
-            openPage(parseInt(openPageBtn.getAttribute('data-id'), 10) || 0);
-            return;
-        }
-
-        var renamePageBtn = e.target.closest('.js-rename-page');
-        if (renamePageBtn) {
-            renamePage(parseInt(renamePageBtn.getAttribute('data-id'), 10) || 0);
-            return;
-        }
-
-        var duplicatePageBtn = e.target.closest('.js-duplicate-page');
-        if (duplicatePageBtn) {
-            duplicatePage(parseInt(duplicatePageBtn.getAttribute('data-id'), 10) || 0);
-            return;
-        }
-
-        var toggleStatusBtn = e.target.closest('.js-toggle-status');
-        if (toggleStatusBtn) {
-            togglePageStatus(
-                parseInt(toggleStatusBtn.getAttribute('data-id'), 10) || 0,
-                toggleStatusBtn.getAttribute('data-status') || 'draft'
-            );
-            return;
-        }
-
-        var movePageUpBtn = e.target.closest('.js-move-page-up');
-        if (movePageUpBtn) {
-            movePage(parseInt(movePageUpBtn.getAttribute('data-id'), 10) || 0, 'up');
-            return;
-        }
-
-        var movePageDownBtn = e.target.closest('.js-move-page-down');
-        if (movePageDownBtn) {
-            movePage(parseInt(movePageDownBtn.getAttribute('data-id'), 10) || 0, 'down');
-            return;
-        }
-
-        var deletePageBtn = e.target.closest('.js-delete-page');
-        if (deletePageBtn) {
-            deletePage(parseInt(deletePageBtn.getAttribute('data-id'), 10) || 0);
-            return;
-        }
-
-        var editBlockBtn = e.target.closest('.js-edit-block');
-        if (editBlockBtn) {
-            editBlock(parseInt(editBlockBtn.getAttribute('data-id'), 10) || 0);
-            return;
-        }
-
-        var deleteBlockBtn = e.target.closest('.js-delete-block');
-        if (deleteBlockBtn) {
-            deleteBlock(parseInt(deleteBlockBtn.getAttribute('data-id'), 10) || 0);
-            return;
-        }
-
-        var duplicateBlockBtn = e.target.closest('.js-duplicate-block');
-        if (duplicateBlockBtn) {
-            duplicateBlock(parseInt(duplicateBlockBtn.getAttribute('data-id'), 10) || 0);
-            return;
-        }
-
-        var moveBlockUpBtn = e.target.closest('.js-move-block-up');
-        if (moveBlockUpBtn) {
-            moveBlock(parseInt(moveBlockUpBtn.getAttribute('data-id'), 10) || 0, 'up');
-            return;
-        }
-
-        var moveBlockDownBtn = e.target.closest('.js-move-block-down');
-        if (moveBlockDownBtn) {
-            moveBlock(parseInt(moveBlockDownBtn.getAttribute('data-id'), 10) || 0, 'down');
-            return;
-        }
+    document.getElementById('reloadBtn').addEventListener('click', loadDashboard);
+    document.getElementById('exportBtn').addEventListener('click', function () {
+        alert('Экспорт можно подключить позже');
     });
 
     window.onerror = function (message, source, lineno, colno, error) {
@@ -1176,31 +1029,85 @@ if ($siteId <= 0) {
         });
     };
 
-    loadSite(function () {
-        loadPages(function () {
-            if (state.currentPageId) {
-                loadBlocks();
-            } else {
-                updateStats();
-            }
-        });
-    });
+    loadDashboard();
 })();
 </script>
 </body>
 </html>
 
-Что изменилось по сути:
 
-карточка страницы слева теперь выбирается кликом
+---
 
-колонки сбалансированы лучше
+Что ты получишь после замены
 
-правая панель уже и полезнее
+После этого:
 
-центр сильнее выделен
+index.php станет dashboard-страницей
 
-страница и блоки читаются лучше
+сверху будут KPI
+
+будет зона под график
+
+будет таблица сайтов со статистикой
+
+будет блок популярных сайтов
+
+будет блок низкой активности
+
+будет блок последних действий
+
+будет сводная активность
+
+всё уже будет в единой стилистике
 
 
-После этого уже можно переходить к следующему экрану. Логично — menu.php до такого же уровня.
+
+---
+
+Что важно сейчас понимать
+
+Сейчас часть данных будет демо-расчётной, потому что у тебя пока нет реальной аналитики посещаемости и журналов действий в нужном виде.
+
+То есть:
+
+реальные сайты берутся из site.list
+
+а посещения, уникальные, средняя сессия, последние действия — пока считаются mock-логикой в JS
+
+
+Это нормально для этапа дизайна и сборки интерфейса.
+
+
+---
+
+Что делать после внедрения
+
+1. Создай файл
+
+/local/sitebuilder/assets/admin/dashboard.css
+
+2. Вставь туда CSS из шага 1
+
+3. Полностью замени
+
+/local/sitebuilder/index.php
+
+на код из шага 2
+
+4. Обнови страницу
+
+/local/sitebuilder/index.php
+
+
+---
+
+Что делать дальше
+
+Когда этот dashboard встанет, следующим шагом уже можно:
+
+или подключить реальную статистику
+
+или привести editor.php к такому же уровню дизайна
+
+
+Если хочешь, следующим сообщением я сделаю тебе dashboard-версию editor.php в том же визуальном стиле.
