@@ -1,687 +1,405 @@
-Тогда дальше — layout.php под admin.css.
+Отлично. Раз основные админские страницы уже привели в порядок, следующий правильный шаг — подтянуть публичную часть, чтобы сайт выглядел аккуратнее и более “прикладным”, а не как сырая демо-страница.
 
-Полный файл /local/sitebuilder/layout.php
+Логично сделать это так:
 
-<?php
-require $_SERVER['DOCUMENT_ROOT'] . '/bitrix/modules/main/include/prolog_before.php';
+1. обновить public.css
 
-global $APPLICATION, $USER;
 
-if (!$USER->IsAuthorized()) {
-    require $_SERVER['DOCUMENT_ROOT'] . '/auth.php';
-    exit;
+2. слегка улучшить шаблон views/layout/public_page.php
+
+
+
+Начнём с самого безопасного и заметного — полного public.css.
+
+Полный файл /local/sitebuilder/assets/public/public.css
+
+* {
+    box-sizing: border-box;
 }
 
-CJSCore::Init(['ajax']);
-
-header('Content-Type: text/html; charset=UTF-8');
-
-$basePath = rtrim(str_replace($_SERVER['DOCUMENT_ROOT'], '', __DIR__), '/');
-$siteId = (int)($_GET['siteId'] ?? 0);
-
-if ($siteId <= 0) {
-    ?>
-    <!doctype html>
-    <html lang="ru">
-    <head>
-        <meta charset="UTF-8">
-        <title>SiteBuilder / Layout</title>
-        <?php $APPLICATION->ShowHead(); ?>
-        <link rel="stylesheet" href="<?= htmlspecialchars($basePath, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?>/assets/admin/admin.css">
-    </head>
-    <body class="sb-admin-body">
-        <div class="sb-page">
-            <h1 class="sb-title">Не передан siteId</h1>
-            <p><a class="sb-back-link" href="<?= htmlspecialchars($basePath, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?>/index.php">Вернуться к списку сайтов</a></p>
-        </div>
-    </body>
-    </html>
-    <?php
-    exit;
+html,
+body {
+    margin: 0;
+    padding: 0;
 }
-?>
-<!doctype html>
-<html lang="ru">
-<head>
-    <meta charset="UTF-8">
-    <title>SiteBuilder / Layout</title>
-    <?php $APPLICATION->ShowHead(); ?>
-    <link rel="stylesheet" href="<?= htmlspecialchars($basePath, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?>/assets/admin/admin.css">
-    <style>
-        .sb-layout-zones-grid {
-            display: grid;
-            grid-template-columns: repeat(2, 1fr);
-            gap: 16px;
-        }
 
-        .sb-layout-zone-card {
-            border: 1px solid #e5e7eb;
-            border-radius: 14px;
-            background: #fff;
-            overflow: hidden;
-        }
+body {
+    font-family: Arial, sans-serif;
+    color: #1f2937;
+    background: #f5f7fb;
+    line-height: 1.5;
+}
 
-        .sb-layout-zone-head {
-            padding: 14px 16px;
-            border-bottom: 1px solid #e5e7eb;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            gap: 12px;
-        }
+a {
+    color: var(--sb-accent);
+}
 
-        .sb-layout-zone-title {
-            margin: 0;
-            font-size: 16px;
-            font-weight: 700;
-            text-transform: capitalize;
-        }
+.sb-public-shell {
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+}
 
-        .sb-layout-zone-body {
-            padding: 16px;
-        }
+.sb-container {
+    width: 100%;
+    max-width: var(--sb-container-width);
+    margin: 0 auto;
+    padding: 0 20px;
+}
 
-        .sb-layout-blocks {
-            display: flex;
-            flex-direction: column;
-            gap: 10px;
-        }
+.sb-public-header,
+.sb-public-footer {
+    background: #ffffff;
+    border-bottom: 1px solid #e5e7eb;
+}
 
-        .sb-layout-block {
-            border: 1px solid #e5e7eb;
-            border-radius: 12px;
-            background: #fafafa;
-            padding: 12px;
-        }
+.sb-public-footer {
+    border-top: 1px solid #e5e7eb;
+    border-bottom: 0;
+    margin-top: auto;
+}
 
-        .sb-layout-block-head {
-            display: flex;
-            justify-content: space-between;
-            gap: 12px;
-            align-items: flex-start;
-        }
+.sb-public-header .sb-container,
+.sb-public-footer .sb-container {
+    padding-top: 18px;
+    padding-bottom: 18px;
+}
 
-        .sb-layout-block-title {
-            margin: 0 0 6px;
-            font-size: 15px;
-            font-weight: 700;
-        }
+.sb-public-main .sb-container {
+    padding-top: 24px;
+    padding-bottom: 24px;
+}
 
-        .sb-layout-editor-box {
-            margin-top: 20px;
-        }
+.sb-brand {
+    font-size: 28px;
+    font-weight: 700;
+    color: var(--sb-accent);
+    margin-bottom: 14px;
+}
 
-        @media (max-width: 1200px) {
-            .sb-layout-zones-grid {
-                grid-template-columns: 1fr;
-            }
-        }
-    </style>
-</head>
-<body class="sb-admin-body">
-<div class="sb-page">
-    <div class="sb-topbar">
-        <div>
-            <a class="sb-back-link" href="<?= htmlspecialchars($basePath, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?>/index.php">← К списку сайтов</a>
-            <h1 class="sb-title">Layout сайта</h1>
-            <p class="sb-subtitle">siteId = <?= (int)$siteId ?></p>
-        </div>
-    </div>
+.sb-public-menu {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+}
 
-    <div class="sb-panel">
-        <h2 class="sb-panel-title">Настройки layout</h2>
+.sb-public-menu__link {
+    display: inline-flex;
+    align-items: center;
+    min-height: 38px;
+    text-decoration: none;
+    color: var(--sb-accent);
+    font-weight: 600;
+    padding: 8px 12px;
+    border-radius: 10px;
+    transition: background .15s ease, color .15s ease;
+}
 
-        <div class="sb-grid-4">
-            <div class="sb-field">
-                <label for="showHeader">Show header</label>
-                <select class="sb-select" id="showHeader">
-                    <option value="1">Да</option>
-                    <option value="0">Нет</option>
-                </select>
-            </div>
+.sb-public-menu__link:hover {
+    background: #eef2ff;
+}
 
-            <div class="sb-field">
-                <label for="showFooter">Show footer</label>
-                <select class="sb-select" id="showFooter">
-                    <option value="1">Да</option>
-                    <option value="0">Нет</option>
-                </select>
-            </div>
+.sb-layout {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 20px;
+    align-items: start;
+}
 
-            <div class="sb-field">
-                <label for="showLeft">Show left</label>
-                <select class="sb-select" id="showLeft">
-                    <option value="1">Да</option>
-                    <option value="0">Нет</option>
-                </select>
-            </div>
+.sb-layout.sb-layout--left {
+    grid-template-columns: var(--sb-left-width) 1fr;
+}
 
-            <div class="sb-field">
-                <label for="showRight">Show right</label>
-                <select class="sb-select" id="showRight">
-                    <option value="1">Да</option>
-                    <option value="0">Нет</option>
-                </select>
-            </div>
+.sb-layout.sb-layout--right {
+    grid-template-columns: 1fr var(--sb-right-width);
+}
 
-            <div class="sb-field">
-                <label for="leftWidth">Left width</label>
-                <input class="sb-input" type="number" id="leftWidth" min="120" max="800">
-            </div>
+.sb-layout.sb-layout--left.sb-layout--right {
+    grid-template-columns: var(--sb-left-width) 1fr var(--sb-right-width);
+}
 
-            <div class="sb-field">
-                <label for="rightWidth">Right width</label>
-                <input class="sb-input" type="number" id="rightWidth" min="120" max="800">
-            </div>
+.sb-sidebar,
+.sb-content {
+    min-width: 0;
+}
 
-            <div class="sb-field">
-                <label for="leftMode">Left mode</label>
-                <select class="sb-select" id="leftMode">
-                    <option value="blocks">blocks</option>
-                    <option value="menu">menu</option>
-                </select>
-            </div>
-        </div>
+.sb-box {
+    background: #ffffff;
+    border: 1px solid #e5e7eb;
+    border-radius: 16px;
+    padding: 18px;
+    box-shadow: 0 2px 8px rgba(15, 23, 42, 0.04);
+}
 
-        <div class="sb-toolbar" style="margin-top:16px;">
-            <button type="button" class="sb-btn sb-btn-primary" id="saveSettingsBtn">Сохранить layout settings</button>
-            <button type="button" class="sb-btn sb-btn-light" id="reloadBtn">Обновить</button>
-        </div>
-    </div>
+.sb-box--content {
+    padding: 24px;
+}
 
-    <div class="sb-layout-zones-grid" id="zonesContainer"></div>
+.sb-page-title {
+    margin: 0 0 24px;
+    font-size: 34px;
+    line-height: 1.15;
+    font-weight: 700;
+    color: #111827;
+}
 
-    <div class="sb-panel sb-layout-editor-box">
-        <h2 class="sb-panel-title">Редактор layout-блока</h2>
+.sb-block {
+    margin: 0 0 18px;
+}
 
-        <div id="layoutBlockEditorEmpty" class="sb-empty">Выберите блок для редактирования</div>
+.sb-block:last-child {
+    margin-bottom: 0;
+}
 
-        <div id="layoutBlockEditorForm" class="sb-hidden">
-            <div class="sb-field" style="margin-bottom:12px;">
-                <label for="editLayoutBlockZone">Zone</label>
-                <input class="sb-input" type="text" id="editLayoutBlockZone" readonly>
-            </div>
+.sb-block__inner {
+    min-width: 0;
+}
 
-            <div class="sb-field" style="margin-bottom:12px;">
-                <label for="editLayoutBlockType">Тип</label>
-                <input class="sb-input" type="text" id="editLayoutBlockType" readonly>
-            </div>
+.sb-text {
+    font-size: 16px;
+    line-height: 1.7;
+    color: #374151;
+}
 
-            <div class="sb-field" style="margin-bottom:12px;">
-                <label for="editLayoutBlockContent">Content / JSON</label>
-                <textarea class="sb-textarea" id="editLayoutBlockContent"></textarea>
-            </div>
+.sb-text p {
+    margin: 0 0 14px;
+}
 
-            <div class="sb-field" style="margin-bottom:12px;">
-                <label for="editLayoutBlockProps">Props / JSON</label>
-                <textarea class="sb-textarea" id="editLayoutBlockProps">{}</textarea>
-            </div>
+.sb-text p:last-child {
+    margin-bottom: 0;
+}
 
-            <div class="sb-toolbar">
-                <button type="button" class="sb-btn sb-btn-primary" id="saveLayoutBlockBtn">Сохранить</button>
-                <button type="button" class="sb-btn sb-btn-danger" id="deleteLayoutBlockBtn">Удалить</button>
-            </div>
-        </div>
-    </div>
+.sb-text ul,
+.sb-text ol {
+    margin: 0 0 14px 20px;
+    padding: 0;
+}
 
-    <div class="sb-panel">
-        <h2 class="sb-panel-title">Отладка</h2>
-        <div id="output" class="sb-output">Здесь будут ответы API...</div>
-    </div>
-</div>
+.sb-text li + li {
+    margin-top: 6px;
+}
 
-<script>
-(function () {
-    var BASE_PATH = '<?= CUtil::JSEscape($basePath) ?>';
-    var API_URL = BASE_PATH + '/api.php';
-    var SITE_ID = <?= (int)$siteId ?>;
+.sb-heading {
+    margin: 0 0 12px;
+    line-height: 1.2;
+    color: #111827;
+}
 
-    var output = document.getElementById('output');
-    var zonesContainer = document.getElementById('zonesContainer');
+.sb-heading--h1 {
+    font-size: 40px;
+}
 
-    var state = {
-        layout: null,
-        currentBlockId: 0,
-        currentZone: ''
-    };
+.sb-heading--h2 {
+    font-size: 32px;
+}
 
-    var ZONES = ['header', 'footer', 'left', 'right'];
+.sb-heading--h3 {
+    font-size: 26px;
+}
 
-    function print(data) {
-        if (typeof data === 'string') {
-            output.textContent = data;
-            return;
-        }
-        try {
-            output.textContent = JSON.stringify(data, null, 2);
-        } catch (e) {
-            output.textContent = String(data);
-        }
+.sb-heading--h4 {
+    font-size: 22px;
+}
+
+.sb-heading--h5 {
+    font-size: 18px;
+}
+
+.sb-heading--h6 {
+    font-size: 16px;
+}
+
+.sb-button-wrap {
+    margin: 0;
+}
+
+.sb-button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 42px;
+    padding: 12px 18px;
+    border-radius: 12px;
+    background: var(--sb-accent);
+    color: #ffffff;
+    text-decoration: none;
+    font-weight: 700;
+    transition: opacity .15s ease, transform .15s ease;
+}
+
+.sb-button:hover {
+    opacity: 0.94;
+    transform: translateY(-1px);
+}
+
+.sb-empty {
+    padding: 18px;
+    border: 1px dashed #d1d5db;
+    border-radius: 12px;
+    color: #6b7280;
+    background: #ffffff;
+}
+
+.sb-footer-note {
+    color: #6b7280;
+    font-size: 14px;
+}
+
+.sb-sidebar .sb-public-menu {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.sb-sidebar .sb-public-menu__link {
+    width: 100%;
+    border-radius: 10px;
+    padding: 10px 12px;
+}
+
+.sb-sidebar .sb-public-menu__link:hover {
+    background: #f3f4f6;
+}
+
+.sb-block--html table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 0 0 14px;
+    font-size: 14px;
+}
+
+.sb-block--html table th,
+.sb-block--html table td {
+    border: 1px solid #d1d5db;
+    padding: 10px 12px;
+    text-align: left;
+    vertical-align: top;
+}
+
+.sb-block--html table th {
+    background: #f9fafb;
+    font-weight: 700;
+}
+
+.sb-block--html img {
+    max-width: 100%;
+    height: auto;
+    border-radius: 12px;
+}
+
+.sb-block--html iframe {
+    max-width: 100%;
+}
+
+.sb-block--html pre {
+    overflow: auto;
+    background: #111827;
+    color: #f9fafb;
+    padding: 14px;
+    border-radius: 12px;
+    font-size: 13px;
+}
+
+.sb-block--html code {
+    font-family: Consolas, Monaco, monospace;
+}
+
+@media (max-width: 1000px) {
+    .sb-layout,
+    .sb-layout.sb-layout--left,
+    .sb-layout.sb-layout--right,
+    .sb-layout.sb-layout--left.sb-layout--right {
+        grid-template-columns: 1fr;
     }
 
-    function escapeHtml(value) {
-        return String(value)
-            .replace(/&/g, '&amp;')
-            .replace(/</g, '&lt;')
-            .replace(/>/g, '&gt;')
-            .replace(/"/g, '&quot;')
-            .replace(/'/g, '&#039;');
+    .sb-page-title {
+        font-size: 28px;
     }
 
-    function getSessid() {
-        if (typeof window.BX !== 'undefined' && typeof BX.bitrix_sessid === 'function') {
-            return BX.bitrix_sessid();
-        }
-        return '<?= CUtil::JSEscape(bitrix_sessid()) ?>';
+    .sb-heading--h1 {
+        font-size: 32px;
     }
 
-    function api(action, data, onSuccess, onFailure) {
-        if (typeof window.BX === 'undefined' || typeof BX.ajax !== 'function') {
-            print('BX.ajax не загружен');
-            return;
-        }
-
-        BX.ajax({
-            url: API_URL,
-            method: 'POST',
-            dataType: 'json',
-            timeout: 60,
-            data: Object.assign({
-                action: action,
-                sessid: getSessid()
-            }, data || {}),
-            onsuccess: function (res) {
-                print(res);
-                if (typeof onSuccess === 'function') {
-                    onSuccess(res);
-                }
-            },
-            onfailure: function (err) {
-                print({
-                    ok: false,
-                    error: 'AJAX_ERROR',
-                    detail: err
-                });
-                if (typeof onFailure === 'function') {
-                    onFailure(err);
-                }
-            }
-        });
+    .sb-heading--h2 {
+        font-size: 26px;
     }
 
-    function loadLayout() {
-        api('layout.get', { siteId: SITE_ID }, function (res) {
-            if (!res || res.ok !== true) {
-                zonesContainer.innerHTML = '<div class="sb-empty">Не удалось загрузить layout</div>';
-                return;
-            }
+    .sb-box,
+    .sb-box--content {
+        padding: 18px;
+    }
+}
 
-            state.layout = res.layout || null;
-            renderSettings();
-            renderZones();
-        });
+@media (max-width: 640px) {
+    .sb-container {
+        padding: 0 14px;
     }
 
-    function renderSettings() {
-        if (!state.layout || !state.layout.settings) {
-            return;
-        }
-
-        var s = state.layout.settings;
-        document.getElementById('showHeader').value = s.showHeader ? '1' : '0';
-        document.getElementById('showFooter').value = s.showFooter ? '1' : '0';
-        document.getElementById('showLeft').value = s.showLeft ? '1' : '0';
-        document.getElementById('showRight').value = s.showRight ? '1' : '0';
-        document.getElementById('leftWidth').value = Number(s.leftWidth || 260);
-        document.getElementById('rightWidth').value = Number(s.rightWidth || 260);
-        document.getElementById('leftMode').value = s.leftMode || 'blocks';
+    .sb-public-header .sb-container,
+    .sb-public-footer .sb-container {
+        padding-top: 14px;
+        padding-bottom: 14px;
     }
 
-    function renderZones() {
-        if (!state.layout || !state.layout.zones) {
-            zonesContainer.innerHTML = '<div class="sb-empty">Нет layout-зон</div>';
-            return;
-        }
-
-        var html = '';
-        for (var i = 0; i < ZONES.length; i++) {
-            html += renderZoneCard(ZONES[i], state.layout.zones[ZONES[i]] || []);
-        }
-        zonesContainer.innerHTML = html;
-
-        if (state.currentBlockId) {
-            var found = findLayoutBlock(state.currentBlockId);
-            if (!found) {
-                clearLayoutBlockEditor();
-            }
-        }
+    .sb-public-main .sb-container {
+        padding-top: 16px;
+        padding-bottom: 16px;
     }
 
-    function renderZoneCard(zone, blocks) {
-        var html = ''
-            + '<div class="sb-layout-zone-card">'
-            + '  <div class="sb-layout-zone-head">'
-            + '    <h3 class="sb-layout-zone-title">' + escapeHtml(zone) + '</h3>'
-            + '    <span class="sb-badge">' + blocks.length + ' блок(ов)</span>'
-            + '  </div>'
-            + '  <div class="sb-layout-zone-body">'
-            + '    <div class="sb-toolbar" style="margin-bottom:12px;">'
-            + '      <button type="button" class="sb-btn sb-btn-light sb-btn-small js-add-layout-block" data-zone="' + zone + '" data-type="text">+ Text</button>'
-            + '      <button type="button" class="sb-btn sb-btn-light sb-btn-small js-add-layout-block" data-zone="' + zone + '" data-type="heading">+ Heading</button>'
-            + '      <button type="button" class="sb-btn sb-btn-light sb-btn-small js-add-layout-block" data-zone="' + zone + '" data-type="button">+ Button</button>'
-            + '      <button type="button" class="sb-btn sb-btn-light sb-btn-small js-add-layout-block" data-zone="' + zone + '" data-type="html">+ HTML</button>'
-            + '    </div>';
-
-        if (!blocks.length) {
-            html += '<div class="sb-empty">Блоков нет</div>';
-        } else {
-            html += '<div class="sb-layout-blocks">';
-            for (var i = 0; i < blocks.length; i++) {
-                html += renderLayoutBlock(zone, blocks[i], i, blocks.length);
-            }
-            html += '</div>';
-        }
-
-        html += '</div></div>';
-        return html;
+    .sb-brand {
+        font-size: 24px;
     }
 
-    function renderLayoutBlock(zone, block, index, total) {
-        var id = Number(block.id || 0);
-        var type = escapeHtml(block.type || '');
-        var preview = escapeHtml(buildPreviewText(block));
-
-        return ''
-            + '<div class="sb-layout-block">'
-            + '  <div class="sb-layout-block-head">'
-            + '    <div>'
-            + '      <div class="sb-layout-block-title">' + type + ' #' + id + '</div>'
-            + '      <div class="sb-meta">'
-            + '        <div><strong>Zone:</strong> ' + escapeHtml(zone) + '</div>'
-            + '        <div><strong>Sort:</strong> ' + Number(block.sort || 0) + '</div>'
-            + '      </div>'
-            + '    </div>'
-            + '    <span class="sb-badge">layout block</span>'
-            + '  </div>'
-            + '  <div class="sb-meta" style="margin-top:8px;">' + preview + '</div>'
-            + '  <div class="sb-actions" style="margin-top:10px;">'
-            + '    <button type="button" class="sb-btn sb-btn-light sb-btn-small js-edit-layout-block" data-zone="' + zone + '" data-id="' + id + '">Редактировать</button>'
-            + '    <button type="button" class="sb-btn sb-btn-gray sb-btn-small js-move-layout-block-up" data-id="' + id + '"' + (index === 0 ? ' disabled' : '') + '>↑</button>'
-            + '    <button type="button" class="sb-btn sb-btn-gray sb-btn-small js-move-layout-block-down" data-id="' + id + '"' + (index === total - 1 ? ' disabled' : '') + '>↓</button>'
-            + '    <button type="button" class="sb-btn sb-btn-danger sb-btn-small js-delete-layout-block" data-id="' + id + '">Удалить</button>'
-            + '  </div>'
-            + '</div>';
+    .sb-page-title {
+        font-size: 24px;
+        margin-bottom: 18px;
     }
 
-    function buildPreviewText(block) {
-        var type = String(block.type || '');
-        var content = block.content || {};
-
-        if (type === 'text') {
-            return String(content.html || '').replace(/<[^>]*>/g, ' ').trim() || '[text]';
-        }
-        if (type === 'heading') {
-            return String(content.text || '') || '[heading]';
-        }
-        if (type === 'button') {
-            return (content.text || '[button]') + ' → ' + (content.href || '');
-        }
-        if (type === 'html') {
-            return String(content.html || '').replace(/<[^>]*>/g, ' ').trim() || '[html]';
-        }
-
-        return JSON.stringify(content);
+    .sb-public-menu {
+        gap: 8px;
     }
 
-    function saveLayoutSettings() {
-        var settings = {
-            showHeader: document.getElementById('showHeader').value === '1',
-            showFooter: document.getElementById('showFooter').value === '1',
-            showLeft: document.getElementById('showLeft').value === '1',
-            showRight: document.getElementById('showRight').value === '1',
-            leftWidth: parseInt(document.getElementById('leftWidth').value, 10) || 260,
-            rightWidth: parseInt(document.getElementById('rightWidth').value, 10) || 260,
-            leftMode: document.getElementById('leftMode').value || 'blocks'
-        };
-
-        api('layout.updateSettings', {
-            siteId: SITE_ID,
-            settings: JSON.stringify(settings)
-        }, function (res) {
-            if (!res || res.ok !== true) {
-                alert('Не удалось сохранить layout settings');
-                return;
-            }
-
-            state.layout = res.layout || state.layout;
-            renderSettings();
-            renderZones();
-        });
+    .sb-public-menu__link {
+        min-height: 34px;
+        padding: 7px 10px;
+        font-size: 14px;
     }
+}
 
-    function addLayoutBlock(zone, type) {
-        api('layout.block.create', {
-            siteId: SITE_ID,
-            zone: zone,
-            type: type
-        }, function (res) {
-            if (!res || res.ok !== true) {
-                alert('Не удалось создать layout block');
-                return;
-            }
+Что это даст
 
-            state.layout = res.layout || state.layout;
-            renderZones();
-        });
-    }
+После замены public.css:
 
-    function findLayoutBlock(blockId) {
-        if (!state.layout || !state.layout.zones) {
-            return null;
-        }
+шапка и футер станут аккуратнее
 
-        for (var i = 0; i < ZONES.length; i++) {
-            var zone = ZONES[i];
-            var blocks = state.layout.zones[zone] || [];
-            for (var j = 0; j < blocks.length; j++) {
-                if (Number(blocks[j].id || 0) === Number(blockId || 0)) {
-                    return {
-                        zone: zone,
-                        block: blocks[j]
-                    };
-                }
-            }
-        }
+меню будет выглядеть лучше
 
-        return null;
-    }
+текст и HTML-блоки будут читабельнее
 
-    function editLayoutBlock(zone, blockId) {
-        var found = findLayoutBlock(blockId);
-        if (!found) {
-            alert('Блок не найден');
-            return;
-        }
+таблицы в html станут нормальными
 
-        state.currentBlockId = Number(blockId || 0);
-        state.currentZone = found.zone || zone;
+страница в целом будет выглядеть как рабочий внутренний сайт, а не просто рендер данных
 
-        document.getElementById('layoutBlockEditorEmpty').classList.add('sb-hidden');
-        document.getElementById('layoutBlockEditorForm').classList.remove('sb-hidden');
-        document.getElementById('editLayoutBlockZone').value = state.currentZone;
-        document.getElementById('editLayoutBlockType').value = found.block.type || '';
-        document.getElementById('editLayoutBlockContent').value = JSON.stringify(found.block.content || {}, null, 2);
-        document.getElementById('editLayoutBlockProps').value = JSON.stringify(found.block.props || {}, null, 2);
-    }
 
-    function clearLayoutBlockEditor() {
-        state.currentBlockId = 0;
-        state.currentZone = '';
-        document.getElementById('layoutBlockEditorEmpty').classList.remove('sb-hidden');
-        document.getElementById('layoutBlockEditorForm').classList.add('sb-hidden');
-        document.getElementById('editLayoutBlockZone').value = '';
-        document.getElementById('editLayoutBlockType').value = '';
-        document.getElementById('editLayoutBlockContent').value = '';
-        document.getElementById('editLayoutBlockProps').value = '{}';
-    }
+Что проверить
 
-    function saveLayoutBlock() {
-        if (!state.currentBlockId) {
-            return;
-        }
+Открой снова:
 
-        var contentText = document.getElementById('editLayoutBlockContent').value || '{}';
-        var propsText = document.getElementById('editLayoutBlockProps').value || '{}';
+/local/sitebuilder/public.php?siteId=1
 
-        try {
-            JSON.parse(contentText);
-        } catch (e) {
-            alert('Content должен быть валидным JSON');
-            return;
-        }
+Проверь:
 
-        try {
-            JSON.parse(propsText);
-        } catch (e) {
-            alert('Props должен быть валидным JSON');
-            return;
-        }
+1. улучшились ли отступы
 
-        var currentId = Number(state.currentBlockId || 0);
-        var currentZone = String(state.currentZone || '');
 
-        api('layout.block.update', {
-            siteId: SITE_ID,
-            id: currentId,
-            content: contentText,
-            props: propsText
-        }, function (res) {
-            if (!res || res.ok !== true) {
-                alert('Не удалось сохранить layout block');
-                return;
-            }
+2. лучше ли читается текст
 
-            state.layout = res.layout || state.layout;
-            renderZones();
 
-            var found = findLayoutBlock(currentId);
-            if (found) {
-                state.currentBlockId = currentId;
-                state.currentZone = found.zone;
-                document.getElementById('editLayoutBlockZone').value = found.zone;
-                document.getElementById('editLayoutBlockType').value = found.block.type || '';
-                document.getElementById('editLayoutBlockContent').value = JSON.stringify(found.block.content || {}, null, 2);
-                document.getElementById('editLayoutBlockProps').value = JSON.stringify(found.block.props || {}, null, 2);
-                document.getElementById('layoutBlockEditorEmpty').classList.add('sb-hidden');
-                document.getElementById('layoutBlockEditorForm').classList.remove('sb-hidden');
-            } else {
-                state.currentBlockId = 0;
-                state.currentZone = currentZone;
-                clearLayoutBlockEditor();
-            }
-        });
-    }
+3. аккуратнее ли выглядит меню
 
-    function deleteLayoutBlock(blockId) {
-        if (!confirm('Удалить layout block #' + blockId + '?')) {
-            return;
-        }
 
-        api('layout.block.delete', {
-            siteId: SITE_ID,
-            id: blockId
-        }, function (res) {
-            if (!res || res.ok !== true) {
-                alert('Не удалось удалить layout block');
-                return;
-            }
+4. не сломался ли вывод текущих блоков
 
-            state.layout = res.layout || state.layout;
 
-            if (Number(state.currentBlockId || 0) === Number(blockId || 0)) {
-                clearLayoutBlockEditor();
-            }
 
-            renderZones();
-        });
-    }
-
-    function moveLayoutBlock(blockId, dir) {
-        api('layout.block.move', {
-            siteId: SITE_ID,
-            id: blockId,
-            dir: dir
-        }, function (res) {
-            if (!res || res.ok !== true) {
-                alert('Не удалось переместить layout block');
-                return;
-            }
-
-            state.layout = res.layout || state.layout;
-            renderZones();
-        });
-    }
-
-    document.getElementById('saveSettingsBtn').addEventListener('click', saveLayoutSettings);
-    document.getElementById('reloadBtn').addEventListener('click', loadLayout);
-    document.getElementById('saveLayoutBlockBtn').addEventListener('click', saveLayoutBlock);
-    document.getElementById('deleteLayoutBlockBtn').addEventListener('click', function () {
-        if (state.currentBlockId) {
-            deleteLayoutBlock(state.currentBlockId);
-        }
-    });
-
-    document.addEventListener('click', function (e) {
-        var addBtn = e.target.closest('.js-add-layout-block');
-        if (addBtn) {
-            addLayoutBlock(
-                addBtn.getAttribute('data-zone') || '',
-                addBtn.getAttribute('data-type') || 'text'
-            );
-            return;
-        }
-
-        var editBtn = e.target.closest('.js-edit-layout-block');
-        if (editBtn) {
-            editLayoutBlock(
-                editBtn.getAttribute('data-zone') || '',
-                parseInt(editBtn.getAttribute('data-id'), 10) || 0
-            );
-            return;
-        }
-
-        var delBtn = e.target.closest('.js-delete-layout-block');
-        if (delBtn) {
-            deleteLayoutBlock(parseInt(delBtn.getAttribute('data-id'), 10) || 0);
-            return;
-        }
-
-        var upBtn = e.target.closest('.js-move-layout-block-up');
-        if (upBtn) {
-            moveLayoutBlock(parseInt(upBtn.getAttribute('data-id'), 10) || 0, 'up');
-            return;
-        }
-
-        var downBtn = e.target.closest('.js-move-layout-block-down');
-        if (downBtn) {
-            moveLayoutBlock(parseInt(downBtn.getAttribute('data-id'), 10) || 0, 'down');
-            return;
-        }
-    });
-
-    window.onerror = function (message, source, lineno, colno, error) {
-        print({
-            jsError: true,
-            message: message,
-            source: source,
-            line: lineno,
-            column: colno,
-            stack: error && error.stack ? error.stack : null
-        });
-    };
-
-    loadLayout();
-})();
-</script>
-</body>
-</html>
+Следующим пакетом логично прислать уже улучшенный views/layout/public_page.php, чтобы верхняя часть сайта и контентный контейнер выглядели ещё аккуратнее.
