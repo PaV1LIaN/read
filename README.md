@@ -1,94 +1,69 @@
-Можно. И это даже лучше для первого прогона.
+Значит компонент уже рендерится, но DiskPermissionService возвращает canView = false.
 
-Самый простой путь — протестировать компонент как отдельную страницу вне sitebuilder, подставив вручную siteId/pageId/blockId.
-
-
----
-
-Что сделать
-
-1. Создай тестовый файл
-
-Например:
-
-/local/sitebuilder/components/disk/test.php
+Нужно проверить 4 вещи.
 
 
 ---
 
-2. Вставь туда такой код
+1. Твой пользователь реально авторизован
+
+В test.php временно выведи:
 
 <?php
-require_once $_SERVER['DOCUMENT_ROOT'] . '/local/sitebuilder/components/disk/class.php';
-
 global $USER;
-
-if (!$USER->IsAuthorized()) {
-    die('Нужно авторизоваться в Битрикс');
-}
-
-$siteId = 1;   // подставь существующий site_id
-$pageId = 1;   // подставь существующий page_id
-$blockId = 1;  // подставь существующий block_id типа disk
-$currentUserId = (int)$USER->GetID();
+echo '<pre>';
+echo 'USER_ID=' . (int)$USER->GetID() . PHP_EOL;
+echo 'AUTHORIZED=' . ($USER->IsAuthorized() ? 'Y' : 'N') . PHP_EOL;
+echo '</pre>';
 ?>
-<!DOCTYPE html>
-<html lang="ru">
-<head>
-    <meta charset="UTF-8">
-    <title>Тест компонента Disk</title>
-    <link rel="stylesheet" href="/local/sitebuilder/components/disk/styles.css">
-</head>
-<body style="margin:0; padding:24px; background:#f5f7fb;">
-    <div style="max-width:1200px; margin:0 auto;">
-        <?php
-        $component = new SitebuilderDiskComponent([
-            'SITE_ID' => $siteId,
-            'PAGE_ID' => $pageId,
-            'BLOCK_ID' => $blockId,
-            'CURRENT_USER_ID' => $currentUserId,
-        ]);
-        $component->execute();
-        ?>
-    </div>
 
-    <script src="/bitrix/js/main/core/core.js"></script>
-    <script src="/local/sitebuilder/components/disk/script.js"></script>
-</body>
-</html>
+Если USER_ID=0, проблема в авторизации.
 
 
 ---
 
-Что нужно подготовить до теста
+2. В таблице sitebuilder_site_user_access есть роль именно для этого site_id и этого user_id
 
-1. В БД должен существовать сайт
+Проверь SQL:
 
-В таблице sitebuilder_site должна быть запись, например:
+SELECT *
+FROM sitebuilder_site_user_access
+WHERE site_id = 1
+  AND user_id = 1;
 
-id = 1
+Подставь свои реальные site_id и user_id.
 
+Должна быть строка с role_code, например:
+
+site_admin
+
+site_editor
+
+site_user
+
+site_viewer
+
+
+Если строки нет, компонент и покажет “нет доступа”.
 
 
 ---
 
-2. В БД должна существовать страница этого сайта
+3. В test.php совпадают siteId/pageId/blockId с БД
 
-В таблице sitebuilder_page:
+Проверь, что в test.php ты указал именно те значения, которые реально связаны между собой:
 
-id = 1
+$siteId = 1;
+$pageId = 1;
+$blockId = 1;
 
-site_id = 1
+И в БД должно быть так:
 
+SELECT *
+FROM sitebuilder_block
+WHERE id = 1;
 
-
----
-
-3. В БД должен существовать блок типа disk
-
-В таблице sitebuilder_block:
-
-id = 1
+У блока должно быть:
 
 site_id = 1
 
@@ -102,206 +77,118 @@ is_active = 1
 
 ---
 
-4. Для пользователя должна быть роль на сайте
+4. Сам SiteAccessRepository вообще что-то возвращает
 
-В таблице sitebuilder_site_user_access:
+Самая частая причина именно здесь.
 
-site_id = 1
+В test.php временно добавь:
 
-user_id = ТВОЙ_ID
+<?php
+require_once $_SERVER['DOCUMENT_ROOT'] . '/local/sitebuilder/components/disk/bootstrap.php';
 
-role_code = 'site_admin'
+global $USER;
 
+$userId = (int)$USER->GetID();
+$siteId = 1;
+
+echo '<pre>';
+echo 'CURRENT USER: ' . $userId . PHP_EOL;
+echo 'ROLE: ';
+var_dump(SiteAccessRepository::getUserRole($siteId, $userId));
+echo '</pre>';
+?>
+
+Если там NULL, значит проблема точно в таблице sitebuilder_site_user_access или в данных.
 
 
 ---
 
-Как быстро создать тестовые данные вручную
+Быстрый способ проверить, что проблема именно в роли
 
-Если записей еще нет, можно вставить их SQL.
+Временно в DiskPermissionService.php замени метод resolveRolePermissions() на такой:
 
-Сайт
+protected static function resolveRolePermissions(DiskContext $context): array
+{
+    return [
+        'canView' => true,
+        'canUpload' => true,
+        'canCreateFolder' => true,
+        'canRename' => true,
+        'canDelete' => true,
+        'canDownload' => true,
+        'canManageAccess' => true,
+        'canEditSettings' => true,
+    ];
+}
 
-INSERT INTO sitebuilder_site (id, name, code, root_disk_folder_id, settings_json, created_at, updated_at)
-VALUES (1, 'Тестовый сайт', 'test-site', NULL, '{}', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP);
+Если после этого блок откроется — проблема точно в роли/доступе, а не в Disk или UI.
 
-Страница
 
-INSERT INTO sitebuilder_page (id, site_id, title, slug, sort, created_at, updated_at)
-VALUES (1, 1, 'Главная', 'index', 100, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP);
+---
 
-Блок
+Что я бы сделал прямо сейчас
 
-INSERT INTO sitebuilder_block (id, site_id, page_id, type, sort, settings_json, is_active, created_by, created_at, updated_at)
-VALUES (1, 1, 1, 'disk', 100, '{}', 1, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP);
+Вариант 1 — правильный
 
-Роль пользователю
+Добавить себе запись в sitebuilder_site_user_access.
+
+Например:
 
 INSERT INTO sitebuilder_site_user_access (site_id, user_id, role_code, created_at, updated_at)
 VALUES (1, 1, 'site_admin', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP);
 
-Если id=1 уже заняты, подставь другие и такие же значения укажи в test.php.
+Если запись уже есть, но роль другая:
+
+UPDATE sitebuilder_site_user_access
+SET role_code = 'site_admin',
+    updated_at = CURRENT_TIMESTAMP
+WHERE site_id = 1
+  AND user_id = 1;
 
 
 ---
 
-Как открыть тест
+Вариант 2 — для диагностики
 
-Открой в браузере:
-
-https://твой-домен/local/sitebuilder/components/disk/test.php
+Временно открыть доступ всем через DiskPermissionService.
 
 
 ---
 
-Что должно произойти
+Самая вероятная причина
 
-Сценарий 1. Root еще не создан
+С вероятностью почти наверняка одно из двух:
 
-Ты увидишь состояние:
+в sitebuilder_site_user_access нет записи для твоего пользователя;
 
-“Для блока не настроена корневая папка”
-
-кнопки:
-
-“Создать корень сайта”
-
-“Создать папку блока”
-
-
-
-Это уже хороший знак: компонент живой.
-
-
----
-
-Сценарий 2. Root создался
-
-После нажатия:
-
-создастся папка в Bitrix Disk
-
-у сайта или блока сохранится root_folder_id
-
-блок загрузит содержимое папки
+user_id в БД не совпадает с тем, кто реально авторизован в Bitrix.
 
 
 
 ---
 
-Сценарий 3. Проверка функций
+Чтобы быстро локализовать
 
-Потом можно проверить:
+В test.php вставь вот это целиком над рендером компонента:
 
-создание папки
+<?php
+require_once $_SERVER['DOCUMENT_ROOT'] . '/local/sitebuilder/components/disk/bootstrap.php';
 
-загрузку файла
+global $USER;
 
-открытие вложенной папки
+$userId = (int)$USER->GetID();
+$siteId = 1;
+$pageId = 1;
+$blockId = 1;
 
-поиск
+echo '<pre>';
+echo 'USER_ID=' . $userId . PHP_EOL;
+echo 'AUTHORIZED=' . ($USER->IsAuthorized() ? 'Y' : 'N') . PHP_EOL;
+echo 'ROLE=';
+var_dump(SiteAccessRepository::getUserRole($siteId, $userId));
+echo 'BLOCK=';
+var_dump(BlockRepository::getDiskBlockByContext($siteId, $pageId, $blockId));
+echo '</pre>';
+?>
 
-переименование
-
-удаление
-
-настройки блока
-
-
-
----
-
-Как проверить по частям, если что-то не работает
-
-1. Проверить API отдельно
-
-Можно дергать экшены прямо через браузер/DevTools/Postman.
-
-Например, открыть страницу теста, потом в консоли браузера:
-
-fetch('/local/sitebuilder/components/disk/api.php?action=getSettings', {
-  method: 'POST',
-  headers: {'Content-Type': 'application/json'},
-  body: JSON.stringify({
-    siteId: 1,
-    pageId: 1,
-    blockId: 1,
-    sessid: BX.bitrix_sessid()
-  })
-}).then(r => r.json()).then(console.log)
-
-Если это работает — серверная часть уже живая.
-
-
----
-
-2. Проверить resolveRoot
-
-fetch('/local/sitebuilder/components/disk/api.php?action=resolveRoot', {
-  method: 'POST',
-  headers: {'Content-Type': 'application/json'},
-  body: JSON.stringify({
-    siteId: 1,
-    pageId: 1,
-    blockId: 1,
-    sessid: BX.bitrix_sessid()
-  })
-}).then(r => r.json()).then(console.log)
-
-
----
-
-3. Проверить создание корня сайта
-
-fetch('/local/sitebuilder/components/disk/api.php?action=initSiteRoot', {
-  method: 'POST',
-  headers: {'Content-Type': 'application/json'},
-  body: JSON.stringify({
-    siteId: 1,
-    sessid: BX.bitrix_sessid()
-  })
-}).then(r => r.json()).then(console.log)
-
-
----
-
-Если хочешь вообще без блока в БД
-
-Теоретически можно и так, но твоя текущая архитектура специально завязана на blockId, поэтому без записи в sitebuilder_block тестировать неудобно.
-
-Минимум для теста нужен именно такой набор:
-
-один site
-
-одна page
-
-один block типа disk
-
-одна роль для пользователя
-
-
-Это уже не sitebuilder UI, но уже честный тест компонента.
-
-
----
-
-Самый удобный способ теста
-
-Лучший вариант сейчас:
-
-1. создать test.php
-
-
-2. создать 1 тестовый сайт/страницу/блок в БД
-
-
-3. выдать себе роль site_admin
-
-
-4. открыть /local/sitebuilder/components/disk/test.php
-
-
-
-Так ты проверишь почти весь компонент без интеграции в editor/sitebuilder.
-
-Если хочешь, следующим сообщением я могу прислать готовый test.php + SQL-вставки для тестовых данных одним куском.
+Пришли вывод этого блока — и я сразу скажу, где именно ломается.
