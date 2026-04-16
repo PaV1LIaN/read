@@ -1,291 +1,20 @@
-Отлично. Ниже даю уже практически готовый каркас реализации компонента «Диск» для вашего проекта в стиле sitebuilder, чтобы это можно было брать как основу разработки.
+Ниже даю стартовый комплект файлов компонента “Диск” в практически готовом виде.
 
+Я сделаю набор так, чтобы:
 
----
+его можно было положить в /local/sitebuilder/components/disk/;
 
-1. Рекомендуемое место в проекте
+он уже был похож на реальный компонент;
 
-Для вашего проекта логично положить компонент сюда:
+дальше можно было спокойно подключать вашу БД, Bitrix Disk или другое хранилище;
 
-/local/sitebuilder/components/disk/
-
-И отдельно зарегистрировать обработчик API в общем API проекта, либо временно использовать локальный API компонента.
-
-Рекомендуемая структура:
-
-/local/sitebuilder/components/disk/
-├── class.php
-├── template.php
-├── styles.css
-├── script.js
-├── api.php
-├── bootstrap.php
-├── context.php
-├── settings.php
-├── permissions.php
-├── renderer.php
-├── storage.php
-├── lib/
-│   ├── DiskContext.php
-│   ├── DiskSettingsRepository.php
-│   ├── DiskRootResolver.php
-│   ├── DiskPermissionService.php
-│   ├── DiskStorageAdapterInterface.php
-│   ├── DiskStorageAdapter.php
-│   ├── DiskFolderTreeService.php
-│   ├── DiskValidator.php
-│   ├── DiskResponse.php
-│   └── helpers.php
-├── actions/
-│   ├── resolve_root.php
-│   ├── get_settings.php
-│   ├── save_settings.php
-│   ├── get_permissions.php
-│   ├── list.php
-│   ├── upload.php
-│   ├── create_folder.php
-│   ├── rename.php
-│   ├── delete.php
-│   ├── move.php
-│   ├── copy.php
-│   ├── search.php
-│   └── download.php
-└── templates/
-    ├── table_row.php
-    ├── grid_card.php
-    ├── state_empty.php
-    ├── state_error.php
-    ├── state_no_access.php
-    ├── state_no_root.php
-    └── modals/
-        ├── create_folder.php
-        ├── rename.php
-        ├── delete_confirm.php
-        ├── move.php
-        └── settings.php
-
-
----
-
-2. SQL-структура таблиц
-
-Ниже дам SQL в нейтральном виде. Под ваш проект потом можно адаптировать под конкретную СУБД.
-
-
----
-
-2.1. Таблица блоков конструктора
-
-Если уже есть таблица блоков — не дублировать. Тогда просто использовать существующую. Ниже для полноты:
-
-CREATE TABLE sitebuilder_block (
-    id                BIGSERIAL PRIMARY KEY,
-    site_id           BIGINT NOT NULL,
-    page_id           BIGINT NOT NULL,
-    type              VARCHAR(50) NOT NULL,
-    sort              INTEGER NOT NULL DEFAULT 500,
-    settings_json     TEXT NULL,
-    is_active         SMALLINT NOT NULL DEFAULT 1,
-    created_by        BIGINT NULL,
-    created_at        TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at        TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
-);
-
-CREATE INDEX idx_sb_block_site_id ON sitebuilder_block(site_id);
-CREATE INDEX idx_sb_block_page_id ON sitebuilder_block(page_id);
-CREATE INDEX idx_sb_block_type ON sitebuilder_block(type);
-
-
----
-
-2.2. Таблица настроек компонента Disk
-
-CREATE TABLE sitebuilder_disk_settings (
-    id                         BIGSERIAL PRIMARY KEY,
-    block_id                   BIGINT NOT NULL UNIQUE,
-    site_id                    BIGINT NOT NULL,
-    page_id                    BIGINT NOT NULL,
-    title                      VARCHAR(255) NOT NULL DEFAULT 'Файлы',
-    root_folder_id             BIGINT NULL,
-    view_mode                  VARCHAR(20) NOT NULL DEFAULT 'table',
-    allow_upload               SMALLINT NOT NULL DEFAULT 1,
-    allow_create_folder        SMALLINT NOT NULL DEFAULT 1,
-    allow_rename               SMALLINT NOT NULL DEFAULT 1,
-    allow_delete               SMALLINT NOT NULL DEFAULT 0,
-    allow_download             SMALLINT NOT NULL DEFAULT 1,
-    show_search                SMALLINT NOT NULL DEFAULT 1,
-    show_breadcrumbs           SMALLINT NOT NULL DEFAULT 1,
-    default_sort               VARCHAR(50) NOT NULL DEFAULT 'updatedAt',
-    default_sort_direction     VARCHAR(10) NOT NULL DEFAULT 'desc',
-    allowed_extensions_json    TEXT NULL,
-    max_file_size              BIGINT NOT NULL DEFAULT 52428800,
-    permission_mode            VARCHAR(30) NOT NULL DEFAULT 'inherit_site',
-    use_site_root_fallback     SMALLINT NOT NULL DEFAULT 1,
-    created_by                 BIGINT NULL,
-    created_at                 TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at                 TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
-);
-
-CREATE INDEX idx_sb_disk_settings_site_id ON sitebuilder_disk_settings(site_id);
-CREATE INDEX idx_sb_disk_settings_page_id ON sitebuilder_disk_settings(page_id);
-
-
----
-
-2.3. Корневой диск сайта
-
-Если у сайта уже есть поле rootDiskFolderId, используйте его. Если нет — отдельная таблица:
-
-CREATE TABLE sitebuilder_site_disk (
-    site_id              BIGINT PRIMARY KEY,
-    root_folder_id       BIGINT NULL,
-    storage_type         VARCHAR(30) NOT NULL DEFAULT 'bitrix_disk',
-    created_at           TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at           TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
-);
-
-
----
-
-2.4. Таблица логических папок
-
-Если будете поверх внешнего хранилища вести свои метаданные:
-
-CREATE TABLE sitebuilder_disk_folder (
-    id                  BIGSERIAL PRIMARY KEY,
-    external_id         BIGINT NULL,
-    parent_id           BIGINT NULL,
-    site_id             BIGINT NOT NULL,
-    block_id            BIGINT NULL,
-    name                VARCHAR(255) NOT NULL,
-    path                TEXT NULL,
-    depth               INTEGER NOT NULL DEFAULT 0,
-    is_deleted          SMALLINT NOT NULL DEFAULT 0,
-    created_by          BIGINT NULL,
-    created_at          TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at          TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
-);
-
-CREATE INDEX idx_sb_disk_folder_parent_id ON sitebuilder_disk_folder(parent_id);
-CREATE INDEX idx_sb_disk_folder_site_id ON sitebuilder_disk_folder(site_id);
-CREATE INDEX idx_sb_disk_folder_block_id ON sitebuilder_disk_folder(block_id);
-
-
----
-
-2.5. Таблица логических файлов
-
-CREATE TABLE sitebuilder_disk_file (
-    id                  BIGSERIAL PRIMARY KEY,
-    external_id         BIGINT NULL,
-    folder_id           BIGINT NOT NULL,
-    site_id             BIGINT NOT NULL,
-    block_id            BIGINT NULL,
-    name                VARCHAR(255) NOT NULL,
-    original_name       VARCHAR(255) NULL,
-    extension           VARCHAR(20) NULL,
-    mime_type           VARCHAR(255) NULL,
-    size                BIGINT NOT NULL DEFAULT 0,
-    path                TEXT NULL,
-    hash                VARCHAR(64) NULL,
-    is_deleted          SMALLINT NOT NULL DEFAULT 0,
-    created_by          BIGINT NULL,
-    created_at          TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at          TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    download_url        TEXT NULL,
-    preview_url         TEXT NULL
-);
-
-CREATE INDEX idx_sb_disk_file_folder_id ON sitebuilder_disk_file(folder_id);
-CREATE INDEX idx_sb_disk_file_site_id ON sitebuilder_disk_file(site_id);
-CREATE INDEX idx_sb_disk_file_block_id ON sitebuilder_disk_file(block_id);
-
-
----
-
-2.6. Таблица прав доступа
-
-Если хотите гибкость по сайту / блоку / папке:
-
-CREATE TABLE sitebuilder_disk_permission (
-    id                    BIGSERIAL PRIMARY KEY,
-    site_id               BIGINT NOT NULL,
-    block_id              BIGINT NULL,
-    folder_id             BIGINT NULL,
-    subject_type          VARCHAR(20) NOT NULL, -- user / group / role
-    subject_id            VARCHAR(100) NOT NULL,
-    can_view              SMALLINT NOT NULL DEFAULT 1,
-    can_upload            SMALLINT NOT NULL DEFAULT 0,
-    can_create_folder     SMALLINT NOT NULL DEFAULT 0,
-    can_rename            SMALLINT NOT NULL DEFAULT 0,
-    can_delete            SMALLINT NOT NULL DEFAULT 0,
-    can_download          SMALLINT NOT NULL DEFAULT 1,
-    can_manage_access     SMALLINT NOT NULL DEFAULT 0,
-    can_edit_settings     SMALLINT NOT NULL DEFAULT 0,
-    created_at            TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
-);
-
-CREATE INDEX idx_sb_disk_perm_site_id ON sitebuilder_disk_permission(site_id);
-CREATE INDEX idx_sb_disk_perm_block_id ON sitebuilder_disk_permission(block_id);
-CREATE INDEX idx_sb_disk_perm_folder_id ON sitebuilder_disk_permission(folder_id);
-
-
----
-
-3. Как именно привязывается блок к siteId / pageId / blockId
-
-Ниже схема поведения.
-
-
----
-
-3.1. При добавлении блока в редакторе
-
-Когда редактор добавляет блок типа disk, выполняется:
-
-1. создается запись в sitebuilder_block;
-
-
-2. создается запись в sitebuilder_disk_settings;
-
-
-3. в sitebuilder_disk_settings.block_id сохраняется ID блока;
-
-
-4. в sitebuilder_disk_settings.site_id/page_id дублируется контекст;
-
-
-5. если root не задан, блок будет использовать root сайта.
-
+структура соответствовала вашему sitebuilder.
 
 
 
 ---
 
-3.2. Пример создания блока
-
-$blockId = BlockRepository::create([
-    'site_id' => $siteId,
-    'page_id' => $pageId,
-    'type' => 'disk',
-    'sort' => 500,
-    'settings_json' => '{}',
-    'created_by' => $currentUserId,
-]);
-
-DiskSettingsRepository::createDefault([
-    'block_id' => $blockId,
-    'site_id' => $siteId,
-    'page_id' => $pageId,
-    'created_by' => $currentUserId,
-]);
-
-
----
-
-4. Каркас PHP: главный класс компонента
-
-class.php
+1. class.php
 
 <?php
 
@@ -303,40 +32,82 @@ class SitebuilderDiskComponent
 
     public function execute(): void
     {
-        $context = DiskContextFactory::fromArray([
-            'siteId' => (int)($this->params['SITE_ID'] ?? 0),
-            'pageId' => (int)($this->params['PAGE_ID'] ?? 0),
-            'blockId' => (int)($this->params['BLOCK_ID'] ?? 0),
-            'currentUserId' => (int)($this->params['CURRENT_USER_ID'] ?? 0),
-        ]);
+        try {
+            $context = DiskContextFactory::fromArray([
+                'siteId' => (int)($this->params['SITE_ID'] ?? 0),
+                'pageId' => (int)($this->params['PAGE_ID'] ?? 0),
+                'blockId' => (int)($this->params['BLOCK_ID'] ?? 0),
+                'currentUserId' => (int)($this->params['CURRENT_USER_ID'] ?? 0),
+            ]);
 
-        DiskValidator::assertContext($context);
+            DiskValidator::assertContext($context);
 
-        $settings = DiskSettingsRepository::getByBlockId($context->blockId);
-        $rootFolderId = DiskRootResolver::resolve($context, $settings);
-        $permissions = DiskPermissionService::resolve($context, $settings, $rootFolderId);
+            $settings = DiskSettingsRepository::getByBlockId($context->blockId);
+            $rootFolderId = DiskRootResolver::resolve($context, $settings);
+            $permissions = DiskPermissionService::resolve($context, $settings, $rootFolderId);
 
-        $this->result = [
-            'SITE_ID' => $context->siteId,
-            'PAGE_ID' => $context->pageId,
-            'BLOCK_ID' => $context->blockId,
-            'CURRENT_USER_ID' => $context->currentUserId,
-            'SETTINGS' => $settings,
-            'ROOT_FOLDER_ID' => $rootFolderId,
-            'PERMISSIONS' => $permissions,
-            'TITLE' => $settings['title'] ?? 'Файлы',
-            'CAN_VIEW' => !empty($permissions['canView']),
-            'INITIAL_STATE' => [
-                'siteId' => $context->siteId,
-                'pageId' => $context->pageId,
-                'blockId' => $context->blockId,
-                'rootFolderId' => $rootFolderId,
-                'currentFolderId' => $rootFolderId,
-                'settings' => $settings,
-                'permissions' => $permissions,
-            ],
-        ];
+            $this->result = [
+                'SITE_ID' => $context->siteId,
+                'PAGE_ID' => $context->pageId,
+                'BLOCK_ID' => $context->blockId,
+                'CURRENT_USER_ID' => $context->currentUserId,
+                'SETTINGS' => $settings,
+                'ROOT_FOLDER_ID' => $rootFolderId,
+                'PERMISSIONS' => $permissions,
+                'TITLE' => $settings['title'] ?? 'Файлы',
+                'INITIAL_STATE' => [
+                    'siteId' => $context->siteId,
+                    'pageId' => $context->pageId,
+                    'blockId' => $context->blockId,
+                    'rootFolderId' => $rootFolderId,
+                    'currentFolderId' => $rootFolderId,
+                    'settings' => $settings,
+                    'permissions' => $permissions,
+                ],
+                'ERROR' => null,
+            ];
+        } catch (Throwable $e) {
+            $this->result = [
+                'SITE_ID' => (int)($this->params['SITE_ID'] ?? 0),
+                'PAGE_ID' => (int)($this->params['PAGE_ID'] ?? 0),
+                'BLOCK_ID' => (int)($this->params['BLOCK_ID'] ?? 0),
+                'CURRENT_USER_ID' => (int)($this->params['CURRENT_USER_ID'] ?? 0),
+                'SETTINGS' => [],
+                'ROOT_FOLDER_ID' => null,
+                'PERMISSIONS' => [
+                    'canView' => false,
+                    'canUpload' => false,
+                    'canCreateFolder' => false,
+                    'canRename' => false,
+                    'canDelete' => false,
+                    'canDownload' => false,
+                    'canManageAccess' => false,
+                    'canEditSettings' => false,
+                ],
+                'TITLE' => 'Файлы',
+                'INITIAL_STATE' => [
+                    'siteId' => (int)($this->params['SITE_ID'] ?? 0),
+                    'pageId' => (int)($this->params['PAGE_ID'] ?? 0),
+                    'blockId' => (int)($this->params['BLOCK_ID'] ?? 0),
+                    'rootFolderId' => null,
+                    'currentFolderId' => null,
+                    'settings' => [],
+                    'permissions' => [
+                        'canView' => false,
+                        'canUpload' => false,
+                        'canCreateFolder' => false,
+                        'canRename' => false,
+                        'canDelete' => false,
+                        'canDownload' => false,
+                        'canManageAccess' => false,
+                        'canEditSettings' => false,
+                    ],
+                ],
+                'ERROR' => $e->getMessage(),
+            ];
+        }
 
+        $arResult = $this->result;
         include __DIR__ . '/template.php';
     }
 }
@@ -344,9 +115,7 @@ class SitebuilderDiskComponent
 
 ---
 
-5. Bootstrap компонента
-
-bootstrap.php
+2. bootstrap.php
 
 <?php
 
@@ -362,15 +131,53 @@ if (!defined('SITEBUILDER_DISK_BOOTSTRAP')) {
     require_once __DIR__ . '/lib/DiskPermissionService.php';
     require_once __DIR__ . '/lib/DiskStorageAdapterInterface.php';
     require_once __DIR__ . '/lib/DiskStorageAdapter.php';
-    require_once __DIR__ . '/lib/DiskFolderTreeService.php';
 }
 
 
 ---
 
-6. Контекст компонента
+3. lib/helpers.php
 
-lib/DiskContext.php
+<?php
+
+function disk_h(?string $value): string
+{
+    return htmlspecialchars((string)$value, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
+}
+
+function disk_read_json_body(): array
+{
+    $raw = file_get_contents('php://input');
+    if ($raw === false || $raw === '') {
+        return [];
+    }
+
+    $data = json_decode($raw, true);
+    return is_array($data) ? $data : [];
+}
+
+function disk_normalize_bool($value): bool
+{
+    if (is_bool($value)) {
+        return $value;
+    }
+
+    if (is_int($value)) {
+        return $value === 1;
+    }
+
+    if (is_string($value)) {
+        $value = strtolower(trim($value));
+        return in_array($value, ['1', 'y', 'yes', 'true', 'on'], true);
+    }
+
+    return false;
+}
+
+
+---
+
+4. lib/DiskContext.php
 
 <?php
 
@@ -416,148 +223,47 @@ class DiskContextFactory
 
 ---
 
-7. Репозиторий настроек компонента
-
-lib/DiskSettingsRepository.php
+5. lib/DiskResponse.php
 
 <?php
 
-class DiskSettingsRepository
+class DiskResponse
 {
-    public static function getByBlockId(int $blockId): array
+    public static function success(array $data = [], array $meta = []): void
     {
-        // Здесь должен быть реальный запрос к БД.
-        // Временный пример.
-        return [
-            'block_id' => $blockId,
-            'title' => 'Файлы',
-            'rootFolderId' => null,
-            'viewMode' => 'table',
-            'allowUpload' => true,
-            'allowCreateFolder' => true,
-            'allowRename' => true,
-            'allowDelete' => false,
-            'allowDownload' => true,
-            'showSearch' => true,
-            'showBreadcrumbs' => true,
-            'defaultSort' => 'updatedAt',
-            'defaultSortDirection' => 'desc',
-            'allowedExtensions' => [],
-            'maxFileSize' => 52428800,
-            'permissionMode' => 'inherit_site',
-            'useSiteRootFallback' => true,
-        ];
+        self::send([
+            'ok' => true,
+            'data' => $data,
+            'meta' => $meta,
+            'error' => null,
+            'message' => '',
+        ]);
     }
 
-    public static function createDefault(array $data): bool
+    public static function error(string $errorCode, string $message = '', array $details = []): void
     {
-        return true;
+        self::send([
+            'ok' => false,
+            'data' => [],
+            'meta' => [],
+            'error' => $errorCode,
+            'message' => $message,
+            'details' => $details,
+        ]);
     }
 
-    public static function save(int $blockId, array $settings): bool
+    protected static function send(array $payload): void
     {
-        return true;
+        header('Content-Type: application/json; charset=UTF-8');
+        echo json_encode($payload, JSON_UNESCAPED_UNICODE);
+        exit;
     }
 }
 
 
 ---
 
-8. Резолвер корневой папки
-
-lib/DiskRootResolver.php
-
-<?php
-
-class DiskRootResolver
-{
-    public static function resolve(DiskContext $context, array $settings): ?int
-    {
-        if (!empty($settings['rootFolderId'])) {
-            return (int)$settings['rootFolderId'];
-        }
-
-        if (!empty($settings['useSiteRootFallback'])) {
-            $siteRootFolderId = self::getSiteRootFolderId($context->siteId);
-            if ($siteRootFolderId) {
-                return (int)$siteRootFolderId;
-            }
-        }
-
-        return null;
-    }
-
-    protected static function getSiteRootFolderId(int $siteId): ?int
-    {
-        // Реальный запрос к site / sitebuilder_site_disk
-        return null;
-    }
-}
-
-
----
-
-9. Расчет прав
-
-lib/DiskPermissionService.php
-
-<?php
-
-class DiskPermissionService
-{
-    public static function resolve(DiskContext $context, array $settings, ?int $rootFolderId = null): array
-    {
-        $rolePermissions = self::resolveRolePermissions($context);
-        $blockRestrictions = self::resolveBlockRestrictions($settings);
-
-        return [
-            'canView' => $rolePermissions['canView'] && $blockRestrictions['canView'],
-            'canUpload' => $rolePermissions['canUpload'] && $blockRestrictions['canUpload'],
-            'canCreateFolder' => $rolePermissions['canCreateFolder'] && $blockRestrictions['canCreateFolder'],
-            'canRename' => $rolePermissions['canRename'] && $blockRestrictions['canRename'],
-            'canDelete' => $rolePermissions['canDelete'] && $blockRestrictions['canDelete'],
-            'canDownload' => $rolePermissions['canDownload'] && $blockRestrictions['canDownload'],
-            'canManageAccess' => $rolePermissions['canManageAccess'],
-            'canEditSettings' => $rolePermissions['canEditSettings'],
-        ];
-    }
-
-    protected static function resolveRolePermissions(DiskContext $context): array
-    {
-        // Здесь должна быть реальная логика определения роли пользователя в рамках сайта.
-        // Пока временно считаем, что пользователь - редактор.
-
-        return [
-            'canView' => true,
-            'canUpload' => true,
-            'canCreateFolder' => true,
-            'canRename' => true,
-            'canDelete' => true,
-            'canDownload' => true,
-            'canManageAccess' => false,
-            'canEditSettings' => true,
-        ];
-    }
-
-    protected static function resolveBlockRestrictions(array $settings): array
-    {
-        return [
-            'canView' => true,
-            'canUpload' => !empty($settings['allowUpload']),
-            'canCreateFolder' => !empty($settings['allowCreateFolder']),
-            'canRename' => !empty($settings['allowRename']),
-            'canDelete' => !empty($settings['allowDelete']),
-            'canDownload' => !empty($settings['allowDownload']),
-        ];
-    }
-}
-
-
----
-
-10. Валидатор контекста
-
-lib/DiskValidator.php
+6. lib/DiskValidator.php
 
 <?php
 
@@ -586,11 +292,12 @@ class DiskValidator
 
     public static function assertBlockBelongsToContext(DiskContext $context): void
     {
-        // Здесь обязательна реальная проверка:
-        // block.site_id == context.siteId
-        // block.page_id == context.pageId
-        // block.type == disk
-
+        // TODO:
+        // Проверить в БД, что:
+        // - блок существует
+        // - блок принадлежит siteId
+        // - блок принадлежит pageId
+        // - тип блока = disk
         $ok = true;
 
         if (!$ok) {
@@ -598,9 +305,19 @@ class DiskValidator
         }
     }
 
-    public static function assertFolderInsideRoot(int $folderId, int $rootFolderId): void
+    public static function assertFolderInsideRoot(int $folderId, ?int $rootFolderId): void
     {
-        // Здесь должна быть реальная проверка принадлежности папки дереву rootFolderId.
+        if ($folderId <= 0) {
+            throw new RuntimeException('INVALID_FOLDER_ID');
+        }
+
+        if ($rootFolderId === null || $rootFolderId <= 0) {
+            throw new RuntimeException('ROOT_FOLDER_NOT_RESOLVED');
+        }
+
+        // TODO:
+        // Здесь обязательна реальная проверка,
+        // что folderId лежит внутри дерева rootFolderId.
         $ok = true;
 
         if (!$ok) {
@@ -614,16 +331,156 @@ class DiskValidator
             throw new RuntimeException('ACCESS_DENIED');
         }
     }
+
+    public static function assertNonEmptyString(string $value, string $errorCode): void
+    {
+        if (trim($value) === '') {
+            throw new RuntimeException($errorCode);
+        }
+    }
 }
 
 
 ---
 
-11. Адаптер хранилища
+7. lib/DiskSettingsRepository.php
 
-Если будете работать через Bitrix Disk или внутреннее хранилище — у вас должен быть единый интерфейс.
+<?php
 
-lib/DiskStorageAdapterInterface.php
+class DiskSettingsRepository
+{
+    public static function getByBlockId(int $blockId): array
+    {
+        // TODO:
+        // Заменить на реальный SELECT из sitebuilder_disk_settings
+
+        return [
+            'block_id' => $blockId,
+            'title' => 'Файлы',
+            'rootFolderId' => null,
+            'viewMode' => 'table',
+            'allowUpload' => true,
+            'allowCreateFolder' => true,
+            'allowRename' => true,
+            'allowDelete' => false,
+            'allowDownload' => true,
+            'showSearch' => true,
+            'showBreadcrumbs' => true,
+            'defaultSort' => 'updatedAt',
+            'defaultSortDirection' => 'desc',
+            'allowedExtensions' => [],
+            'maxFileSize' => 52428800,
+            'permissionMode' => 'inherit_site',
+            'useSiteRootFallback' => true,
+        ];
+    }
+
+    public static function createDefault(array $data): bool
+    {
+        // TODO: INSERT
+        return true;
+    }
+
+    public static function save(int $blockId, array $settings): bool
+    {
+        // TODO: UPDATE
+        return true;
+    }
+}
+
+
+---
+
+8. lib/DiskRootResolver.php
+
+<?php
+
+class DiskRootResolver
+{
+    public static function resolve(DiskContext $context, array $settings): ?int
+    {
+        if (!empty($settings['rootFolderId'])) {
+            return (int)$settings['rootFolderId'];
+        }
+
+        if (!empty($settings['useSiteRootFallback'])) {
+            $siteRootFolderId = self::getSiteRootFolderId($context->siteId);
+            if ($siteRootFolderId > 0) {
+                return (int)$siteRootFolderId;
+            }
+        }
+
+        return null;
+    }
+
+    protected static function getSiteRootFolderId(int $siteId): ?int
+    {
+        // TODO:
+        // Подтянуть rootDiskFolderId из таблицы site / sitebuilder_site_disk
+        return null;
+    }
+}
+
+
+---
+
+9. lib/DiskPermissionService.php
+
+<?php
+
+class DiskPermissionService
+{
+    public static function resolve(DiskContext $context, array $settings, ?int $rootFolderId = null): array
+    {
+        $rolePermissions = self::resolveRolePermissions($context);
+        $blockRestrictions = self::resolveBlockRestrictions($settings);
+
+        return [
+            'canView' => $rolePermissions['canView'] && $blockRestrictions['canView'],
+            'canUpload' => $rolePermissions['canUpload'] && $blockRestrictions['canUpload'],
+            'canCreateFolder' => $rolePermissions['canCreateFolder'] && $blockRestrictions['canCreateFolder'],
+            'canRename' => $rolePermissions['canRename'] && $blockRestrictions['canRename'],
+            'canDelete' => $rolePermissions['canDelete'] && $blockRestrictions['canDelete'],
+            'canDownload' => $rolePermissions['canDownload'] && $blockRestrictions['canDownload'],
+            'canManageAccess' => $rolePermissions['canManageAccess'],
+            'canEditSettings' => $rolePermissions['canEditSettings'],
+        ];
+    }
+
+    protected static function resolveRolePermissions(DiskContext $context): array
+    {
+        // TODO:
+        // Реально определить роль пользователя на уровне сайта.
+        // Пока временно считаем пользователя редактором сайта.
+        return [
+            'canView' => true,
+            'canUpload' => true,
+            'canCreateFolder' => true,
+            'canRename' => true,
+            'canDelete' => true,
+            'canDownload' => true,
+            'canManageAccess' => false,
+            'canEditSettings' => true,
+        ];
+    }
+
+    protected static function resolveBlockRestrictions(array $settings): array
+    {
+        return [
+            'canView' => true,
+            'canUpload' => !empty($settings['allowUpload']),
+            'canCreateFolder' => !empty($settings['allowCreateFolder']),
+            'canRename' => !empty($settings['allowRename']),
+            'canDelete' => !empty($settings['allowDelete']),
+            'canDownload' => !empty($settings['allowDownload']),
+        ];
+    }
+}
+
+
+---
+
+10. lib/DiskStorageAdapterInterface.php
 
 <?php
 
@@ -653,7 +510,7 @@ interface DiskStorageAdapterInterface
 
 ---
 
-lib/DiskStorageAdapter.php
+11. lib/DiskStorageAdapter.php
 
 <?php
 
@@ -661,9 +518,12 @@ class DiskStorageAdapter implements DiskStorageAdapterInterface
 {
     public function listItems(DiskContext $context, int $folderId, array $options = []): array
     {
+        // TODO:
+        // Здесь должна быть реальная работа с хранилищем.
+        // Пока тестовые данные.
         return [
             [
-                'id' => 101,
+                'id' => 1001,
                 'entityType' => 'folder',
                 'name' => 'Документы',
                 'extension' => null,
@@ -673,14 +533,24 @@ class DiskStorageAdapter implements DiskStorageAdapterInterface
                 'downloadUrl' => null,
             ],
             [
-                'id' => 102,
+                'id' => 1002,
+                'entityType' => 'folder',
+                'name' => 'Шаблоны',
+                'extension' => null,
+                'mimeType' => null,
+                'size' => null,
+                'updatedAt' => '2026-04-15 18:40:00',
+                'downloadUrl' => null,
+            ],
+            [
+                'id' => 2001,
                 'entityType' => 'file',
                 'name' => 'report.pdf',
                 'extension' => 'pdf',
                 'mimeType' => 'application/pdf',
                 'size' => 124000,
                 'updatedAt' => '2026-04-16 09:55:00',
-                'downloadUrl' => '/local/sitebuilder/components/disk/api.php?action=download&fileId=102',
+                'downloadUrl' => '/local/sitebuilder/components/disk/api.php?action=download&fileId=2001',
             ],
         ];
     }
@@ -688,7 +558,7 @@ class DiskStorageAdapter implements DiskStorageAdapterInterface
     public function createFolder(DiskContext $context, int $parentFolderId, string $name): array
     {
         return [
-            'id' => 5001,
+            'id' => random_int(5000, 9999),
             'entityType' => 'folder',
             'name' => $name,
         ];
@@ -736,7 +606,16 @@ class DiskStorageAdapter implements DiskStorageAdapterInterface
 
     public function search(DiskContext $context, int $rootFolderId, string $query, array $options = []): array
     {
-        return [];
+        $all = $this->listItems($context, $rootFolderId, $options);
+        $query = mb_strtolower(trim($query));
+
+        if ($query === '') {
+            return [];
+        }
+
+        return array_values(array_filter($all, static function ($item) use ($query) {
+            return mb_stripos((string)($item['name'] ?? ''), $query) !== false;
+        }));
     }
 
     public function getBreadcrumbs(DiskContext $context, int $folderId): array
@@ -755,48 +634,7 @@ class DiskStorageAdapter implements DiskStorageAdapterInterface
 
 ---
 
-12. Ответы API
-
-lib/DiskResponse.php
-
-<?php
-
-class DiskResponse
-{
-    public static function success(array $data = [], array $meta = []): void
-    {
-        self::send([
-            'ok' => true,
-            'data' => $data,
-            'meta' => $meta,
-            'error' => null,
-        ]);
-    }
-
-    public static function error(string $errorCode, string $message = '', array $details = []): void
-    {
-        self::send([
-            'ok' => false,
-            'error' => $errorCode,
-            'message' => $message,
-            'details' => $details,
-        ]);
-    }
-
-    protected static function send(array $payload): void
-    {
-        header('Content-Type: application/json; charset=UTF-8');
-        echo json_encode($payload, JSON_UNESCAPED_UNICODE);
-        exit;
-    }
-}
-
-
----
-
-13. Единая точка входа API
-
-api.php
+12. api.php
 
 <?php
 
@@ -868,29 +706,7 @@ try {
 
 ---
 
-14. Общий помощник чтения JSON-body
-
-lib/helpers.php
-
-<?php
-
-function disk_read_json_body(): array
-{
-    $raw = file_get_contents('php://input');
-    if (!$raw) {
-        return [];
-    }
-
-    $data = json_decode($raw, true);
-    return is_array($data) ? $data : [];
-}
-
-
----
-
-15. Пример API-метода resolveRoot
-
-actions/resolve_root.php
+13. actions/resolve_root.php
 
 <?php
 
@@ -900,7 +716,7 @@ $context = DiskContextFactory::fromArray([
     'siteId' => (int)($data['siteId'] ?? 0),
     'pageId' => (int)($data['pageId'] ?? 0),
     'blockId' => (int)($data['blockId'] ?? 0),
-    'currentUserId' => 1, // заменить на реального пользователя
+    'currentUserId' => 1, // TODO: заменить на реального пользователя
 ]);
 
 DiskValidator::assertContext($context);
@@ -916,9 +732,7 @@ DiskResponse::success([
 
 ---
 
-16. Пример API-метода getSettings
-
-actions/get_settings.php
+14. actions/get_settings.php
 
 <?php
 
@@ -942,9 +756,7 @@ DiskResponse::success([
 
 ---
 
-17. Пример API-метода getPermissions
-
-actions/get_permissions.php
+15. actions/get_permissions.php
 
 <?php
 
@@ -970,9 +782,7 @@ DiskResponse::success([
 
 ---
 
-18. Пример API-метода list
-
-actions/list.php
+16. actions/list.php
 
 <?php
 
@@ -993,11 +803,20 @@ $permissions = DiskPermissionService::resolve($context, $settings, $rootFolderId
 
 DiskValidator::assertCan($permissions, 'canView');
 
-$currentFolderId = (int)($data['currentFolderId'] ?? $rootFolderId);
-
-if ($rootFolderId && $currentFolderId) {
-    DiskValidator::assertFolderInsideRoot($currentFolderId, $rootFolderId);
+if ($rootFolderId === null) {
+    DiskResponse::success([
+        'folder' => null,
+        'breadcrumbs' => [],
+        'items' => [],
+    ], [
+        'isEmpty' => true,
+        'noRoot' => true,
+        'total' => 0,
+    ]);
 }
+
+$currentFolderId = (int)($data['currentFolderId'] ?? $rootFolderId);
+DiskValidator::assertFolderInsideRoot($currentFolderId, $rootFolderId);
 
 $adapter = new DiskStorageAdapter();
 
@@ -1017,16 +836,14 @@ DiskResponse::success([
     'breadcrumbs' => $breadcrumbs,
     'items' => $items,
 ], [
-    'total' => count($items),
     'isEmpty' => empty($items),
+    'total' => count($items),
 ]);
 
 
 ---
 
-19. Пример API-метода createFolder
-
-actions/create_folder.php
+17. actions/create_folder.php
 
 <?php
 
@@ -1050,15 +867,8 @@ DiskValidator::assertCan($permissions, 'canCreateFolder');
 $currentFolderId = (int)($data['currentFolderId'] ?? 0);
 $name = trim((string)($data['name'] ?? ''));
 
-if ($currentFolderId <= 0) {
-    throw new RuntimeException('INVALID_FOLDER_ID');
-}
-
-if ($name === '') {
-    throw new RuntimeException('EMPTY_FOLDER_NAME');
-}
-
 DiskValidator::assertFolderInsideRoot($currentFolderId, $rootFolderId);
+DiskValidator::assertNonEmptyString($name, 'EMPTY_FOLDER_NAME');
 
 $adapter = new DiskStorageAdapter();
 $folder = $adapter->createFolder($context, $currentFolderId, $name);
@@ -1070,11 +880,7 @@ DiskResponse::success([
 
 ---
 
-20. Пример API-метода upload
-
-Здесь отдельно важно: upload обычно идет через multipart/form-data, а не JSON.
-
-actions/upload.php
+18. actions/upload.php
 
 <?php
 
@@ -1102,7 +908,9 @@ if (!$files) {
 }
 
 $normalizedFiles = [];
-for ($i = 0; $i < count($files['name']); $i++) {
+$count = is_array($files['name']) ? count($files['name']) : 0;
+
+for ($i = 0; $i < $count; $i++) {
     $normalizedFiles[] = [
         'name' => $files['name'][$i],
         'type' => $files['type'][$i],
@@ -1112,18 +920,21 @@ for ($i = 0; $i < count($files['name']); $i++) {
     ];
 }
 
+$allowedExtensions = $settings['allowedExtensions'] ?? [];
+$maxFileSize = (int)($settings['maxFileSize'] ?? 0);
+
 foreach ($normalizedFiles as $file) {
-    if ($file['error'] !== UPLOAD_ERR_OK) {
+    if ((int)$file['error'] !== UPLOAD_ERR_OK) {
         throw new RuntimeException('UPLOAD_ERROR');
     }
 
-    if (!empty($settings['maxFileSize']) && $file['size'] > (int)$settings['maxFileSize']) {
+    if ($maxFileSize > 0 && (int)$file['size'] > $maxFileSize) {
         throw new RuntimeException('FILE_TOO_LARGE');
     }
 
-    if (!empty($settings['allowedExtensions'])) {
-        $ext = strtolower(pathinfo($file['name'], PATHINFO_EXTENSION));
-        if (!in_array($ext, $settings['allowedExtensions'], true)) {
+    if (!empty($allowedExtensions)) {
+        $ext = strtolower(pathinfo((string)$file['name'], PATHINFO_EXTENSION));
+        if (!in_array($ext, $allowedExtensions, true)) {
             throw new RuntimeException('EXTENSION_NOT_ALLOWED');
         }
     }
@@ -1139,12 +950,293 @@ DiskResponse::success([
 
 ---
 
-21. HTML-шаблон компонента
-
-template.php
+19. actions/search.php
 
 <?php
-$initialStateJson = htmlspecialchars(json_encode($arResult['INITIAL_STATE'], JSON_UNESCAPED_UNICODE), ENT_QUOTES, 'UTF-8');
+
+$data = disk_read_json_body();
+
+$context = DiskContextFactory::fromArray([
+    'siteId' => (int)($data['siteId'] ?? 0),
+    'pageId' => (int)($data['pageId'] ?? 0),
+    'blockId' => (int)($data['blockId'] ?? 0),
+    'currentUserId' => 1,
+]);
+
+DiskValidator::assertContext($context);
+
+$settings = DiskSettingsRepository::getByBlockId($context->blockId);
+$rootFolderId = DiskRootResolver::resolve($context, $settings);
+$permissions = DiskPermissionService::resolve($context, $settings, $rootFolderId);
+
+DiskValidator::assertCan($permissions, 'canView');
+
+$query = trim((string)($data['query'] ?? ''));
+if ($query === '') {
+    DiskResponse::success([
+        'items' => [],
+    ], [
+        'total' => 0,
+    ]);
+}
+
+$adapter = new DiskStorageAdapter();
+$items = $adapter->search($context, (int)$rootFolderId, $query, []);
+
+DiskResponse::success([
+    'items' => $items,
+], [
+    'total' => count($items),
+]);
+
+
+---
+
+20. actions/rename.php
+
+<?php
+
+$data = disk_read_json_body();
+
+$context = DiskContextFactory::fromArray([
+    'siteId' => (int)($data['siteId'] ?? 0),
+    'pageId' => (int)($data['pageId'] ?? 0),
+    'blockId' => (int)($data['blockId'] ?? 0),
+    'currentUserId' => 1,
+]);
+
+DiskValidator::assertContext($context);
+
+$settings = DiskSettingsRepository::getByBlockId($context->blockId);
+$rootFolderId = DiskRootResolver::resolve($context, $settings);
+$permissions = DiskPermissionService::resolve($context, $settings, $rootFolderId);
+
+DiskValidator::assertCan($permissions, 'canRename');
+
+$entityType = trim((string)($data['entityType'] ?? ''));
+$entityId = (int)($data['entityId'] ?? 0);
+$newName = trim((string)($data['newName'] ?? ''));
+
+if (!in_array($entityType, ['file', 'folder'], true)) {
+    throw new RuntimeException('INVALID_ENTITY_TYPE');
+}
+
+if ($entityId <= 0) {
+    throw new RuntimeException('INVALID_ENTITY_ID');
+}
+
+DiskValidator::assertNonEmptyString($newName, 'EMPTY_NAME');
+
+$adapter = new DiskStorageAdapter();
+$item = $adapter->rename($context, $entityType, $entityId, $newName);
+
+DiskResponse::success([
+    'item' => $item,
+]);
+
+
+---
+
+21. actions/delete.php
+
+<?php
+
+$data = disk_read_json_body();
+
+$context = DiskContextFactory::fromArray([
+    'siteId' => (int)($data['siteId'] ?? 0),
+    'pageId' => (int)($data['pageId'] ?? 0),
+    'blockId' => (int)($data['blockId'] ?? 0),
+    'currentUserId' => 1,
+]);
+
+DiskValidator::assertContext($context);
+
+$settings = DiskSettingsRepository::getByBlockId($context->blockId);
+$rootFolderId = DiskRootResolver::resolve($context, $settings);
+$permissions = DiskPermissionService::resolve($context, $settings, $rootFolderId);
+
+DiskValidator::assertCan($permissions, 'canDelete');
+
+$items = $data['items'] ?? [];
+if (!is_array($items) || empty($items)) {
+    throw new RuntimeException('EMPTY_ITEMS');
+}
+
+$adapter = new DiskStorageAdapter();
+$result = $adapter->delete($context, $items);
+
+DiskResponse::success([
+    'result' => $result,
+]);
+
+
+---
+
+22. actions/move.php
+
+<?php
+
+$data = disk_read_json_body();
+
+$context = DiskContextFactory::fromArray([
+    'siteId' => (int)($data['siteId'] ?? 0),
+    'pageId' => (int)($data['pageId'] ?? 0),
+    'blockId' => (int)($data['blockId'] ?? 0),
+    'currentUserId' => 1,
+]);
+
+DiskValidator::assertContext($context);
+
+$settings = DiskSettingsRepository::getByBlockId($context->blockId);
+$rootFolderId = DiskRootResolver::resolve($context, $settings);
+$permissions = DiskPermissionService::resolve($context, $settings, $rootFolderId);
+
+DiskValidator::assertCan($permissions, 'canRename');
+
+$items = $data['items'] ?? [];
+$targetFolderId = (int)($data['targetFolderId'] ?? 0);
+
+if (!is_array($items) || empty($items)) {
+    throw new RuntimeException('EMPTY_ITEMS');
+}
+
+DiskValidator::assertFolderInsideRoot($targetFolderId, $rootFolderId);
+
+$adapter = new DiskStorageAdapter();
+$result = $adapter->move($context, $items, $targetFolderId);
+
+DiskResponse::success([
+    'result' => $result,
+]);
+
+
+---
+
+23. actions/copy.php
+
+<?php
+
+$data = disk_read_json_body();
+
+$context = DiskContextFactory::fromArray([
+    'siteId' => (int)($data['siteId'] ?? 0),
+    'pageId' => (int)($data['pageId'] ?? 0),
+    'blockId' => (int)($data['blockId'] ?? 0),
+    'currentUserId' => 1,
+]);
+
+DiskValidator::assertContext($context);
+
+$settings = DiskSettingsRepository::getByBlockId($context->blockId);
+$rootFolderId = DiskRootResolver::resolve($context, $settings);
+$permissions = DiskPermissionService::resolve($context, $settings, $rootFolderId);
+
+DiskValidator::assertCan($permissions, 'canView');
+
+$items = $data['items'] ?? [];
+$targetFolderId = (int)($data['targetFolderId'] ?? 0);
+
+if (!is_array($items) || empty($items)) {
+    throw new RuntimeException('EMPTY_ITEMS');
+}
+
+DiskValidator::assertFolderInsideRoot($targetFolderId, $rootFolderId);
+
+$adapter = new DiskStorageAdapter();
+$result = $adapter->copy($context, $items, $targetFolderId);
+
+DiskResponse::success([
+    'result' => $result,
+]);
+
+
+---
+
+24. actions/save_settings.php
+
+<?php
+
+$data = disk_read_json_body();
+
+$context = DiskContextFactory::fromArray([
+    'siteId' => (int)($data['siteId'] ?? 0),
+    'pageId' => (int)($data['pageId'] ?? 0),
+    'blockId' => (int)($data['blockId'] ?? 0),
+    'currentUserId' => 1,
+]);
+
+DiskValidator::assertContext($context);
+
+$currentSettings = DiskSettingsRepository::getByBlockId($context->blockId);
+$rootFolderId = DiskRootResolver::resolve($context, $currentSettings);
+$permissions = DiskPermissionService::resolve($context, $currentSettings, $rootFolderId);
+
+DiskValidator::assertCan($permissions, 'canEditSettings');
+
+$settings = $data['settings'] ?? [];
+if (!is_array($settings)) {
+    throw new RuntimeException('INVALID_SETTINGS_PAYLOAD');
+}
+
+$normalized = [
+    'title' => trim((string)($settings['title'] ?? 'Файлы')),
+    'rootFolderId' => isset($settings['rootFolderId']) ? (int)$settings['rootFolderId'] : null,
+    'viewMode' => in_array(($settings['viewMode'] ?? 'table'), ['table', 'grid'], true) ? $settings['viewMode'] : 'table',
+    'allowUpload' => disk_normalize_bool($settings['allowUpload'] ?? true),
+    'allowCreateFolder' => disk_normalize_bool($settings['allowCreateFolder'] ?? true),
+    'allowRename' => disk_normalize_bool($settings['allowRename'] ?? true),
+    'allowDelete' => disk_normalize_bool($settings['allowDelete'] ?? false),
+    'allowDownload' => disk_normalize_bool($settings['allowDownload'] ?? true),
+    'showSearch' => disk_normalize_bool($settings['showSearch'] ?? true),
+    'showBreadcrumbs' => disk_normalize_bool($settings['showBreadcrumbs'] ?? true),
+    'defaultSort' => trim((string)($settings['defaultSort'] ?? 'updatedAt')),
+    'defaultSortDirection' => trim((string)($settings['defaultSortDirection'] ?? 'desc')),
+    'allowedExtensions' => is_array($settings['allowedExtensions'] ?? null) ? array_values($settings['allowedExtensions']) : [],
+    'maxFileSize' => (int)($settings['maxFileSize'] ?? 52428800),
+    'permissionMode' => trim((string)($settings['permissionMode'] ?? 'inherit_site')),
+    'useSiteRootFallback' => disk_normalize_bool($settings['useSiteRootFallback'] ?? true),
+];
+
+DiskSettingsRepository::save($context->blockId, $normalized);
+
+DiskResponse::success([
+    'settings' => $normalized,
+]);
+
+
+---
+
+25. actions/download.php
+
+Пока как заглушка, чтобы было понятно место логики:
+
+<?php
+
+$fileId = (int)($_GET['fileId'] ?? 0);
+if ($fileId <= 0) {
+    throw new RuntimeException('INVALID_FILE_ID');
+}
+
+// TODO:
+// Здесь должна быть полноценная логика:
+// - определить пользователя
+// - определить контекст блока
+// - проверить canDownload
+// - проверить принадлежность файла root-дереву
+// - отдать файл
+
+header('Content-Type: text/plain; charset=UTF-8');
+echo 'TODO: download file #' . $fileId;
+exit;
+
+
+---
+
+26. template.php
+
+<?php
+$initialStateJson = disk_h(json_encode($arResult['INITIAL_STATE'], JSON_UNESCAPED_UNICODE));
 ?>
 <div class="sb-disk"
      id="sb-disk-<?= (int)$arResult['BLOCK_ID'] ?>"
@@ -1154,13 +1246,16 @@ $initialStateJson = htmlspecialchars(json_encode($arResult['INITIAL_STATE'], JSO
      data-initial-state="<?= $initialStateJson ?>">
 
     <div class="sb-disk__header">
-        <div class="sb-disk__header-left">
-            <h3 class="sb-disk__title"><?= htmlspecialchars($arResult['TITLE']) ?></h3>
-            <div class="sb-disk__subtitle" data-role="subtitle"></div>
+        <div class="sb-disk__header-main">
+            <div class="sb-disk__title-wrap">
+                <h3 class="sb-disk__title"><?= disk_h($arResult['TITLE']) ?></h3>
+                <div class="sb-disk__subtitle" data-role="subtitle"></div>
+            </div>
         </div>
 
-        <div class="sb-disk__header-right">
+        <div class="sb-disk__header-actions">
             <button type="button" class="sb-disk__btn sb-disk__btn--ghost" data-action="refresh">Обновить</button>
+
             <?php if (!empty($arResult['PERMISSIONS']['canEditSettings'])): ?>
                 <button type="button" class="sb-disk__btn sb-disk__btn--ghost" data-action="settings">Настройки</button>
             <?php endif; ?>
@@ -1175,7 +1270,10 @@ $initialStateJson = htmlspecialchars(json_encode($arResult['INITIAL_STATE'], JSO
         <div class="sb-disk__toolbar-left">
             <?php if (!empty($arResult['SETTINGS']['showSearch'])): ?>
                 <div class="sb-disk__search">
-                    <input type="text" class="sb-disk__search-input" data-role="search-input" placeholder="Поиск файлов и папок">
+                    <input type="text"
+                           class="sb-disk__search-input"
+                           data-role="search-input"
+                           placeholder="Поиск файлов и папок">
                 </div>
             <?php endif; ?>
 
@@ -1206,8 +1304,10 @@ $initialStateJson = htmlspecialchars(json_encode($arResult['INITIAL_STATE'], JSO
 
     <div class="sb-disk__bulkbar" data-role="bulkbar" hidden>
         <span class="sb-disk__bulkbar-text" data-role="bulkbar-text">Выбрано: 0</span>
-        <button type="button" class="sb-disk__btn" data-action="download-selected">Скачать</button>
-        <button type="button" class="sb-disk__btn sb-disk__btn--danger" data-action="delete-selected">Удалить</button>
+        <div class="sb-disk__bulkbar-actions">
+            <button type="button" class="sb-disk__btn" data-action="download-selected">Скачать</button>
+            <button type="button" class="sb-disk__btn sb-disk__btn--danger" data-action="delete-selected">Удалить</button>
+        </div>
     </div>
 
     <div class="sb-disk__content">
@@ -1221,7 +1321,9 @@ $initialStateJson = htmlspecialchars(json_encode($arResult['INITIAL_STATE'], JSO
             <table class="sb-disk__table">
                 <thead>
                     <tr>
-                        <th class="sb-disk__col sb-disk__col--checkbox"></th>
+                        <th class="sb-disk__col sb-disk__col--checkbox">
+                            <input type="checkbox" data-role="select-all">
+                        </th>
                         <th class="sb-disk__col sb-disk__col--name">Название</th>
                         <th class="sb-disk__col">Тип</th>
                         <th class="sb-disk__col">Размер</th>
@@ -1236,24 +1338,24 @@ $initialStateJson = htmlspecialchars(json_encode($arResult['INITIAL_STATE'], JSO
         <div class="sb-disk__view sb-disk__view--grid" data-view-container="grid" hidden></div>
     </div>
 
-    <input type="file" multiple hidden data-role="upload-input">
+    <input type="file" class="sb-disk__file-input" data-role="upload-input" multiple hidden>
 </div>
 
 
 ---
 
-22. CSS naming и стартовый CSS-каркас
-
-styles.css
+27. styles.css
 
 .sb-disk {
-    border: 1px solid #dfe3ea;
-    border-radius: 16px;
-    background: #ffffff;
-    padding: 20px;
     display: flex;
     flex-direction: column;
     gap: 16px;
+    padding: 20px;
+    background: #ffffff;
+    border: 1px solid #dfe3ea;
+    border-radius: 18px;
+    min-height: 280px;
+    box-sizing: border-box;
 }
 
 .sb-disk__header,
@@ -1265,12 +1367,20 @@ styles.css
     gap: 12px;
 }
 
-.sb-disk__header-left,
+.sb-disk__header-main,
+.sb-disk__header-actions,
 .sb-disk__toolbar-left,
-.sb-disk__toolbar-right {
+.sb-disk__toolbar-right,
+.sb-disk__bulkbar-actions {
     display: flex;
     align-items: center;
     gap: 12px;
+}
+
+.sb-disk__title-wrap {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
 }
 
 .sb-disk__title {
@@ -1278,26 +1388,38 @@ styles.css
     font-size: 20px;
     line-height: 1.2;
     font-weight: 600;
+    color: #111827;
 }
 
 .sb-disk__subtitle {
     font-size: 13px;
+    line-height: 1.4;
     color: #6b7280;
 }
 
 .sb-disk__breadcrumbs {
     display: flex;
     flex-wrap: wrap;
+    align-items: center;
     gap: 8px;
+    min-height: 20px;
     font-size: 13px;
+    line-height: 1.4;
 }
 
 .sb-disk__crumb {
-    background: none;
+    appearance: none;
     border: none;
+    background: transparent;
     padding: 0;
     cursor: pointer;
     color: #2563eb;
+    font-size: 13px;
+    line-height: 1.4;
+}
+
+.sb-disk__crumb:hover {
+    text-decoration: underline;
 }
 
 .sb-disk__search-input,
@@ -1305,8 +1427,11 @@ styles.css
     height: 40px;
     border: 1px solid #d1d5db;
     border-radius: 10px;
+    background: #ffffff;
     padding: 0 12px;
     font-size: 14px;
+    line-height: 1;
+    box-sizing: border-box;
 }
 
 .sb-disk__search-input {
@@ -1315,63 +1440,138 @@ styles.css
 
 .sb-disk__btn,
 .sb-disk__view-btn {
+    appearance: none;
     height: 40px;
+    padding: 0 14px;
     border: 1px solid #d1d5db;
     border-radius: 10px;
-    background: #fff;
-    padding: 0 14px;
+    background: #ffffff;
+    color: #111827;
     font-size: 14px;
+    line-height: 1;
     cursor: pointer;
+    box-sizing: border-box;
 }
 
-.sb-disk__btn--danger {
-    border-color: #ef4444;
+.sb-disk__btn:hover,
+.sb-disk__view-btn:hover {
+    background: #f8fafc;
+}
+
+.sb-disk__btn:disabled,
+.sb-disk__view-btn:disabled {
+    opacity: .5;
+    cursor: default;
 }
 
 .sb-disk__btn--ghost {
     background: #f8fafc;
 }
 
+.sb-disk__btn--danger {
+    border-color: #ef4444;
+    color: #b91c1c;
+}
+
 .sb-disk__view-switch {
-    display: flex;
+    display: inline-flex;
+    align-items: center;
     gap: 8px;
 }
 
 .sb-disk__view-btn.is-active {
     font-weight: 600;
+    border-color: #93c5fd;
+    background: #eff6ff;
+}
+
+.sb-disk__bulkbar {
+    padding: 12px 14px;
+    border: 1px solid #dbeafe;
+    border-radius: 12px;
+    background: #f8fbff;
+}
+
+.sb-disk__bulkbar-text {
+    font-size: 14px;
+    color: #1f2937;
 }
 
 .sb-disk__content {
-    min-height: 240px;
+    display: block;
+    min-height: 220px;
+}
+
+.sb-disk__state {
+    padding: 40px 20px;
+    border: 1px dashed #d1d5db;
+    border-radius: 12px;
+    text-align: center;
+    color: #6b7280;
+    font-size: 14px;
+    line-height: 1.5;
 }
 
 .sb-disk__table {
     width: 100%;
     border-collapse: collapse;
+    table-layout: fixed;
 }
 
-.sb-disk__table th,
-.sb-disk__table td {
+.sb-disk__table thead th {
+    padding: 12px 10px;
+    border-bottom: 1px solid #e5e7eb;
+    color: #6b7280;
+    font-size: 13px;
+    line-height: 1.4;
+    font-weight: 500;
+    text-align: left;
+}
+
+.sb-disk__table tbody td {
     padding: 12px 10px;
     border-bottom: 1px solid #eef2f7;
-    text-align: left;
+    color: #111827;
+    font-size: 14px;
+    line-height: 1.4;
     vertical-align: middle;
 }
 
-.sb-disk__row {
-    cursor: default;
+.sb-disk__col--checkbox {
+    width: 44px;
+}
+
+.sb-disk__col--actions {
+    width: 110px;
 }
 
 .sb-disk__row.is-selected {
     background: #f5f9ff;
 }
 
-.sb-disk__state {
-    padding: 40px 20px;
-    text-align: center;
-    color: #6b7280;
-    border: 1px dashed #d1d5db;
-    border-radius: 12px;
+.sb-disk__item-name {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+}
+
+.sb-disk__item-name-label {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.sb-disk__badge {
+    display: inline-flex;
+    align-items: center;
+    height: 22px;
+    padding: 0 8px;
+    border-radius: 999px;
+    background: #f3f4f6;
+    color: #374151;
+    font-size: 12px;
+    line-height: 1;
 }
 
 .sb-disk__grid {
@@ -1381,27 +1581,92 @@ styles.css
 }
 
 .sb-disk__card {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    min-height: 150px;
+    padding: 14px;
     border: 1px solid #e5e7eb;
     border-radius: 14px;
-    padding: 14px;
-    background: #fff;
+    background: #ffffff;
+    box-sizing: border-box;
+}
+
+.sb-disk__card.is-selected {
+    border-color: #93c5fd;
+    background: #f8fbff;
+}
+
+.sb-disk__card-top,
+.sb-disk__card-meta,
+.sb-disk__card-actions {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+}
+
+.sb-disk__card-name {
+    font-size: 14px;
+    font-weight: 500;
+    line-height: 1.4;
+    color: #111827;
+    word-break: break-word;
+}
+
+.sb-disk__card-sub {
+    font-size: 12px;
+    line-height: 1.4;
+    color: #6b7280;
+}
+
+.sb-disk__row-btn {
+    appearance: none;
+    border: 1px solid #d1d5db;
+    background: #ffffff;
+    border-radius: 8px;
+    padding: 6px 10px;
+    cursor: pointer;
+    font-size: 13px;
+}
+
+.sb-disk__row-btn:hover {
+    background: #f8fafc;
+}
+
+.sb-disk__file-input {
+    display: none;
 }
 
 .is-hidden {
     display: none !important;
 }
 
-.is-disabled {
-    opacity: .5;
-    pointer-events: none;
+@media (max-width: 980px) {
+    .sb-disk__header,
+    .sb-disk__toolbar,
+    .sb-disk__bulkbar {
+        flex-direction: column;
+        align-items: stretch;
+    }
+
+    .sb-disk__toolbar-left,
+    .sb-disk__toolbar-right,
+    .sb-disk__header-actions,
+    .sb-disk__bulkbar-actions {
+        flex-wrap: wrap;
+    }
+
+    .sb-disk__search-input {
+        min-width: 100%;
+        width: 100%;
+    }
 }
 
 
 ---
 
-23. JS-компонент
-
-script.js
+28. script.js
 
 (function () {
   function DiskComponent(root) {
@@ -1430,6 +1695,7 @@ script.js
       breadcrumbs: [],
       items: [],
       selectedIds: [],
+      searchQuery: '',
       viewMode: (parsed.settings && parsed.settings.viewMode) || 'table',
       loading: false,
       error: null
@@ -1438,6 +1704,7 @@ script.js
 
   DiskComponent.prototype.init = async function () {
     this.bindStaticEvents();
+    this.applyInitialViewMode();
 
     if (!this.state.permissions.canView) {
       this.renderState('no-access');
@@ -1452,16 +1719,40 @@ script.js
     await this.loadFolder(this.state.rootFolderId);
   };
 
+  DiskComponent.prototype.applyInitialViewMode = function () {
+    this.setViewMode(this.state.viewMode || 'table');
+  };
+
+  DiskComponent.prototype.setViewMode = function (mode) {
+    this.state.viewMode = mode === 'grid' ? 'grid' : 'table';
+
+    var tableContainer = this.root.querySelector('[data-view-container="table"]');
+    var gridContainer = this.root.querySelector('[data-view-container="grid"]');
+    var buttons = this.root.querySelectorAll('.sb-disk__view-btn');
+
+    if (tableContainer) {
+      tableContainer.hidden = this.state.viewMode !== 'table';
+    }
+
+    if (gridContainer) {
+      gridContainer.hidden = this.state.viewMode !== 'grid';
+    }
+
+    buttons.forEach(function (btn) {
+      btn.classList.toggle('is-active', btn.getAttribute('data-view') === mode);
+    });
+  };
+
   DiskComponent.prototype.api = async function (action, payload, isFormData) {
     if (isFormData) {
-      var response = await fetch('/local/sitebuilder/components/disk/api.php?action=' + action, {
+      var response = await fetch('/local/sitebuilder/components/disk/api.php?action=' + encodeURIComponent(action), {
         method: 'POST',
         body: payload
       });
       return await response.json();
     }
 
-    var response = await fetch('/local/sitebuilder/components/disk/api.php?action=' + action, {
+    var response = await fetch('/local/sitebuilder/components/disk/api.php?action=' + encodeURIComponent(action), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload)
@@ -1478,6 +1769,19 @@ script.js
     };
   };
 
+  DiskComponent.prototype.getSortValue = function () {
+    var select = this.root.querySelector('[data-role="sort-select"]');
+    return select && select.value ? String(select.value) : 'updatedAt:desc';
+  };
+
+  DiskComponent.prototype.getSortBy = function () {
+    return this.getSortValue().split(':')[0] || 'updatedAt';
+  };
+
+  DiskComponent.prototype.getSortDir = function () {
+    return this.getSortValue().split(':')[1] || 'desc';
+  };
+
   DiskComponent.prototype.loadFolder = async function (folderId) {
     try {
       this.setLoading(true);
@@ -1486,6 +1790,7 @@ script.js
       payload.currentFolderId = folderId;
       payload.sortBy = this.getSortBy();
       payload.sortDir = this.getSortDir();
+      payload.filters = {};
 
       var res = await this.api('list', payload);
 
@@ -1494,10 +1799,44 @@ script.js
       }
 
       this.state.currentFolderId = folderId;
-      this.state.items = res.data.items || [];
-      this.state.breadcrumbs = res.data.breadcrumbs || [];
+      this.state.items = Array.isArray(res.data.items) ? res.data.items : [];
+      this.state.breadcrumbs = Array.isArray(res.data.breadcrumbs) ? res.data.breadcrumbs : [];
       this.state.selectedIds = [];
 
+      this.renderAll();
+
+      if (res.meta && res.meta.noRoot) {
+        this.renderState('no-root');
+        return;
+      }
+
+      if (!this.state.items.length) {
+        this.renderState('empty');
+      } else {
+        this.renderState(null);
+      }
+    } catch (e) {
+      console.error(e);
+      this.state.error = e.message || 'LIST_ERROR';
+      this.renderState('error');
+    } finally {
+      this.setLoading(false);
+    }
+  };
+
+  DiskComponent.prototype.search = async function (query) {
+    try {
+      var payload = this.getBasePayload();
+      payload.query = query;
+
+      var res = await this.api('search', payload);
+
+      if (!res.ok) {
+        throw new Error(res.message || res.error || 'SEARCH_ERROR');
+      }
+
+      this.state.items = Array.isArray(res.data.items) ? res.data.items : [];
+      this.state.selectedIds = [];
       this.renderAll();
 
       if (!this.state.items.length) {
@@ -1508,8 +1847,6 @@ script.js
     } catch (e) {
       console.error(e);
       this.renderState('error');
-    } finally {
-      this.setLoading(false);
     }
   };
 
@@ -1528,7 +1865,7 @@ script.js
       createFolderBtn.addEventListener('click', async function () {
         if (!self.state.permissions.canCreateFolder) return;
 
-        var name = prompt('Название папки');
+        var name = window.prompt('Название папки');
         if (!name) return;
 
         var payload = self.getBasePayload();
@@ -1537,7 +1874,7 @@ script.js
 
         var res = await self.api('createFolder', payload);
         if (!res.ok) {
-          alert(res.message || res.error || 'Ошибка создания папки');
+          window.alert(res.message || res.error || 'Ошибка создания папки');
           return;
         }
 
@@ -1570,7 +1907,7 @@ script.js
 
         var res = await self.api('upload', formData, true);
         if (!res.ok) {
-          alert(res.message || res.error || 'Ошибка загрузки');
+          window.alert(res.message || res.error || 'Ошибка загрузки');
           return;
         }
 
@@ -1582,51 +1919,254 @@ script.js
     var sortSelect = this.root.querySelector('[data-role="sort-select"]');
     if (sortSelect) {
       sortSelect.addEventListener('change', function () {
-        self.loadFolder(self.state.currentFolderId);
+        self.loadFolder(self.state.currentFolderId || self.state.rootFolderId);
       });
     }
+
+    var searchInput = this.root.querySelector('[data-role="search-input"]');
+    if (searchInput) {
+      var searchTimer = null;
+
+      searchInput.addEventListener('input', function () {
+        var value = String(searchInput.value || '').trim();
+
+        clearTimeout(searchTimer);
+        searchTimer = setTimeout(function () {
+          self.state.searchQuery = value;
+
+          if (value === '') {
+            self.loadFolder(self.state.currentFolderId || self.state.rootFolderId);
+            return;
+          }
+
+          self.search(value);
+        }, 250);
+      });
+    }
+
+    var selectAll = this.root.querySelector('[data-role="select-all"]');
+    if (selectAll) {
+      selectAll.addEventListener('change', function () {
+        var checked = !!selectAll.checked;
+        var checkboxes = self.root.querySelectorAll('.sb-disk__item-check');
+
+        self.state.selectedIds = [];
+
+        checkboxes.forEach(function (checkbox) {
+          checkbox.checked = checked;
+          var id = Number(checkbox.getAttribute('data-id') || 0);
+
+          if (checked && id > 0) {
+            self.state.selectedIds.push(id);
+          }
+        });
+
+        self.syncSelectedState();
+      });
+    }
+
+    var viewButtons = this.root.querySelectorAll('.sb-disk__view-btn');
+    viewButtons.forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        var mode = btn.getAttribute('data-view') || 'table';
+        self.setViewMode(mode);
+      });
+    });
 
     this.root.addEventListener('click', async function (e) {
       var crumb = e.target.closest('.sb-disk__crumb');
       if (crumb) {
-        var folderId = Number(crumb.getAttribute('data-folder-id') || 0);
-        if (folderId > 0) {
-          await self.loadFolder(folderId);
+        var crumbFolderId = Number(crumb.getAttribute('data-folder-id') || 0);
+        if (crumbFolderId > 0) {
+          await self.loadFolder(crumbFolderId);
         }
+        return;
       }
 
-      var rowAction = e.target.closest('[data-row-action="open"]');
-      if (rowAction) {
-        var row = e.target.closest('.sb-disk__row');
+      var openBtn = e.target.closest('[data-row-action="open"]');
+      if (openBtn) {
+        var row = e.target.closest('[data-id][data-entity-type]');
         if (!row) return;
 
         var entityType = row.getAttribute('data-entity-type');
-        var id = Number(row.getAttribute('data-id') || 0);
+        var entityId = Number(row.getAttribute('data-id') || 0);
 
-        if (entityType === 'folder' && id > 0) {
-          await self.loadFolder(id);
+        if (entityType === 'folder' && entityId > 0) {
+          await self.loadFolder(entityId);
+        } else if (entityType === 'file') {
+          var downloadUrl = row.getAttribute('data-download-url') || '';
+          if (downloadUrl) {
+            window.open(downloadUrl, '_blank');
+          }
         }
+        return;
       }
+
+      var renameBtn = e.target.closest('[data-row-action="rename"]');
+      if (renameBtn) {
+        var renameRow = e.target.closest('[data-id][data-entity-type]');
+        if (!renameRow) return;
+
+        var renameEntityType = renameRow.getAttribute('data-entity-type');
+        var renameEntityId = Number(renameRow.getAttribute('data-id') || 0);
+        var currentName = renameRow.getAttribute('data-name') || '';
+
+        var newName = window.prompt('Новое название', currentName);
+        if (!newName) return;
+
+        var renamePayload = self.getBasePayload();
+        renamePayload.entityType = renameEntityType;
+        renamePayload.entityId = renameEntityId;
+        renamePayload.newName = newName;
+
+        var renameRes = await self.api('rename', renamePayload);
+        if (!renameRes.ok) {
+          window.alert(renameRes.message || renameRes.error || 'Ошибка переименования');
+          return;
+        }
+
+        await self.loadFolder(self.state.currentFolderId);
+        return;
+      }
+
+      var deleteBtn = e.target.closest('[data-row-action="delete"]');
+      if (deleteBtn) {
+        var deleteRow = e.target.closest('[data-id][data-entity-type]');
+        if (!deleteRow) return;
+
+        var confirmDelete = window.confirm('Удалить элемент?');
+        if (!confirmDelete) return;
+
+        var deletePayload = self.getBasePayload();
+        deletePayload.items = [{
+          id: Number(deleteRow.getAttribute('data-id') || 0),
+          entityType: deleteRow.getAttribute('data-entity-type')
+        }];
+
+        var deleteRes = await self.api('delete', deletePayload);
+        if (!deleteRes.ok) {
+          window.alert(deleteRes.message || deleteRes.error || 'Ошибка удаления');
+          return;
+        }
+
+        await self.loadFolder(self.state.currentFolderId);
+        return;
+      }
+
+      var deleteSelectedBtn = e.target.closest('[data-action="delete-selected"]');
+      if (deleteSelectedBtn) {
+        if (!self.state.selectedIds.length) return;
+
+        var confirmBulkDelete = window.confirm('Удалить выбранные элементы?');
+        if (!confirmBulkDelete) return;
+
+        var selectedItems = self.collectSelectedItemsPayload();
+        if (!selectedItems.length) return;
+
+        var bulkDeletePayload = self.getBasePayload();
+        bulkDeletePayload.items = selectedItems;
+
+        var bulkDeleteRes = await self.api('delete', bulkDeletePayload);
+        if (!bulkDeleteRes.ok) {
+          window.alert(bulkDeleteRes.message || bulkDeleteRes.error || 'Ошибка удаления');
+          return;
+        }
+
+        await self.loadFolder(self.state.currentFolderId);
+        return;
+      }
+
+      var downloadSelectedBtn = e.target.closest('[data-action="download-selected"]');
+      if (downloadSelectedBtn) {
+        var rows = self.root.querySelectorAll('[data-id][data-entity-type="file"]');
+        rows.forEach(function (row) {
+          var id = Number(row.getAttribute('data-id') || 0);
+          var downloadUrl = row.getAttribute('data-download-url') || '';
+
+          if (self.state.selectedIds.indexOf(id) !== -1 && downloadUrl) {
+            window.open(downloadUrl, '_blank');
+          }
+        });
+      }
+    });
+
+    this.root.addEventListener('change', function (e) {
+      var checkbox = e.target.closest('.sb-disk__item-check');
+      if (!checkbox) return;
+
+      var id = Number(checkbox.getAttribute('data-id') || 0);
+      if (id <= 0) return;
+
+      if (checkbox.checked) {
+        if (self.state.selectedIds.indexOf(id) === -1) {
+          self.state.selectedIds.push(id);
+        }
+      } else {
+        self.state.selectedIds = self.state.selectedIds.filter(function (value) {
+          return value !== id;
+        });
+      }
+
+      self.syncSelectedState();
     });
   };
 
-  DiskComponent.prototype.getSortBy = function () {
-    var select = this.root.querySelector('[data-role="sort-select"]');
-    if (!select || !select.value) return 'updatedAt';
-    return String(select.value).split(':')[0] || 'updatedAt';
+  DiskComponent.prototype.collectSelectedItemsPayload = function () {
+    var rows = this.root.querySelectorAll('[data-id][data-entity-type]');
+    var items = [];
+
+    rows.forEach(function (row) {
+      var id = Number(row.getAttribute('data-id') || 0);
+      if (id <= 0) return;
+
+      if (this.state.selectedIds.indexOf(id) !== -1) {
+        items.push({
+          id: id,
+          entityType: row.getAttribute('data-entity-type')
+        });
+      }
+    }, this);
+
+    return items;
   };
 
-  DiskComponent.prototype.getSortDir = function () {
-    var select = this.root.querySelector('[data-role="sort-select"]');
-    if (!select || !select.value) return 'desc';
-    return String(select.value).split(':')[1] || 'desc';
+  DiskComponent.prototype.syncSelectedState = function () {
+    var rows = this.root.querySelectorAll('[data-id][data-entity-type]');
+    rows.forEach(function (row) {
+      var id = Number(row.getAttribute('data-id') || 0);
+      var selected = this.state.selectedIds.indexOf(id) !== -1;
+      row.classList.toggle('is-selected', selected);
+    }, this);
+
+    var cards = this.root.querySelectorAll('.sb-disk__card[data-id]');
+    cards.forEach(function (card) {
+      var id = Number(card.getAttribute('data-id') || 0);
+      var selected = this.state.selectedIds.indexOf(id) !== -1;
+      card.classList.toggle('is-selected', selected);
+    }, this);
+
+    var bulkbar = this.root.querySelector('[data-role="bulkbar"]');
+    var bulkbarText = this.root.querySelector('[data-role="bulkbar-text"]');
+
+    if (bulkbar && bulkbarText) {
+      bulkbar.hidden = !this.state.selectedIds.length;
+      bulkbarText.textContent = 'Выбрано: ' + this.state.selectedIds.length;
+    }
   };
 
   DiskComponent.prototype.renderAll = function () {
+    this.renderSubtitle();
     this.renderBreadcrumbs();
     this.renderItemsTable();
-    this.renderSubtitle();
-    this.renderBulkbar();
+    this.renderItemsGrid();
+    this.syncSelectedState();
+  };
+
+  DiskComponent.prototype.renderSubtitle = function () {
+    var node = this.root.querySelector('[data-role="subtitle"]');
+    if (!node) return;
+
+    node.textContent = this.state.items.length + ' эл.';
   };
 
   DiskComponent.prototype.renderBreadcrumbs = function () {
@@ -1634,7 +2174,9 @@ script.js
     if (!container) return;
 
     container.innerHTML = this.state.breadcrumbs.map(function (item) {
-      return '<button type="button" class="sb-disk__crumb" data-folder-id="' + item.id + '">' + escapeHtml(item.name) + '</button>';
+      return '<button type="button" class="sb-disk__crumb" data-folder-id="' + escapeHtml(item.id) + '">' +
+        escapeHtml(item.name) +
+      '</button>';
     }).join('<span>/</span>');
   };
 
@@ -1644,40 +2186,76 @@ script.js
 
     tbody.innerHTML = this.state.items.map(function (item) {
       var typeText = item.entityType === 'folder' ? 'Папка' : (item.extension || 'Файл');
-      var sizeText = item.size ? String(item.size) : '';
+      var sizeText = item.size ? formatBytes(item.size) : '';
+      var badge = item.entityType === 'folder'
+        ? '<span class="sb-disk__badge">Папка</span>'
+        : '<span class="sb-disk__badge">' + escapeHtml(item.extension || 'Файл') + '</span>';
 
       return '' +
-        '<tr class="sb-disk__row" data-id="' + item.id + '" data-entity-type="' + item.entityType + '">' +
-          '<td><input type="checkbox" class="sb-disk__check"></td>' +
-          '<td>' + escapeHtml(item.name) + '</td>' +
-          '<td>' + escapeHtml(typeText) + '</td>' +
-          '<td>' + escapeHtml(sizeText) + '</td>' +
-          '<td>' + escapeHtml(item.updatedAt || '') + '</td>' +
-          '<td><button type="button" class="sb-disk__btn sb-disk__btn--ghost" data-row-action="open">Открыть</button></td>' +
+        '<tr class="sb-disk__row" ' +
+          'data-id="' + escapeHtml(item.id) + '" ' +
+          'data-entity-type="' + escapeHtml(item.entityType) + '" ' +
+          'data-name="' + escapeHtml(item.name) + '" ' +
+          'data-download-url="' + escapeHtml(item.downloadUrl || '') + '">' +
+            '<td>' +
+              '<input type="checkbox" class="sb-disk__item-check" data-id="' + escapeHtml(item.id) + '">' +
+            '</td>' +
+            '<td>' +
+              '<div class="sb-disk__item-name">' +
+                badge +
+                '<span class="sb-disk__item-name-label">' + escapeHtml(item.name) + '</span>' +
+              '</div>' +
+            '</td>' +
+            '<td>' + escapeHtml(typeText) + '</td>' +
+            '<td>' + escapeHtml(sizeText) + '</td>' +
+            '<td>' + escapeHtml(item.updatedAt || '') + '</td>' +
+            '<td>' +
+              '<button type="button" class="sb-disk__row-btn" data-row-action="open">Открыть</button> ' +
+              '<button type="button" class="sb-disk__row-btn" data-row-action="rename">Переим.</button> ' +
+              '<button type="button" class="sb-disk__row-btn" data-row-action="delete">Удалить</button>' +
+            '</td>' +
         '</tr>';
     }).join('');
   };
 
-  DiskComponent.prototype.renderSubtitle = function () {
-    var node = this.root.querySelector('[data-role="subtitle"]');
-    if (!node) return;
+  DiskComponent.prototype.renderItemsGrid = function () {
+    var container = this.root.querySelector('[data-view-container="grid"]');
+    if (!container) return;
 
-    var count = this.state.items.length;
-    node.textContent = count + ' эл.';
-  };
+    container.innerHTML = this.state.items.map(function (item) {
+      var typeText = item.entityType === 'folder' ? 'Папка' : (item.extension || 'Файл');
+      var sizeText = item.size ? formatBytes(item.size) : '—';
 
-  DiskComponent.prototype.renderBulkbar = function () {
-    var bulkbar = this.root.querySelector('[data-role="bulkbar"]');
-    var textNode = this.root.querySelector('[data-role="bulkbar-text"]');
-
-    if (!bulkbar || !textNode) return;
-
-    textNode.textContent = 'Выбрано: ' + this.state.selectedIds.length;
-    bulkbar.hidden = !this.state.selectedIds.length;
+      return '' +
+        '<div class="sb-disk__card" ' +
+             'data-id="' + escapeHtml(item.id) + '" ' +
+             'data-entity-type="' + escapeHtml(item.entityType) + '" ' +
+             'data-name="' + escapeHtml(item.name) + '" ' +
+             'data-download-url="' + escapeHtml(item.downloadUrl || '') + '">' +
+            '<div class="sb-disk__card-top">' +
+              '<label>' +
+                '<input type="checkbox" class="sb-disk__item-check" data-id="' + escapeHtml(item.id) + '">' +
+              '</label>' +
+              '<span class="sb-disk__badge">' + escapeHtml(typeText) + '</span>' +
+            '</div>' +
+            '<div class="sb-disk__card-name">' + escapeHtml(item.name) + '</div>' +
+            '<div class="sb-disk__card-meta">' +
+              '<span class="sb-disk__card-sub">Размер: ' + escapeHtml(sizeText) + '</span>' +
+            '</div>' +
+            '<div class="sb-disk__card-meta">' +
+              '<span class="sb-disk__card-sub">' + escapeHtml(item.updatedAt || '') + '</span>' +
+            '</div>' +
+            '<div class="sb-disk__card-actions">' +
+              '<button type="button" class="sb-disk__row-btn" data-row-action="open">Открыть</button>' +
+              '<button type="button" class="sb-disk__row-btn" data-row-action="rename">Переим.</button>' +
+              '<button type="button" class="sb-disk__row-btn" data-row-action="delete">Удалить</button>' +
+            '</div>' +
+        '</div>';
+    }).join('');
   };
 
   DiskComponent.prototype.setLoading = function (loading) {
-    this.state.loading = loading;
+    this.state.loading = !!loading;
     this.renderState(loading ? 'loading' : null);
   };
 
@@ -1687,14 +2265,34 @@ script.js
       node.hidden = true;
     });
 
-    if (!stateName) return;
+    if (!stateName) {
+      return;
+    }
 
     var node = this.root.querySelector('[data-state="' + stateName + '"]');
-    if (node) node.hidden = false;
+    if (node) {
+      node.hidden = false;
+    }
   };
 
-  function escapeHtml(str) {
-    return String(str == null ? '' : str)
+  function formatBytes(bytes) {
+    bytes = Number(bytes || 0);
+    if (bytes <= 0) return '0 Б';
+
+    var units = ['Б', 'КБ', 'МБ', 'ГБ', 'ТБ'];
+    var unitIndex = 0;
+
+    while (bytes >= 1024 && unitIndex < units.length - 1) {
+      bytes /= 1024;
+      unitIndex++;
+    }
+
+    var value = unitIndex === 0 ? Math.round(bytes) : bytes.toFixed(1);
+    return String(value) + ' ' + units[unitIndex];
+  }
+
+  function escapeHtml(value) {
+    return String(value == null ? '' : value)
       .replace(/&/g, '&amp;')
       .replace(/</g, '&lt;')
       .replace(/>/g, '&gt;')
@@ -1713,243 +2311,135 @@ script.js
 
 ---
 
-24. Регистрация блока в конструкторе
+29. Как это подключать в страницу
 
-Ниже схема, как включить его в ваш sitebuilder.
+Пример:
 
-Пример регистрации типа блока
+<?php
 
-$registry['disk'] = [
-    'type' => 'disk',
-    'name' => 'Диск',
-    'icon' => 'disk',
-    'componentPath' => '/local/sitebuilder/components/disk/',
-    'category' => 'content',
-    'supportsSettings' => true,
-    'supportsPermissions' => true,
-];
+$component = new SitebuilderDiskComponent([
+    'SITE_ID' => (int)$siteId,
+    'PAGE_ID' => (int)$pageId,
+    'BLOCK_ID' => (int)$block['id'],
+    'CURRENT_USER_ID' => (int)$USER->GetID(),
+]);
 
+$component->execute();
 
----
+И не забыть подключить стили и скрипт:
 
-Пример рендера страницы
-
-foreach ($pageBlocks as $block) {
-    switch ($block['type']) {
-        case 'disk':
-            $component = new SitebuilderDiskComponent([
-                'SITE_ID' => $siteId,
-                'PAGE_ID' => $pageId,
-                'BLOCK_ID' => $block['id'],
-                'CURRENT_USER_ID' => $currentUserId,
-            ]);
-            $component->execute();
-            break;
-
-        default:
-            // другие блоки
-            break;
-    }
-}
+<link rel="stylesheet" href="/local/sitebuilder/components/disk/styles.css">
+<script src="/local/sitebuilder/components/disk/script.js"></script>
 
 
 ---
 
-25. Что обязательно проверить на сервере
+30. Что в этом комплекте уже есть
 
-Это критично, иначе компонент будет дырявым.
+Уже есть:
 
-Для любого API-запроса:
+каркас компонента;
 
-siteId существует;
+контекст siteId/pageId/blockId/currentUserId;
 
-pageId принадлежит siteId;
+стартовый шаблон;
 
-blockId принадлежит pageId и siteId;
+UI таблица и плитка;
 
-block.type == 'disk';
+breadcrumbs;
 
-пользователь имеет доступ к сайту;
+поиск;
 
-currentFolderId находится внутри root-дерева блока;
+массовое выделение;
 
-действие разрешено итоговыми правами.
+загрузка файлов;
+
+создание папки;
+
+переименование;
+
+удаление;
+
+API-каркас;
+
+заготовка прав;
+
+заготовка root resolver;
+
+адаптер хранилища.
 
 
 
 ---
 
-26. Практические дефолты для первого запуска
+31. Что нужно заменить у вас в проекте в первую очередь
 
-При первом создании блока:
+Самые важные места, которые надо будет сразу связать с вашим проектом:
 
-title = 'Файлы'
+1. Пользователь
 
-viewMode = 'table'
+Сейчас в action-файлах стоит:
 
-showSearch = true
+'currentUserId' => 1
 
-showBreadcrumbs = true
-
-allowUpload = true
-
-allowCreateFolder = true
-
-allowRename = true
-
-allowDelete = false
-
-allowDownload = true
-
-permissionMode = 'inherit_site'
-
-useSiteRootFallback = true
-
-
-Это даст рабочий старт без лишней настройки.
+Нужно заменить на реальный ID текущего пользователя.
 
 
 ---
 
-27. Что я бы рекомендовал делать в вашей реализации сразу
+2. Проверка принадлежности блока
 
-Сразу заложить:
-
-Обязательно
-
-DiskStorageAdapterInterface
-
-DiskValidator::assertFolderInsideRoot()
-
-отдельную таблицу sitebuilder_disk_settings
-
-отдельный DiskPermissionService
-
-таблицу и плитку
-
-breadcrumbs
-
-поиск
-
-массовые действия
-
-модалки
-
-состояния loading / empty / error / no-access / no-root
+В DiskValidator::assertBlockBelongsToContext() нужно сделать реальный SELECT по вашему sitebuilder.
 
 
-Не обязательно в первой версии, но держать в архитектуре
+---
 
-copy
+3. Получение настроек
 
-drag & drop move
+В DiskSettingsRepository вместо заглушек должен быть реальный SELECT / INSERT / UPDATE.
 
-preview
 
-versioning
+---
 
-audit log
+4. Получение корня сайта
 
-comments
+В DiskRootResolver::getSiteRootFolderId() нужно подставить вашу таблицу сайта или диск-сущность.
 
-favorites
 
-quota
+---
+
+5. Проверка дерева папок
+
+assertFolderInsideRoot() сейчас заглушка. Это одно из самых важных мест.
+
+
+---
+
+6. Хранилище
+
+В DiskStorageAdapter надо подставить либо:
+
+Bitrix Disk,
+
+либо ваше файловое хранилище,
+
+либо метаданные из БД + физические файлы.
 
 
 
 ---
 
-28. Минимальный план реализации по этапам
+32. Что логично сделать следующим шагом
 
-Этап 1
+Следующий хороший шаг — я могу собрать вам второй пакет, уже более близкий к продакшену:
 
-Собрать основу:
+полноценный DiskSettingsRepository с SQL-логикой;
 
-таблица настроек
+BlockRepository / SiteRepository под проверку контекста;
 
-рендер блока
+DiskRootResolver с реальным резолвом;
 
-resolveRoot
-
-getSettings
-
-getPermissions
-
-list
+Bitrix Disk adapter или адаптер под вашу структуру.
 
 
-Этап 2
-
-Добавить CRUD:
-
-upload
-
-createFolder
-
-rename
-
-delete
-
-
-Этап 3
-
-Добавить UX:
-
-search
-
-bulk actions
-
-grid view
-
-modals
-
-error states
-
-
-Этап 4
-
-Доработать безопасность и масштабирование:
-
-folder scope validation
-
-block-level permissions
-
-audit log
-
-storage adapter integration
-
-
-
----
-
-29. Что у вас получится на выходе
-
-После реализации по этому каркасу у вас будет:
-
-реально встраиваемый блок для конструктора;
-
-изолированный по siteId/pageId/blockId;
-
-не завязанный на тяжелый frontend;
-
-расширяемый;
-
-пригодный для корпоративного портала;
-
-совместимый с подходом вашего sitebuilder.
-
-
-
----
-
-30. Что могу сделать следующим сообщением
-
-Я могу сразу собрать следующий слой, уже совсем прикладной:
-
-вариант 1 — полный файл template.php + styles.css + script.js для стартового рабочего UI блока
-вариант 2 — полный PHP API-скелет по всем action-файлам
-вариант 3 — SQL + PHP-репозитории под ваш стиль sitebuilder
-вариант 4 — готовое ТЗ для разработчика/команды в структурированном виде
-
-Я бы следующим сообщением рекомендовал сделать именно полный стартовый комплект файлов компонента.
+Самый полезный следующий шаг здесь — сделать именно серверную часть без заглушек под ваш sitebuilder.
