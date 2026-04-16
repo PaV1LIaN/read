@@ -1,362 +1,197 @@
-Отлично. Тогда следующий шаг — подключить блок в sitebuilder, чтобы он реально появился в системе.
+Можно. И это даже лучше для первого прогона.
 
-Ниже даю, что делать дальше после таблиц и файлов компонента.
-
-
----
-
-1. Зарегистрировать тип блока disk
-
-Найди место, где у тебя хранится реестр блоков конструктора.
-
-Это может быть что-то вроде:
-
-/local/sitebuilder/config/blocks.php
-
-/local/sitebuilder/lib/blocks.php
-
-/local/sitebuilder/data/blocks.php
-
-или массив в editor.php
-
-
-Туда нужно добавить блок:
-
-'disk' => [
-    'type' => 'disk',
-    'name' => 'Диск',
-    'icon' => 'disk',
-    'category' => 'content',
-    'component_path' => '/local/sitebuilder/components/disk/',
-    'supports_settings' => true,
-    'supports_permissions' => true,
-    'is_active' => true,
-],
-
-Если у тебя блоки хранятся массивом без ключа, добавь как обычный элемент:
-
-[
-    'type' => 'disk',
-    'name' => 'Диск',
-    'icon' => 'disk',
-    'category' => 'content',
-    'component_path' => '/local/sitebuilder/components/disk/',
-    'supports_settings' => true,
-    'supports_permissions' => true,
-    'is_active' => true,
-],
+Самый простой путь — протестировать компонент как отдельную страницу вне sitebuilder, подставив вручную siteId/pageId/blockId.
 
 
 ---
 
-2. Добавить создание блока disk через API/обработчик блока
+Что сделать
 
-У тебя уже есть логика создания блоков страницы.
-Там, где создается новый блок, нужно добавить ветку для type = disk.
+1. Создай тестовый файл
 
-Если создание идет через handler API
+Например:
 
-Например, в чем-то вроде:
-
-/local/sitebuilder/api/handlers/block.php
-/local/sitebuilder/api/handlers/page.php
-/local/sitebuilder/api/handlers/site.php
-
-Нужна логика:
-
-case 'disk':
-    $blockId = BlockRepository::create([
-        'site_id' => $siteId,
-        'page_id' => $pageId,
-        'type' => 'disk',
-        'sort' => $sort,
-        'settings_json' => '{}',
-        'is_active' => 1,
-        'created_by' => $currentUserId,
-    ]);
-
-    DiskSettingsRepository::createDefault([
-        'block_id' => $blockId,
-        'site_id' => $siteId,
-        'page_id' => $pageId,
-        'created_by' => $currentUserId,
-    ]);
-    break;
+/local/sitebuilder/components/disk/test.php
 
 
 ---
 
-3. Если у тебя есть общий helper создания блока
+2. Вставь туда такой код
 
-Лучше вынести в отдельную функцию:
+<?php
+require_once $_SERVER['DOCUMENT_ROOT'] . '/local/sitebuilder/components/disk/class.php';
 
-function sitebuilder_create_disk_block(int $siteId, int $pageId, int $currentUserId, int $sort = 500): int
-{
-    $blockId = BlockRepository::create([
-        'site_id' => $siteId,
-        'page_id' => $pageId,
-        'type' => 'disk',
-        'sort' => $sort,
-        'settings_json' => '{}',
-        'is_active' => 1,
-        'created_by' => $currentUserId,
-    ]);
+global $USER;
 
-    DiskSettingsRepository::createDefault([
-        'block_id' => $blockId,
-        'site_id' => $siteId,
-        'page_id' => $pageId,
-        'created_by' => $currentUserId,
-    ]);
-
-    return $blockId;
+if (!$USER->IsAuthorized()) {
+    die('Нужно авторизоваться в Битрикс');
 }
 
-
----
-
-4. Подключить рендер блока на странице
-
-Теперь нужно, чтобы при выводе страницы блок disk реально рендерился.
-
-Найди место, где у тебя идет цикл по блокам страницы.
-Это может быть:
-
-editor.php
-
-public.php
-
-renderer.php
-
-page renderer
-
-или что-то внутри /local/sitebuilder/
-
-
-Примерно там есть что-то вроде:
-
-foreach ($blocks as $block) {
-    switch ($block['type']) {
-        case 'text':
-            // ...
-            break;
-
-        case 'image':
-            // ...
-            break;
-    }
-}
-
-Добавь туда:
-
-case 'disk':
-    require_once $_SERVER['DOCUMENT_ROOT'] . '/local/sitebuilder/components/disk/class.php';
-
-    $component = new SitebuilderDiskComponent([
-        'SITE_ID' => (int)$siteId,
-        'PAGE_ID' => (int)$pageId,
-        'BLOCK_ID' => (int)$block['id'],
-        'CURRENT_USER_ID' => (int)$USER->GetID(),
-    ]);
-
-    $component->execute();
-    break;
-
-
----
-
-5. Подключить styles.css и script.js
-
-Чтобы блок работал, на странице должны быть подключены:
-
-<link rel="stylesheet" href="/local/sitebuilder/components/disk/styles.css">
-<script src="/local/sitebuilder/components/disk/script.js"></script>
-
-Лучше подключать один раз на страницу, а не при каждом блоке.
-
-Вариант
-
-Если у тебя есть общий layout/editor page header, вставь туда:
-
-<?php if ($pageHasDiskBlock): ?>
+$siteId = 1;   // подставь существующий site_id
+$pageId = 1;   // подставь существующий page_id
+$blockId = 1;  // подставь существующий block_id типа disk
+$currentUserId = (int)$USER->GetID();
+?>
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <title>Тест компонента Disk</title>
     <link rel="stylesheet" href="/local/sitebuilder/components/disk/styles.css">
+</head>
+<body style="margin:0; padding:24px; background:#f5f7fb;">
+    <div style="max-width:1200px; margin:0 auto;">
+        <?php
+        $component = new SitebuilderDiskComponent([
+            'SITE_ID' => $siteId,
+            'PAGE_ID' => $pageId,
+            'BLOCK_ID' => $blockId,
+            'CURRENT_USER_ID' => $currentUserId,
+        ]);
+        $component->execute();
+        ?>
+    </div>
+
+    <script src="/bitrix/js/main/core/core.js"></script>
     <script src="/local/sitebuilder/components/disk/script.js"></script>
-<?php endif; ?>
-
-Если такой оптимизации нет, на первом этапе можно просто подключить всегда.
-
-
----
-
-6. Проверить, что PDO реально подключен
-
-До первого запуска обязательно проверь DiskDb.php.
-
-Сейчас там заглушка:
-
-throw new RuntimeException('DB_CONNECTION_NOT_CONFIGURED');
-
-Ее надо заменить на ваш реальный доступ к БД.
-
-Например, если у тебя есть свой wrapper:
-
-public static function getConnection(): PDO
-{
-    if (self::$pdo instanceof PDO) {
-        return self::$pdo;
-    }
-
-    require_once $_SERVER['DOCUMENT_ROOT'] . '/local/php_interface/lib/pg_master.php';
-
-    $pdo = getPdo();
-    if (!$pdo instanceof PDO) {
-        throw new RuntimeException('DB_CONNECTION_NOT_CONFIGURED');
-    }
-
-    self::$pdo = $pdo;
-    self::$pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
-    self::$pdo->setAttribute(PDO::ATTR_DEFAULT_FETCH_MODE, PDO::FETCH_ASSOC);
-
-    return self::$pdo;
-}
-
-Если у тебя не getPdo(), а другой метод — подставь свой.
+</body>
+</html>
 
 
 ---
 
-7. Проверить SQL-таблицы и названия полей
+Что нужно подготовить до теста
 
-Код ожидает именно такие таблицы:
+1. В БД должен существовать сайт
 
-sitebuilder_site
+В таблице sitebuilder_site должна быть запись, например:
 
-sitebuilder_page
+id = 1
 
-sitebuilder_block
-
-sitebuilder_disk_settings
-
-sitebuilder_site_user_access
-
-
-И такие поля:
-
-В sitebuilder_site
-
-id
-
-name
-
-root_disk_folder_id
-
-
-В sitebuilder_block
-
-id
-
-site_id
-
-page_id
-
-type
-
-sort
-
-settings_json
-
-is_active
-
-created_by
-
-
-В sitebuilder_disk_settings
-
-block_id
-
-site_id
-
-page_id
-
-title
-
-root_folder_id
-
-view_mode
-
-allow_upload
-
-allow_create_folder
-
-allow_rename
-
-allow_delete
-
-allow_download
-
-show_search
-
-show_breadcrumbs
-
-default_sort
-
-default_sort_direction
-
-allowed_extensions_json
-
-max_file_size
-
-permission_mode
-
-use_site_root_fallback
-
-
-Если у тебя таблицы или поля называются иначе — надо поправить репозитории.
 
 
 ---
 
-8. Выдать себе роль на сайт
+2. В БД должна существовать страница этого сайта
 
-Без этого DiskPermissionService может закрыть доступ.
+В таблице sitebuilder_page:
 
-В sitebuilder_site_user_access у текущего пользователя должна быть роль, например:
+id = 1
 
-INSERT INTO sitebuilder_site_user_access (site_id, user_id, role_code)
-VALUES (1, 1, 'site_admin');
+site_id = 1
 
-Подставь свой site_id и свой user_id.
 
 
 ---
 
-9. Проверить первый сценарий запуска
+3. В БД должен существовать блок типа disk
 
-После подключения сделай такой тест:
+В таблице sitebuilder_block:
 
-Шаги
+id = 1
 
-1. Открой страницу сайта, где добавлен блок disk
+site_id = 1
 
+page_id = 1
 
-2. Если корня нет — должен показаться state no-root
+type = 'disk'
 
-
-3. Нажми:
-
-Создать корень сайта или
-
-Создать папку блока
+is_active = 1
 
 
 
-4. Открой настройки
+---
+
+4. Для пользователя должна быть роль на сайте
+
+В таблице sitebuilder_site_user_access:
+
+site_id = 1
+
+user_id = ТВОЙ_ID
+
+role_code = 'site_admin'
 
 
-5. Сохрани настройки
+
+---
+
+Как быстро создать тестовые данные вручную
+
+Если записей еще нет, можно вставить их SQL.
+
+Сайт
+
+INSERT INTO sitebuilder_site (id, name, code, root_disk_folder_id, settings_json, created_at, updated_at)
+VALUES (1, 'Тестовый сайт', 'test-site', NULL, '{}', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP);
+
+Страница
+
+INSERT INTO sitebuilder_page (id, site_id, title, slug, sort, created_at, updated_at)
+VALUES (1, 1, 'Главная', 'index', 100, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP);
+
+Блок
+
+INSERT INTO sitebuilder_block (id, site_id, page_id, type, sort, settings_json, is_active, created_by, created_at, updated_at)
+VALUES (1, 1, 1, 'disk', 100, '{}', 1, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP);
+
+Роль пользователю
+
+INSERT INTO sitebuilder_site_user_access (site_id, user_id, role_code, created_at, updated_at)
+VALUES (1, 1, 'site_admin', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP);
+
+Если id=1 уже заняты, подставь другие и такие же значения укажи в test.php.
 
 
-6. Проверь:
+---
+
+Как открыть тест
+
+Открой в браузере:
+
+https://твой-домен/local/sitebuilder/components/disk/test.php
+
+
+---
+
+Что должно произойти
+
+Сценарий 1. Root еще не создан
+
+Ты увидишь состояние:
+
+“Для блока не настроена корневая папка”
+
+кнопки:
+
+“Создать корень сайта”
+
+“Создать папку блока”
+
+
+
+Это уже хороший знак: компонент живой.
+
+
+---
+
+Сценарий 2. Root создался
+
+После нажатия:
+
+создастся папка в Bitrix Disk
+
+у сайта или блока сохранится root_folder_id
+
+блок загрузит содержимое папки
+
+
+
+---
+
+Сценарий 3. Проверка функций
+
+Потом можно проверить:
 
 создание папки
 
@@ -366,96 +201,107 @@ VALUES (1, 1, 'site_admin');
 
 поиск
 
-скачивание
+переименование
 
+удаление
 
+настройки блока
 
 
 
 ---
 
-10. Что может сломаться первым делом
+Как проверить по частям, если что-то не работает
 
-Самые вероятные проблемы:
+1. Проверить API отдельно
 
-DB_CONNECTION_NOT_CONFIGURED
+Можно дергать экшены прямо через браузер/DevTools/Postman.
 
-Значит не подключен реальный PDO в DiskDb.php
+Например, открыть страницу теста, потом в консоли браузера:
 
-BLOCK_CONTEXT_MISMATCH
+fetch('/local/sitebuilder/components/disk/api.php?action=getSettings', {
+  method: 'POST',
+  headers: {'Content-Type': 'application/json'},
+  body: JSON.stringify({
+    siteId: 1,
+    pageId: 1,
+    blockId: 1,
+    sessid: BX.bitrix_sessid()
+  })
+}).then(r => r.json()).then(console.log)
 
-Значит:
-
-site_id/page_id/block_id не совпадают
-
-или блок в БД не type = 'disk'
-
-
-BAD_SESSID
-
-Значит на фронте не передается sessid
-
-DISK_STORAGE_NOT_FOUND
-
-Значит Bitrix Disk storage не найден для пользователя
-
-SITE_NOT_FOUND
-
-Значит в sitebuilder_site нет записи с таким id
-
-ACCESS_DENIED
-
-Значит у пользователя нет роли в sitebuilder_site_user_access
+Если это работает — серверная часть уже живая.
 
 
 ---
 
-11. Что лучше сделать прямо сейчас
+2. Проверить resolveRoot
 
-Сейчас порядок такой:
-
-1.
-
-Подключить DiskDb.php к реальной БД
-
-2.
-
-Зарегистрировать тип блока disk
-
-3.
-
-Добавить создание блока disk
-
-4.
-
-Добавить рендер блока в цикл рендера страницы
-
-5.
-
-Подключить styles.css и script.js
-
-6.
-
-Выдать себе роль site_admin в sitebuilder_site_user_access
-
-7.
-
-Открыть страницу и проверить первый запуск
+fetch('/local/sitebuilder/components/disk/api.php?action=resolveRoot', {
+  method: 'POST',
+  headers: {'Content-Type': 'application/json'},
+  body: JSON.stringify({
+    siteId: 1,
+    pageId: 1,
+    blockId: 1,
+    sessid: BX.bitrix_sessid()
+  })
+}).then(r => r.json()).then(console.log)
 
 
 ---
 
-12. Самый полезный следующий шаг
+3. Проверить создание корня сайта
 
-Дальше лучше идти не в теорию, а в точечную интеграцию под твой проект.
+fetch('/local/sitebuilder/components/disk/api.php?action=initSiteRoot', {
+  method: 'POST',
+  headers: {'Content-Type': 'application/json'},
+  body: JSON.stringify({
+    siteId: 1,
+    sessid: BX.bitrix_sessid()
+  })
+}).then(r => r.json()).then(console.log)
 
-Самое полезное сейчас — прислать мне:
 
-файл, где у тебя регистрируются блоки
+---
 
-файл, где у тебя создаются блоки
+Если хочешь вообще без блока в БД
 
-файл, где у тебя рендерится страница / блоки
+Теоретически можно и так, но твоя текущая архитектура специально завязана на blockId, поэтому без записи в sitebuilder_block тестировать неудобно.
+
+Минимум для теста нужен именно такой набор:
+
+один site
+
+одна page
+
+один block типа disk
+
+одна роль для пользователя
 
 
-И я скажу конкретно, какой кусок и куда вставить под твой sitebuilder.
+Это уже не sitebuilder UI, но уже честный тест компонента.
+
+
+---
+
+Самый удобный способ теста
+
+Лучший вариант сейчас:
+
+1. создать test.php
+
+
+2. создать 1 тестовый сайт/страницу/блок в БД
+
+
+3. выдать себе роль site_admin
+
+
+4. открыть /local/sitebuilder/components/disk/test.php
+
+
+
+Так ты проверишь почти весь компонент без интеграции в editor/sitebuilder.
+
+Если хочешь, следующим сообщением я могу прислать готовый test.php + SQL-вставки для тестовых данных одним куском.
