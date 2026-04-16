@@ -1,853 +1,834 @@
-Ниже следующая пачка файлов.
+Ниже все actions/*.php, которые тебе нужны.
 
 
 ---
 
-/local/sitebuilder/components/disk/lib/DiskRootResolver.php
+/local/sitebuilder/components/disk/actions/resolve_root.php
 
 <?php
 
-class DiskRootResolver
-{
-    public static function resolve(DiskContext $context, array $settings): ?int
-    {
-        if (!empty($settings['rootFolderId'])) {
-            return (int)$settings['rootFolderId'];
-        }
+DiskCsrf::validateFromRequest();
+$data = disk_read_json_body();
 
-        if (!empty($settings['useSiteRootFallback'])) {
-            $siteRootFolderId = SiteRepository::getRootDiskFolderId($context->siteId);
-            if ($siteRootFolderId !== null && $siteRootFolderId > 0) {
-                return $siteRootFolderId;
-            }
-        }
+$currentUserId = DiskCurrentUser::requireId();
 
-        return null;
-    }
+$context = DiskContextFactory::fromArray([
+    'siteId' => (int)($data['siteId'] ?? 0),
+    'pageId' => (int)($data['pageId'] ?? 0),
+    'blockId' => (int)($data['blockId'] ?? 0),
+    'currentUserId' => $currentUserId,
+]);
 
-    public static function resolveWithSource(DiskContext $context, array $settings): array
-    {
-        if (!empty($settings['rootFolderId'])) {
-            return [
-                'rootFolderId' => (int)$settings['rootFolderId'],
-                'source' => 'block',
-            ];
-        }
+DiskValidator::assertContext($context);
 
-        if (!empty($settings['useSiteRootFallback'])) {
-            $siteRootFolderId = SiteRepository::getRootDiskFolderId($context->siteId);
-            if ($siteRootFolderId !== null && $siteRootFolderId > 0) {
-                return [
-                    'rootFolderId' => $siteRootFolderId,
-                    'source' => 'site',
-                ];
-            }
-        }
+$settings = DiskSettingsRepository::ensureExistsForBlock(
+    $context->blockId,
+    $context->siteId,
+    $context->pageId,
+    $context->currentUserId
+);
 
-        return [
-            'rootFolderId' => null,
-            'source' => 'none',
-        ];
-    }
-}
+$result = DiskRootResolver::resolveWithSource($context, $settings);
+
+DiskResponse::success([
+    'rootFolderId' => $result['rootFolderId'],
+    'source' => $result['source'],
+]);
 
 
 ---
 
-/local/sitebuilder/components/disk/lib/DiskValidator.php
+/local/sitebuilder/components/disk/actions/get_settings.php
 
 <?php
 
-class DiskValidator
-{
-    public static function assertContext(DiskContext $context): void
-    {
-        if ($context->siteId <= 0) {
-            throw new RuntimeException('INVALID_SITE_ID');
-        }
+DiskCsrf::validateFromRequest();
+$data = disk_read_json_body();
 
-        if ($context->pageId <= 0) {
-            throw new RuntimeException('INVALID_PAGE_ID');
-        }
+$currentUserId = DiskCurrentUser::requireId();
 
-        if ($context->blockId <= 0) {
-            throw new RuntimeException('INVALID_BLOCK_ID');
-        }
+$context = DiskContextFactory::fromArray([
+    'siteId' => (int)($data['siteId'] ?? 0),
+    'pageId' => (int)($data['pageId'] ?? 0),
+    'blockId' => (int)($data['blockId'] ?? 0),
+    'currentUserId' => $currentUserId,
+]);
 
-        if ($context->currentUserId <= 0) {
-            throw new RuntimeException('NOT_AUTHORIZED');
-        }
+DiskValidator::assertContext($context);
 
-        self::assertSiteExists($context->siteId);
-        self::assertBlockBelongsToContext($context);
-    }
+$settings = DiskSettingsRepository::ensureExistsForBlock(
+    $context->blockId,
+    $context->siteId,
+    $context->pageId,
+    $context->currentUserId
+);
 
-    public static function assertSiteExists(int $siteId): void
-    {
-        $site = SiteRepository::getById($siteId);
-        if (!$site) {
-            throw new RuntimeException('SITE_NOT_FOUND');
-        }
-    }
-
-    public static function assertBlockBelongsToContext(DiskContext $context): void
-    {
-        $block = BlockRepository::getDiskBlockByContext(
-            $context->siteId,
-            $context->pageId,
-            $context->blockId
-        );
-
-        if (!$block) {
-            throw new RuntimeException('BLOCK_CONTEXT_MISMATCH');
-        }
-    }
-
-    public static function assertFolderInsideRoot(int $folderId, ?int $rootFolderId, ?DiskContext $context = null): void
-    {
-        if ($folderId <= 0) {
-            throw new RuntimeException('INVALID_FOLDER_ID');
-        }
-
-        if ($rootFolderId === null || $rootFolderId <= 0) {
-            throw new RuntimeException('ROOT_FOLDER_NOT_RESOLVED');
-        }
-
-        if ($folderId === $rootFolderId) {
-            return;
-        }
-
-        if (!$context instanceof DiskContext) {
-            throw new RuntimeException('DISK_CONTEXT_REQUIRED');
-        }
-
-        $adapter = new DiskBitrixStorageAdapter($context->currentUserId);
-        $ok = $adapter->isFolderInsideRoot($context, $folderId, $rootFolderId);
-
-        if (!$ok) {
-            throw new RuntimeException('FOLDER_OUT_OF_SCOPE');
-        }
-    }
-
-    public static function assertCan(array $permissions, string $permissionKey): void
-    {
-        if (empty($permissions[$permissionKey])) {
-            throw new RuntimeException('ACCESS_DENIED');
-        }
-    }
-
-    public static function assertNonEmptyString(string $value, string $errorCode): void
-    {
-        if (trim($value) === '') {
-            throw new RuntimeException($errorCode);
-        }
-    }
-}
+DiskResponse::success([
+    'settings' => $settings,
+]);
 
 
 ---
 
-/local/sitebuilder/components/disk/lib/DiskPermissionService.php
+/local/sitebuilder/components/disk/actions/save_settings.php
 
 <?php
 
-class DiskPermissionService
-{
-    public static function resolve(DiskContext $context, array $settings, ?int $rootFolderId = null): array
-    {
-        $rolePermissions = self::resolveRolePermissions($context);
-        $blockRestrictions = self::resolveBlockRestrictions($settings);
+DiskCsrf::validateFromRequest();
+$data = disk_read_json_body();
 
-        return [
-            'canView' => $rolePermissions['canView'] && $blockRestrictions['canView'],
-            'canUpload' => $rolePermissions['canUpload'] && $blockRestrictions['canUpload'],
-            'canCreateFolder' => $rolePermissions['canCreateFolder'] && $blockRestrictions['canCreateFolder'],
-            'canRename' => $rolePermissions['canRename'] && $blockRestrictions['canRename'],
-            'canDelete' => $rolePermissions['canDelete'] && $blockRestrictions['canDelete'],
-            'canDownload' => $rolePermissions['canDownload'] && $blockRestrictions['canDownload'],
-            'canManageAccess' => $rolePermissions['canManageAccess'],
-            'canEditSettings' => $rolePermissions['canEditSettings'],
-        ];
-    }
+$currentUserId = DiskCurrentUser::requireId();
 
-    protected static function resolveRolePermissions(DiskContext $context): array
-    {
-        if (DiskCurrentUser::isAdmin()) {
-            return [
-                'canView' => true,
-                'canUpload' => true,
-                'canCreateFolder' => true,
-                'canRename' => true,
-                'canDelete' => true,
-                'canDownload' => true,
-                'canManageAccess' => true,
-                'canEditSettings' => true,
-            ];
+$context = DiskContextFactory::fromArray([
+    'siteId' => (int)($data['siteId'] ?? 0),
+    'pageId' => (int)($data['pageId'] ?? 0),
+    'blockId' => (int)($data['blockId'] ?? 0),
+    'currentUserId' => $currentUserId,
+]);
+
+DiskValidator::assertContext($context);
+
+$currentSettings = DiskSettingsRepository::ensureExistsForBlock(
+    $context->blockId,
+    $context->siteId,
+    $context->pageId,
+    $context->currentUserId
+);
+
+$rootFolderId = DiskRootResolver::resolve($context, $currentSettings);
+$permissions = DiskPermissionService::resolve($context, $currentSettings, $rootFolderId);
+
+DiskValidator::assertCan($permissions, 'canEditSettings');
+
+$settings = $data['settings'] ?? [];
+if (!is_array($settings)) {
+    throw new RuntimeException('INVALID_SETTINGS_PAYLOAD');
+}
+
+$allowedExtensions = [];
+if (isset($settings['allowedExtensions'])) {
+    if (is_array($settings['allowedExtensions'])) {
+        $allowedExtensions = $settings['allowedExtensions'];
+    } else {
+        $raw = trim((string)$settings['allowedExtensions']);
+        if ($raw !== '') {
+            $allowedExtensions = preg_split('/[\s,;]+/u', $raw);
         }
-
-        $role = SiteAccessRepository::getUserRole($context->siteId, $context->currentUserId);
-
-        switch ($role) {
-            case 'site_admin':
-                return [
-                    'canView' => true,
-                    'canUpload' => true,
-                    'canCreateFolder' => true,
-                    'canRename' => true,
-                    'canDelete' => true,
-                    'canDownload' => true,
-                    'canManageAccess' => true,
-                    'canEditSettings' => true,
-                ];
-
-            case 'site_editor':
-                return [
-                    'canView' => true,
-                    'canUpload' => true,
-                    'canCreateFolder' => true,
-                    'canRename' => true,
-                    'canDelete' => true,
-                    'canDownload' => true,
-                    'canManageAccess' => false,
-                    'canEditSettings' => true,
-                ];
-
-            case 'site_user':
-                return [
-                    'canView' => true,
-                    'canUpload' => true,
-                    'canCreateFolder' => false,
-                    'canRename' => false,
-                    'canDelete' => false,
-                    'canDownload' => true,
-                    'canManageAccess' => false,
-                    'canEditSettings' => false,
-                ];
-
-            case 'site_viewer':
-                return [
-                    'canView' => true,
-                    'canUpload' => false,
-                    'canCreateFolder' => false,
-                    'canRename' => false,
-                    'canDelete' => false,
-                    'canDownload' => true,
-                    'canManageAccess' => false,
-                    'canEditSettings' => false,
-                ];
-
-            default:
-                return [
-                    'canView' => false,
-                    'canUpload' => false,
-                    'canCreateFolder' => false,
-                    'canRename' => false,
-                    'canDelete' => false,
-                    'canDownload' => false,
-                    'canManageAccess' => false,
-                    'canEditSettings' => false,
-                ];
-        }
-    }
-
-    protected static function resolveBlockRestrictions(array $settings): array
-    {
-        return [
-            'canView' => true,
-            'canUpload' => !empty($settings['allowUpload']),
-            'canCreateFolder' => !empty($settings['allowCreateFolder']),
-            'canRename' => !empty($settings['allowRename']),
-            'canDelete' => !empty($settings['allowDelete']),
-            'canDownload' => !empty($settings['allowDownload']),
-        ];
     }
 }
+
+$rootFolderIdValue = null;
+if (array_key_exists('rootFolderId', $settings)) {
+    $tmp = trim((string)$settings['rootFolderId']);
+    $rootFolderIdValue = ($tmp !== '' && (int)$tmp > 0) ? (int)$tmp : null;
+}
+
+$normalized = [
+    'title' => trim((string)($settings['title'] ?? 'Файлы')),
+    'rootFolderId' => $rootFolderIdValue,
+    'viewMode' => in_array((string)($settings['viewMode'] ?? 'table'), ['table', 'grid'], true)
+        ? (string)$settings['viewMode']
+        : 'table',
+    'allowUpload' => disk_normalize_bool($settings['allowUpload'] ?? true),
+    'allowCreateFolder' => disk_normalize_bool($settings['allowCreateFolder'] ?? true),
+    'allowRename' => disk_normalize_bool($settings['allowRename'] ?? true),
+    'allowDelete' => disk_normalize_bool($settings['allowDelete'] ?? false),
+    'allowDownload' => disk_normalize_bool($settings['allowDownload'] ?? true),
+    'showSearch' => disk_normalize_bool($settings['showSearch'] ?? true),
+    'showBreadcrumbs' => disk_normalize_bool($settings['showBreadcrumbs'] ?? true),
+    'defaultSort' => trim((string)($settings['defaultSort'] ?? 'updatedAt')),
+    'defaultSortDirection' => strtolower((string)($settings['defaultSortDirection'] ?? 'desc')) === 'asc' ? 'asc' : 'desc',
+    'allowedExtensions' => array_values(array_filter(array_map(static function ($value) {
+        return strtolower(trim((string)$value));
+    }, $allowedExtensions))),
+    'maxFileSize' => max(0, (int)($settings['maxFileSize'] ?? 52428800)),
+    'permissionMode' => in_array((string)($settings['permissionMode'] ?? 'inherit_site'), ['inherit_site', 'custom'], true)
+        ? (string)$settings['permissionMode']
+        : 'inherit_site',
+    'useSiteRootFallback' => disk_normalize_bool($settings['useSiteRootFallback'] ?? true),
+];
+
+DiskSettingsRepository::save($context->blockId, $normalized);
+
+$updatedSettings = DiskSettingsRepository::getByBlockId($context->blockId);
+
+DiskResponse::success([
+    'settings' => $updatedSettings,
+]);
 
 
 ---
 
-/local/sitebuilder/components/disk/lib/SiteDiskInitializer.php
+/local/sitebuilder/components/disk/actions/get_permissions.php
 
 <?php
 
-use Bitrix\Disk\Driver;
-use Bitrix\Disk\Storage;
-use Bitrix\Disk\Folder;
+DiskCsrf::validateFromRequest();
+$data = disk_read_json_body();
 
-class SiteDiskInitializer
-{
-    public static function ensureSiteRootFolder(int $siteId, int $currentUserId, string $siteName = ''): int
-    {
-        $existing = SiteRepository::getRootDiskFolderId($siteId);
-        if ($existing !== null && $existing > 0) {
-            return $existing;
-        }
+$currentUserId = DiskCurrentUser::requireId();
 
-        $site = SiteRepository::getById($siteId);
-        if (!$site) {
-            throw new RuntimeException('SITE_NOT_FOUND');
-        }
+$context = DiskContextFactory::fromArray([
+    'siteId' => (int)($data['siteId'] ?? 0),
+    'pageId' => (int)($data['pageId'] ?? 0),
+    'blockId' => (int)($data['blockId'] ?? 0),
+    'currentUserId' => $currentUserId,
+]);
 
-        $driver = Driver::getInstance();
-        $securityContext = $driver->getFakeSecurityContext($currentUserId);
+DiskValidator::assertContext($context);
 
-        $storage = self::resolveDefaultStorage($currentUserId);
-        if (!$storage instanceof Storage) {
-            throw new RuntimeException('DISK_STORAGE_NOT_FOUND');
-        }
+$settings = DiskSettingsRepository::ensureExistsForBlock(
+    $context->blockId,
+    $context->siteId,
+    $context->pageId,
+    $context->currentUserId
+);
 
-        $rootFolder = $storage->getRootObject();
-        if (!$rootFolder instanceof Folder) {
-            throw new RuntimeException('DISK_STORAGE_ROOT_NOT_FOUND');
-        }
+$rootFolderId = DiskRootResolver::resolve($context, $settings);
+$permissions = DiskPermissionService::resolve($context, $settings, $rootFolderId);
 
-        $folderName = $siteName !== ''
-            ? ('Сайт: ' . $siteName)
-            : ('Сайт: ' . (string)$site['name']);
-
-        $siteFolder = $rootFolder->addSubFolder([
-            'NAME' => $folderName,
-            'CREATED_BY' => $currentUserId,
-        ], $securityContext);
-
-        if (!$siteFolder instanceof Folder) {
-            throw new RuntimeException('DISK_SITE_ROOT_CREATE_ERROR');
-        }
-
-        SiteRepository::updateRootDiskFolderId($siteId, (int)$siteFolder->getId());
-
-        return (int)$siteFolder->getId();
-    }
-
-    protected static function resolveDefaultStorage(int $currentUserId): ?Storage
-    {
-        $driver = Driver::getInstance();
-
-        $storage = $driver->getStorageByUserId($currentUserId);
-        if ($storage instanceof Storage) {
-            return $storage;
-        }
-
-        return null;
-    }
-}
+DiskResponse::success([
+    'permissions' => $permissions,
+]);
 
 
 ---
 
-/local/sitebuilder/components/disk/lib/BlockDiskInitializer.php
+/local/sitebuilder/components/disk/actions/get_root_options.php
 
 <?php
 
-use Bitrix\Disk\Folder;
-use Bitrix\Disk\Driver;
+DiskCsrf::validateFromRequest();
+$data = disk_read_json_body();
 
-class BlockDiskInitializer
-{
-    public static function ensureBlockRootFolder(
-        int $siteId,
-        int $pageId,
-        int $blockId,
-        int $currentUserId,
-        string $blockTitle = ''
-    ): int {
-        $settings = DiskSettingsRepository::ensureExistsForBlock($blockId, $siteId, $pageId, $currentUserId);
+$currentUserId = DiskCurrentUser::requireId();
 
-        if (!empty($settings['rootFolderId'])) {
-            return (int)$settings['rootFolderId'];
-        }
+$context = DiskContextFactory::fromArray([
+    'siteId' => (int)($data['siteId'] ?? 0),
+    'pageId' => (int)($data['pageId'] ?? 0),
+    'blockId' => (int)($data['blockId'] ?? 0),
+    'currentUserId' => $currentUserId,
+]);
 
-        $site = SiteRepository::getById($siteId);
-        if (!$site) {
-            throw new RuntimeException('SITE_NOT_FOUND');
-        }
+DiskValidator::assertContext($context);
 
-        $siteRootFolderId = SiteDiskInitializer::ensureSiteRootFolder(
-            $siteId,
-            $currentUserId,
-            (string)$site['name']
-        );
+$settings = DiskSettingsRepository::ensureExistsForBlock(
+    $context->blockId,
+    $context->siteId,
+    $context->pageId,
+    $context->currentUserId
+);
 
-        $siteRootFolder = Folder::loadById($siteRootFolderId);
-        if (!$siteRootFolder instanceof Folder) {
-            throw new RuntimeException('SITE_ROOT_FOLDER_NOT_FOUND');
-        }
+$permissions = DiskPermissionService::resolve($context, $settings, null);
+DiskValidator::assertCan($permissions, 'canEditSettings');
 
-        $folderName = $blockTitle !== ''
-            ? ('Блок: ' . $blockTitle)
-            : ('Блок #' . $blockId);
+$site = SiteRepository::getById($context->siteId);
+$siteRootFolderId = SiteRepository::getRootDiskFolderId($context->siteId);
 
-        $created = $siteRootFolder->addSubFolder([
-            'NAME' => $folderName,
-            'CREATED_BY' => $currentUserId,
-        ], Driver::getInstance()->getFakeSecurityContext($currentUserId));
+$options = [];
 
-        if (!$created instanceof Folder) {
-            throw new RuntimeException('BLOCK_ROOT_CREATE_ERROR');
-        }
-
-        DiskSettingsRepository::save($blockId, [
-            'rootFolderId' => (int)$created->getId(),
-            'useSiteRootFallback' => true,
-        ]);
-
-        return (int)$created->getId();
-    }
+if ($siteRootFolderId) {
+    $options[] = [
+        'value' => '',
+        'label' => 'Использовать корень сайта',
+        'type' => 'site_root',
+        'folderId' => (int)$siteRootFolderId,
+    ];
 }
+
+if (!empty($settings['rootFolderId'])) {
+    $options[] = [
+        'value' => (int)$settings['rootFolderId'],
+        'label' => 'Собственная папка блока',
+        'type' => 'block_root',
+        'folderId' => (int)$settings['rootFolderId'],
+    ];
+}
+
+DiskResponse::success([
+    'options' => $options,
+    'siteRootFolderId' => $siteRootFolderId ? (int)$siteRootFolderId : null,
+    'blockRootFolderId' => !empty($settings['rootFolderId']) ? (int)$settings['rootFolderId'] : null,
+    'siteName' => $site ? (string)$site['name'] : '',
+]);
 
 
 ---
 
-/local/sitebuilder/components/disk/lib/DiskStorageAdapterInterface.php
+/local/sitebuilder/components/disk/actions/list.php
 
 <?php
 
-interface DiskStorageAdapterInterface
-{
-    public function listItems(DiskContext $context, int $folderId, array $options = []): array;
+DiskCsrf::validateFromRequest();
+$data = disk_read_json_body();
 
-    public function createFolder(DiskContext $context, int $parentFolderId, string $name): array;
+$currentUserId = DiskCurrentUser::requireId();
 
-    public function uploadFiles(DiskContext $context, int $folderId, array $files, array $options = []): array;
+$context = DiskContextFactory::fromArray([
+    'siteId' => (int)($data['siteId'] ?? 0),
+    'pageId' => (int)($data['pageId'] ?? 0),
+    'blockId' => (int)($data['blockId'] ?? 0),
+    'currentUserId' => $currentUserId,
+]);
 
-    public function rename(DiskContext $context, string $entityType, int $entityId, string $newName): array;
+DiskValidator::assertContext($context);
 
-    public function delete(DiskContext $context, array $items): array;
+$settings = DiskSettingsRepository::ensureExistsForBlock(
+    $context->blockId,
+    $context->siteId,
+    $context->pageId,
+    $context->currentUserId
+);
 
-    public function move(DiskContext $context, array $items, int $targetFolderId): array;
+$rootFolderId = DiskRootResolver::resolve($context, $settings);
+$permissions = DiskPermissionService::resolve($context, $settings, $rootFolderId);
 
-    public function copy(DiskContext $context, array $items, int $targetFolderId): array;
+DiskValidator::assertCan($permissions, 'canView');
 
-    public function search(DiskContext $context, int $rootFolderId, string $query, array $options = []): array;
-
-    public function getBreadcrumbs(DiskContext $context, int $folderId): array;
-
-    public function getDownloadUrl(DiskContext $context, int $fileId): string;
-
-    public function isFolderInsideRoot(DiskContext $context, int $folderId, int $rootFolderId): bool;
+if ($rootFolderId === null) {
+    DiskResponse::success([
+        'folder' => null,
+        'breadcrumbs' => [],
+        'items' => [],
+    ], [
+        'isEmpty' => true,
+        'noRoot' => true,
+        'total' => 0,
+    ]);
 }
+
+$currentFolderId = (int)($data['currentFolderId'] ?? $rootFolderId);
+DiskValidator::assertFolderInsideRoot($currentFolderId, $rootFolderId, $context);
+
+$adapter = new DiskBitrixStorageAdapter($context->currentUserId);
+
+$items = $adapter->listItems($context, $currentFolderId, [
+    'sortBy' => $data['sortBy'] ?? 'updatedAt',
+    'sortDir' => $data['sortDir'] ?? 'desc',
+    'filters' => $data['filters'] ?? [],
+]);
+
+$breadcrumbs = $adapter->getBreadcrumbs($context, $currentFolderId);
+
+DiskResponse::success([
+    'folder' => [
+        'id' => $currentFolderId,
+        'name' => 'Текущая папка',
+    ],
+    'breadcrumbs' => $breadcrumbs,
+    'items' => $items,
+], [
+    'isEmpty' => empty($items),
+    'total' => count($items),
+]);
 
 
 ---
 
-/local/sitebuilder/components/disk/lib/DiskBitrixStorageAdapter.php
+/local/sitebuilder/components/disk/actions/upload.php
 
 <?php
 
-use Bitrix\Disk\Driver;
-use Bitrix\Disk\File;
-use Bitrix\Disk\Folder;
-use Bitrix\Disk\BaseObject;
-use Bitrix\Main\Type\DateTime;
+DiskCsrf::validateFromRequest();
 
-class DiskBitrixStorageAdapter implements DiskStorageAdapterInterface
-{
-    protected Driver $driver;
-    protected \Bitrix\Disk\Security\SecurityContext $securityContext;
+$currentUserId = DiskCurrentUser::requireId();
 
-    public function __construct(?int $userId = null)
-    {
-        $this->driver = Driver::getInstance();
+$context = DiskContextFactory::fromArray([
+    'siteId' => (int)($_POST['siteId'] ?? 0),
+    'pageId' => (int)($_POST['pageId'] ?? 0),
+    'blockId' => (int)($_POST['blockId'] ?? 0),
+    'currentUserId' => $currentUserId,
+]);
 
-        global $USER;
+DiskValidator::assertContext($context);
 
-        $userId = $userId ?: (int)($USER instanceof CUser ? $USER->GetID() : 0);
-        if ($userId <= 0) {
-            throw new RuntimeException('NOT_AUTHORIZED');
-        }
+$settings = DiskSettingsRepository::ensureExistsForBlock(
+    $context->blockId,
+    $context->siteId,
+    $context->pageId,
+    $context->currentUserId
+);
 
-        $this->securityContext = $this->driver->getFakeSecurityContext($userId);
+$rootFolderId = DiskRootResolver::resolve($context, $settings);
+$permissions = DiskPermissionService::resolve($context, $settings, $rootFolderId);
+
+DiskValidator::assertCan($permissions, 'canUpload');
+
+$currentFolderId = (int)($_POST['currentFolderId'] ?? 0);
+DiskValidator::assertFolderInsideRoot($currentFolderId, $rootFolderId, $context);
+
+$files = $_FILES['files'] ?? null;
+if (!$files) {
+    throw new RuntimeException('NO_FILES');
+}
+
+$normalizedFiles = [];
+$count = is_array($files['name']) ? count($files['name']) : 0;
+
+for ($i = 0; $i < $count; $i++) {
+    $normalizedFiles[] = [
+        'name' => $files['name'][$i],
+        'type' => $files['type'][$i],
+        'tmp_name' => $files['tmp_name'][$i],
+        'error' => $files['error'][$i],
+        'size' => $files['size'][$i],
+    ];
+}
+
+$allowedExtensions = $settings['allowedExtensions'] ?? [];
+$maxFileSize = (int)($settings['maxFileSize'] ?? 0);
+
+foreach ($normalizedFiles as $file) {
+    if ((int)$file['error'] !== UPLOAD_ERR_OK) {
+        throw new RuntimeException('UPLOAD_ERROR');
     }
 
-    public function listItems(DiskContext $context, int $folderId, array $options = []): array
-    {
-        $folder = $this->getFolderById($folderId);
-
-        $sortBy = (string)($options['sortBy'] ?? 'updatedAt');
-        $sortDir = strtolower((string)($options['sortDir'] ?? 'desc')) === 'asc' ? 'asc' : 'desc';
-
-        $children = $folder->getChildren($this->securityContext, [
-            'filter' => [
-                '=DELETED_TYPE' => 0,
-            ],
-            'order' => $this->normalizeOrder($sortBy, $sortDir),
-        ]);
-
-        $items = [];
-
-        foreach ($children as $child) {
-            if ($child instanceof Folder) {
-                $items[] = $this->normalizeFolder($context, $child);
-                continue;
-            }
-
-            if ($child instanceof File) {
-                $items[] = $this->normalizeFile($context, $child);
-            }
-        }
-
-        return $items;
+    if ($maxFileSize > 0 && (int)$file['size'] > $maxFileSize) {
+        throw new RuntimeException('FILE_TOO_LARGE');
     }
 
-    public function createFolder(DiskContext $context, int $parentFolderId, string $name): array
-    {
-        $parentFolder = $this->getFolderById($parentFolderId);
-
-        $createdFolder = $parentFolder->addSubFolder([
-            'NAME' => $name,
-            'CREATED_BY' => $context->currentUserId,
-        ], $this->securityContext);
-
-        if (!$createdFolder instanceof Folder) {
-            throw new RuntimeException('DISK_CREATE_FOLDER_ERROR');
-        }
-
-        return $this->normalizeFolder($context, $createdFolder);
-    }
-
-    public function uploadFiles(DiskContext $context, int $folderId, array $files, array $options = []): array
-    {
-        $folder = $this->getFolderById($folderId);
-
-        $uploadedItems = [];
-
-        foreach ($files as $file) {
-            if (empty($file['tmp_name']) || !is_uploaded_file($file['tmp_name'])) {
-                throw new RuntimeException('INVALID_UPLOADED_FILE');
-            }
-
-            $diskFile = $folder->uploadFile(
-                $file,
-                [
-                    'NAME' => (string)$file['name'],
-                    'CREATED_BY' => $context->currentUserId,
-                ],
-                [],
-                $this->securityContext
-            );
-
-            if (!$diskFile instanceof File) {
-                throw new RuntimeException('DISK_UPLOAD_ERROR');
-            }
-
-            $uploadedItems[] = $this->normalizeFile($context, $diskFile);
-        }
-
-        return [
-            'uploaded' => count($uploadedItems),
-            'items' => $uploadedItems,
-        ];
-    }
-
-    public function rename(DiskContext $context, string $entityType, int $entityId, string $newName): array
-    {
-        $object = $this->getObjectByTypeAndId($entityType, $entityId);
-
-        $result = $object->rename($newName, $context->currentUserId);
-        if (!$result) {
-            throw new RuntimeException('DISK_RENAME_ERROR');
-        }
-
-        $object = $this->reloadObject($object);
-
-        if ($object instanceof Folder) {
-            return $this->normalizeFolder($context, $object);
-        }
-
-        if ($object instanceof File) {
-            return $this->normalizeFile($context, $object);
-        }
-
-        throw new RuntimeException('DISK_OBJECT_RELOAD_ERROR');
-    }
-
-    public function delete(DiskContext $context, array $items): array
-    {
-        $deleted = 0;
-
-        foreach ($items as $item) {
-            $entityType = (string)($item['entityType'] ?? '');
-            $id = (int)($item['id'] ?? 0);
-
-            if ($id <= 0 || !in_array($entityType, ['file', 'folder'], true)) {
-                continue;
-            }
-
-            $object = $this->getObjectByTypeAndId($entityType, $id);
-            $result = $object->delete($context->currentUserId);
-
-            if ($result) {
-                $deleted++;
-            }
-        }
-
-        return [
-            'deleted' => $deleted,
-        ];
-    }
-
-    public function move(DiskContext $context, array $items, int $targetFolderId): array
-    {
-        $targetFolder = $this->getFolderById($targetFolderId);
-        $moved = 0;
-
-        foreach ($items as $item) {
-            $entityType = (string)($item['entityType'] ?? '');
-            $id = (int)($item['id'] ?? 0);
-
-            if ($id <= 0 || !in_array($entityType, ['file', 'folder'], true)) {
-                continue;
-            }
-
-            $object = $this->getObjectByTypeAndId($entityType, $id);
-            $result = $object->moveTo($targetFolder, $context->currentUserId);
-
-            if ($result) {
-                $moved++;
-            }
-        }
-
-        return [
-            'moved' => $moved,
-            'targetFolderId' => $targetFolderId,
-        ];
-    }
-
-    public function copy(DiskContext $context, array $items, int $targetFolderId): array
-    {
-        $targetFolder = $this->getFolderById($targetFolderId);
-        $copied = 0;
-
-        foreach ($items as $item) {
-            $entityType = (string)($item['entityType'] ?? '');
-            $id = (int)($item['id'] ?? 0);
-
-            if ($id <= 0 || !in_array($entityType, ['file', 'folder'], true)) {
-                continue;
-            }
-
-            $object = $this->getObjectByTypeAndId($entityType, $id);
-            $result = $object->copyTo($targetFolder, $context->currentUserId, true);
-
-            if ($result) {
-                $copied++;
-            }
-        }
-
-        return [
-            'copied' => $copied,
-            'targetFolderId' => $targetFolderId,
-        ];
-    }
-
-    public function search(DiskContext $context, int $rootFolderId, string $query, array $options = []): array
-    {
-        $query = trim($query);
-        if ($query === '') {
-            return [];
-        }
-
-        $rootFolder = $this->getFolderById($rootFolderId);
-
-        $result = [];
-        $this->searchRecursive($context, $rootFolder, mb_strtolower($query), $result);
-
-        return $result;
-    }
-
-    public function getBreadcrumbs(DiskContext $context, int $folderId): array
-    {
-        $folder = $this->getFolderById($folderId);
-
-        $breadcrumbs = [];
-        $chain = $folder->getPath();
-
-        foreach ($chain as $pathFolder) {
-            if (!$pathFolder instanceof Folder) {
-                continue;
-            }
-
-            $breadcrumbs[] = [
-                'id' => (int)$pathFolder->getId(),
-                'name' => (string)$pathFolder->getName(),
-            ];
-        }
-
-        return $breadcrumbs;
-    }
-
-    public function getDownloadUrl(DiskContext $context, int $fileId): string
-    {
-        $file = $this->getFileById($fileId);
-
-        return '/local/sitebuilder/components/disk/api.php?action=download'
-            . '&siteId=' . (int)$context->siteId
-            . '&pageId=' . (int)$context->pageId
-            . '&blockId=' . (int)$context->blockId
-            . '&fileId=' . (int)$file->getId();
-    }
-
-    public function isFolderInsideRoot(DiskContext $context, int $folderId, int $rootFolderId): bool
-    {
-        if ($folderId === $rootFolderId) {
-            return true;
-        }
-
-        $folder = $this->getFolderById($folderId);
-        $path = $folder->getPath();
-
-        foreach ($path as $pathFolder) {
-            if ($pathFolder instanceof Folder && (int)$pathFolder->getId() === $rootFolderId) {
-                return true;
-            }
-        }
-
-        return false;
-    }
-
-    protected function searchRecursive(DiskContext $context, Folder $folder, string $query, array &$result): void
-    {
-        $children = $folder->getChildren($this->securityContext, [
-            'filter' => [
-                '=DELETED_TYPE' => 0,
-            ],
-            'order' => [
-                'NAME' => 'ASC',
-            ],
-        ]);
-
-        foreach ($children as $child) {
-            $name = mb_strtolower((string)$child->getName());
-
-            if (mb_stripos($name, $query) !== false) {
-                if ($child instanceof Folder) {
-                    $result[] = $this->normalizeFolder($context, $child);
-                } elseif ($child instanceof File) {
-                    $result[] = $this->normalizeFile($context, $child);
-                }
-            }
-
-            if ($child instanceof Folder) {
-                $this->searchRecursive($context, $child, $query, $result);
-            }
-        }
-    }
-
-    protected function getFolderById(int $folderId): Folder
-    {
-        $folder = Folder::loadById($folderId);
-        if (!$folder instanceof Folder) {
-            throw new RuntimeException('DISK_FOLDER_NOT_FOUND');
-        }
-
-        return $folder;
-    }
-
-    protected function getFileById(int $fileId): File
-    {
-        $file = File::loadById($fileId);
-        if (!$file instanceof File) {
-            throw new RuntimeException('DISK_FILE_NOT_FOUND');
-        }
-
-        return $file;
-    }
-
-    protected function getObjectByTypeAndId(string $entityType, int $id): BaseObject
-    {
-        if ($entityType === 'folder') {
-            return $this->getFolderById($id);
-        }
-
-        if ($entityType === 'file') {
-            return $this->getFileById($id);
-        }
-
-        throw new RuntimeException('INVALID_ENTITY_TYPE');
-    }
-
-    protected function reloadObject(BaseObject $object): BaseObject
-    {
-        if ($object instanceof Folder) {
-            return $this->getFolderById((int)$object->getId());
-        }
-
-        if ($object instanceof File) {
-            return $this->getFileById((int)$object->getId());
-        }
-
-        throw new RuntimeException('DISK_OBJECT_RELOAD_ERROR');
-    }
-
-    protected function normalizeFolder(DiskContext $context, Folder $folder): array
-    {
-        return [
-            'id' => (int)$folder->getId(),
-            'entityType' => 'folder',
-            'name' => (string)$folder->getName(),
-            'extension' => null,
-            'mimeType' => null,
-            'size' => null,
-            'updatedAt' => $this->formatDateTime($folder->getUpdateTime()),
-            'createdAt' => $this->formatDateTime($folder->getCreateTime()),
-            'createdBy' => (int)$folder->getCreatedBy(),
-            'downloadUrl' => null,
-            'previewUrl' => null,
-        ];
-    }
-
-    protected function normalizeFile(DiskContext $context, File $file): array
-    {
-        $name = (string)$file->getName();
-        $extension = strtolower(pathinfo($name, PATHINFO_EXTENSION));
-
-        return [
-            'id' => (int)$file->getId(),
-            'entityType' => 'file',
-            'name' => $name,
-            'extension' => $extension ?: null,
-            'mimeType' => (string)$file->getMimeType(),
-            'size' => (int)$file->getSize(),
-            'updatedAt' => $this->formatDateTime($file->getUpdateTime()),
-            'createdAt' => $this->formatDateTime($file->getCreateTime()),
-            'createdBy' => (int)$file->getCreatedBy(),
-            'downloadUrl' => $this->getDownloadUrl($context, (int)$file->getId()),
-            'previewUrl' => null,
-        ];
-    }
-
-    protected function formatDateTime($value): string
-    {
-        if ($value instanceof DateTime) {
-            return $value->format('d.m.Y H:i:s');
-        }
-
-        if ($value instanceof \Bitrix\Main\Type\Date) {
-            return $value->format('d.m.Y');
-        }
-
-        return '';
-    }
-
-    protected function normalizeOrder(string $sortBy, string $sortDir): array
-    {
-        $sortDir = strtoupper($sortDir) === 'ASC' ? 'ASC' : 'DESC';
-
-        switch ($sortBy) {
-            case 'name':
-                return ['NAME' => $sortDir];
-
-            case 'size':
-                return ['SIZE' => $sortDir];
-
-            case 'createdAt':
-                return ['CREATE_TIME' => $sortDir];
-
-            case 'updatedAt':
-            default:
-                return ['UPDATE_TIME' => $sortDir];
+    if (!empty($allowedExtensions)) {
+        $ext = strtolower(pathinfo((string)$file['name'], PATHINFO_EXTENSION));
+        if (!in_array($ext, $allowedExtensions, true)) {
+            throw new RuntimeException('EXTENSION_NOT_ALLOWED');
         }
     }
 }
 
-Следом пришлю все actions/*.php.
+$adapter = new DiskBitrixStorageAdapter($context->currentUserId);
+$result = $adapter->uploadFiles($context, $currentFolderId, $normalizedFiles, $settings);
+
+DiskResponse::success([
+    'uploadResult' => $result,
+]);
+
+
+---
+
+/local/sitebuilder/components/disk/actions/create_folder.php
+
+<?php
+
+DiskCsrf::validateFromRequest();
+$data = disk_read_json_body();
+
+$currentUserId = DiskCurrentUser::requireId();
+
+$context = DiskContextFactory::fromArray([
+    'siteId' => (int)($data['siteId'] ?? 0),
+    'pageId' => (int)($data['pageId'] ?? 0),
+    'blockId' => (int)($data['blockId'] ?? 0),
+    'currentUserId' => $currentUserId,
+]);
+
+DiskValidator::assertContext($context);
+
+$settings = DiskSettingsRepository::ensureExistsForBlock(
+    $context->blockId,
+    $context->siteId,
+    $context->pageId,
+    $context->currentUserId
+);
+
+$rootFolderId = DiskRootResolver::resolve($context, $settings);
+$permissions = DiskPermissionService::resolve($context, $settings, $rootFolderId);
+
+DiskValidator::assertCan($permissions, 'canCreateFolder');
+
+$currentFolderId = (int)($data['currentFolderId'] ?? 0);
+$name = trim((string)($data['name'] ?? ''));
+
+DiskValidator::assertFolderInsideRoot($currentFolderId, $rootFolderId, $context);
+DiskValidator::assertNonEmptyString($name, 'EMPTY_FOLDER_NAME');
+
+$adapter = new DiskBitrixStorageAdapter($context->currentUserId);
+$folder = $adapter->createFolder($context, $currentFolderId, $name);
+
+DiskResponse::success([
+    'folder' => $folder,
+]);
+
+
+---
+
+/local/sitebuilder/components/disk/actions/rename.php
+
+<?php
+
+DiskCsrf::validateFromRequest();
+$data = disk_read_json_body();
+
+$currentUserId = DiskCurrentUser::requireId();
+
+$context = DiskContextFactory::fromArray([
+    'siteId' => (int)($data['siteId'] ?? 0),
+    'pageId' => (int)($data['pageId'] ?? 0),
+    'blockId' => (int)($data['blockId'] ?? 0),
+    'currentUserId' => $currentUserId,
+]);
+
+DiskValidator::assertContext($context);
+
+$settings = DiskSettingsRepository::ensureExistsForBlock(
+    $context->blockId,
+    $context->siteId,
+    $context->pageId,
+    $context->currentUserId
+);
+
+$rootFolderId = DiskRootResolver::resolve($context, $settings);
+$permissions = DiskPermissionService::resolve($context, $settings, $rootFolderId);
+
+DiskValidator::assertCan($permissions, 'canRename');
+
+$entityType = trim((string)($data['entityType'] ?? ''));
+$entityId = (int)($data['entityId'] ?? 0);
+$newName = trim((string)($data['newName'] ?? ''));
+
+if (!in_array($entityType, ['file', 'folder'], true)) {
+    throw new RuntimeException('INVALID_ENTITY_TYPE');
+}
+
+if ($entityId <= 0) {
+    throw new RuntimeException('INVALID_ENTITY_ID');
+}
+
+DiskValidator::assertNonEmptyString($newName, 'EMPTY_NAME');
+
+$adapter = new DiskBitrixStorageAdapter($context->currentUserId);
+$item = $adapter->rename($context, $entityType, $entityId, $newName);
+
+DiskResponse::success([
+    'item' => $item,
+]);
+
+
+---
+
+/local/sitebuilder/components/disk/actions/delete.php
+
+<?php
+
+DiskCsrf::validateFromRequest();
+$data = disk_read_json_body();
+
+$currentUserId = DiskCurrentUser::requireId();
+
+$context = DiskContextFactory::fromArray([
+    'siteId' => (int)($data['siteId'] ?? 0),
+    'pageId' => (int)($data['pageId'] ?? 0),
+    'blockId' => (int)($data['blockId'] ?? 0),
+    'currentUserId' => $currentUserId,
+]);
+
+DiskValidator::assertContext($context);
+
+$settings = DiskSettingsRepository::ensureExistsForBlock(
+    $context->blockId,
+    $context->siteId,
+    $context->pageId,
+    $context->currentUserId
+);
+
+$rootFolderId = DiskRootResolver::resolve($context, $settings);
+$permissions = DiskPermissionService::resolve($context, $settings, $rootFolderId);
+
+DiskValidator::assertCan($permissions, 'canDelete');
+
+$items = $data['items'] ?? [];
+if (!is_array($items) || empty($items)) {
+    throw new RuntimeException('EMPTY_ITEMS');
+}
+
+$adapter = new DiskBitrixStorageAdapter($context->currentUserId);
+$result = $adapter->delete($context, $items);
+
+DiskResponse::success([
+    'result' => $result,
+]);
+
+
+---
+
+/local/sitebuilder/components/disk/actions/move.php
+
+<?php
+
+DiskCsrf::validateFromRequest();
+$data = disk_read_json_body();
+
+$currentUserId = DiskCurrentUser::requireId();
+
+$context = DiskContextFactory::fromArray([
+    'siteId' => (int)($data['siteId'] ?? 0),
+    'pageId' => (int)($data['pageId'] ?? 0),
+    'blockId' => (int)($data['blockId'] ?? 0),
+    'currentUserId' => $currentUserId,
+]);
+
+DiskValidator::assertContext($context);
+
+$settings = DiskSettingsRepository::ensureExistsForBlock(
+    $context->blockId,
+    $context->siteId,
+    $context->pageId,
+    $context->currentUserId
+);
+
+$rootFolderId = DiskRootResolver::resolve($context, $settings);
+$permissions = DiskPermissionService::resolve($context, $settings, $rootFolderId);
+
+DiskValidator::assertCan($permissions, 'canRename');
+
+$items = $data['items'] ?? [];
+$targetFolderId = (int)($data['targetFolderId'] ?? 0);
+
+if (!is_array($items) || empty($items)) {
+    throw new RuntimeException('EMPTY_ITEMS');
+}
+
+DiskValidator::assertFolderInsideRoot($targetFolderId, $rootFolderId, $context);
+
+$adapter = new DiskBitrixStorageAdapter($context->currentUserId);
+$result = $adapter->move($context, $items, $targetFolderId);
+
+DiskResponse::success([
+    'result' => $result,
+]);
+
+
+---
+
+/local/sitebuilder/components/disk/actions/copy.php
+
+<?php
+
+DiskCsrf::validateFromRequest();
+$data = disk_read_json_body();
+
+$currentUserId = DiskCurrentUser::requireId();
+
+$context = DiskContextFactory::fromArray([
+    'siteId' => (int)($data['siteId'] ?? 0),
+    'pageId' => (int)($data['pageId'] ?? 0),
+    'blockId' => (int)($data['blockId'] ?? 0),
+    'currentUserId' => $currentUserId,
+]);
+
+DiskValidator::assertContext($context);
+
+$settings = DiskSettingsRepository::ensureExistsForBlock(
+    $context->blockId,
+    $context->siteId,
+    $context->pageId,
+    $context->currentUserId
+);
+
+$rootFolderId = DiskRootResolver::resolve($context, $settings);
+$permissions = DiskPermissionService::resolve($context, $settings, $rootFolderId);
+
+DiskValidator::assertCan($permissions, 'canView');
+
+$items = $data['items'] ?? [];
+$targetFolderId = (int)($data['targetFolderId'] ?? 0);
+
+if (!is_array($items) || empty($items)) {
+    throw new RuntimeException('EMPTY_ITEMS');
+}
+
+DiskValidator::assertFolderInsideRoot($targetFolderId, $rootFolderId, $context);
+
+$adapter = new DiskBitrixStorageAdapter($context->currentUserId);
+$result = $adapter->copy($context, $items, $targetFolderId);
+
+DiskResponse::success([
+    'result' => $result,
+]);
+
+
+---
+
+/local/sitebuilder/components/disk/actions/search.php
+
+<?php
+
+DiskCsrf::validateFromRequest();
+$data = disk_read_json_body();
+
+$currentUserId = DiskCurrentUser::requireId();
+
+$context = DiskContextFactory::fromArray([
+    'siteId' => (int)($data['siteId'] ?? 0),
+    'pageId' => (int)($data['pageId'] ?? 0),
+    'blockId' => (int)($data['blockId'] ?? 0),
+    'currentUserId' => $currentUserId,
+]);
+
+DiskValidator::assertContext($context);
+
+$settings = DiskSettingsRepository::ensureExistsForBlock(
+    $context->blockId,
+    $context->siteId,
+    $context->pageId,
+    $context->currentUserId
+);
+
+$rootFolderId = DiskRootResolver::resolve($context, $settings);
+$permissions = DiskPermissionService::resolve($context, $settings, $rootFolderId);
+
+DiskValidator::assertCan($permissions, 'canView');
+
+$query = trim((string)($data['query'] ?? ''));
+if ($query === '') {
+    DiskResponse::success([
+        'items' => [],
+    ], [
+        'total' => 0,
+    ]);
+}
+
+$adapter = new DiskBitrixStorageAdapter($context->currentUserId);
+$items = $adapter->search($context, (int)$rootFolderId, $query, []);
+
+DiskResponse::success([
+    'items' => $items,
+], [
+    'total' => count($items),
+]);
+
+
+---
+
+/local/sitebuilder/components/disk/actions/download.php
+
+<?php
+
+$currentUserId = DiskCurrentUser::requireId();
+
+$data = disk_read_json_body();
+
+$context = DiskContextFactory::fromArray([
+    'siteId' => (int)($data['siteId'] ?? ($_GET['siteId'] ?? 0)),
+    'pageId' => (int)($data['pageId'] ?? ($_GET['pageId'] ?? 0)),
+    'blockId' => (int)($data['blockId'] ?? ($_GET['blockId'] ?? 0)),
+    'currentUserId' => $currentUserId,
+]);
+
+$fileId = (int)($data['fileId'] ?? ($_GET['fileId'] ?? 0));
+if ($fileId <= 0) {
+    throw new RuntimeException('INVALID_FILE_ID');
+}
+
+DiskValidator::assertContext($context);
+
+$settings = DiskSettingsRepository::ensureExistsForBlock(
+    $context->blockId,
+    $context->siteId,
+    $context->pageId,
+    $context->currentUserId
+);
+
+$rootFolderId = DiskRootResolver::resolve($context, $settings);
+$permissions = DiskPermissionService::resolve($context, $settings, $rootFolderId);
+
+DiskValidator::assertCan($permissions, 'canDownload');
+
+$adapter = new DiskBitrixStorageAdapter($context->currentUserId);
+$url = $adapter->getDownloadUrl($context, $fileId);
+
+// Чтобы не уйти в цикл на тот же action, берем прямой URL Bitrix Disk:
+$file = \Bitrix\Disk\File::loadById($fileId);
+if (!$file instanceof \Bitrix\Disk\File) {
+    throw new RuntimeException('DISK_FILE_NOT_FOUND');
+}
+
+LocalRedirect((string)$file->getDownloadUrl());
+exit;
+
+
+---
+
+/local/sitebuilder/components/disk/actions/init_site_root.php
+
+<?php
+
+DiskCsrf::validateFromRequest();
+$data = disk_read_json_body();
+
+$currentUserId = DiskCurrentUser::requireId();
+
+$siteId = (int)($data['siteId'] ?? 0);
+if ($siteId <= 0) {
+    throw new RuntimeException('INVALID_SITE_ID');
+}
+
+$site = SiteRepository::getById($siteId);
+if (!$site) {
+    throw new RuntimeException('SITE_NOT_FOUND');
+}
+
+$role = SiteAccessRepository::getUserRole($siteId, $currentUserId);
+if (!DiskCurrentUser::isAdmin() && !in_array($role, ['site_admin', 'site_editor'], true)) {
+    throw new RuntimeException('ACCESS_DENIED');
+}
+
+$folderId = SiteDiskInitializer::ensureSiteRootFolder(
+    $siteId,
+    $currentUserId,
+    (string)$site['name']
+);
+
+DiskResponse::success([
+    'rootFolderId' => $folderId,
+]);
+
+
+---
+
+/local/sitebuilder/components/disk/actions/init_block_root.php
+
+<?php
+
+DiskCsrf::validateFromRequest();
+$data = disk_read_json_body();
+
+$currentUserId = DiskCurrentUser::requireId();
+
+$context = DiskContextFactory::fromArray([
+    'siteId' => (int)($data['siteId'] ?? 0),
+    'pageId' => (int)($data['pageId'] ?? 0),
+    'blockId' => (int)($data['blockId'] ?? 0),
+    'currentUserId' => $currentUserId,
+]);
+
+DiskValidator::assertContext($context);
+
+$settings = DiskSettingsRepository::ensureExistsForBlock(
+    $context->blockId,
+    $context->siteId,
+    $context->pageId,
+    $context->currentUserId
+);
+
+$permissions = DiskPermissionService::resolve($context, $settings, null);
+DiskValidator::assertCan($permissions, 'canEditSettings');
+
+$folderId = BlockDiskInitializer::ensureBlockRootFolder(
+    $context->siteId,
+    $context->pageId,
+    $context->blockId,
+    $context->currentUserId,
+    (string)($settings['title'] ?? '')
+);
+
+DiskResponse::success([
+    'rootFolderId' => $folderId,
+]);
+
+Следом пришлю оставшиеся три больших файла:
+
+template.php
+
+styles.css
+
+script.js
