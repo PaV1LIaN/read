@@ -1,179 +1,88 @@
-Значит BX.Disk.Viewer у тебя не открывается через Actions.show(...), и код уходит в fallback на previewUrl, а он у тебя ведет на /disk/downloadFile/..., поэтому и скачивает.
+Понял. Значит программный .click() по скрытому элементу не поднимает viewer в твоей сборке.
 
-Раз в твоем рабочем примере просмотр запускается через data-viewer, надо делать точно так же и в компоненте.
+В таком случае надо сделать ровно как в рабочем примере:
+для docx/xlsx/pptx кнопка Открыть должна быть не <button>, а сам viewer-элемент с data-viewer, который пользователь нажимает напрямую.
 
-Что исправить
-
-1. В script.js больше не открываем office-файл через openOfficeViewer()
-
-Вместо этого будем:
-
-рендерить для office-файла скрытый viewer-элемент с теми же data-*, что в твоем рабочем коде
-
-по кнопке Открыть программно кликать по нему
-
-
-
----
-
-2. Замени renderItemsTable() целиком
+Что поменять в script.js
 
 Файл:
 
 /local/sitebuilder/components/disk/script.js
 
-Замени метод renderItemsTable на этот:
-
-DiskComponent.prototype.renderItemsTable = function () {
-  var tbody = this.root.querySelector('[data-role="items-table"]');
-  if (!tbody) return;
-
-  tbody.innerHTML = this.state.items.map(function (item) {
-    var typeText = item.entityType === 'folder' ? 'Папка' : (item.extension || 'Файл');
-    var sizeText = item.size ? formatBytes(item.size) : '';
-    var badge = item.entityType === 'folder'
-      ? '<span class="sb-disk__badge">Папка</span>'
-      : '<span class="sb-disk__badge">' + escapeHtml(item.extension || 'Файл') + '</span>';
-
-    var officeViewerHtml = '';
-
-    if (item.entityType === 'file' && item.previewMode === 'office') {
-      var actions = escapeHtml(JSON.stringify([{ type: 'download' }]));
-
-      officeViewerHtml =
-        '<span ' +
-          'class="sb-disk__office-viewer-trigger" ' +
-          'style="display:none" ' +
-          'data-viewer="" ' +
-          'data-viewer-type="cloud-document" ' +
-          'data-src="' + escapeHtml(item.previewUrl || '') + '" ' +
-          'data-viewer-type-class="BX.Disk.Viewer.DocumentItem" ' +
-          'data-viewer-extension="disk.viewer.document-item" ' +
-          'data-object-id="' + escapeHtml(item.id) + '" ' +
-          'data-title="' + escapeHtml(item.name) + '" ' +
-          'data-actions="' + actions + '"' +
-        '></span>';
-    }
-
-    return '' +
-      '<tr class="sb-disk__row ' + (item.entityType === 'folder' ? 'is-clickable' : '') + '" ' +
-        'data-id="' + escapeHtml(item.id) + '" ' +
-        'data-entity-type="' + escapeHtml(item.entityType) + '" ' +
-        'data-name="' + escapeHtml(item.name) + '" ' +
-        'data-download-url="' + escapeHtml(item.downloadUrl || '') + '" ' +
-        'data-preview-url="' + escapeHtml(item.previewUrl || '') + '" ' +
-        'data-preview-mode="' + escapeHtml(item.previewMode || '') + '">' +
-          '<td>' +
-            '<input type="checkbox" class="sb-disk__item-check" data-id="' + escapeHtml(item.id) + '">' +
-          '</td>' +
-          '<td>' +
-            '<div class="sb-disk__item-name">' +
-              badge +
-              '<span class="sb-disk__item-name-label">' + escapeHtml(item.name) + '</span>' +
-              officeViewerHtml +
-            '</div>' +
-          '</td>' +
-          '<td>' + escapeHtml(typeText) + '</td>' +
-          '<td>' + escapeHtml(sizeText) + '</td>' +
-          '<td>' + escapeHtml(item.updatedAt || '') + '</td>' +
-          '<td>' +
-            '<div class="sb-disk__actions">' +
-              '<button type="button" class="sb-disk__row-btn" data-row-action="open">Открыть</button>' +
-              (item.entityType === 'file'
-                ? '<button type="button" class="sb-disk__row-btn" data-row-action="download">Скачать</button>'
-                : '') +
-              '<button type="button" class="sb-disk__row-btn" data-row-action="rename">Переим.</button>' +
-              '<button type="button" class="sb-disk__row-btn" data-row-action="delete">Удалить</button>' +
-            '</div>' +
-          '</td>' +
-      '</tr>';
-  }).join('');
-};
-
 
 ---
 
-3. Замени renderItemsGrid() целиком
+1. В renderItemsTable() замени формирование openControl
 
-DiskComponent.prototype.renderItemsGrid = function () {
-  var container = this.root.querySelector('[data-view-container="grid"]');
-  if (!container) return;
+Найди внутри метода renderItemsTable() строку:
 
-  container.classList.add('sb-disk__grid');
+var openControl = '<button type="button" class="sb-disk__row-btn" data-row-action="open">Открыть</button>';
 
-  container.innerHTML = this.state.items.map(function (item) {
-    var typeText = item.entityType === 'folder' ? 'Папка' : (item.extension || 'Файл');
-    var sizeText = item.size ? formatBytes(item.size) : '—';
+И замени на это:
 
-    var officeViewerHtml = '';
+var openControl = '';
 
-    if (item.entityType === 'file' && item.previewMode === 'office') {
-      var actions = escapeHtml(JSON.stringify([{ type: 'download' }]));
+if (item.entityType === 'folder') {
+  openControl = '<button type="button" class="sb-disk__row-btn" data-row-action="open">Открыть</button>';
+} else if (item.previewMode === 'office') {
+  var actions = escapeHtml(JSON.stringify([{ type: 'download' }]));
 
-      officeViewerHtml =
-        '<span ' +
-          'class="sb-disk__office-viewer-trigger" ' +
-          'style="display:none" ' +
-          'data-viewer="" ' +
-          'data-viewer-type="cloud-document" ' +
-          'data-src="' + escapeHtml(item.previewUrl || '') + '" ' +
-          'data-viewer-type-class="BX.Disk.Viewer.DocumentItem" ' +
-          'data-viewer-extension="disk.viewer.document-item" ' +
-          'data-object-id="' + escapeHtml(item.id) + '" ' +
-          'data-title="' + escapeHtml(item.name) + '" ' +
-          'data-actions="' + actions + '"' +
-        '></span>';
-    }
-
-    return '' +
-      '<div class="sb-disk__card ' + (item.entityType === 'folder' ? 'is-clickable' : '') + '" ' +
-           'data-id="' + escapeHtml(item.id) + '" ' +
-           'data-entity-type="' + escapeHtml(item.entityType) + '" ' +
-           'data-name="' + escapeHtml(item.name) + '" ' +
-           'data-download-url="' + escapeHtml(item.downloadUrl || '') + '" ' +
-           'data-preview-url="' + escapeHtml(item.previewUrl || '') + '" ' +
-           'data-preview-mode="' + escapeHtml(item.previewMode || '') + '">' +
-          '<div class="sb-disk__card-top">' +
-            '<label>' +
-              '<input type="checkbox" class="sb-disk__item-check" data-id="' + escapeHtml(item.id) + '">' +
-            '</label>' +
-            '<span class="sb-disk__badge">' + escapeHtml(typeText) + '</span>' +
-          '</div>' +
-          '<div class="sb-disk__card-name">' + escapeHtml(item.name) + '</div>' +
-          officeViewerHtml +
-          '<div class="sb-disk__card-meta">' +
-            '<span class="sb-disk__card-sub">Размер: ' + escapeHtml(sizeText) + '</span>' +
-          '</div>' +
-          '<div class="sb-disk__card-meta">' +
-            '<span class="sb-disk__card-sub">' + escapeHtml(item.updatedAt || '') + '</span>' +
-          '</div>' +
-          '<div class="sb-disk__card-actions">' +
-            '<button type="button" class="sb-disk__row-btn" data-row-action="open">Открыть</button>' +
-            (item.entityType === 'file'
-              ? '<button type="button" class="sb-disk__row-btn" data-row-action="download">Скачать</button>'
-              : '') +
-            '<button type="button" class="sb-disk__row-btn" data-row-action="rename">Переим.</button>' +
-            '<button type="button" class="sb-disk__row-btn" data-row-action="delete">Удалить</button>' +
-          '</div>' +
-      '</div>';
-  }).join('');
-};
-
-
----
-
-4. В обработчике open замени блок для файлов
-
-Найди кусок:
-
-if (previewMode === 'office') {
-  if (!self.openOfficeViewer(row) && previewUrl) {
-    window.open(previewUrl, '_blank');
-  }
-  return;
+  openControl =
+    '<span ' +
+      'class="sb-disk__row-btn sb-disk__viewer-btn disk-detail-sidebar-editor-item disk-detail-sidebar-editor-item-show" ' +
+      'data-viewer="" ' +
+      'data-viewer-type="cloud-document" ' +
+      'data-src="' + escapeHtml(item.previewUrl || '') + '" ' +
+      'data-viewer-type-class="BX.Disk.Viewer.DocumentItem" ' +
+      'data-viewer-extension="disk.viewer.document-item" ' +
+      'data-object-id="' + escapeHtml(item.id) + '" ' +
+      'data-title="' + escapeHtml(item.name) + '" ' +
+      'data-actions="' + actions + '"' +
+    '>Открыть</span>';
+} else {
+  openControl = '<button type="button" class="sb-disk__row-btn" data-row-action="open">Открыть</button>';
 }
 
-И замени на:
+
+---
+
+2. В renderItemsGrid() тоже замени openControl
+
+Найди внутри renderItemsGrid() строку:
+
+var openControl = '<button type="button" class="sb-disk__row-btn" data-row-action="open">Открыть</button>';
+
+И замени на это:
+
+var openControl = '';
+
+if (item.entityType === 'folder') {
+  openControl = '<button type="button" class="sb-disk__row-btn" data-row-action="open">Открыть</button>';
+} else if (item.previewMode === 'office') {
+  var actions = escapeHtml(JSON.stringify([{ type: 'download' }]));
+
+  openControl =
+    '<span ' +
+      'class="sb-disk__row-btn sb-disk__viewer-btn disk-detail-sidebar-editor-item disk-detail-sidebar-editor-item-show" ' +
+      'data-viewer="" ' +
+      'data-viewer-type="cloud-document" ' +
+      'data-src="' + escapeHtml(item.previewUrl || '') + '" ' +
+      'data-viewer-type-class="BX.Disk.Viewer.DocumentItem" ' +
+      'data-viewer-extension="disk.viewer.document-item" ' +
+      'data-object-id="' + escapeHtml(item.id) + '" ' +
+      'data-title="' + escapeHtml(item.name) + '" ' +
+      'data-actions="' + actions + '"' +
+    '>Открыть</span>';
+} else {
+  openControl = '<button type="button" class="sb-disk__row-btn" data-row-action="open">Открыть</button>';
+}
+
+
+---
+
+3. Убери специальную JS-логику для office из обработчика open
+
+Найди блок:
 
 if (previewMode === 'office') {
   var hiddenViewer = row.querySelector('.sb-disk__office-viewer-trigger');
@@ -188,46 +97,80 @@ if (previewMode === 'office') {
   return;
 }
 
+И замени на:
 
----
+if (previewMode === 'office') {
+  return;
+}
 
-5. Метод openOfficeViewer() больше не нужен
-
-Можешь удалить его целиком из файла, чтобы не путался.
-
-
----
-
-Почему это сработает
-
-Потому что ты уже показал рабочий способ в другом коде:
-
-элемент со span
-
-data-viewer
-
-data-viewer-type="cloud-document"
-
-data-viewer-type-class="BX.Disk.Viewer.DocumentItem"
-
-data-viewer-extension="disk.viewer.document-item"
-
-
-То есть нужно не пытаться открыть viewer вручную через JS API, а воспроизвести тот же HTML-паттерн и кликнуть по нему.
+Почему так: для office-файла viewer теперь откроется сам по клику на span, а не через наш JS.
 
 
 ---
 
-После этого
+4. Удали из renderItemsTable() и renderItemsGrid() весь код с:
 
-1. сохрани script.js
+officeViewerHtml
 
-
-2. сделай Ctrl + F5
-
-
-3. снова нажми Открыть у docx
+Он больше не нужен.
 
 
+---
 
-Если все равно не откроется, пришли HTML строки этого docx из инспектора, и я скажу, какого data-* еще не хватает.
+5. Добавь стиль, чтобы span выглядел как кнопка
+
+Файл:
+
+/local/sitebuilder/components/disk/styles.css
+
+Добавь в конец:
+
+.sb-disk__viewer-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  user-select: none;
+}
+
+
+---
+
+Очень важно
+
+На странице должен быть подключен viewer core.
+В public_page.php внутри блока для диска должно остаться:
+
+<?php if ($pageHasDiskBlock): ?>
+<?php CJSCore::Init(['ui.viewer']); ?>
+<script src="/bitrix/js/main/core/core.js"></script>
+<script src="<?= sb_public_h($basePath) ?>/components/disk/script.js"></script>
+<?php endif; ?>
+
+
+---
+
+Почему это правильнее
+
+Твой рабочий код с файлами лаборатории открывает документы не через JS API напрямую, а через реальный DOM-элемент с data-viewer.
+Значит и тут надо делать тот же паттерн, а не эмулировать его.
+
+
+---
+
+Что сделать сейчас
+
+1. заменить openControl в двух методах
+
+
+2. удалить officeViewerHtml и логику hidden click
+
+
+3. добавить CSS для sb-disk__viewer-btn
+
+
+4. Ctrl + F5
+
+
+
+Если после этого все равно не откроется, пришли HTML кнопки Открыть у одного docx из инспектора браузера.
