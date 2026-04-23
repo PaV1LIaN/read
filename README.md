@@ -1,380 +1,512 @@
-Отлично. Тогда делаем единые права так, чтобы:
+Отлично. Тогда делаем интеграционный пакет disk под текущий sitebuilder без отдельной таблицы настроек блока.
 
-sitebuilder и disk смотрели на один и тот же источник прав
+Цель:
 
-права брались из таблицы sitebuilder.access
+disk берет siteId/pageId/blockId из блока страницы
 
-disk больше не зависел от старой таблицы sitebuilder_site_user_access
+настройки читает из sitebuilder.block.props_json
+
+права берет из sitebuilder.access
+
+root папки создает автоматически
+
+инициализируется одним вызовом disk.bootstrap
 
 
-
----
-
-Что меняем
-
-Сейчас у тебя в disk права живут через:
-
-/local/sitebuilder/components/disk/lib/SiteAccessRepository.php
-/local/sitebuilder/components/disk/lib/DiskPermissionService.php
-
-Нужно сделать так, чтобы disk читал те же access rows, что и сам sitebuilder.
+Ниже даю что создать и что заменить.
 
 
 ---
 
-Логика общей модели прав
+1. Новый bridge между disk и sitebuilder
 
-Берем роли из sitebuilder.access и маппим их в права disk.
-
-Маппинг
-
-OWNER / ADMIN   -> site_admin
-EDITOR          -> site_editor
-USER / MEMBER   -> site_user
-VIEWER / READER -> site_viewer
-
-Access code
-
-Для обычного пользователя Bitrix используем:
-
-U<ID>
-
-Например:
-
-пользователь 1 → U1
-
-пользователь 25 → U25
-
-
-Дополнительно можно поддержать группы:
-
-G<ID группы>
-
-
-И отдельный супер-код:
-
-AU для админа системы, если ты его используешь в sitebuilder
-
-
-
----
-
-1. Замени файл /local/sitebuilder/components/disk/lib/SiteAccessRepository.php
+/local/sitebuilder/components/disk/lib/DiskSitebuilderBridge.php
 
 <?php
 
-class SiteAccessRepository
+class DiskSitebuilderBridge
 {
-    public static function getUserRole(int $siteId, int $userId): ?string
+    public static function getSiteById(int $siteId): ?array
     {
-        if ($siteId <= 0 || $userId <= 0) {
+        $row = DiskDb::fetchOne("
+            SELECT
+                id,
+                name,
+                slug,
+                home_page_id,
+                disk_folder_id,
+                top_menu_id,
+                settings_json,
+                layout_json,
+                created_by,
+                created_at,
+                updated_by,
+                updated_at
+            FROM sitebuilder.site
+            WHERE id = :id
+            LIMIT 1
+        ", [
+            ':id' => $siteId,
+        ]);
+
+        if (!$row) {
             return null;
         }
 
-        $accessCodes = self::buildAccessCodes($userId);
-        if (empty($accessCodes)) {
-            return null;
-        }
-
-        $placeholders = [];
-        $params = [
-            ':site_id' => $siteId,
+        return [
+            'id' => (int)$row['id'],
+            'name' => (string)$row['name'],
+            'slug' => (string)$row['slug'],
+            'homePageId' => !empty($row['home_page_id']) ? (int)$row['home_page_id'] : 0,
+            'diskFolderId' => !empty($row['disk_folder_id']) ? (int)$row['disk_folder_id'] : 0,
+            'topMenuId' => !empty($row['top_menu_id']) ? (int)$row['top_menu_id'] : 0,
+            'settings' => sb_json_decode_assoc($row['settings_json'] ?? '{}'),
+            'layout' => sb_json_decode_assoc($row['layout_json'] ?? '{}'),
+            'createdBy' => isset($row['created_by']) ? (int)$row['created_by'] : 0,
+            'createdAt' => (string)($row['created_at'] ?? ''),
+            'updatedBy' => isset($row['updated_by']) ? (int)$row['updated_by'] : 0,
+            'updatedAt' => (string)($row['updated_at'] ?? ''),
         ];
-
-        foreach ($accessCodes as $index => $code) {
-            $key = ':code_' . $index;
-            $placeholders[] = $key;
-            $params[$key] = $code;
-        }
-
-        $sql = "
-            SELECT access_code, role
-            FROM sitebuilder.access
-            WHERE site_id = :site_id
-              AND access_code IN (" . implode(', ', $placeholders) . ")
-        ";
-
-        $rows = DiskDb::fetchAll($sql, $params);
-        if (empty($rows)) {
-            return null;
-        }
-
-        $bestRole = null;
-        $bestRank = -1;
-
-        foreach ($rows as $row) {
-            $roleCode = strtoupper(trim((string)($row['role'] ?? '')));
-            $mappedRole = self::mapSitebuilderRoleToDiskRole($roleCode);
-
-            if ($mappedRole === null) {
-                continue;
-            }
-
-            $rank = self::diskRoleRank($mappedRole);
-            if ($rank > $bestRank) {
-                $bestRank = $rank;
-                $bestRole = $mappedRole;
-            }
-        }
-
-        return $bestRole;
     }
 
-    public static function setUserRole(int $siteId, int $userId, string $roleCode): bool
+    public static function getPageById(int $pageId): ?array
     {
-        if ($siteId <= 0 || $userId <= 0) {
-            throw new RuntimeException('INVALID_SITE_OR_USER');
-        }
-
-        $accessCode = 'U' . $userId;
-        $sitebuilderRole = self::mapDiskRoleToSitebuilderRole($roleCode);
-
-        if ($sitebuilderRole === null) {
-            throw new RuntimeException('INVALID_ROLE_CODE');
-        }
-
-        $sql = "
-            INSERT INTO sitebuilder.access (
+        $row = DiskDb::fetchOne("
+            SELECT
+                id,
                 site_id,
-                access_code,
-                role,
+                title,
+                slug,
+                parent_id,
+                sort,
+                status,
+                published_at,
+                created_by,
                 created_at,
+                updated_by,
                 updated_at
-            ) VALUES (
-                :site_id,
-                :access_code,
-                :role,
-                CURRENT_TIMESTAMP,
-                CURRENT_TIMESTAMP
-            )
-            ON CONFLICT (site_id, access_code)
-            DO UPDATE SET
-                role = EXCLUDED.role,
-                updated_at = CURRENT_TIMESTAMP
-        ";
+            FROM sitebuilder.page
+            WHERE id = :id
+            LIMIT 1
+        ", [
+            ':id' => $pageId,
+        ]);
 
-        return DiskDb::execute($sql, [
-            ':site_id' => $siteId,
-            ':access_code' => $accessCode,
-            ':role' => $sitebuilderRole,
+        if (!$row) {
+            return null;
+        }
+
+        return [
+            'id' => (int)$row['id'],
+            'siteId' => (int)$row['site_id'],
+            'title' => (string)$row['title'],
+            'slug' => (string)$row['slug'],
+            'parentId' => !empty($row['parent_id']) ? (int)$row['parent_id'] : 0,
+            'sort' => (int)($row['sort'] ?? 500),
+            'status' => (string)($row['status'] ?? 'draft'),
+            'publishedAt' => !empty($row['published_at']) ? (string)$row['published_at'] : null,
+            'createdBy' => isset($row['created_by']) ? (int)$row['created_by'] : 0,
+            'createdAt' => (string)($row['created_at'] ?? ''),
+            'updatedBy' => isset($row['updated_by']) ? (int)$row['updated_by'] : 0,
+            'updatedAt' => (string)($row['updated_at'] ?? ''),
+        ];
+    }
+
+    public static function getBlockById(int $blockId): ?array
+    {
+        $row = DiskDb::fetchOne("
+            SELECT
+                id,
+                page_id,
+                type,
+                sort,
+                content_json,
+                props_json,
+                created_by,
+                created_at,
+                updated_by,
+                updated_at
+            FROM sitebuilder.block
+            WHERE id = :id
+            LIMIT 1
+        ", [
+            ':id' => $blockId,
+        ]);
+
+        if (!$row) {
+            return null;
+        }
+
+        return [
+            'id' => (int)$row['id'],
+            'pageId' => (int)$row['page_id'],
+            'type' => (string)$row['type'],
+            'sort' => (int)($row['sort'] ?? 500),
+            'content' => sb_json_decode_assoc($row['content_json'] ?? '{}'),
+            'props' => sb_json_decode_assoc($row['props_json'] ?? '{}'),
+            'createdBy' => isset($row['created_by']) ? (int)$row['created_by'] : 0,
+            'createdAt' => (string)($row['created_at'] ?? ''),
+            'updatedBy' => isset($row['updated_by']) ? (int)$row['updated_by'] : 0,
+            'updatedAt' => (string)($row['updated_at'] ?? ''),
+        ];
+    }
+
+    public static function saveBlockProps(int $blockId, array $props): bool
+    {
+        return DiskDb::execute("
+            UPDATE sitebuilder.block
+            SET
+                props_json = :props_json::jsonb,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = :id
+        ", [
+            ':id' => $blockId,
+            ':props_json' => json_encode($props, JSON_UNESCAPED_UNICODE),
         ]);
     }
 
-    public static function hasAnyAccess(int $siteId, int $userId): bool
+    public static function updateSiteDiskFolderId(int $siteId, int $folderId): bool
     {
-        return self::getUserRole($siteId, $userId) !== null;
+        return DiskDb::execute("
+            UPDATE sitebuilder.site
+            SET
+                disk_folder_id = :disk_folder_id,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = :id
+        ", [
+            ':id' => $siteId,
+            ':disk_folder_id' => $folderId,
+        ]);
     }
 
-    protected static function buildAccessCodes(int $userId): array
+    public static function normalizeDiskProps(array $props): array
     {
-        $codes = ['U' . $userId];
-
-        if (DiskCurrentUser::isAdmin()) {
-            $codes[] = 'AU';
-            $codes[] = 'ADMIN';
-        }
-
-        foreach (DiskCurrentUser::getGroupIds() as $groupId) {
-            if ($groupId > 0) {
-                $codes[] = 'G' . (int)$groupId;
-            }
-        }
-
-        return array_values(array_unique($codes));
-    }
-
-    protected static function mapSitebuilderRoleToDiskRole(string $roleCode): ?string
-    {
-        switch ($roleCode) {
-            case 'OWNER':
-            case 'ADMIN':
-                return 'site_admin';
-
-            case 'EDITOR':
-                return 'site_editor';
-
-            case 'USER':
-            case 'MEMBER':
-                return 'site_user';
-
-            case 'VIEWER':
-            case 'READER':
-                return 'site_viewer';
-
-            default:
-                return null;
-        }
-    }
-
-    protected static function mapDiskRoleToSitebuilderRole(string $roleCode): ?string
-    {
-        switch ($roleCode) {
-            case 'site_admin':
-                return 'OWNER';
-
-            case 'site_editor':
-                return 'EDITOR';
-
-            case 'site_user':
-                return 'USER';
-
-            case 'site_viewer':
-                return 'VIEWER';
-
-            default:
-                return null;
-        }
-    }
-
-    protected static function diskRoleRank(string $roleCode): int
-    {
-        switch ($roleCode) {
-            case 'site_admin':
-                return 4;
-
-            case 'site_editor':
-                return 3;
-
-            case 'site_user':
-                return 2;
-
-            case 'site_viewer':
-                return 1;
-
-            default:
-                return 0;
-        }
+        return [
+            'title' => trim((string)($props['title'] ?? 'Файлы')),
+            'rootMode' => in_array((string)($props['rootMode'] ?? 'site'), ['site', 'block'], true)
+                ? (string)$props['rootMode']
+                : 'site',
+            'rootFolderId' => !empty($props['rootFolderId']) ? (int)$props['rootFolderId'] : null,
+            'viewMode' => in_array((string)($props['viewMode'] ?? 'table'), ['table', 'grid'], true)
+                ? (string)$props['viewMode']
+                : 'table',
+            'allowUpload' => !array_key_exists('allowUpload', $props) || !empty($props['allowUpload']),
+            'allowCreateFolder' => !array_key_exists('allowCreateFolder', $props) || !empty($props['allowCreateFolder']),
+            'allowRename' => !array_key_exists('allowRename', $props) || !empty($props['allowRename']),
+            'allowDelete' => !empty($props['allowDelete']),
+            'allowDownload' => !array_key_exists('allowDownload', $props) || !empty($props['allowDownload']),
+            'showSearch' => !array_key_exists('showSearch', $props) || !empty($props['showSearch']),
+            'showBreadcrumbs' => !array_key_exists('showBreadcrumbs', $props) || !empty($props['showBreadcrumbs']),
+            'defaultSort' => trim((string)($props['defaultSort'] ?? 'updatedAt')),
+            'defaultSortDirection' => strtolower((string)($props['defaultSortDirection'] ?? 'desc')) === 'asc' ? 'asc' : 'desc',
+            'allowedExtensions' => is_array($props['allowedExtensions'] ?? null) ? array_values($props['allowedExtensions']) : [],
+            'maxFileSize' => max(0, (int)($props['maxFileSize'] ?? 52428800)),
+            'permissionMode' => in_array((string)($props['permissionMode'] ?? 'inherit_site'), ['inherit_site', 'custom'], true)
+                ? (string)$props['permissionMode']
+                : 'inherit_site',
+            'useSiteRootFallback' => !array_key_exists('useSiteRootFallback', $props) || !empty($props['useSiteRootFallback']),
+        ];
     }
 }
 
 
 ---
 
-2. DiskPermissionService.php можно оставить почти как есть
+2. Подключить bridge в bootstrap.php
 
-Если у тебя уже стоит вот такая логика:
+/local/sitebuilder/components/disk/bootstrap.php
 
-DiskCurrentUser::isAdmin() → полный доступ
+Добавь:
 
-дальше SiteAccessRepository::getUserRole(...)
+require_once $_SERVER['DOCUMENT_ROOT'] . '/local/sitebuilder/lib/db.php';
+
+и ниже среди require_once:
+
+require_once __DIR__ . '/lib/DiskSitebuilderBridge.php';
+
+Если sb_json_decode_assoc() уже в db.php, этого достаточно.
 
 
-то после замены SiteAccessRepository.php права уже станут общими.
+---
 
-Но я все равно пришлю готовую финальную версию, чтобы у тебя не было расхождений.
+3. Заменить SiteRepository.php
 
-/local/sitebuilder/components/disk/lib/DiskPermissionService.php
+Теперь disk не должен жить своей отдельной моделью сайта.
+
+/local/sitebuilder/components/disk/lib/SiteRepository.php
 
 <?php
 
-class DiskPermissionService
+class SiteRepository
 {
-    public static function resolve(DiskContext $context, array $settings, ?int $rootFolderId = null): array
+    public static function getById(int $siteId): ?array
     {
-        $rolePermissions = self::resolveRolePermissions($context);
-        $blockRestrictions = self::resolveBlockRestrictions($settings);
-
-        return [
-            'canView' => $rolePermissions['canView'] && $blockRestrictions['canView'],
-            'canUpload' => $rolePermissions['canUpload'] && $blockRestrictions['canUpload'],
-            'canCreateFolder' => $rolePermissions['canCreateFolder'] && $blockRestrictions['canCreateFolder'],
-            'canRename' => $rolePermissions['canRename'] && $blockRestrictions['canRename'],
-            'canDelete' => $rolePermissions['canDelete'] && $blockRestrictions['canDelete'],
-            'canDownload' => $rolePermissions['canDownload'] && $blockRestrictions['canDownload'],
-            'canManageAccess' => $rolePermissions['canManageAccess'],
-            'canEditSettings' => $rolePermissions['canEditSettings'],
-        ];
+        return DiskSitebuilderBridge::getSiteById($siteId);
     }
 
-    protected static function resolveRolePermissions(DiskContext $context): array
+    public static function getRootDiskFolderId(int $siteId): ?int
     {
-        if (DiskCurrentUser::isAdmin()) {
+        $site = self::getById($siteId);
+        if (!$site) {
+            return null;
+        }
+
+        return !empty($site['diskFolderId']) ? (int)$site['diskFolderId'] : null;
+    }
+
+    public static function updateRootDiskFolderId(int $siteId, ?int $folderId): bool
+    {
+        if (!$folderId || $folderId <= 0) {
+            throw new RuntimeException('INVALID_FOLDER_ID');
+        }
+
+        return DiskSitebuilderBridge::updateSiteDiskFolderId($siteId, (int)$folderId);
+    }
+}
+
+
+---
+
+4. Заменить BlockRepository.php
+
+Теперь блок тоже берем из sitebuilder.block.
+
+/local/sitebuilder/components/disk/lib/BlockRepository.php
+
+<?php
+
+class BlockRepository
+{
+    public static function getById(int $blockId): ?array
+    {
+        return DiskSitebuilderBridge::getBlockById($blockId);
+    }
+
+    public static function getDiskBlockByContext(int $siteId, int $pageId, int $blockId): ?array
+    {
+        $block = self::getById($blockId);
+        if (!$block) {
+            return null;
+        }
+
+        if ((string)($block['type'] ?? '') !== 'disk') {
+            return null;
+        }
+
+        if ((int)($block['pageId'] ?? 0) !== $pageId) {
+            return null;
+        }
+
+        $page = DiskSitebuilderBridge::getPageById($pageId);
+        if (!$page) {
+            return null;
+        }
+
+        if ((int)($page['siteId'] ?? 0) !== $siteId) {
+            return null;
+        }
+
+        return $block;
+    }
+
+    public static function updateSettingsJson(int $blockId, array $settings): bool
+    {
+        return DiskSitebuilderBridge::saveBlockProps($blockId, $settings);
+    }
+}
+
+
+---
+
+5. Больше не использовать DiskSettingsRepository как отдельную таблицу
+
+Теперь настройки disk — это props_json блока.
+
+/local/sitebuilder/components/disk/lib/DiskSettingsRepository.php
+
+Полностью замени на:
+
+<?php
+
+class DiskSettingsRepository
+{
+    public static function getByBlockId(int $blockId): array
+    {
+        $block = DiskSitebuilderBridge::getBlockById($blockId);
+        if (!$block) {
+            throw new RuntimeException('BLOCK_NOT_FOUND');
+        }
+
+        return DiskSitebuilderBridge::normalizeDiskProps($block['props'] ?? []);
+    }
+
+    public static function createDefault(array $data): bool
+    {
+        $blockId = (int)($data['block_id'] ?? 0);
+        if ($blockId <= 0) {
+            throw new RuntimeException('INVALID_BLOCK_ID');
+        }
+
+        $default = DiskSitebuilderBridge::normalizeDiskProps([]);
+        return DiskSitebuilderBridge::saveBlockProps($blockId, $default);
+    }
+
+    public static function save(int $blockId, array $settings): bool
+    {
+        $current = self::getByBlockId($blockId);
+        $merged = array_merge($current, $settings);
+        $normalized = DiskSitebuilderBridge::normalizeDiskProps($merged);
+
+        return DiskSitebuilderBridge::saveBlockProps($blockId, $normalized);
+    }
+
+    public static function ensureExistsForBlock(int $blockId, int $siteId, int $pageId, ?int $createdBy = null): array
+    {
+        $block = DiskSitebuilderBridge::getBlockById($blockId);
+        if (!$block) {
+            throw new RuntimeException('BLOCK_NOT_FOUND');
+        }
+
+        $props = $block['props'] ?? [];
+        $normalized = DiskSitebuilderBridge::normalizeDiskProps($props);
+
+        if (($block['props'] ?? []) !== $normalized) {
+            DiskSitebuilderBridge::saveBlockProps($blockId, $normalized);
+        }
+
+        return $normalized;
+    }
+}
+
+
+---
+
+6. Новый единый disk.bootstrap
+
+Новый файл /local/sitebuilder/components/disk/actions/bootstrap.php
+
+<?php
+
+DiskCsrf::validateFromRequest();
+$data = disk_read_json_body();
+
+$currentUserId = DiskCurrentUser::requireId();
+
+$context = DiskContextFactory::fromArray([
+    'siteId' => (int)($data['siteId'] ?? 0),
+    'pageId' => (int)($data['pageId'] ?? 0),
+    'blockId' => (int)($data['blockId'] ?? 0),
+    'currentUserId' => $currentUserId,
+]);
+
+DiskValidator::assertContext($context);
+
+$settings = DiskSettingsRepository::ensureExistsForBlock(
+    $context->blockId,
+    $context->siteId,
+    $context->pageId,
+    $context->currentUserId
+);
+
+$rootInfo = DiskRootResolver::resolveWithSource($context, $settings, true);
+$permissions = DiskPermissionService::resolve($context, $settings, $rootInfo['rootFolderId']);
+
+DiskResponse::success([
+    'siteId' => $context->siteId,
+    'pageId' => $context->pageId,
+    'blockId' => $context->blockId,
+    'settings' => $settings,
+    'permissions' => $permissions,
+    'rootFolderId' => $rootInfo['rootFolderId'],
+    'currentFolderId' => $rootInfo['rootFolderId'],
+    'rootSource' => $rootInfo['source'],
+]);
+
+
+---
+
+7. Обновить DiskRootResolver.php
+
+Теперь он должен уметь:
+
+брать disk_folder_id сайта
+
+создавать корень сайта
+
+создавать папку блока
+
+сохранять rootFolderId обратно в props_json
+
+
+/local/sitebuilder/components/disk/lib/DiskRootResolver.php
+
+<?php
+
+class DiskRootResolver
+{
+    public static function resolve(DiskContext $context, array $settings, bool $autoCreate = false): ?int
+    {
+        $result = self::resolveWithSource($context, $settings, $autoCreate);
+        return $result['rootFolderId'];
+    }
+
+    public static function resolveWithSource(DiskContext $context, array $settings, bool $autoCreate = false): array
+    {
+        $rootMode = (string)($settings['rootMode'] ?? 'site');
+
+        if ($rootMode === 'block') {
+            if (!empty($settings['rootFolderId'])) {
+                return [
+                    'rootFolderId' => (int)$settings['rootFolderId'],
+                    'source' => 'block',
+                ];
+            }
+
+            if ($autoCreate) {
+                $folderId = BlockDiskInitializer::ensureBlockRootFolder(
+                    $context->siteId,
+                    $context->pageId,
+                    $context->blockId,
+                    $context->currentUserId,
+                    (string)($settings['title'] ?? '')
+                );
+
+                return [
+                    'rootFolderId' => $folderId,
+                    'source' => 'block',
+                ];
+            }
+        }
+
+        $siteRootFolderId = SiteRepository::getRootDiskFolderId($context->siteId);
+        if ($siteRootFolderId !== null && $siteRootFolderId > 0) {
             return [
-                'canView' => true,
-                'canUpload' => true,
-                'canCreateFolder' => true,
-                'canRename' => true,
-                'canDelete' => true,
-                'canDownload' => true,
-                'canManageAccess' => true,
-                'canEditSettings' => true,
+                'rootFolderId' => $siteRootFolderId,
+                'source' => 'site',
             ];
         }
 
-        $role = SiteAccessRepository::getUserRole($context->siteId, $context->currentUserId);
+        if ($autoCreate && !empty($settings['useSiteRootFallback'])) {
+            $site = SiteRepository::getById($context->siteId);
+            if (!$site) {
+                throw new RuntimeException('SITE_NOT_FOUND');
+            }
 
-        switch ($role) {
-            case 'site_admin':
-                return [
-                    'canView' => true,
-                    'canUpload' => true,
-                    'canCreateFolder' => true,
-                    'canRename' => true,
-                    'canDelete' => true,
-                    'canDownload' => true,
-                    'canManageAccess' => true,
-                    'canEditSettings' => true,
-                ];
+            $folderId = SiteDiskInitializer::ensureSiteRootFolder(
+                $context->siteId,
+                $context->currentUserId,
+                (string)$site['name']
+            );
 
-            case 'site_editor':
-                return [
-                    'canView' => true,
-                    'canUpload' => true,
-                    'canCreateFolder' => true,
-                    'canRename' => true,
-                    'canDelete' => true,
-                    'canDownload' => true,
-                    'canManageAccess' => false,
-                    'canEditSettings' => true,
-                ];
-
-            case 'site_user':
-                return [
-                    'canView' => true,
-                    'canUpload' => true,
-                    'canCreateFolder' => false,
-                    'canRename' => false,
-                    'canDelete' => false,
-                    'canDownload' => true,
-                    'canManageAccess' => false,
-                    'canEditSettings' => false,
-                ];
-
-            case 'site_viewer':
-                return [
-                    'canView' => true,
-                    'canUpload' => false,
-                    'canCreateFolder' => false,
-                    'canRename' => false,
-                    'canDelete' => false,
-                    'canDownload' => true,
-                    'canManageAccess' => false,
-                    'canEditSettings' => false,
-                ];
-
-            default:
-                return [
-                    'canView' => false,
-                    'canUpload' => false,
-                    'canCreateFolder' => false,
-                    'canRename' => false,
-                    'canDelete' => false,
-                    'canDownload' => false,
-                    'canManageAccess' => false,
-                    'canEditSettings' => false,
-                ];
+            return [
+                'rootFolderId' => $folderId,
+                'source' => 'site',
+            ];
         }
-    }
 
-    protected static function resolveBlockRestrictions(array $settings): array
-    {
         return [
-            'canView' => true,
-            'canUpload' => !empty($settings['allowUpload']),
-            'canCreateFolder' => !empty($settings['allowCreateFolder']),
-            'canRename' => !empty($settings['allowRename']),
-            'canDelete' => !empty($settings['allowDelete']),
-            'canDownload' => !empty($settings['allowDownload']),
+            'rootFolderId' => null,
+            'source' => 'none',
         ];
     }
 }
@@ -382,103 +514,149 @@ class DiskPermissionService
 
 ---
 
-3. Что это даст
+8. Обновить BlockDiskInitializer.php
 
-После замены этих файлов:
+Важно: теперь он должен писать rootFolderId в sitebuilder.block.props_json.
 
-editor.php, sitebuilder, access.php и disk будут смотреть на одни и те же access rows
+/local/sitebuilder/components/disk/lib/BlockDiskInitializer.php
 
-если пользователь имеет в sitebuilder.access роль OWNER, то disk увидит site_admin
+<?php
 
-если роль EDITOR, то disk даст права редактора
+use Bitrix\Disk\Folder;
+use Bitrix\Disk\Driver;
 
-если VIEWER, то в disk будет только просмотр
+class BlockDiskInitializer
+{
+    public static function ensureBlockRootFolder(
+        int $siteId,
+        int $pageId,
+        int $blockId,
+        int $currentUserId,
+        string $blockTitle = ''
+    ): int {
+        $settings = DiskSettingsRepository::ensureExistsForBlock($blockId, $siteId, $pageId, $currentUserId);
+
+        if (!empty($settings['rootFolderId'])) {
+            return (int)$settings['rootFolderId'];
+        }
+
+        $site = SiteRepository::getById($siteId);
+        if (!$site) {
+            throw new RuntimeException('SITE_NOT_FOUND');
+        }
+
+        $siteRootFolderId = SiteDiskInitializer::ensureSiteRootFolder(
+            $siteId,
+            $currentUserId,
+            (string)$site['name']
+        );
+
+        $siteRootFolder = Folder::loadById($siteRootFolderId);
+        if (!$siteRootFolder instanceof Folder) {
+            throw new RuntimeException('SITE_ROOT_FOLDER_NOT_FOUND');
+        }
+
+        $folderName = $blockTitle !== ''
+            ? ('Блок: ' . $blockTitle)
+            : ('Блок #' . $blockId);
+
+        $created = $siteRootFolder->addSubFolder([
+            'NAME' => $folderName,
+            'CREATED_BY' => $currentUserId,
+        ], Driver::getInstance()->getFakeSecurityContext($currentUserId));
+
+        if (!$created instanceof Folder) {
+            throw new RuntimeException('BLOCK_ROOT_CREATE_ERROR');
+        }
+
+        DiskSettingsRepository::save($blockId, [
+            'rootMode' => 'block',
+            'rootFolderId' => (int)$created->getId(),
+            'useSiteRootFallback' => true,
+        ]);
+
+        return (int)$created->getId();
+    }
+}
+
+
+---
+
+9. Добавить bootstrap action в api.php
+
+/local/sitebuilder/components/disk/api.php
+
+В switch добавь:
+
+case 'bootstrap':
+    require __DIR__ . '/actions/bootstrap.php';
+    break;
+
+
+---
+
+10. Как встраивать блок в сайт
+
+Теперь на странице sitebuilder рендер блока disk должен быть таким:
+
+<?php
+$blockId = (int)$block['id'];
+$pageId = (int)$page['id'];
+$siteId = (int)$site['id'];
+$props = is_array($block['props'] ?? null) ? $block['props'] : [];
+$title = (string)($props['title'] ?? 'Файлы');
+?>
+<div class="sb-disk"
+     data-site-id="<?= $siteId ?>"
+     data-page-id="<?= $pageId ?>"
+     data-block-id="<?= $blockId ?>"
+     data-initial-state="<?= htmlspecialchars(json_encode([
+         'siteId' => $siteId,
+         'pageId' => $pageId,
+         'blockId' => $blockId,
+         'settings' => $props,
+     ], JSON_UNESCAPED_UNICODE), ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?>">
+</div>
+
+И на фронте script.js при инициализации должен первым делом вызывать:
+
+api('bootstrap', {
+  siteId: this.state.siteId,
+  pageId: this.state.pageId,
+  blockId: this.state.blockId,
+  sessid: this.getSessid()
+})
+
+
+---
+
+11. Что это даст
+
+После этого disk будет:
+
+сам получать siteId/pageId/blockId из текущего блока
+
+сам тянуть настройки из sitebuilder.block.props_json
+
+сам подтягивать права пользователя из sitebuilder.access
+
+сам создавать корень сайта и папку блока при первом запуске
+
+быть полностью встроенным в sitebuilder, а не жить отдельно
 
 
 
 ---
 
-4. Что проверить после правки
+12. Что делать следующим шагом
 
-Проверь на одном сайте:
+Теперь уже логично сделать реальный case 'disk' в renderer страницы и editor renderer, чтобы:
 
-Пользователь с OWNER
+блок можно было добавлять как type = disk
 
-Должен мочь:
+у него открывались настройки
 
-открывать диск
-
-загружать
-
-создавать папки
-
-удалять
-
-переименовывать
-
-открывать настройки блока
+и он жил как полноценный блок конструктора
 
 
-Пользователь с EDITOR
-
-Должен мочь:
-
-открывать диск
-
-загружать
-
-создавать папки
-
-редактировать
-
-открывать настройки блока
-
-но без управления доступами
-
-
-Пользователь с VIEWER
-
-Должен мочь:
-
-только смотреть
-
-скачивать
-
-но не загружать и не удалять
-
-
-
----
-
-5. Что еще желательно сделать
-
-Если ты больше не используешь старую таблицу:
-
-sitebuilder_site_user_access
-
-то ее лучше:
-
-либо оставить как legacy и больше не трогать,
-
-либо потом удалить из проекта окончательно.
-
-
-Но сначала убедись, что весь disk уже работает от sitebuilder.access.
-
-
----
-
-6. Следующий логичный шаг
-
-После объединения прав я бы следующим шагом сделал:
-
-единый repository/service слой для sitebuilder и disk, чтобы:
-
-не было двух параллельных моделей SiteRepository
-
-DiskRootResolver и sitebuilder использовали один источник данных по сайту
-
-disk стал полноценным блоком конструктора, а не отдельным островом
-
-
-Если хочешь, следующим сообщением я дам тебе план и код, как связать sitebuilder.site и disk по rootFolder/diskFolderId` без дублирования логики.
+Следующим сообщением я могу дать тебе готовый renderer + editor integration для блока disk.
