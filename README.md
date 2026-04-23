@@ -1,58 +1,144 @@
-У тебя в DiskBitrixStorageAdapter.php метод isOfficeDocument() уже был, и ты добавил его второй раз.
+Значит data-viewer на docx отрисовывается, но viewer не стартует на этом элементе. Такое часто бывает со span, динамической перерисовкой и bind.
 
-Нужно оставить только один.
+Надежнее сделать не “магический” bind, а явно открывать viewer по клику.
 
-Что сделать
+Что поменять в script.js
 
-Открой файл:
+Файл:
 
-/local/sitebuilder/components/disk/lib/DiskBitrixStorageAdapter.php
+/local/sitebuilder/components/disk/script.js
 
-Найди оба метода:
+1. Добавь в класс метод открытия office viewer
 
-protected function isOfficeDocument(string $extension): bool
+Вставь в файл, например после bindViewer():
 
-и удали один из них.
+DiskComponent.prototype.openOfficeViewer = function (row) {
+  if (!row) return false;
+  if (!window.BX || !BX.Disk || !BX.Disk.Viewer || !BX.Disk.Viewer.Actions) {
+    return false;
+  }
 
-Оставь только такой вариант:
+  var objectId = Number(row.getAttribute('data-id') || 0);
+  var name = row.getAttribute('data-name') || '';
+  var src = row.getAttribute('data-preview-url') || '';
 
-protected function isOfficeDocument(string $extension): bool
-{
-    $extension = mb_strtolower(trim($extension));
+  if (objectId <= 0 || !src) {
+    return false;
+  }
 
-    return in_array($extension, [
-        'doc', 'docx',
-        'xls', 'xlsx',
-        'ppt', 'pptx',
-        'odt', 'ods', 'odp',
-        'rtf', 'csv'
-    ], true);
+  try {
+    var item = new BX.Disk.Viewer.DocumentItem({
+      objectId: String(objectId),
+      name: name,
+      src: src
+    });
+
+    BX.Disk.Viewer.Actions.show(item);
+    return true;
+  } catch (e) {
+    console.warn('Office viewer open failed', e);
+    return false;
+  }
+};
+
+
+---
+
+2. В обработчике open замени блок для файла
+
+Найди в bindStaticEvents() кусок:
+
+} else if (entityType === 'file') {
+  var previewMode = row.getAttribute('data-preview-mode') || '';
+  var previewUrl = row.getAttribute('data-preview-url') || '';
+  var downloadUrl = row.getAttribute('data-download-url') || '';
+
+  if (previewMode === 'office') {
+    return;
+  }
+
+  if (previewUrl) {
+    window.open(previewUrl, '_blank');
+  } else if (downloadUrl) {
+    window.open(downloadUrl, '_blank');
+  }
 }
 
-Что еще проверить сразу
+И замени на:
 
-Скорее всего ты так же мог продублировать и другие методы. Проверь, чтобы в классе был только один экземпляр каждого из этих методов:
+} else if (entityType === 'file') {
+  var previewMode = row.getAttribute('data-preview-mode') || '';
+  var previewUrl = row.getAttribute('data-preview-url') || '';
+  var downloadUrl = row.getAttribute('data-download-url') || '';
 
-isOfficeDocument
+  if (previewMode === 'office') {
+    if (!self.openOfficeViewer(row) && previewUrl) {
+      window.open(previewUrl, '_blank');
+    }
+    return;
+  }
 
-buildViewerSrc
+  if (previewUrl) {
+    window.open(previewUrl, '_blank');
+  } else if (downloadUrl) {
+    window.open(downloadUrl, '_blank');
+  }
+}
 
-buildPreviewUrl
 
-buildDownloadUrl
+---
 
-detectMimeTypeByExtension
+3. Упрости кнопки Открыть для office-файлов
+
+В renderItemsTable() и renderItemsGrid() не нужно больше генерировать span с data-viewer.
+Для всех файлов оставь обычную кнопку:
+
+В renderItemsTable() внутри actions:
+
+openControl = '<button type="button" class="sb-disk__row-btn" data-row-action="open">Открыть</button>';
+
+В renderItemsGrid() тоже:
+
+openControl = '<button type="button" class="sb-disk__row-btn" data-row-action="open">Открыть</button>';
+
+То есть убери ветку с:
+
+item.previewMode === 'office'
+
+и data-viewer.
 
 
-Быстрый способ найти дубли
+---
 
-По SSH выполни:
+Почему это должно помочь
 
-grep -n "function isOfficeDocument" /srv/bx/docroot/local/sitebuilder/components/disk/lib/DiskBitrixStorageAdapter.php
-grep -n "function buildViewerSrc" /srv/bx/docroot/local/sitebuilder/components/disk/lib/DiskBitrixStorageAdapter.php
-grep -n "function buildPreviewUrl" /srv/bx/docroot/local/sitebuilder/components/disk/lib/DiskBitrixStorageAdapter.php
-grep -n "function buildDownloadUrl" /srv/bx/docroot/local/sitebuilder/components/disk/lib/DiskBitrixStorageAdapter.php
+Сейчас у тебя:
 
-Если по какому-то имени показывает 2 строки — значит этот метод тоже задублирован.
+картинки открываются, потому что идут через обычный window.open(previewUrl)
 
-После удаления дубля обнови страницу. Если хочешь, пришли мне текущий DiskBitrixStorageAdapter.php, и я соберу тебе его в один чистый готовый файл.
+docx не открывается, потому что viewer не цепляется к динамически созданному span
+
+
+После правки:
+
+кнопка Открыть сама вызывает BX.Disk.Viewer.Actions.show(...)
+
+если viewer не поднимется, будет fallback на previewUrl
+
+
+
+---
+
+После этого
+
+1. сохрани script.js
+
+
+2. Ctrl + F5
+
+
+3. снова открой docx
+
+
+
+Если после этого все равно ничего не произойдет, пришли ошибку из консоли после клика по docx.
