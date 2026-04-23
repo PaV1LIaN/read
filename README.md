@@ -1,205 +1,258 @@
-Посмотрел архив. У тебя не switch по типам блоков, а другая схема:
+Дальше нужно сделать 4 вещи, чтобы блок disk реально заработал на сайте, а не только отрисовался как контейнер.
 
-блок рендерится через lib/public_render.php
+1. Подключить disk.bootstrap на сервере
 
-там функция sb_public_render_block() просто подключает шаблон из
-views/blocks/<type>.php
+Ты уже вставил публичный рендер блока. Теперь нужно, чтобы API disk умел стартовать в контексте сайта.
 
-сама публичная страница собирается в
-views/layout/public_page.php
+Проверь, что у тебя уже есть:
 
+/local/sitebuilder/components/disk/actions/bootstrap.php
 
-То есть пункт 6 нужно вставлять не в один файл, а так:
-
-
----
-
-Куда именно вставлять
-
-1. Рендер самого блока disk
-
-Нужно создать новый файл:
-
-/local/sitebuilder/views/blocks/disk.php
-
-Потому что в архиве блоки рендерятся именно так:
-
-views/blocks/button.php
-
-views/blocks/heading.php
-
-views/blocks/html.php
-
-views/blocks/text.php
+в /local/sitebuilder/components/disk/api.php есть:
 
 
-И lib/public_render.php сам подхватит disk.php, если type = 'disk'.
+case 'bootstrap':
+    require __DIR__ . '/actions/bootstrap.php';
+    break;
+
+Если этого еще нет — добавить.
 
 
 ---
 
-2. Подключение CSS/JS диска на публичной странице
+2. Обновить script.js, чтобы он стартовал через bootstrap
 
-Это нужно вставлять в:
+Нужно, чтобы фронт блока не пытался жить только на data-initial-state, а сразу дергал сервер и получал:
 
-/local/sitebuilder/views/layout/public_page.php
+реальные настройки из block.props
 
-Именно там находится <head> и финальная сборка HTML страницы.
+права пользователя
 
+rootFolderId
 
----
-
-Что именно сделать
-
-
----
-
-Шаг 1. Создай файл /local/sitebuilder/views/blocks/disk.php
-
-Вставь туда вот это:
-
-<?php
-$site = $context['site'] ?? [];
-$currentPage = $context['currentPage'] ?? [];
-$siteId = (int)($site['id'] ?? 0);
-$pageId = (int)($currentPage['id'] ?? 0);
-$blockId = (int)($block['id'] ?? 0);
-$diskProps = is_array($props ?? null) ? $props : [];
-?>
-<div class="sb-block sb-block--disk">
-    <div class="sb-disk"
-         data-site-id="<?= $siteId ?>"
-         data-page-id="<?= $pageId ?>"
-         data-block-id="<?= $blockId ?>"
-         data-initial-state="<?= htmlspecialchars(json_encode([
-             'siteId' => $siteId,
-             'pageId' => $pageId,
-             'blockId' => $blockId,
-             'settings' => $diskProps,
-         ], JSON_UNESCAPED_UNICODE), ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?>">
-    </div>
-</div>
+currentFolderId
 
 
----
+В /local/sitebuilder/components/disk/script.js найди:
 
-Шаг 2. В views/layout/public_page.php добавить проверку, есть ли disk на странице
+DiskComponent.prototype.init = async function () {
 
-Найди вот этот участок:
+и замени на:
 
-$pageHtml = sb_public_render_blocks($pageBlocks, $vm);
-$menuHtml = sb_public_render_menu($menu, $basePath, $siteId);
+DiskComponent.prototype.init = async function () {
+  this.bindStaticEvents();
 
-И сразу после него вставь:
+  try {
+    var payload = this.getBasePayload();
+    payload.sessid = this.getSessid();
 
-$pageHasDiskBlock = false;
-
-foreach ($pageBlocks as $pageBlock) {
-    if ((string)($pageBlock['type'] ?? '') === 'disk') {
-        $pageHasDiskBlock = true;
-        break;
+    var res = await this.api('bootstrap', payload);
+    if (!res.ok) {
+      throw new Error(res.message || res.error || 'BOOTSTRAP_ERROR');
     }
+
+    var data = res.data || {};
+
+    this.state.siteId = Number(data.siteId || this.state.siteId || 0);
+    this.state.pageId = Number(data.pageId || this.state.pageId || 0);
+    this.state.blockId = Number(data.blockId || this.state.blockId || 0);
+    this.state.settings = data.settings || {};
+    this.state.permissions = data.permissions || {};
+    this.state.rootFolderId = data.rootFolderId || null;
+    this.state.currentFolderId = data.currentFolderId || null;
+    this.state.viewMode = (this.state.settings && this.state.settings.viewMode) || 'table';
+
+    this.applyInitialViewMode();
+
+    if (!this.state.permissions.canView) {
+      this.renderState('no-access');
+      return;
+    }
+
+    if (!this.state.rootFolderId) {
+      this.renderState('no-root');
+      return;
+    }
+
+    await this.loadFolder(this.state.rootFolderId);
+  } catch (e) {
+    console.error(e);
+    this.renderState('error');
+  }
+};
+
+
+---
+
+3. Проверить storage-интеграцию блока
+
+Теперь нужно убедиться, что disk берет настройки не из старой таблицы, а из sitebuilder.block.props_json.
+
+То есть у тебя уже должны быть заменены:
+
+DiskSitebuilderBridge.php
+
+SiteRepository.php
+
+BlockRepository.php
+
+DiskSettingsRepository.php
+
+DiskRootResolver.php
+
+BlockDiskInitializer.php
+
+SiteAccessRepository.php
+
+
+Если что-то из этого еще не заменено, bootstrap может стартовать, но читать не тот источник.
+
+
+---
+
+4. Проверить сценарий запуска на странице
+
+Теперь можно тестировать по шагам.
+
+Сценарий A. Блок открыт впервые
+
+Открой публичную страницу, где есть disk.
+
+Ожидаемое поведение:
+
+блок рендерится
+
+идет bootstrap
+
+создается корень сайта, если его нет
+
+либо создается папка блока, если rootMode = block
+
+грузится содержимое
+
+
+Сценарий B. У пользователя нет прав
+
+Поставь пользователю роль VIEWER и проверь:
+
+блок открывается
+
+доступ только на просмотр
+
+без загрузки и удаления
+
+
+Сценарий C. Настройки блока
+
+В редакторе создай или отредактируй disk блок и в props задай:
+
+rootMode = site
+
+потом rootMode = block
+
+
+И проверь, что блок показывает нужную файловую зону.
+
+
+---
+
+Что проверить в первую очередь прямо сейчас
+
+После того как ты вставил публичный рендер, я бы делал так:
+
+1.
+
+Открой страницу с блоком disk
+
+2.
+
+Открой DevTools → Network
+
+3.
+
+Посмотри, есть ли запрос:
+
+/local/sitebuilder/components/disk/api.php?action=bootstrap
+
+4.
+
+Если запрос есть:
+
+смотри его response
+
+
+Ожидаемо там должно быть что-то вроде:
+
+{
+  "ok": true,
+  "data": {
+    "siteId": 1,
+    "pageId": 10,
+    "blockId": 55,
+    "settings": {...},
+    "permissions": {...},
+    "rootFolderId": 123,
+    "currentFolderId": 123,
+    "rootSource": "site"
+  }
 }
 
-if (!$pageHasDiskBlock) {
-    foreach ($headerBlocks as $layoutBlock) {
-        if ((string)($layoutBlock['type'] ?? '') === 'disk') {
-            $pageHasDiskBlock = true;
-            break;
-        }
-    }
-}
 
-if (!$pageHasDiskBlock) {
-    foreach ($footerBlocks as $layoutBlock) {
-        if ((string)($layoutBlock['type'] ?? '') === 'disk') {
-            $pageHasDiskBlock = true;
-            break;
-        }
-    }
-}
+---
 
-if (!$pageHasDiskBlock) {
-    foreach ($leftBlocks as $layoutBlock) {
-        if ((string)($layoutBlock['type'] ?? '') === 'disk') {
-            $pageHasDiskBlock = true;
-            break;
-        }
-    }
-}
+Если bootstrap не вызывается
 
-if (!$pageHasDiskBlock) {
-    foreach ($rightBlocks as $layoutBlock) {
-        if ((string)($layoutBlock['type'] ?? '') === 'disk') {
-            $pageHasDiskBlock = true;
-            break;
-        }
-    }
-}
+Значит проблема еще на фронте:
+
+не подключился script.js
+
+не сработал DOMContentLoaded
+
+класс .sb-disk не найден
+
+script.js еще старый
+
 
 
 ---
 
-Шаг 3. В том же views/layout/public_page.php подключить стили диска
+Если bootstrap вызывается, но падает
 
-Найди в <head> строку:
+Тогда пришли response этого запроса. Это уже сразу покажет, что сломано:
 
-<link rel="stylesheet" href="<?= sb_public_h($basePath) ?>/assets/public/public.css">
+context
 
-И сразу после нее вставь:
+права
 
-<?php if ($pageHasDiskBlock): ?>
-    <link rel="stylesheet" href="<?= sb_public_h($basePath) ?>/components/disk/styles.css">
-<?php endif; ?>
+root
+
+props
+
+block type
+
+Bitrix Disk
+
 
 
 ---
 
-Шаг 4. В views/layout/public_page.php подключить JS диска
+Если хочешь идти без диагностики, а сразу дальше
 
-Найди внизу перед </body> существующий <script> и после него вставь:
+Следующий логичный шаг после запуска на публичной странице — сделать человеческую настройку блока disk в editor.php, чтобы не редактировать его через JSON.
 
-<?php if ($pageHasDiskBlock): ?>
-<script src="<?= sb_public_h($basePath) ?>/components/disk/script.js"></script>
-<?php endif; ?>
+То есть:
 
+поле “Заголовок”
 
----
+выбор rootMode
 
-Что важно
+чекбоксы прав
 
-Тебе не нужно вставлять case 'disk' в public.php, потому что:
+viewMode
 
-public.php только собирает view model и подключает layout
+maxFileSize
 
-сам рендер блоков идет через:
-
-lib/public_render.php
-
-views/blocks/*.php
+allowedExtensions
 
 
-
-То есть в твоем архиве правильная точка интеграции — новый файл views/blocks/disk.php, а не switch.
-
-
----
-
-Итого по файлам
-
-Создать:
-
-/local/sitebuilder/views/blocks/disk.php
-
-Изменить:
-
-/local/sitebuilder/views/layout/public_page.php
-
-
----
-
-Если совсем коротко
-
-6 пункт в твоем архиве нужно реализовывать через новый файл views/blocks/disk.php, а не вставкой в public.php.
-
-Если хочешь, следующим сообщением я пришлю тебе готовый патч именно для public_page.php целиком с уже вставленными кусками, чтобы ты просто заменил нужные строки без ручного поиска.
+Это как раз следующий удобный этап.
