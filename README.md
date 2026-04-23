@@ -1,72 +1,100 @@
-Да, сейчас у тебя логика все еще смешана: кнопка «Открыть» фактически ведет на скачивание.
-Правильнее сделать так:
+Да, это лучше делать не через наш preview.php, а через штатный обработчик документов Bitrix Disk, если у вас уже настроен Office Online / Microsoft Office Online. Bitrix24 Drive умеет работать с документами через встроенный редактор Bitrix24.Docs, Office 365 / MS Office Online и Google Docs, а доступные действия зависят от выбранного способа работы с документами и настроенной интеграции. 
 
-Открыть → просмотр в браузере
+С учетом того, что у тебя уже были логи про WOPI discovery и document handlers, правильная схема такая:
 
-Скачать → принудительное скачивание
+для pdf/png/jpg/txt/json/html оставляем наш preview.php
 
+для doc/docx/xls/xlsx/ppt/pptx уводим в Bitrix document viewer/editor
 
-И при этом понимать, что не все типы файлов браузер умеет показывать. Обычно в браузере откроются:
+кнопки делаем две:
 
-pdf
+Открыть → браузерный preview или Office Online
 
-png, jpg, jpeg, gif, webp, svg
-
-txt, json, xml, html
+Скачать → прямое скачивание
 
 
-А, например, docx/xlsx чаще всего будут скачиваться даже через preview.
+
+Что менять
+
+1. В DiskBitrixStorageAdapter.php добавь определение office-файлов
+
+Ниже detectMimeTypeByExtension() добавь:
+
+protected function isOfficeDocument(string $extension): bool
+{
+    $extension = mb_strtolower(trim($extension));
+
+    return in_array($extension, [
+        'doc', 'docx',
+        'xls', 'xlsx',
+        'ppt', 'pptx',
+        'odt', 'ods', 'odp',
+        'rtf', 'csv'
+    ], true);
+}
 
 
 ---
 
-Что нужно сделать
+2. Замени normalizeFile() на этот вариант
 
-1. Исправить preview.php
+protected function normalizeFile(DiskContext $context, File $file): array
+{
+    $name = (string)$file->getName();
+    $extension = (string)$file->getExtension();
+    $mimeType = $this->detectMimeTypeByExtension($extension);
 
-Замени файл:
+    $previewUrl = $this->isOfficeDocument($extension)
+        ? $this->buildOfficePreviewUrl($context, $file)
+        : $this->buildPreviewUrl($context, $file);
 
-/local/sitebuilder/components/disk/preview.php
+    return [
+        'id' => (int)$file->getId(),
+        'entityType' => 'file',
+        'name' => $name,
+        'originalName' => $name,
+        'extension' => $extension,
+        'mimeType' => $mimeType,
+        'size' => (int)$file->getSize(),
+        'downloadUrl' => $this->buildDownloadUrl($file),
+        'previewUrl' => $previewUrl,
+        'previewMode' => $this->isOfficeDocument($extension) ? 'office' : 'browser',
+        'createdAt' => $this->normalizeDate($file->getCreateTime()),
+        'updatedAt' => $this->normalizeDate($file->getUpdateTime()),
+        'createdBy' => (int)$file->getCreatedBy(),
+    ];
+}
 
-на этот код:
+
+---
+
+3. Добавь в этот же класс метод URL для Office Online
+
+protected function buildOfficePreviewUrl(DiskContext $context, File $file): string
+{
+    return '/local/sitebuilder/components/disk/office_preview.php'
+        . '?siteId=' . (int)$context->siteId
+        . '&pageId=' . (int)$context->pageId
+        . '&blockId=' . (int)$context->blockId
+        . '&fileId=' . (int)$file->getId();
+}
+
+
+---
+
+4. Создай файл office_preview.php
+
+Путь:
+
+/local/sitebuilder/components/disk/office_preview.php
+
+Код:
 
 <?php
 require $_SERVER['DOCUMENT_ROOT'] . '/bitrix/modules/main/include/prolog_before.php';
 require_once __DIR__ . '/bootstrap.php';
 
 use Bitrix\Disk\File;
-
-function sb_disk_detect_mime(string $path, string $fileName = ''): string
-{
-    if (is_file($path) && function_exists('mime_content_type')) {
-        $mime = @mime_content_type($path);
-        if (is_string($mime) && $mime !== '') {
-            return $mime;
-        }
-    }
-
-    $ext = mb_strtolower(pathinfo($fileName, PATHINFO_EXTENSION));
-
-    $map = [
-        'pdf' => 'application/pdf',
-        'png' => 'image/png',
-        'jpg' => 'image/jpeg',
-        'jpeg' => 'image/jpeg',
-        'gif' => 'image/gif',
-        'webp' => 'image/webp',
-        'svg' => 'image/svg+xml',
-        'txt' => 'text/plain; charset=UTF-8',
-        'json' => 'application/json; charset=UTF-8',
-        'xml' => 'application/xml; charset=UTF-8',
-        'html' => 'text/html; charset=UTF-8',
-        'htm' => 'text/html; charset=UTF-8',
-        'csv' => 'text/csv; charset=UTF-8',
-        'mp4' => 'video/mp4',
-        'mp3' => 'audio/mpeg',
-    ];
-
-    return $map[$ext] ?? 'application/octet-stream';
-}
 
 try {
     $siteId = (int)($_GET['siteId'] ?? 0);
@@ -99,41 +127,20 @@ try {
         throw new RuntimeException('ACCESS_DENIED');
     }
 
-    if ($fileId <= 0) {
-        throw new RuntimeException('INVALID_FILE_ID');
-    }
-
     $file = File::loadById($fileId);
     if (!$file instanceof File) {
         throw new RuntimeException('DISK_FILE_NOT_FOUND');
     }
 
-    $fileArray = $file->getFile();
-    if (!is_array($fileArray) || empty($fileArray['SRC'])) {
-        throw new RuntimeException('FILE_SOURCE_NOT_FOUND');
-    }
+    // Универсальный безопасный вариант:
+    // открываем стандартную страницу Disk, а Bitrix сам решит,
+    // показать preview, Office Online или скачать файл.
+    $url = '/company/personal/user/' . $currentUserId . '/disk/path/'
+        . rawurlencode($file->getName())
+        . '?objectId=' . (int)$file->getId()
+        . '&IFRAME=Y';
 
-    $absolutePath = $_SERVER['DOCUMENT_ROOT'] . $fileArray['SRC'];
-    if (!is_file($absolutePath)) {
-        throw new RuntimeException('FILE_NOT_FOUND_ON_DISK');
-    }
-
-    $fileName = (string)$file->getName();
-    $mimeType = sb_disk_detect_mime($absolutePath, $fileName);
-    $fileSize = (int)filesize($absolutePath);
-
-    while (ob_get_level()) {
-        ob_end_clean();
-    }
-
-    header('Content-Type: ' . $mimeType);
-    header('Content-Length: ' . $fileSize);
-    header('Content-Disposition: inline; filename="' . addslashes($fileName) . '"');
-    header('X-Content-Type-Options: nosniff');
-    header('Cache-Control: private, max-age=0, must-revalidate');
-
-    readfile($absolutePath);
-    exit;
+    LocalRedirect($url);
 } catch (Throwable $e) {
     http_response_code(500);
     header('Content-Type: text/plain; charset=UTF-8');
@@ -144,121 +151,79 @@ try {
 
 ---
 
-2. В script.js сделать отдельные кнопки Открыть и Скачать
+Важно
 
-Сейчас у тебя отдельной кнопки скачивания у строки нет. Добавим.
-
-Файл:
-
-/local/sitebuilder/components/disk/script.js
-
-В renderItemsTable() замени блок actions на этот:
-
-'<td>' +
-  '<div class="sb-disk__actions">' +
-    '<button type="button" class="sb-disk__row-btn" data-row-action="open">Открыть</button>' +
-    (item.entityType === 'file'
-      ? '<button type="button" class="sb-disk__row-btn" data-row-action="download">Скачать</button>'
-      : '') +
-    '<button type="button" class="sb-disk__row-btn" data-row-action="rename">Переим.</button>' +
-    '<button type="button" class="sb-disk__row-btn" data-row-action="delete">Удалить</button>' +
-  '</div>' +
-'</td>'
-
-В renderItemsGrid() замени actions на этот:
-
-'<div class="sb-disk__card-actions">' +
-  '<button type="button" class="sb-disk__row-btn" data-row-action="open">Открыть</button>' +
-  (item.entityType === 'file'
-    ? '<button type="button" class="sb-disk__row-btn" data-row-action="download">Скачать</button>'
-    : '') +
-  '<button type="button" class="sb-disk__row-btn" data-row-action="rename">Переим.</button>' +
-  '<button type="button" class="sb-disk__row-btn" data-row-action="delete">Удалить</button>' +
-'</div>'
+Этот редирект — самый безопасный интеграционный вариант, потому что точные внутренние методы Bitrix для Office Online сильно зависят от версии и установленного document handler. А стандартный интерфейс Disk уже знает, когда открывать документ через настроенный сервис. Возможность работать с документами через MS Office Online / Office 365 / Google Docs в Bitrix24 предусмотрена, но конкретный runtime-маршрут зависит от вашей конфигурации. 
 
 
 ---
 
-3. Добавить обработчик download
+5. В script.js ничего большого менять не надо
 
-В bindStaticEvents() внутри обработчика this.root.addEventListener('click', async function (e) { ... })
+У тебя уже есть логика:
 
-после блока openBtn вставь:
-
-var downloadBtn = e.target.closest('[data-row-action="download"]');
-if (downloadBtn) {
-  var downloadRow = e.target.closest('[data-id][data-entity-type="file"]');
-  if (!downloadRow) return;
-
-  var directDownloadUrl = downloadRow.getAttribute('data-download-url') || '';
-  if (directDownloadUrl) {
-    window.open(directDownloadUrl, '_blank');
-  }
-  return;
+if (previewUrl) {
+  window.open(previewUrl, '_blank');
+} else if (downloadUrl) {
+  window.open(downloadUrl, '_blank');
 }
 
+Этого достаточно.
+
 
 ---
 
-4. Логика кнопки Открыть должна остаться такой
+По breadcrumbs
 
-Проверь, чтобы у тебя было именно так:
+Ты просил скрыть Общий диск / SiteBuilder.
+Мы уже резали breadcrumbs от rootFolderId, но если первый breadcrumb все равно не нравится, оставь такой метод в script.js:
 
-} else if (entityType === 'file') {
-  var previewUrl = row.getAttribute('data-preview-url') || '';
-  var downloadUrl = row.getAttribute('data-download-url') || '';
+DiskComponent.prototype.renderBreadcrumbs = function () {
+  var container = this.root.querySelector('[data-role="breadcrumbs"]');
+  if (!container) return;
 
-  if (previewUrl) {
-    window.open(previewUrl, '_blank');
-  } else if (downloadUrl) {
-    window.open(downloadUrl, '_blank');
+  var crumbs = Array.isArray(this.state.breadcrumbs) ? this.state.breadcrumbs.slice() : [];
+
+  if (this.state.rootFolderId) {
+    var startIndex = crumbs.findIndex(function (item) {
+      return Number(item.id || 0) === Number(this.state.rootFolderId || 0);
+    }, this);
+
+    if (startIndex >= 0) {
+      crumbs = crumbs.slice(startIndex);
+    }
   }
-}
+
+  if (crumbs.length) {
+    crumbs[0] = {
+      id: crumbs[0].id,
+      name: this.state.settings && this.state.settings.title ? this.state.settings.title : 'Файлы'
+    };
+  }
+
+  container.innerHTML = crumbs.map(function (item) {
+    return '<button type="button" class="sb-disk__crumb" data-folder-id="' + escapeHtml(item.id) + '">' +
+      escapeHtml(item.name) +
+    '</button>';
+  }).join('<span>/</span>');
+};
+
+Тогда будет что-то вроде:
+
+Файлы / Папка / Архив
+
+а не Общий диск / SiteBuilder / ...
 
 
 ---
 
-Что получится
+Что важно проверить
 
-Теперь поведение будет таким:
+После этого проверь на одном docx:
 
-Открыть
-пытается показать файл в браузере через preview.php
+если настроен document handler и WOPI живой, файл должен уйти в штатный viewer/editor Bitrix
 
-Скачать
-всегда идет по downloadUrl
+если handler не работает, откроется стандартная страница Disk или пойдет fallback на скачивание
 
 
-
----
-
-Важный момент
-
-Даже после этого некоторые форматы все равно будут скачиваться при “Открыть”, потому что это зависит от браузера и типа файла.
-
-Нормально откроются:
-
-pdf
-
-картинки
-
-txt/json/xml/html
-
-
-А docx/xlsx чаще всего все равно уйдут в скачивание — это нормально.
-
-
----
-
-Если хочешь совсем удобно
-
-Следующим шагом лучше сделать:
-
-для картинок — модальное превью прямо на странице
-
-для PDF — открытие во встроенном iframe/modal
-
-для офисных документов — отдельную кнопку “Скачать”
-
-
-Тогда UX будет намного лучше.
+С учетом твоей прошлой ошибки с expired certificate на hosting/discovery, Office Online может не заработать, пока не починен сертификат у WOPI discovery. Это уже не проблема компонента, а инфраструктуры document handler. Если хочешь, следующим сообщением я дам готовый DiskBitrixStorageAdapter.php целиком с этими изменениями.
