@@ -1,512 +1,205 @@
-Отлично. Тогда даю готовую интеграцию блока disk в renderer и editor.
+Посмотрел архив. У тебя не switch по типам блоков, а другая схема:
 
-Идем практично:
+блок рендерится через lib/public_render.php
 
-1. добавить disk в список добавления блоков в editor.php
+там функция sb_public_render_block() просто подключает шаблон из
+views/blocks/<type>.php
 
-
-2. дать ему нормальный preview в редакторе
-
-
-3. при сохранении блока держать настройки в props
+сама публичная страница собирается в
+views/layout/public_page.php
 
 
-4. в публичном рендере добавить case 'disk'
-
-
-5. подключить disk/styles.css и disk/script.js на странице, где есть такой блок
-
-
+То есть пункт 6 нужно вставлять не в один файл, а так:
 
 
 ---
 
-1. Что хранить в блоке disk
+Куда именно вставлять
 
-Для блока типа disk:
+1. Рендер самого блока disk
 
-type = 'disk'
+Нужно создать новый файл:
 
-content = {}
+/local/sitebuilder/views/blocks/disk.php
 
-props = настройки диска
+Потому что в архиве блоки рендерятся именно так:
+
+views/blocks/button.php
+
+views/blocks/heading.php
+
+views/blocks/html.php
+
+views/blocks/text.php
 
 
-Пример props:
-
-{
-  "title": "Документы",
-  "rootMode": "site",
-  "rootFolderId": null,
-  "viewMode": "table",
-  "allowUpload": true,
-  "allowCreateFolder": true,
-  "allowRename": true,
-  "allowDelete": false,
-  "allowDownload": true,
-  "showSearch": true,
-  "showBreadcrumbs": true,
-  "defaultSort": "updatedAt",
-  "defaultSortDirection": "desc",
-  "allowedExtensions": [],
-  "maxFileSize": 52428800,
-  "permissionMode": "inherit_site",
-  "useSiteRootFallback": true
-}
+И lib/public_render.php сам подхватит disk.php, если type = 'disk'.
 
 
 ---
 
-2. Правка editor.php: добавить карточку блока disk
+2. Подключение CSS/JS диска на публичной странице
 
-Найди блок с карточками добавления:
+Это нужно вставлять в:
 
-<div class="sb-editor-addbar">
+/local/sitebuilder/views/layout/public_page.php
 
-И добавь туда еще одну карточку:
-
-<button class="sb-editor-add-card" type="button" data-add-block="disk">
-    <span class="sb-editor-add-card__title">Диск</span>
-    <span class="sb-editor-add-card__text">Файлы, папки, загрузка и доступы в контексте сайта</span>
-</button>
+Именно там находится <head> и финальная сборка HTML страницы.
 
 
 ---
 
-3. Правка editor.php: при создании disk блока подставлять дефолтные props
-
-Найди функцию createBlock(type) и замени ее целиком на это:
-
-async function createBlock(type) {
-    if (!state.currentPageId) {
-        alert('Сначала выберите страницу');
-        return;
-    }
-
-    var content = {};
-    var props = {};
-
-    if (type === 'heading') {
-        content = { text: 'Новый заголовок' };
-    } else if (type === 'text') {
-        content = { text: 'Новый текстовый блок' };
-    } else if (type === 'button') {
-        content = { label: 'Кнопка', href: '#' };
-    } else if (type === 'html') {
-        content = { html: '<div>Новый HTML блок</div>' };
-    } else if (type === 'disk') {
-        content = {};
-        props = {
-            title: 'Файлы',
-            rootMode: 'site',
-            rootFolderId: null,
-            viewMode: 'table',
-            allowUpload: true,
-            allowCreateFolder: true,
-            allowRename: true,
-            allowDelete: false,
-            allowDownload: true,
-            showSearch: true,
-            showBreadcrumbs: true,
-            defaultSort: 'updatedAt',
-            defaultSortDirection: 'desc',
-            allowedExtensions: [],
-            maxFileSize: 52428800,
-            permissionMode: 'inherit_site',
-            useSiteRootFallback: true
-        };
-    }
-
-    await api('block.create', {
-        pageId: state.currentPageId,
-        type: type,
-        content: JSON.stringify(content),
-        props: JSON.stringify(props)
-    });
-
-    await loadBlocks();
-}
+Что именно сделать
 
 
 ---
 
-4. Правка editor.php: дать блоку disk понятный preview
+Шаг 1. Создай файл /local/sitebuilder/views/blocks/disk.php
 
-Найди функцию blockPreviewText(block) и замени ее целиком:
+Вставь туда вот это:
 
-function blockPreviewText(block) {
-    var type = String(block.type || '');
-    var content = block.content || {};
-    var props = block.props || {};
-
-    if (type === 'heading') {
-        return content.text || '[пустой заголовок]';
-    }
-
-    if (type === 'text') {
-        return content.text || '[пустой текст]';
-    }
-
-    if (type === 'button') {
-        return (content.label || 'Кнопка') + (content.href ? ' → ' + content.href : '');
-    }
-
-    if (type === 'html') {
-        return (content.html || '').slice(0, 220) || '[пустой HTML]';
-    }
-
-    if (type === 'disk') {
-        var title = props.title || 'Файлы';
-        var mode = props.rootMode || 'site';
-        var view = props.viewMode || 'table';
-
-        return 'Компонент "Диск": ' + title + ' · rootMode=' + mode + ' · view=' + view;
-    }
-
-    try {
-        return JSON.stringify(content);
-    } catch (e) {
-        return '[контент блока]';
-    }
-}
-
-
----
-
-5. Правка editor.php: отдельная форма настроек для disk
-
-Сейчас у тебя справа свойства блока идут только через два JSON textarea.
-Для disk лучше сделать человеческую форму.
-
-5.1. В блоке "Свойства блока" после blockTypeInput вставь HTML
-
-Найди:
-
-<div class="sb-field">
-    <label for="blockTypeInput">Тип</label>
-    <input class="sb-input" type="text" id="blockTypeInput" disabled>
+<?php
+$site = $context['site'] ?? [];
+$currentPage = $context['currentPage'] ?? [];
+$siteId = (int)($site['id'] ?? 0);
+$pageId = (int)($currentPage['id'] ?? 0);
+$blockId = (int)($block['id'] ?? 0);
+$diskProps = is_array($props ?? null) ? $props : [];
+?>
+<div class="sb-block sb-block--disk">
+    <div class="sb-disk"
+         data-site-id="<?= $siteId ?>"
+         data-page-id="<?= $pageId ?>"
+         data-block-id="<?= $blockId ?>"
+         data-initial-state="<?= htmlspecialchars(json_encode([
+             'siteId' => $siteId,
+             'pageId' => $pageId,
+             'blockId' => $blockId,
+             'settings' => $diskProps,
+         ], JSON_UNESCAPED_UNICODE), ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?>">
+    </div>
 </div>
+
+
+---
+
+Шаг 2. В views/layout/public_page.php добавить проверку, есть ли disk на странице
+
+Найди вот этот участок:
+
+$pageHtml = sb_public_render_blocks($pageBlocks, $vm);
+$menuHtml = sb_public_render_menu($menu, $basePath, $siteId);
 
 И сразу после него вставь:
 
-<div id="diskBlockForm" class="sb-hidden" style="margin-top:12px;">
-    <div class="sb-field">
-        <label for="diskTitleInput">Заголовок блока</label>
-        <input class="sb-input" type="text" id="diskTitleInput">
-    </div>
-
-    <div class="sb-field" style="margin-top:12px;">
-        <label for="diskRootModeInput">Режим корня</label>
-        <select class="sb-select" id="diskRootModeInput">
-            <option value="site">Корень сайта</option>
-            <option value="block">Папка блока</option>
-        </select>
-    </div>
-
-    <div class="sb-field" style="margin-top:12px;">
-        <label for="diskViewModeInput">Вид</label>
-        <select class="sb-select" id="diskViewModeInput">
-            <option value="table">Таблица</option>
-            <option value="grid">Плитка</option>
-        </select>
-    </div>
-
-    <div class="sb-field" style="margin-top:12px;">
-        <label for="diskPermissionModeInput">Режим прав</label>
-        <select class="sb-select" id="diskPermissionModeInput">
-            <option value="inherit_site">Наследовать права сайта</option>
-            <option value="custom">Собственные ограничения блока</option>
-        </select>
-    </div>
-
-    <div class="sb-field" style="margin-top:12px;">
-        <label for="diskMaxFileSizeInput">Максимальный размер файла</label>
-        <input class="sb-input" type="number" id="diskMaxFileSizeInput" min="0">
-    </div>
-
-    <div class="sb-field" style="margin-top:12px;">
-        <label for="diskAllowedExtensionsInput">Разрешенные расширения</label>
-        <input class="sb-input" type="text" id="diskAllowedExtensionsInput" placeholder="pdf docx xlsx png jpg">
-    </div>
-
-    <div class="sb-form-row" style="margin-top:12px;">
-        <label><input type="checkbox" id="diskAllowUploadInput"> Загрузка</label>
-        <label><input type="checkbox" id="diskAllowCreateFolderInput"> Создание папок</label>
-    </div>
-
-    <div class="sb-form-row" style="margin-top:12px;">
-        <label><input type="checkbox" id="diskAllowRenameInput"> Переименование</label>
-        <label><input type="checkbox" id="diskAllowDeleteInput"> Удаление</label>
-    </div>
-
-    <div class="sb-form-row" style="margin-top:12px;">
-        <label><input type="checkbox" id="diskAllowDownloadInput"> Скачивание</label>
-        <label><input type="checkbox" id="diskShowSearchInput"> Показывать поиск</label>
-    </div>
-
-    <div class="sb-form-row" style="margin-top:12px;">
-        <label><input type="checkbox" id="diskShowBreadcrumbsInput"> Показывать breadcrumbs</label>
-        <label><input type="checkbox" id="diskUseSiteRootFallbackInput"> Использовать корень сайта как fallback</label>
-    </div>
-
-    <div class="sb-editor-divider"></div>
-</div>
-
-
----
-
-5.2. Обнови fillBlockForm()
-
-Найди функцию fillBlockForm() и замени ее целиком:
-
-function fillBlockForm() {
-    var block = getCurrentBlock();
-    var emptyNode = document.getElementById('blockInspectorEmpty');
-    var formNode = document.getElementById('blockInspector');
-    var diskForm = document.getElementById('diskBlockForm');
-
-    if (!block) {
-        emptyNode.classList.remove('sb-hidden');
-        formNode.classList.add('sb-hidden');
-        if (diskForm) diskForm.classList.add('sb-hidden');
-
-        document.getElementById('blockTypeInput').value = '';
-        document.getElementById('blockContentInput').value = '';
-        document.getElementById('blockPropsInput').value = '';
-        return;
-    }
-
-    emptyNode.classList.add('sb-hidden');
-    formNode.classList.remove('sb-hidden');
-
-    document.getElementById('blockTypeInput').value = block.type || '';
-
-    var content = block.content || {};
-    var props = block.props || {};
-
-    document.getElementById('blockContentInput').value = JSON.stringify(content, null, 2);
-    document.getElementById('blockPropsInput').value = JSON.stringify(props, null, 2);
-
-    if (block.type === 'disk') {
-        if (diskForm) diskForm.classList.remove('sb-hidden');
-
-        document.getElementById('diskTitleInput').value = props.title || 'Файлы';
-        document.getElementById('diskRootModeInput').value = props.rootMode || 'site';
-        document.getElementById('diskViewModeInput').value = props.viewMode || 'table';
-        document.getElementById('diskPermissionModeInput').value = props.permissionMode || 'inherit_site';
-        document.getElementById('diskMaxFileSizeInput').value = props.maxFileSize || 52428800;
-        document.getElementById('diskAllowedExtensionsInput').value = Array.isArray(props.allowedExtensions) ? props.allowedExtensions.join(' ') : '';
-
-        document.getElementById('diskAllowUploadInput').checked = !!props.allowUpload;
-        document.getElementById('diskAllowCreateFolderInput').checked = !!props.allowCreateFolder;
-        document.getElementById('diskAllowRenameInput').checked = !!props.allowRename;
-        document.getElementById('diskAllowDeleteInput').checked = !!props.allowDelete;
-        document.getElementById('diskAllowDownloadInput').checked = !!props.allowDownload;
-        document.getElementById('diskShowSearchInput').checked = !!props.showSearch;
-        document.getElementById('diskShowBreadcrumbsInput').checked = !!props.showBreadcrumbs;
-        document.getElementById('diskUseSiteRootFallbackInput').checked = !!props.useSiteRootFallback;
-    } else {
-        if (diskForm) diskForm.classList.add('sb-hidden');
-    }
-}
-
-
----
-
-5.3. Обнови saveBlock()
-
-Найди функцию saveBlock() и замени ее целиком:
-
-async function saveBlock() {
-    var block = getCurrentBlock();
-    if (!block) return;
-
-    var content;
-    var props;
-
-    try {
-        content = JSON.parse(document.getElementById('blockContentInput').value || '{}');
-    } catch (e) {
-        alert('Контент блока должен быть валидным JSON');
-        return;
-    }
-
-    try {
-        props = JSON.parse(document.getElementById('blockPropsInput').value || '{}');
-    } catch (e) {
-        alert('Свойства блока должны быть валидным JSON');
-        return;
-    }
-
-    if (block.type === 'disk') {
-        props = {
-            title: document.getElementById('diskTitleInput').value.trim() || 'Файлы',
-            rootMode: document.getElementById('diskRootModeInput').value,
-            rootFolderId: props.rootFolderId || null,
-            viewMode: document.getElementById('diskViewModeInput').value,
-            permissionMode: document.getElementById('diskPermissionModeInput').value,
-            maxFileSize: Number(document.getElementById('diskMaxFileSizeInput').value || 0),
-            allowedExtensions: String(document.getElementById('diskAllowedExtensionsInput').value || '')
-                .trim()
-                .split(/\s+/)
-                .filter(Boolean),
-
-            allowUpload: document.getElementById('diskAllowUploadInput').checked,
-            allowCreateFolder: document.getElementById('diskAllowCreateFolderInput').checked,
-            allowRename: document.getElementById('diskAllowRenameInput').checked,
-            allowDelete: document.getElementById('diskAllowDeleteInput').checked,
-            allowDownload: document.getElementById('diskAllowDownloadInput').checked,
-            showSearch: document.getElementById('diskShowSearchInput').checked,
-            showBreadcrumbs: document.getElementById('diskShowBreadcrumbsInput').checked,
-            useSiteRootFallback: document.getElementById('diskUseSiteRootFallbackInput').checked,
-            defaultSort: props.defaultSort || 'updatedAt',
-            defaultSortDirection: props.defaultSortDirection || 'desc'
-        };
-
-        document.getElementById('blockPropsInput').value = JSON.stringify(props, null, 2);
-    }
-
-    await api('block.update', {
-        id: block.id,
-        content: JSON.stringify(content),
-        props: JSON.stringify(props)
-    });
-
-    await loadBlocks();
-}
-
-
----
-
-6. Добавить рендер disk в публичную страницу
-
-Найди место, где у тебя рендерятся блоки страницы через switch ($block['type']), и добавь:
-
-case 'disk':
-    $diskProps = is_array($block['props'] ?? null) ? $block['props'] : [];
-    ?>
-    <div class="sb-block sb-block--disk">
-        <div class="sb-disk"
-             data-site-id="<?= (int)$site['id'] ?>"
-             data-page-id="<?= (int)$page['id'] ?>"
-             data-block-id="<?= (int)$block['id'] ?>"
-             data-initial-state="<?= htmlspecialchars(json_encode([
-                 'siteId' => (int)$site['id'],
-                 'pageId' => (int)$page['id'],
-                 'blockId' => (int)$block['id'],
-                 'settings' => $diskProps,
-             ], JSON_UNESCAPED_UNICODE), ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?>">
-        </div>
-    </div>
-    <?php
-    break;
-
-
----
-
-7. Подключить ассеты disk только если на странице есть блок типа disk
-
-Перед рендером страницы проверь:
-
-<?php
 $pageHasDiskBlock = false;
 
-foreach ($blocks as $block) {
-    if (($block['type'] ?? '') === 'disk') {
+foreach ($pageBlocks as $pageBlock) {
+    if ((string)($pageBlock['type'] ?? '') === 'disk') {
         $pageHasDiskBlock = true;
         break;
     }
 }
-?>
 
-И в <head> или перед </body> подключи:
+if (!$pageHasDiskBlock) {
+    foreach ($headerBlocks as $layoutBlock) {
+        if ((string)($layoutBlock['type'] ?? '') === 'disk') {
+            $pageHasDiskBlock = true;
+            break;
+        }
+    }
+}
+
+if (!$pageHasDiskBlock) {
+    foreach ($footerBlocks as $layoutBlock) {
+        if ((string)($layoutBlock['type'] ?? '') === 'disk') {
+            $pageHasDiskBlock = true;
+            break;
+        }
+    }
+}
+
+if (!$pageHasDiskBlock) {
+    foreach ($leftBlocks as $layoutBlock) {
+        if ((string)($layoutBlock['type'] ?? '') === 'disk') {
+            $pageHasDiskBlock = true;
+            break;
+        }
+    }
+}
+
+if (!$pageHasDiskBlock) {
+    foreach ($rightBlocks as $layoutBlock) {
+        if ((string)($layoutBlock['type'] ?? '') === 'disk') {
+            $pageHasDiskBlock = true;
+            break;
+        }
+    }
+}
+
+
+---
+
+Шаг 3. В том же views/layout/public_page.php подключить стили диска
+
+Найди в <head> строку:
+
+<link rel="stylesheet" href="<?= sb_public_h($basePath) ?>/assets/public/public.css">
+
+И сразу после нее вставь:
 
 <?php if ($pageHasDiskBlock): ?>
-    <link rel="stylesheet" href="/local/sitebuilder/components/disk/styles.css">
-    <script src="/local/sitebuilder/components/disk/script.js"></script>
+    <link rel="stylesheet" href="<?= sb_public_h($basePath) ?>/components/disk/styles.css">
 <?php endif; ?>
 
 
 ---
 
-8. Обновить script.js, чтобы он стартовал через bootstrap
+Шаг 4. В views/layout/public_page.php подключить JS диска
 
-Найди DiskComponent.prototype.init и замени целиком:
+Найди внизу перед </body> существующий <script> и после него вставь:
 
-DiskComponent.prototype.init = async function () {
-  this.bindStaticEvents();
-
-  try {
-    var payload = this.getBasePayload();
-    payload.sessid = this.getSessid();
-
-    var res = await this.api('bootstrap', payload);
-    if (!res.ok) {
-      throw new Error(res.message || res.error || 'BOOTSTRAP_ERROR');
-    }
-
-    var data = res.data || {};
-
-    this.state.siteId = Number(data.siteId || this.state.siteId || 0);
-    this.state.pageId = Number(data.pageId || this.state.pageId || 0);
-    this.state.blockId = Number(data.blockId || this.state.blockId || 0);
-    this.state.settings = data.settings || {};
-    this.state.permissions = data.permissions || {};
-    this.state.rootFolderId = data.rootFolderId || null;
-    this.state.currentFolderId = data.currentFolderId || null;
-    this.state.viewMode = (this.state.settings && this.state.settings.viewMode) || 'table';
-
-    this.applyInitialViewMode();
-
-    if (!this.state.permissions.canView) {
-      this.renderState('no-access');
-      return;
-    }
-
-    if (!this.state.rootFolderId) {
-      this.renderState('no-root');
-      return;
-    }
-
-    await this.loadFolder(this.state.rootFolderId);
-  } catch (e) {
-    console.error(e);
-    this.renderState('error');
-  }
-};
+<?php if ($pageHasDiskBlock): ?>
+<script src="<?= sb_public_h($basePath) ?>/components/disk/script.js"></script>
+<?php endif; ?>
 
 
 ---
 
-9. Что получится после этого
+Что важно
 
-После всех этих правок:
+Тебе не нужно вставлять case 'disk' в public.php, потому что:
 
-в редакторе можно создать блок disk
+public.php только собирает view model и подключает layout
 
-настройки disk живут прямо в block.props
+сам рендер блоков идет через:
 
-на публичной странице блок сам знает свой siteId/pageId/blockId
+lib/public_render.php
 
-при первом открытии он сам делает disk.bootstrap
+views/blocks/*.php
 
-root сайта или root блока создаются автоматически
 
-права пользователя берутся из общей модели sitebuilder.access
 
+То есть в твоем архиве правильная точка интеграции — новый файл views/blocks/disk.php, а не switch.
 
 
 ---
 
-10. Что логично следующим шагом
+Итого по файлам
 
-После этого уже очень правильно сделать еще 2 вещи:
+Создать:
 
-1. человеческую UI-настройку блока disk в editor, без JSON textarea вообще
+/local/sitebuilder/views/blocks/disk.php
+
+Изменить:
+
+/local/sitebuilder/views/layout/public_page.php
 
 
-2. drag&drop / reorder блоков в editor, чтобы disk жил как обычный визуальный блок
+---
 
+Если совсем коротко
 
+6 пункт в твоем архиве нужно реализовывать через новый файл views/blocks/disk.php, а не вставкой в public.php.
 
-Следующим сообщением я могу дать тебе полностью готовую красивую форму настроек блока disk в editor.php без JSON-полей для этого типа.
+Если хочешь, следующим сообщением я пришлю тебе готовый патч именно для public_page.php целиком с уже вставленными кусками, чтобы ты просто заменил нужные строки без ручного поиска.
