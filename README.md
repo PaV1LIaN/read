@@ -1,333 +1,277 @@
-Причина найдена.
+Проблема, скорее всего, не в API.
 
-Сейчас создание **не падает**, но и **не сохраняется**, потому что твои `site.create / page.create / block.create` сначала **сами назначают новый `id`** (`maxId + 1`, `sb_next_id(...)`), а потом вызывают `sb_write_sites / sb_write_pages / sb_write_blocks`. В handler `site.create` это видно прямо в коде: новый сайт получает `$id = $maxId + 1`, добавляется в массив и потом уходит в `sb_write_sites($sites)`.
+На сервере вложенность уже поддерживается:
 
-А в твоем DB-layer логика сейчас такая:
+page.create принимает parentId и сохраняет его в страницу. 
 
-* если `id > 0` → делается только `UPDATE`
-* если `id = 0` → `INSERT`
+page.updateMeta тоже умеет менять parentId. 
 
-Для нового сайта `id` уже больше нуля, значит идет `UPDATE`, но такой строки в БД еще нет, поэтому обновляется **0 строк**. Ошибки нет, но записи тоже нет.
+отдельно есть page.setParent. 
 
-Это же касается не только сайта, но и страниц/блоков: у `page.duplicate` и `block.duplicate` новые `id` тоже назначаются на PHP-стороне заранее.
+
+То есть если вложенность “не работает”, то чаще всего ломается в editor.php:
+
+1. либо при создании страницы не отправляется parentId,
+
+
+2. либо при редактировании страницы нельзя поменять родителя,
+
+
+3. либо дерево слева рисуется плоско.
+
+
+
+Ниже даю нормальный фикс для editor.php.
+
 
 ---
 
-# Что нужно сделать
+Что нужно исправить в editor.php
 
-Нужно переделать `sb_write_sites()`, `sb_write_pages()`, `sb_write_blocks()` на **UPSERT по `id`**, а не на “`UPDATE если id > 0`”.
+1. Добавить выбор родителя в “Свойства страницы”
 
-Ниже готовые замены.
+Найди блок:
+
+<div class="sb-field" style="margin-top:12px;">
+    <label for="pageStatusInput">Статус</label>
+    <select class="sb-select" id="pageStatusInput">
+        <option value="draft">draft</option>
+        <option value="published">published</option>
+    </select>
+</div>
+
+И сразу после него вставь:
+
+<div class="sb-field" style="margin-top:12px;">
+    <label for="pageParentInput">Родительская страница</label>
+    <select class="sb-select" id="pageParentInput">
+        <option value="0">Без родителя</option>
+    </select>
+</div>
+
 
 ---
 
-## Замени `sb_write_sites()` в `/local/sitebuilder/lib/storage_db.php`
+2. Добавить JS-функцию заполнения списка родителей
 
-```php
-function sb_write_sites(array $sites): bool
-{
-    $pdo = sb_db();
-    $pdo->beginTransaction();
+В editor.php внутри <script> вставь функцию:
 
-    try {
-        $existingRows = sb_db_fetch_all("SELECT id FROM sitebuilder.site");
-        $existingIds = array_map('intval', array_column($existingRows, 'id'));
+function fillPageParentEditorOptions() {
+    var select = document.getElementById('pageParentInput');
+    if (!select) return;
 
-        $incomingIds = [];
+    var currentPageId = Number(state.currentPageId || 0);
+    var currentValue = String(select.value || '0');
 
-        foreach ($sites as $site) {
-            $id = (int)($site['id'] ?? 0);
-            if ($id <= 0) {
-                continue;
-            }
+    var html = '<option value="0">Без родителя</option>';
 
-            $incomingIds[] = $id;
+    state.pages.forEach(function (page) {
+        var id = Number(page.id || 0);
 
-            sb_db_execute("
-                INSERT INTO sitebuilder.site (
-                    id,
-                    name,
-                    slug,
-                    home_page_id,
-                    disk_folder_id,
-                    top_menu_id,
-                    settings_json,
-                    layout_json,
-                    created_by,
-                    created_at,
-                    updated_by,
-                    updated_at
-                ) VALUES (
-                    :id,
-                    :name,
-                    :slug,
-                    :home_page_id,
-                    :disk_folder_id,
-                    :top_menu_id,
-                    :settings_json::jsonb,
-                    :layout_json::jsonb,
-                    :created_by,
-                    :created_at,
-                    :updated_by,
-                    :updated_at
-                )
-                ON CONFLICT (id)
-                DO UPDATE SET
-                    name = EXCLUDED.name,
-                    slug = EXCLUDED.slug,
-                    home_page_id = EXCLUDED.home_page_id,
-                    disk_folder_id = EXCLUDED.disk_folder_id,
-                    top_menu_id = EXCLUDED.top_menu_id,
-                    settings_json = EXCLUDED.settings_json,
-                    layout_json = EXCLUDED.layout_json,
-                    created_by = EXCLUDED.created_by,
-                    created_at = EXCLUDED.created_at,
-                    updated_by = EXCLUDED.updated_by,
-                    updated_at = EXCLUDED.updated_at
-            ", [
-                ':id' => $id,
-                ':name' => (string)($site['name'] ?? ''),
-                ':slug' => (string)($site['slug'] ?? ''),
-                ':home_page_id' => !empty($site['homePageId']) ? (int)$site['homePageId'] : null,
-                ':disk_folder_id' => !empty($site['diskFolderId']) ? (int)$site['diskFolderId'] : null,
-                ':top_menu_id' => !empty($site['topMenuId']) ? (int)$site['topMenuId'] : null,
-                ':settings_json' => json_encode($site['settings'] ?? [], JSON_UNESCAPED_UNICODE),
-                ':layout_json' => json_encode($site['layout'] ?? [], JSON_UNESCAPED_UNICODE),
-                ':created_by' => isset($site['createdBy']) ? (int)$site['createdBy'] : null,
-                ':created_at' => (string)($site['createdAt'] ?? date('c')),
-                ':updated_by' => isset($site['updatedBy']) ? (int)$site['updatedBy'] : null,
-                ':updated_at' => (string)($site['updatedAt'] ?? date('c')),
-            ]);
+        if (id === currentPageId) {
+            return;
         }
 
-        $idsToDelete = array_diff($existingIds, $incomingIds);
-        if (!empty($idsToDelete)) {
-            $placeholders = implode(',', array_fill(0, count($idsToDelete), '?'));
-            $stmt = $pdo->prepare("DELETE FROM sitebuilder.site WHERE id IN ($placeholders)");
-            $stmt->execute(array_values($idsToDelete));
-        }
+        html += '<option value="' + id + '">' + escapeHtml(page.title || ('Страница #' + id)) + '</option>';
+    });
 
-        $pdo->commit();
-        return true;
-    } catch (Throwable $e) {
-        $pdo->rollBack();
-        throw $e;
+    select.innerHTML = html;
+
+    if (currentValue && select.querySelector('option[value="' + currentValue + '"]')) {
+        select.value = currentValue;
     }
 }
-```
+
 
 ---
 
-## Замени `sb_write_pages()` в `/local/sitebuilder/lib/storage_db.php`
+3. Обновить fillPageForm()
 
-```php
-function sb_write_pages(array $pages): bool
-{
-    $pdo = sb_db();
-    $pdo->beginTransaction();
+Найди функцию:
 
-    try {
-        $existingRows = sb_db_fetch_all("SELECT id FROM sitebuilder.page");
-        $existingIds = array_map('intval', array_column($existingRows, 'id'));
+function fillPageForm() {
+    var page = getCurrentPage();
 
-        $incomingIds = [];
+    document.getElementById('pageTitleInput').value = page ? (page.title || '') : '';
+    document.getElementById('pageSlugInput').value = page ? (page.slug || '') : '';
+    document.getElementById('pageStatusInput').value = page ? (page.status || 'draft') : 'draft';
+}
 
-        foreach ($pages as $page) {
-            $id = (int)($page['id'] ?? 0);
-            if ($id <= 0) {
-                continue;
-            }
+И замени целиком на это:
 
-            $incomingIds[] = $id;
+function fillPageForm() {
+    var page = getCurrentPage();
 
-            sb_db_execute("
-                INSERT INTO sitebuilder.page (
-                    id,
-                    site_id,
-                    title,
-                    slug,
-                    parent_id,
-                    sort,
-                    status,
-                    published_at,
-                    created_by,
-                    created_at,
-                    updated_by,
-                    updated_at
-                ) VALUES (
-                    :id,
-                    :site_id,
-                    :title,
-                    :slug,
-                    :parent_id,
-                    :sort,
-                    :status,
-                    :published_at,
-                    :created_by,
-                    :created_at,
-                    :updated_by,
-                    :updated_at
-                )
-                ON CONFLICT (id)
-                DO UPDATE SET
-                    site_id = EXCLUDED.site_id,
-                    title = EXCLUDED.title,
-                    slug = EXCLUDED.slug,
-                    parent_id = EXCLUDED.parent_id,
-                    sort = EXCLUDED.sort,
-                    status = EXCLUDED.status,
-                    published_at = EXCLUDED.published_at,
-                    created_by = EXCLUDED.created_by,
-                    created_at = EXCLUDED.created_at,
-                    updated_by = EXCLUDED.updated_by,
-                    updated_at = EXCLUDED.updated_at
-            ", [
-                ':id' => $id,
-                ':site_id' => (int)($page['siteId'] ?? 0),
-                ':title' => (string)($page['title'] ?? ''),
-                ':slug' => (string)($page['slug'] ?? ''),
-                ':parent_id' => !empty($page['parentId']) ? (int)$page['parentId'] : null,
-                ':sort' => (int)($page['sort'] ?? 500),
-                ':status' => (string)($page['status'] ?? 'draft'),
-                ':published_at' => !empty($page['publishedAt']) ? (string)$page['publishedAt'] : null,
-                ':created_by' => isset($page['createdBy']) ? (int)$page['createdBy'] : null,
-                ':created_at' => (string)($page['createdAt'] ?? date('c')),
-                ':updated_by' => isset($page['updatedBy']) ? (int)$page['updatedBy'] : null,
-                ':updated_at' => (string)($page['updatedAt'] ?? date('c')),
-            ]);
-        }
+    fillPageParentEditorOptions();
 
-        $idsToDelete = array_diff($existingIds, $incomingIds);
-        if (!empty($idsToDelete)) {
-            $placeholders = implode(',', array_fill(0, count($idsToDelete), '?'));
-            $stmt = $pdo->prepare("DELETE FROM sitebuilder.page WHERE id IN ($placeholders)");
-            $stmt->execute(array_values($idsToDelete));
-        }
+    document.getElementById('pageTitleInput').value = page ? (page.title || '') : '';
+    document.getElementById('pageSlugInput').value = page ? (page.slug || '') : '';
+    document.getElementById('pageStatusInput').value = page ? (page.status || 'draft') : 'draft';
 
-        $pdo->commit();
-        return true;
-    } catch (Throwable $e) {
-        $pdo->rollBack();
-        throw $e;
+    var parentSelect = document.getElementById('pageParentInput');
+    if (parentSelect) {
+        parentSelect.value = page ? String(page.parentId || 0) : '0';
     }
 }
-```
+
 
 ---
 
-## Замени `sb_write_blocks()` в `/local/sitebuilder/lib/storage_db.php`
+4. Обновить savePage()
 
-```php
-function sb_write_blocks(array $blocks): bool
-{
-    $pdo = sb_db();
-    $pdo->beginTransaction();
+Сейчас у тебя при сохранении страницы, скорее всего, меняются только title/slug/status.
+Нужно еще отправлять parentId.
 
-    try {
-        $existingRows = sb_db_fetch_all("SELECT id FROM sitebuilder.block");
-        $existingIds = array_map('intval', array_column($existingRows, 'id'));
+Найди функцию savePage() и замени ее целиком на это:
 
-        $incomingIds = [];
+async function savePage() {
+    if (!state.currentPageId) return;
 
-        foreach ($blocks as $block) {
-            $id = (int)($block['id'] ?? 0);
-            if ($id <= 0) {
-                continue;
-            }
+    var parentId = Number(document.getElementById('pageParentInput').value || 0);
 
-            $incomingIds[] = $id;
+    await api('page.updateMeta', {
+        id: state.currentPageId,
+        title: document.getElementById('pageTitleInput').value.trim(),
+        slug: document.getElementById('pageSlugInput').value.trim(),
+        parentId: parentId
+    });
 
-            sb_db_execute("
-                INSERT INTO sitebuilder.block (
-                    id,
-                    page_id,
-                    type,
-                    sort,
-                    content_json,
-                    props_json,
-                    created_by,
-                    created_at,
-                    updated_by,
-                    updated_at
-                ) VALUES (
-                    :id,
-                    :page_id,
-                    :type,
-                    :sort,
-                    :content_json::jsonb,
-                    :props_json::jsonb,
-                    :created_by,
-                    :created_at,
-                    :updated_by,
-                    :updated_at
-                )
-                ON CONFLICT (id)
-                DO UPDATE SET
-                    page_id = EXCLUDED.page_id,
-                    type = EXCLUDED.type,
-                    sort = EXCLUDED.sort,
-                    content_json = EXCLUDED.content_json,
-                    props_json = EXCLUDED.props_json,
-                    created_by = EXCLUDED.created_by,
-                    created_at = EXCLUDED.created_at,
-                    updated_by = EXCLUDED.updated_by,
-                    updated_at = EXCLUDED.updated_at
-            ", [
-                ':id' => $id,
-                ':page_id' => (int)($block['pageId'] ?? 0),
-                ':type' => (string)($block['type'] ?? ''),
-                ':sort' => (int)($block['sort'] ?? 500),
-                ':content_json' => json_encode($block['content'] ?? [], JSON_UNESCAPED_UNICODE),
-                ':props_json' => json_encode($block['props'] ?? [], JSON_UNESCAPED_UNICODE),
-                ':created_by' => isset($block['createdBy']) ? (int)$block['createdBy'] : null,
-                ':created_at' => (string)($block['createdAt'] ?? date('c')),
-                ':updated_by' => isset($block['updatedBy']) ? (int)$block['updatedBy'] : null,
-                ':updated_at' => (string)($block['updatedAt'] ?? date('c')),
-            ]);
-        }
+    await api('page.setStatus', {
+        id: state.currentPageId,
+        status: document.getElementById('pageStatusInput').value
+    });
 
-        $idsToDelete = array_diff($existingIds, $incomingIds);
-        if (!empty($idsToDelete)) {
-            $placeholders = implode(',', array_fill(0, count($idsToDelete), '?'));
-            $stmt = $pdo->prepare("DELETE FROM sitebuilder.block WHERE id IN ($placeholders)");
-            $stmt->execute(array_values($idsToDelete));
-        }
-
-        $pdo->commit();
-        return true;
-    } catch (Throwable $e) {
-        $pdo->rollBack();
-        throw $e;
-    }
+    await loadPages();
+    await loadBlocks();
 }
-```
+
+Это как раз использует уже существующую серверную поддержку parentId в page.updateMeta. 
+
 
 ---
 
-# Почему это точно нужно
+5. Убедиться, что при создании страницы реально уходит parentId
 
-Потому что текущие handlers создают новые сущности **с уже заполненным `id`**, а не ждут автоинкремента из БД. Это есть и в `site.create`, и в `page.duplicate`, и в `block.duplicate`.
+На сервере page.create уже принимает parentId. 
+
+Поэтому функция создания на фронте должна быть такой:
+
+async function createPage() {
+    var title = (document.getElementById('newPageTitle').value || '').trim();
+    var slug = (document.getElementById('newPageSlug').value || '').trim();
+    var parentId = Number(document.getElementById('newPageParentId').value || 0);
+
+    if (!title) {
+        alert('Введите название страницы');
+        return;
+    }
+
+    await api('page.create', {
+        siteId: siteId,
+        title: title,
+        slug: slug,
+        parentId: parentId
+    });
+
+    document.getElementById('newPageTitle').value = '';
+    document.getElementById('newPageSlug').value = '';
+    document.getElementById('newPageParentId').value = '0';
+
+    await loadPages();
+    await loadBlocks();
+}
+
+Если у тебя сейчас там идет отдельный page.setParent после создания — это хуже и не нужно, потому что backend уже умеет принять parentId сразу при создании. 
+
 
 ---
 
-# Что проверить после замены
+6. Проверить, что дерево страниц рисуется именно по parentId
 
-Сразу проверь по порядку:
+Слева у тебя должен быть tree-builder примерно такого вида:
 
-1. создание сайта
-2. создание страницы
-3. создание блока
-4. дублирование страницы
-5. дублирование блока
+function buildPageTree(pages, parentId, depth, result) {
+    result = result || [];
+    depth = depth || 0;
 
-Если `site.create` заработает, но потом упрутся `menu/layout`, это уже следующий слой.
+    var branch = pages
+        .filter(function (page) {
+            return Number(page.parentId || 0) === Number(parentId || 0);
+        })
+        .sort(function (a, b) {
+            var sortCmp = Number(a.sort || 0) - Number(b.sort || 0);
+            if (sortCmp !== 0) return sortCmp;
+            return Number(a.id || 0) - Number(b.id || 0);
+        });
+
+    branch.forEach(function (page) {
+        result.push({
+            page: page,
+            depth: depth
+        });
+        buildPageTree(pages, Number(page.id || 0), depth + 1, result);
+    });
+
+    return result;
+}
+
+И рендер должен использовать depth, например:
+
+style="margin-left:' + (depth * 18) + 'px;"
+
+Если у тебя там обычный state.pages.map(...) без tree-builder, тогда вложенность в данных есть, но визуально не отображается.
+
 
 ---
 
-# Очень вероятный следующий баг
+Что проверить после правки
 
-После этого может всплыть такая же логика в `sb_write_menus()`:
+Сразу проверь 3 сценария:
 
-* если новый menu создается с `id > 0`, он тоже может “обновляться в пустоту”.
+1. Создание дочерней страницы
 
-Если так произойдет, скажи — я дам готовую `sb_write_menus()` в том же стиле.
+выбери родителя в newPageParentId
+
+создай страницу
+
+она должна уйти под выбранного родителя
+
+
+2. Перенос существующей страницы под другую
+
+выбери страницу
+
+справа поменяй “Родительская страница”
+
+нажми “Сохранить страницу”
+
+дерево должно перестроиться
+
+
+3. Снятие вложенности
+
+выбери вложенную страницу
+
+поставь “Без родителя”
+
+сохрани
+
+страница должна стать корневой
+
+
+
+---
+
+Если после этого все равно не заработает
+
+Тогда уже надо смотреть не editor, а фактические данные, которые приходят после page.list.
+
+Открой page.list в ответе API и проверь, есть ли у дочерней страницы:
+
+{
+  "parentId": 123
+}
+
+Потому что backend поддержку parentId уже содержит.
+
+Если хочешь, я могу следующим сообщением прислать тебе полностью готовый фрагмент editor.php для блока “Свойства страницы” и функций createPage / savePage / fillPageForm одним куском, чтобы ты просто заменил его без ручной сборки.
