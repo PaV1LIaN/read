@@ -1,12 +1,117 @@
-Error: EMPTY_SESSID
-    at DiskComponent.init (script.js:44:15)
-(anonymous) @ script.js:72
-await in (anonymous)
-(anonymous) @ script.js:950
-(anonymous) @ script.js:948
+Нашли точную причину.
+
+У тебя:
+
+data-sessid в HTML есть
+
+BX.bitrix_sessid() существует, но возвращает ''
+
+
+А текущая логика в getSessid() сначала берет BX.bitrix_sessid(), и не проверяет, что он пустой, поэтому до data-sessid уже не доходит.
+
+
+---
+
+Что исправить
+
+Файл
+
+/local/sitebuilder/components/disk/script.js
+
+Найди функцию getSessid() и замени строго на это:
+
+DiskComponent.prototype.getSessid = function () {
+  if (window.BX && typeof BX.bitrix_sessid === 'function') {
+    var bxSessid = BX.bitrix_sessid();
+    if (bxSessid) {
+      return String(bxSessid);
+    }
+  }
+
+  var sessidFromData = this.root.getAttribute('data-sessid');
+  if (sessidFromData) {
+    return String(sessidFromData);
+  }
+
+  return '';
+};
+
+
+---
+
+Почему твой текущий вариант не сработал
+
+Сейчас у тебя, скорее всего, так:
+
+if (window.BX && typeof BX.bitrix_sessid === 'function') {
+  return BX.bitrix_sessid();
+}
+
+И поскольку функция существует, код сразу возвращает '', не доходя до fallback через data-sessid.
+
+
+---
+
+После правки
+
+Сделай:
+
+1. сохранить script.js
+
+
+2. жестко обновить страницу
+Ctrl + F5
+
+
+3. снова проверить в консоли:
+
+
+
 document.querySelector('.sb-disk')?.getAttribute('data-sessid')
-'603a4cda044cd6f36550146cc877a7c4'
-typeof BX !== 'undefined' && typeof BX.bitrix_sessid === 'function' ? BX.bitrix_sessid() : 'NO_BX'
-''
-document.querySelector('.sb-disk')?.outerHTML
-'<div class="sb-disk" data-site-id="7" data-page-id="7" data-block-id="6" data-sessid="603a4cda044cd6f36550146cc877a7c4" data-initial-state="{&quot;siteId&quot;:7,&quot;pageId&quot;:7,&quot;blockId&quot;:6,&quot;settings&quot;:{&quot;title&quot;:&quot;Файлы&quot;,&quot;rootMode&quot;:&quot;site&quot;,&quot;viewMode&quot;:&quot;table&quot;,&quot;showSearch&quot;:true,&quot;allowDelete&quot;:true,&quot;allowRename&quot;:true,&quot;allowUpload&quot;:true,&quot;defaultSort&quot;:&quot;updatedAt&quot;,&quot;maxFileSize&quot;:52428800,&quot;rootFolderId&quot;:null,&quot;allowDownload&quot;:true,&quot;permissionMode&quot;:&quot;inherit_site&quot;,&quot;showBreadcrumbs&quot;:true,&quot;allowCreateFolder&quot;:true,&quot;allowedExtensions&quot;:[],&quot;useSiteRootFallback&quot;:false,&quot;defaultSortDirection&quot;:&quot;desc&quot;}}">\n    </div>'
+
+и потом открыть bootstrap в Network
+
+
+---
+
+Что должно быть дальше
+
+После этой правки EMPTY_SESSID должен уйти.
+
+И тогда либо:
+
+bootstrap вернет ok: true
+
+либо покажет уже следующую реальную проблему:
+
+права
+
+root папка
+
+block context
+
+Disk storage
+
+
+
+
+---
+
+Если хочешь быстро проверить без перезагрузки файла
+
+Можно прямо в консоли временно проверить, что fallback рабочий:
+
+(function () {
+  var root = document.querySelector('.sb-disk');
+  var bx = (typeof BX !== 'undefined' && typeof BX.bitrix_sessid === 'function') ? BX.bitrix_sessid() : '';
+  var data = root ? root.getAttribute('data-sessid') : '';
+  console.log('BX:', bx);
+  console.log('DATA:', data);
+  console.log('RESULT:', bx || data || '');
+})();
+
+У тебя RESULT должен быть:
+
+603a4cda044cd6f36550146cc877a7c4
+
+Если после этого вылезет следующая ошибка, пришли bootstrap response.
