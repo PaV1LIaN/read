@@ -1,3 +1,176 @@
+Проще всего — через временный PHP-файл.
+
+Создай, например:
+
+/local/sitebuilder/tools/disk_folder_id.php
+
+И вставь туда:
+
+<?php
+require $_SERVER['DOCUMENT_ROOT'] . '/bitrix/modules/main/include/prolog_before.php';
+
+use Bitrix\Disk\Folder;
+
+$folderId = (int)($_GET['id'] ?? 0);
+
+echo '<pre>';
+
+if ($folderId > 0) {
+    $folder = Folder::loadById($folderId);
+
+    if ($folder instanceof Folder) {
+        echo "ID: " . $folder->getId() . PHP_EOL;
+        echo "NAME: " . $folder->getName() . PHP_EOL;
+        echo "PARENT_ID: " . $folder->getParentId() . PHP_EOL;
+    } else {
+        echo "Folder not found" . PHP_EOL;
+    }
+
+    echo '</pre>';
+    return;
+}
+
+echo "Передай ?id=..." . PHP_EOL;
+echo '</pre>';
+
+Но чтобы именно узнать ID нужной папки из общего диска, удобнее сделать список.
+
+Создай файл:
+
+/local/sitebuilder/tools/disk_list_root.php
+
+С таким кодом:
+
+<?php
+require $_SERVER['DOCUMENT_ROOT'] . '/bitrix/modules/main/include/prolog_before.php';
+
+use Bitrix\Disk\Driver;
+use Bitrix\Disk\Storage;
+use Bitrix\Disk\Folder;
+
+global $USER;
+
+echo '<pre>';
+
+$userId = (int)$USER->GetID();
+echo "USER_ID: " . $userId . PHP_EOL . PHP_EOL;
+
+$driver = Driver::getInstance();
+$storage = $driver->getStorageByUserId($userId);
+
+if (!$storage instanceof Storage) {
+    echo "Storage not found" . PHP_EOL;
+    echo '</pre>';
+    return;
+}
+
+$root = $storage->getRootObject();
+
+if (!$root instanceof Folder) {
+    echo "Root folder not found" . PHP_EOL;
+    echo '</pre>';
+    return;
+}
+
+echo "ROOT_ID: " . $root->getId() . PHP_EOL;
+echo "ROOT_NAME: " . $root->getName() . PHP_EOL;
+echo PHP_EOL;
+echo "CHILD FOLDERS:" . PHP_EOL;
+
+$children = $root->getChildren(\Bitrix\Disk\Driver::getInstance()->getFakeSecurityContext($userId));
+
+foreach ($children as $child) {
+    if ($child instanceof Folder) {
+        echo 'ID=' . $child->getId() . ' | NAME=' . $child->getName() . PHP_EOL;
+    }
+}
+
+echo '</pre>';
+
+Но это покажет “Мой диск” для пользователя, а тебе нужен именно “Общий диск”.
+
+Поэтому самый рабочий способ — открыть нужную папку в Bitrix и взять ID через отладочный файл по имени.
+
+
+---
+
+Самый удобный способ для общего диска
+
+Если ты уже создал в Общем диске папку, например SiteBuilder, то можно написать поиск по имени:
+
+/local/sitebuilder/tools/find_disk_folder.php
+
+<?php
+require $_SERVER['DOCUMENT_ROOT'] . '/bitrix/modules/main/include/prolog_before.php';
+
+use Bitrix\Disk\Internals\ObjectTable;
+
+$name = trim((string)($_GET['name'] ?? ''));
+
+echo '<pre>';
+
+if ($name === '') {
+    echo "Передай ?name=SiteBuilder" . PHP_EOL;
+    echo '</pre>';
+    return;
+}
+
+$rows = ObjectTable::getList([
+    'filter' => [
+        '=NAME' => $name,
+        '=TYPE' => 2, // папка
+        '=DELETED_TYPE' => 0,
+    ],
+    'select' => ['ID', 'NAME', 'PARENT_ID', 'REAL_OBJECT_ID']
+])->fetchAll();
+
+if (!$rows) {
+    echo "Ничего не найдено" . PHP_EOL;
+    echo '</pre>';
+    return;
+}
+
+foreach ($rows as $row) {
+    echo 'ID=' . $row['ID']
+        . ' | NAME=' . $row['NAME']
+        . ' | PARENT_ID=' . $row['PARENT_ID']
+        . ' | REAL_OBJECT_ID=' . $row['REAL_OBJECT_ID']
+        . PHP_EOL;
+}
+
+echo '</pre>';
+
+Открой:
+
+/local/sitebuilder/tools/find_disk_folder.php?name=SiteBuilder
+
+и он покажет ID папки.
+
+
+---
+
+Самый простой способ без кода
+
+Если в интерфейсе Bitrix открыть папку, иногда ее objectId или folderId видно:
+
+в URL
+
+в ajax-запросах DevTools
+
+в параметрах popup/sidepanel
+
+
+Но через PHP-файл обычно быстрее и надежнее.
+
+
+---
+
+Что я советую
+
+Сделай именно find_disk_folder.php?name=SiteBuilder, это самый практичный путь.
+
+Если хочешь, я могу сразу дать тебе готовый файл, который ищет только папки общего диска и выводит их деревом.
+
 Да, сейчас это ожидаемо: у тебя в SiteDiskInitializer используется логика вида
 
 $storage = $driver->getStorageByUserId($currentUserId);
