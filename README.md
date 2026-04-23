@@ -1,219 +1,236 @@
-<?php
-/** @var array $vm */
+Проблема уже не в script.js.
+По твоему public_page.php видно, что ты все подключаешь правильно для обычных расширений, но BX.Disk.Viewer на этой кастомной странице все равно не появляется.
 
-$site = $vm['site'];
-$pages = $vm['pages'];
-$currentPage = $vm['currentPage'];
-$pageBlocks = $vm['pageBlocks'];
-$layout = $vm['layout'];
-$menu = $vm['menu'];
-$basePath = $vm['basePath'];
-$siteId = (int)$vm['siteId'];
+Значит для этого layout путь через встроенный viewer на самой странице ненадежен.
 
-$headerBlocks = $layout['zones']['header'] ?? [];
-$footerBlocks = $layout['zones']['footer'] ?? [];
-$leftBlocks = $layout['zones']['left'] ?? [];
-$rightBlocks = $layout['zones']['right'] ?? [];
+Практичное решение
 
-$headerHtml = sb_public_render_blocks($headerBlocks, $vm);
-$footerHtml = sb_public_render_blocks($footerBlocks, $vm);
-$leftHtml = sb_public_render_blocks($leftBlocks, $vm);
-$rightHtml = sb_public_render_blocks($rightBlocks, $vm);
-$pageHtml = sb_public_render_blocks($pageBlocks, $vm);
-$menuHtml = sb_public_render_menu($menu, $basePath, $siteId);
+Сделать так:
 
-$pageHasDiskBlock = false;
+Открыть office-файл не внутри текущей страницы
 
-foreach ($pageBlocks as $pageBlock) {
-    if ((string)($pageBlock['type'] ?? '') === 'disk') {
-        $pageHasDiskBlock = true;
-        break;
-    }
+а через штатную страницу Disk / viewer Bitrix
+
+Редактировать тоже открывать через штатную страницу Bitrix Disk с action edit
+
+
+То есть не пытаться поднимать Disk Viewer внутри sitebuilder public_page.php, а делегировать это стандартному интерфейсу Bitrix, где viewer уже точно живет.
+
+Это самый стабильный вариант для твоей сборки.
+
+
+---
+
+Что сделать
+
+1. Обновить DiskBitrixStorageAdapter.php
+
+Файл:
+
+/local/sitebuilder/components/disk/lib/DiskBitrixStorageAdapter.php
+
+Замени normalizeFile() на это:
+
+protected function normalizeFile(DiskContext $context, File $file): array
+{
+    $name = (string)$file->getName();
+    $extension = (string)$file->getExtension();
+    $mimeType = $this->detectMimeTypeByExtension($extension);
+
+    $isOffice = $this->isOfficeDocument($extension);
+
+    return [
+        'id' => (int)$file->getId(),
+        'entityType' => 'file',
+        'name' => $name,
+        'originalName' => $name,
+        'extension' => $extension,
+        'mimeType' => $mimeType,
+        'size' => (int)$file->getSize(),
+        'downloadUrl' => $this->buildDownloadUrl($file),
+        'previewUrl' => $isOffice
+            ? $this->buildDiskOpenUrl($file)
+            : $this->buildPreviewUrl($context, $file),
+        'editUrl' => $isOffice
+            ? $this->buildDiskEditUrl($file)
+            : '',
+        'previewMode' => $isOffice ? 'office' : 'browser',
+        'canEdit' => $isOffice,
+        'createdAt' => $this->normalizeDate($file->getCreateTime()),
+        'updatedAt' => $this->normalizeDate($file->getUpdateTime()),
+        'createdBy' => (int)$file->getCreatedBy(),
+    ];
 }
 
-if (!$pageHasDiskBlock) {
-    foreach ($headerBlocks as $layoutBlock) {
-        if ((string)($layoutBlock['type'] ?? '') === 'disk') {
-            $pageHasDiskBlock = true;
-            break;
-        }
-    }
+Добавь в этот класс методы:
+
+protected function buildDiskOpenUrl(File $file): string
+{
+    return '/bitrix/components/bitrix/disk.file.view/templates/.default/show_file.php'
+        . '?objectId=' . (int)$file->getId()
+        . '&service=driver'
+        . '&showInline=1'
+        . '&ncc=1';
 }
 
-if (!$pageHasDiskBlock) {
-    foreach ($footerBlocks as $layoutBlock) {
-        if ((string)($layoutBlock['type'] ?? '') === 'disk') {
-            $pageHasDiskBlock = true;
-            break;
-        }
-    }
+protected function buildDiskEditUrl(File $file): string
+{
+    return '/bitrix/components/bitrix/disk.file.view/templates/.default/show_file.php'
+        . '?objectId=' . (int)$file->getId()
+        . '&service=driver'
+        . '&action=edit'
+        . '&ncc=1';
 }
 
-if (!$pageHasDiskBlock) {
-    foreach ($leftBlocks as $layoutBlock) {
-        if ((string)($layoutBlock['type'] ?? '') === 'disk') {
-            $pageHasDiskBlock = true;
-            break;
-        }
-    }
+
+---
+
+2. Обновить script.js
+
+Файл:
+
+/local/sitebuilder/components/disk/script.js
+
+В renderItemsTable() добавь data-edit-url
+
+Найди строку с data-preview-mode и добавь сразу после нее:
+
+'data-edit-url="' + escapeHtml(item.editUrl || '') + '" '
+
+То есть кусок должен стать таким:
+
+'<tr class="sb-disk__row ' + (item.entityType === 'folder' ? 'is-clickable' : '') + '" ' +
+  'data-id="' + escapeHtml(item.id) + '" ' +
+  'data-entity-type="' + escapeHtml(item.entityType) + '" ' +
+  'data-name="' + escapeHtml(item.name) + '" ' +
+  'data-download-url="' + escapeHtml(item.downloadUrl || '') + '" ' +
+  'data-preview-url="' + escapeHtml(item.previewUrl || '') + '" ' +
+  'data-preview-mode="' + escapeHtml(item.previewMode || '') + '" ' +
+  'data-edit-url="' + escapeHtml(item.editUrl || '') + '">' +
+
+В renderItemsGrid() тоже добавь:
+
+'data-edit-url="' + escapeHtml(item.editUrl || '') + '" '
+
+
+---
+
+В renderItemsTable() office-кнопки упрости
+
+Для office-файлов вместо span data-viewer ... сделай обычные кнопки.
+
+Заменяй логику openControl/editControl на такую:
+
+var openControl = '';
+var editControl = '';
+
+if (item.entityType === 'folder') {
+  openControl = '<button type="button" class="sb-disk__row-btn" data-row-action="open">Открыть</button>';
+} else if (item.previewMode === 'office') {
+  openControl = '<button type="button" class="sb-disk__row-btn" data-row-action="open">Открыть</button>';
+  editControl = '<button type="button" class="sb-disk__row-btn" data-row-action="edit-office">Редактировать</button>';
+} else {
+  openControl = '<button type="button" class="sb-disk__row-btn" data-row-action="open">Открыть</button>';
 }
 
-if (!$pageHasDiskBlock) {
-    foreach ($rightBlocks as $layoutBlock) {
-        if ((string)($layoutBlock['type'] ?? '') === 'disk') {
-            $pageHasDiskBlock = true;
-            break;
-        }
-    }
+То же самое сделай в renderItemsGrid().
+
+
+---
+
+В обработчике open замени блок для файла
+
+Найди:
+
+if (previewMode === 'office') {
+  return;
 }
 
-$leftContentHtml = $vm['leftMode'] === 'menu' && $menuHtml !== '' ? $menuHtml : $leftHtml;
+и замени на:
 
-if ($vm['leftMode'] === 'menu' && $vm['sectionNavHtml'] !== '') {
-    $leftContentHtml = $vm['sectionNavHtml'];
+if (previewMode === 'office') {
+  if (previewUrl) {
+    window.open(previewUrl, '_blank');
+  } else if (downloadUrl) {
+    window.open(downloadUrl, '_blank');
+  }
+  return;
 }
-?>
-<?php
-global $APPLICATION;
 
-if ($pageHasDiskBlock) {
-    \CJSCore::Init(['ui.viewer']);
 
-    if (\Bitrix\Main\Loader::includeModule('disk')) {
-        \Bitrix\Main\UI\Extension::load([
-            'disk.viewer',
-            'disk.document',
-            'disk.viewer.document-item',
-        ]);
+---
+
+В обработчике edit-office замени на:
+
+var editOfficeBtn = e.target.closest('[data-row-action="edit-office"]');
+if (editOfficeBtn) {
+  var editRow = e.target.closest('[data-id][data-entity-type="file"]');
+  if (!editRow) return;
+
+  var editUrl = editRow.getAttribute('data-edit-url') || '';
+  var previewModeForEdit = editRow.getAttribute('data-preview-mode') || '';
+
+  if (previewModeForEdit === 'office') {
+    if (editUrl) {
+      window.open(editUrl, '_blank');
+    } else {
+      var fallbackPreviewUrl = editRow.getAttribute('data-preview-url') || '';
+      if (fallbackPreviewUrl) {
+        window.open(fallbackPreviewUrl, '_blank');
+      }
     }
+  }
+  return;
 }
-?>
-<!doctype html>
-<html lang="ru">
-<head>
-    <meta charset="UTF-8">
-    <?php
-    $APPLICATION->ShowHead();
-    ?>
-    <title><?= sb_public_h((string)($currentPage['title'] ?? $site['name'] ?? 'SiteBuilder')) ?></title>
-    <link rel="stylesheet" href="<?= sb_public_h($basePath) ?>/assets/public/public.css">
 
-    <?php if ($pageHasDiskBlock): ?>
-        <link rel="stylesheet" href="<?= sb_public_h($basePath) ?>/components/disk/styles.css">
-    <?php endif; ?>
-    <style>
-        :root {
-            --sb-accent: <?= sb_public_h($vm['accent']) ?>;
-            --sb-container-width: <?= (int)$vm['containerWidth'] ?>px;
-            --sb-left-width: <?= (int)$vm['leftWidth'] ?>px;
-            --sb-right-width: <?= (int)$vm['rightWidth'] ?>px;
-        }
-    </style>
-</head>
-<body>
-<div class="sb-public-shell">
-    <?php if ($vm['showHeader']): ?>
-        <header class="sb-public-header">
-            <div class="sb-container">
-                <?php if ($headerHtml !== ''): ?>
-                    <?= $headerHtml ?>
-                <?php else: ?>
-                    <div class="sb-brand">
-                        <?= sb_public_h((string)($site['name'] ?? 'SiteBuilder')) ?>
-                    </div>
-                <?php endif; ?>
 
-                <?php if ($menuHtml !== ''): ?>
-                    <?= $menuHtml ?>
-                <?php elseif (!empty($pages)): ?>
-                    <nav class="sb-public-menu">
-                        <?php foreach ($pages as $page): ?>
-                            <?php if ((int)($page['parentId'] ?? 0) !== 0) continue; ?>
-                            <a class="sb-public-menu__link" href="<?= sb_public_h(sb_public_page_url($basePath, $siteId, (int)$page['id'])) ?>">
-                                <?= sb_public_h((string)($page['title'] ?? 'Страница')) ?>
-                            </a>
-                        <?php endforeach; ?>
-                    </nav>
-                <?php endif; ?>
-            </div>
-        </header>
-    <?php endif; ?>
+---
 
-    <main class="sb-public-main">
-        <div class="sb-container">
-            <?php if (!empty($vm['breadcrumbsHtml'])): ?>
-                <?= $vm['breadcrumbsHtml'] ?>
-            <?php endif; ?>
+Почему это лучше
 
-            <div class="sb-layout <?= $vm['showLeft'] ? 'sb-layout--left' : '' ?> <?= $vm['showRight'] ? 'sb-layout--right' : '' ?>">
-                <?php if ($vm['showLeft']): ?>
-                    <aside class="sb-sidebar sb-sidebar--left">
-                        <div class="sb-box">
-                            <?= $leftContentHtml !== '' ? $leftContentHtml : '<div class="sb-empty">Левая зона пуста</div>' ?>
-                        </div>
-                    </aside>
-                <?php endif; ?>
+Потому что сейчас на кастомной странице у тебя не поднимается BX.Disk.Viewer, а вот стандартные bitrix-страницы просмотра/редактирования Disk уже умеют:
 
-                <section class="sb-content">
-                    <div class="sb-box sb-box--content">
-                        <?php if ($currentPage): ?>
-                            <h1 class="sb-page-title">
-                                <?= sb_public_h((string)($currentPage['title'] ?? 'Страница')) ?>
-                            </h1>
+Office Online
 
-                            <?php if (!empty($vm['childPagesHtml'])): ?>
-                                <?= $vm['childPagesHtml'] ?>
-                            <?php endif; ?>
+Bitrix24 Docs
 
-                            <?= $pageHtml !== '' ? $pageHtml : '<div class="sb-empty">На странице пока нет блоков</div>' ?>
-                        <?php else: ?>
-                            <div class="sb-empty">У сайта пока нет страниц</div>
-                        <?php endif; ?>
-                    </div>
-                </section>
+document handler
 
-                <?php if ($vm['showRight']): ?>
-                    <aside class="sb-sidebar sb-sidebar--right">
-                        <div class="sb-box">
-                            <?= $rightHtml !== '' ? $rightHtml : '<div class="sb-empty">Правая зона пуста</div>' ?>
-                        </div>
-                    </aside>
-                <?php endif; ?>
-            </div>
-        </div>
-    </main>
+edit mode
 
-    <?php if ($vm['showFooter']): ?>
-        <footer class="sb-public-footer">
-            <div class="sb-container">
-                <?= $footerHtml !== '' ? $footerHtml : '<div class="sb-footer-note">© ' . date('Y') . ' ' . sb_public_h((string)($site['name'] ?? 'SiteBuilder')) . '</div>' ?>
-            </div>
-        </footer>
-    <?php endif; ?>
-</div>
 
-<script>
-document.addEventListener('click', function (e) {
-    var toggle = e.target.closest('[data-role="toggle"]');
-    if (!toggle) {
-        return;
-    }
+То есть мы не ломаемся о кастомный layout и не зависим от отсутствующего BX.Disk.Viewer.
 
-    var node = toggle.closest('.sb-tree-node');
-    if (!node) {
-        return;
-    }
 
-    var isOpen = node.classList.contains('is-open');
-    node.classList.toggle('is-open', !isOpen);
-    toggle.setAttribute('aria-expanded', !isOpen ? 'true' : 'false');
-});
-</script>
+---
 
-<?php if ($pageHasDiskBlock): ?>
-<script src="/bitrix/js/main/core/core.js"></script>
-<script src="<?= sb_public_h($basePath) ?>/components/disk/script.js"></script>
-<?php endif; ?>
+Что получится
 
-</body>
-</html>
+Открыть у docx/xlsx/pptx → откроет штатный просмотр Bitrix
+
+Редактировать → откроет штатное редактирование Bitrix
+
+картинки/pdf/txt останутся через обычный browser preview
+
+Скачать останется отдельной кнопкой
+
+
+
+---
+
+Важно
+
+Если даже на штатной странице Bitrix редактирование не откроется, значит уже проблема в:
+
+document handler
+
+WOPI
+
+сертификате
+
+настройке Office Online / Bitrix Docs
+
+
+Но это уже будет проблема инфраструктуры, а не компонента.
+
+Если хочешь, я следующим сообщением пришлю тебе полный готовый script.js уже под эту схему без viewer на кастомной странице.
