@@ -1,205 +1,36 @@
-Ошибка понятная:
-
-SiteBitrixGroupService.php не подключен
-
-Значит файла физически нет по пути:
-
-/local/sitebuilder/lib/SiteBitrixGroupService.php
-
-или он назван не так, например с маленькой буквы, в другой папке, либо нет прав на чтение.
-
-1. Создай файл
-
-/srv/bx/docroot/local/sitebuilder/lib/SiteBitrixGroupService.php
-
-И вставь туда полностью:
-
-<?php
-
-use Bitrix\Main\Loader;
-
-class SiteBitrixGroupService
 {
-    public static function createForSite(array $site, int $ownerUserId): int
-    {
-        if ($ownerUserId <= 0) {
-            throw new RuntimeException('EMPTY_OWNER_USER_ID');
+    "ok": true,
+    "site": {
+        "id": 11,
+        "name": "321",
+        "slug": "321-2",
+        "createdBy": 1,
+        "createdAt": "2026-04-24T10:46:10+03:00",
+        "updatedAt": "2026-04-24T10:46:10+03:00",
+        "updatedBy": 1,
+        "homePageId": 0,
+        "diskFolderId": 0,
+        "topMenuId": 0,
+        "bitrixGroupId": 2,
+        "bitrixGroupCreatedBy": 1,
+        "bitrixGroupCreatedAt": "2026-04-24T10:46:10+03:00",
+        "settings": {
+            "containerWidth": 1100,
+            "accent": "#2563eb",
+            "logoFileId": 0
+        },
+        "layout": {
+            "showHeader": true,
+            "showFooter": true,
+            "showLeft": false,
+            "showRight": false,
+            "leftWidth": 260,
+            "rightWidth": 260,
+            "leftMode": "blocks"
         }
-
-        if (!Loader::includeModule('socialnetwork')) {
-            throw new RuntimeException('SOCIALNETWORK_MODULE_NOT_INSTALLED');
-        }
-
-        if (!class_exists('CSocNetGroup')) {
-            throw new RuntimeException('CSocNetGroup_NOT_FOUND');
-        }
-
-        $siteId = (int)($site['id'] ?? 0);
-        $siteName = trim((string)($site['name'] ?? ''));
-
-        if ($siteId <= 0) {
-            throw new RuntimeException('EMPTY_SITE_ID');
-        }
-
-        if ($siteName === '') {
-            $siteName = 'Сайт #' . $siteId;
-        }
-
-        $groupName = self::buildGroupName($siteName, $siteId);
-        $subjectId = self::resolveSubjectId();
-
-        $fields = [
-            'SITE_ID' => self::getSiteId(),
-            'NAME' => $groupName,
-            'DESCRIPTION' => 'Рабочая группа сайта SiteBuilder: ' . $siteName,
-            'VISIBLE' => 'N',
-            'OPENED' => 'N',
-            'PROJECT' => 'N',
-            'SUBJECT_ID' => $subjectId,
-            'INITIATE_PERMS' => self::ownerRole(),
-            'SPAM_PERMS' => self::ownerRole(),
-        ];
-
-        $groupId = (int)\CSocNetGroup::CreateGroup(
-            $ownerUserId,
-            $fields,
-            false
-        );
-
-        if ($groupId <= 0) {
-            $message = self::getLastBitrixError();
-
-            throw new RuntimeException(
-                'BITRIX_GROUP_CREATE_ERROR' . ($message !== '' ? ': ' . $message : '')
-            );
-        }
-
-        return $groupId;
-    }
-
-    protected static function buildGroupName(string $siteName, int $siteId): string
-    {
-        $siteName = trim($siteName);
-
-        if ($siteName === '') {
-            $siteName = 'Сайт #' . $siteId;
-        }
-
-        return 'SiteBuilder: ' . $siteName;
-    }
-
-    protected static function resolveSubjectId(): int
-    {
-        if (!class_exists('CSocNetGroupSubject')) {
-            return 1;
-        }
-
-        $siteId = self::getSiteId();
-
-        $rs = \CSocNetGroupSubject::GetList(
-            ['SORT' => 'ASC', 'NAME' => 'ASC'],
-            ['SITE_ID' => $siteId],
-            false,
-            ['nTopCount' => 1],
-            ['ID', 'SITE_ID', 'NAME']
-        );
-
-        if ($row = $rs->Fetch()) {
-            $id = (int)($row['ID'] ?? 0);
-
-            if ($id > 0) {
-                return $id;
-            }
-        }
-
-        $rs = \CSocNetGroupSubject::GetList(
-            ['SORT' => 'ASC', 'NAME' => 'ASC'],
-            [],
-            false,
-            ['nTopCount' => 1],
-            ['ID', 'SITE_ID', 'NAME']
-        );
-
-        if ($row = $rs->Fetch()) {
-            $id = (int)($row['ID'] ?? 0);
-
-            if ($id > 0) {
-                return $id;
-            }
-        }
-
-        return 1;
-    }
-
-    protected static function getSiteId(): string
-    {
-        if (defined('SITE_ID') && SITE_ID) {
-            return (string)SITE_ID;
-        }
-
-        return 's1';
-    }
-
-    protected static function ownerRole(): string
-    {
-        if (defined('SONET_ROLES_OWNER')) {
-            return SONET_ROLES_OWNER;
-        }
-
-        return 'A';
-    }
-
-    protected static function getLastBitrixError(): string
-    {
-        global $APPLICATION;
-
-        if (is_object($APPLICATION) && method_exists($APPLICATION, 'GetException')) {
-            $exception = $APPLICATION->GetException();
-
-            if ($exception && method_exists($exception, 'GetString')) {
-                return trim((string)$exception->GetString());
-            }
-        }
-
-        return '';
-    }
+    },
+    "bitrixGroupId": 2,
+    "bitrixGroupError": "",
+    "handler": "site",
+    "file": "\/srv\/bx\/docroot\/local\/sitebuilder\/api\/handlers\/site.php"
 }
-
-
----
-
-2. Проверь права и наличие файла
-
-На сервере выполни:
-
-ls -la /srv/bx/docroot/local/sitebuilder/lib/SiteBitrixGroupService.php
-
-Если файла нет — значит положил не туда.
-
-Если есть, проверь синтаксис:
-
-php -l /srv/bx/docroot/local/sitebuilder/lib/SiteBitrixGroupService.php
-
-Должно быть:
-
-No syntax errors detected
-
-
----
-
-3. Создай сайт еще раз
-
-В ответе должно измениться:
-
-"bitrixGroupId": 123,
-"bitrixGroupError": ""
-
-Если будет другая ошибка, например:
-
-SOCIALNETWORK_MODULE_NOT_INSTALLED
-
-или
-
-BITRIX_GROUP_CREATE_ERROR
-
-пришли новый response целиком.
