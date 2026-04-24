@@ -1,10 +1,35 @@
-api.php?action=site.syncAccess:1  GET https://portal24.itsnn.ru/local/sitebuilder/api.php?action=site.syncAccess 405 (Method Not Allowed)
+403 сейчас почти точно из-за пустого sessid.
+
+Ты проверил:
+
+document.querySelector('.sb-disk')?.getAttribute('data-sessid')
+
+и получил:
+
+undefined
+
+Значит ты выполняешь проверку не на странице сайта/редактора, где есть компонент и Bitrix-сессия, а на странице API или другой странице без BX.
+
+Как правильно проверить
+
+Открой не API-ссылку, а страницу sitebuilder, например:
+
+/local/sitebuilder/index.php
+
+или страницу редактора/админки, где ты создаешь сайты.
+
+Там в консоли сначала проверь:
+
+typeof BX !== 'undefined'
+
+Потом:
+
+typeof BX !== 'undefined' && typeof BX.bitrix_sessid === 'function' ? BX.bitrix_sessid() : 'NO_SESSID'
+
+Если вернулся нормальный хеш, тогда запускай:
+
 (async function () {
-  const sessid =
-    (typeof BX !== 'undefined' && typeof BX.bitrix_sessid === 'function' && BX.bitrix_sessid()) ||
-    document.querySelector('input[name="sessid"]')?.value ||
-    document.querySelector('.sb-disk')?.getAttribute('data-sessid') ||
-    '';
+  const sessid = BX.bitrix_sessid();
 
   console.log('SESSID:', sessid);
 
@@ -29,9 +54,23 @@ api.php?action=site.syncAccess:1  GET https://portal24.itsnn.ru/local/sitebuilde
     console.log('NOT JSON');
   }
 })();
-Promise {<pending>}[[Prototype]]: Promisecatch: ƒ catch()length: 1name: "catch"arguments: (...)caller: (...)[[Prototype]]: ƒ ()[[Scopes]]: Scopes[0]constructor: ƒ Promise()all: ƒ all()allSettled: ƒ allSettled()any: ƒ any()length: 1name: "Promise"prototype: Promise {Symbol(Symbol.toStringTag): 'Promise', then: ƒ, catch: ƒ, finally: ƒ}race: ƒ race()reject: ƒ reject()resolve: ƒ resolve()try: ƒ try()withResolvers: ƒ withResolvers()Symbol(Symbol.species): ƒ Promise()Symbol(Symbol.species): ƒ Promise()arguments: (...)caller: (...)[[Prototype]]: ƒ ()[[Scopes]]: Scopes[0]finally: ƒ finally()length: 1name: "finally"arguments: (...)caller: (...)[[Prototype]]: ƒ ()[[Scopes]]: Scopes[0]then: ƒ then()length: 2name: "then"arguments: (...)caller: (...)[[Prototype]]: ƒ ()[[Scopes]]: Scopes[0]Symbol(Symbol.toStringTag): "Promise"[[Prototype]]: Object[[PromiseState]]: "fulfilled"[[PromiseResult]]: undefined
-VM44:14  POST https://portal24.itsnn.ru/local/sitebuilder/api.php?action=site.syncAccess 403 (Forbidden)
-(anonymous) @ VM44:14
-(anonymous) @ VM44:30
-document.querySelector('.sb-disk')?.getAttribute('data-sessid')
-undefined
+
+Почему GET дает 405
+
+Это нормально:
+
+GET /local/sitebuilder/api.php?action=site.syncAccess → 405
+
+Твой API принимает только POST.
+
+Если на странице sitebuilder BX тоже нет
+
+Тогда нужно передавать sessid прямо из PHP в страницу. В index.php или редакторе, где ты делаешь запросы к API, должен быть доступен:
+
+<?= bitrix_sessid() ?>
+
+И JS должен отправлять:
+
+fd.append('sessid', window.BX ? BX.bitrix_sessid() : '...');
+
+Но сначала проверь именно с нормальной страницы sitebuilder, не с URL api.php?action=site.syncAccess.
