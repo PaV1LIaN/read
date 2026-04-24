@@ -1,17 +1,3 @@
-Причина понятная: твой /local/sitebuilder/api/index.php берёт action не из URL, а из $_POST.
-
-Поэтому запрос вида:
-
-/local/sitebuilder/api.php?action=site.syncAccess
-
-для твоего API приходит как:
-
-"action": ""
-
-Нужно передавать action в POST body.
-
-Проверь site.get вот так
-
 fetch('/local/sitebuilder/api.php', {
   method: 'POST',
   headers: {
@@ -36,9 +22,7 @@ fetch('/local/sitebuilder/api.php', {
   }
 })
 .catch(console.error);
-
-Потом site.syncAccess
-
+Promise {<pending>}
 fetch('/local/sitebuilder/api.php', {
   method: 'POST',
   headers: {
@@ -63,31 +47,50 @@ fetch('/local/sitebuilder/api.php', {
   }
 })
 .catch(console.error);
+Promise {<pending>}
+VM10524:1  POST https://portal24.itsnn.ru/local/sitebuilder/api.php 400 (Bad Request)
 
-Ожидаемо должно быть примерно так:
 
 {
-  "ok": true,
-  "result": {
-    "siteId": 11,
-    "bitrixGroupId": 2,
-    "created": 0,
-    "updated": 0,
-    "removed": 0,
-    "kept": 1
-  }
+    "ok": true,
+    "site": {
+        "id": 11,
+        "name": "321",
+        "slug": "321-2",
+        "homePageId": 0,
+        "diskFolderId": 0,
+        "topMenuId": 0,
+        "settings": {
+            "accent": "#2563eb",
+            "logoFileId": 0,
+            "containerWidth": 1100
+        },
+        "layout": {
+            "leftMode": "blocks",
+            "showLeft": false,
+            "leftWidth": 260,
+            "showRight": false,
+            "rightWidth": 260,
+            "showFooter": true,
+            "showHeader": true
+        },
+        "createdBy": 1,
+        "createdAt": "2026-04-24 10:46:10",
+        "updatedBy": 1,
+        "updatedAt": "2026-04-24 10:46:10"
+    },
+    "handler": "site",
+    "file": "\/srv\/bx\/docroot\/local\/sitebuilder\/api\/handlers\/site.php"
 }
 
-Что поправить потом в JS API helper
+{
+    "ok": false,
+    "error": "UNKNOWN_ACTION",
+    "action": "site.syncAccess",
+    "file": "\/srv\/bx\/docroot\/local\/sitebuilder\/api\/index.php"
+}
 
-Если у тебя где-то фронт вызывает так:
 
-fetch('/local/sitebuilder/api.php?action=' + action, ...)
 
-лучше привести к единому виду:
 
-const body = new URLSearchParams();
-body.append('action', action);
-body.append('sessid', BX.bitrix_sessid());
 
-И отправлять action именно в POST. Сейчас твой API так и ожидает.
