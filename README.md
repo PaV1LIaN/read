@@ -1,297 +1,112 @@
-Да, для этого этапа достаточно заменить SiteDiskInitializer.php. DiskRootResolver.php может остаться как есть, потому что он уже вызывает:
+Да, сначала сделаем безопасную кнопку «Удалить сайт» в редакторе.
 
-SiteDiskInitializer::ensureSiteRootFolder(...)
+На первом этапе удаляем только сайт из SiteBuilder: страницы, блоки, меню, доступы, шаблоны, layout.
+Группу Битрикс24 и файлы диска пока не удаляем автоматически, чтобы случайно не потерять документы. Это лучше сделать отдельной кнопкой позже.
 
-Мы просто изменим логику внутри SiteDiskInitializer, чтобы он сначала пытался создать папку в диске группы Битрикс24, а если не получится — падал обратно на текущий Общий диск / SiteBuilder.
 
-Замени файл:
+---
 
-/local/sitebuilder/components/disk/lib/SiteDiskInitializer.php
+1. Добавь кнопку в верхнюю панель
 
-на этот код:
+В editor.php найди блок:
 
-<?php
+<div class="sb-editor-topline-actions">
+    <a class="sb-btn sb-btn-light sb-btn-small" href="<?= htmlspecialchars($basePath, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?>/public.php?siteId=<?= (int)$siteId ?>" target="_blank">Открыть публичную</a>
+    <a class="sb-btn sb-btn-light sb-btn-small" href="<?= htmlspecialchars($basePath, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?>/layout.php?siteId=<?= (int)$siteId ?>">Layout</a>
+    <a class="sb-btn sb-btn-light sb-btn-small" href="<?= htmlspecialchars($basePath, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?>/menu.php?siteId=<?= (int)$siteId ?>">Меню</a>
+</div>
 
-use Bitrix\Disk\Driver;
-use Bitrix\Disk\Folder;
-use Bitrix\Disk\Storage;
-use Bitrix\Main\Loader;
+Замени на:
 
-class SiteDiskInitializer
-{
-    /**
-     * Fallback: ID папки в "Общий диск".
-     * Если у сайта нет группы Битрикс24 или диск группы не найден,
-     * папка сайта будет создана здесь.
-     */
-    protected const SHARED_ROOT_FOLDER_ID = 250;
+<div class="sb-editor-topline-actions">
+    <a class="sb-btn sb-btn-light sb-btn-small" href="<?= htmlspecialchars($basePath, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?>/public.php?siteId=<?= (int)$siteId ?>" target="_blank">Открыть публичную</a>
+    <a class="sb-btn sb-btn-light sb-btn-small" href="<?= htmlspecialchars($basePath, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?>/layout.php?siteId=<?= (int)$siteId ?>">Layout</a>
+    <a class="sb-btn sb-btn-light sb-btn-small" href="<?= htmlspecialchars($basePath, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?>/menu.php?siteId=<?= (int)$siteId ?>">Меню</a>
+    <button class="sb-btn sb-btn-danger sb-btn-small" type="button" id="deleteSiteBtn">Удалить сайт</button>
+</div>
 
-    /**
-     * Папка внутри диска группы Битрикс24.
-     *
-     * Структура будет:
-     * Группа Битрикс24
-     * └── Диск группы
-     *     └── SiteBuilder
-     *         └── site_11 - Название сайта
-     */
-    protected const GROUP_ROOT_FOLDER_NAME = 'SiteBuilder';
 
-    public static function ensureSiteRootFolder(int $siteId, int $currentUserId, string $siteName = ''): int
-    {
-        if ($siteId <= 0) {
-            throw new RuntimeException('EMPTY_SITE_ID');
-        }
+---
 
-        if ($currentUserId <= 0) {
-            throw new RuntimeException('EMPTY_CURRENT_USER_ID');
-        }
+2. Добавь JS-функцию удаления сайта
 
-        $existing = SiteRepository::getRootDiskFolderId($siteId);
+Внутри <script>, рядом с другими async function, например после loadSite(), добавь:
 
-        if ($existing !== null && $existing > 0) {
-            $existingFolder = Folder::loadById((int)$existing);
+async function deleteCurrentSite() {
+    var siteName = state.site && state.site.name ? state.site.name : ('siteId ' + siteId);
 
-            if ($existingFolder instanceof Folder) {
-                return (int)$existingFolder->getId();
-            }
-        }
+    var firstConfirm = confirm(
+        'Удалить сайт "' + siteName + '"?\n\n' +
+        'Будут удалены страницы, блоки, меню, доступы, шаблоны и layout внутри SiteBuilder.\n' +
+        'Группа Битрикс24 и файлы диска сейчас не удаляются автоматически.'
+    );
 
-        $site = SiteRepository::getById($siteId);
-        if (!$site) {
-            throw new RuntimeException('SITE_NOT_FOUND');
-        }
-
-        $resolvedSiteName = trim($siteName);
-        if ($resolvedSiteName === '') {
-            $resolvedSiteName = trim((string)($site['name'] ?? ''));
-        }
-
-        $bitrixGroupId = self::extractBitrixGroupId($site);
-
-        $parentFolder = null;
-        $groupDiskError = '';
-
-        if ($bitrixGroupId > 0) {
-            try {
-                $parentFolder = self::getOrCreateGroupSiteBuilderFolder(
-                    $bitrixGroupId,
-                    $currentUserId
-                );
-            } catch (Throwable $e) {
-                $groupDiskError = $e->getMessage();
-                $parentFolder = null;
-            }
-        }
-
-        if (!$parentFolder instanceof Folder) {
-            $parentFolder = self::getSharedRootFolder();
-
-            if (!$parentFolder instanceof Folder) {
-                throw new RuntimeException(
-                    'SHARED_DISK_ROOT_FOLDER_NOT_FOUND'
-                    . ($groupDiskError !== '' ? '; GROUP_DISK_ERROR: ' . $groupDiskError : '')
-                );
-            }
-        }
-
-        $siteFolderName = self::buildSiteFolderName($siteId, $resolvedSiteName);
-
-        $siteFolder = self::getOrCreateChildFolder(
-            $parentFolder,
-            $siteFolderName,
-            $currentUserId
-        );
-
-        SiteRepository::updateRootDiskFolderId($siteId, (int)$siteFolder->getId());
-
-        return (int)$siteFolder->getId();
+    if (!firstConfirm) {
+        return;
     }
 
-    protected static function extractBitrixGroupId(array $site): int
-    {
-        return (int)(
-            $site['bitrixGroupId']
-            ?? $site['bitrix_group_id']
-            ?? $site['BITRIX_GROUP_ID']
-            ?? 0
-        );
+    var secondConfirm = confirm(
+        'Подтверди удаление ещё раз.\n\n' +
+        'Это действие нельзя будет отменить через интерфейс SiteBuilder.'
+    );
+
+    if (!secondConfirm) {
+        return;
     }
 
-    protected static function buildSiteFolderName(int $siteId, string $siteName): string
-    {
-        $siteName = trim($siteName);
+    try {
+        await api('site.delete', {
+            id: siteId
+        });
 
-        if ($siteName === '') {
-            $siteName = 'site_' . $siteId;
-        }
+        alert('Сайт удалён');
 
-        $name = 'site_' . $siteId . ' - ' . $siteName;
-
-        return DiskNameSanitizer::sanitizeFolderName($name, 'site_' . $siteId);
-    }
-
-    protected static function getOrCreateGroupSiteBuilderFolder(int $groupId, int $currentUserId): Folder
-    {
-        if ($groupId <= 0) {
-            throw new RuntimeException('EMPTY_BITRIX_GROUP_ID');
-        }
-
-        $storage = self::getGroupStorage($groupId);
-
-        if (!$storage instanceof Storage) {
-            throw new RuntimeException('GROUP_DISK_STORAGE_NOT_FOUND: ' . $groupId);
-        }
-
-        $rootFolder = $storage->getRootObject();
-
-        if (!$rootFolder instanceof Folder) {
-            throw new RuntimeException('GROUP_DISK_ROOT_FOLDER_NOT_FOUND: ' . $groupId);
-        }
-
-        $folderName = DiskNameSanitizer::sanitizeFolderName(
-            self::GROUP_ROOT_FOLDER_NAME,
-            'SiteBuilder'
-        );
-
-        return self::getOrCreateChildFolder($rootFolder, $folderName, $currentUserId);
-    }
-
-    protected static function getGroupStorage(int $groupId): ?Storage
-    {
-        if ($groupId <= 0) {
-            return null;
-        }
-
-        if (!Loader::includeModule('disk')) {
-            throw new RuntimeException('DISK_MODULE_NOT_INSTALLED');
-        }
-
-        Loader::includeModule('socialnetwork');
-
-        $driver = Driver::getInstance();
-
-        if (is_object($driver) && method_exists($driver, 'getStorageByGroupId')) {
-            $storage = $driver->getStorageByGroupId($groupId);
-
-            if ($storage instanceof Storage) {
-                return $storage;
-            }
-        }
-
-        $storage = Storage::load([
-            '=MODULE_ID' => 'socialnetwork',
-            '=ENTITY_TYPE' => 'group',
-            '=ENTITY_ID' => $groupId,
-        ]);
-
-        if ($storage instanceof Storage) {
-            return $storage;
-        }
-
-        return null;
-    }
-
-    protected static function getSharedRootFolder(): Folder
-    {
-        $folderId = (int)self::SHARED_ROOT_FOLDER_ID;
-
-        if ($folderId <= 0) {
-            throw new RuntimeException('SHARED_ROOT_FOLDER_ID_NOT_CONFIGURED');
-        }
-
-        $folder = Folder::loadById($folderId);
-
-        if (!$folder instanceof Folder) {
-            throw new RuntimeException('SHARED_ROOT_FOLDER_NOT_FOUND: ' . $folderId);
-        }
-
-        return $folder;
-    }
-
-    protected static function getOrCreateChildFolder(Folder $parentFolder, string $folderName, int $currentUserId): Folder
-    {
-        $folderName = DiskNameSanitizer::sanitizeFolderName($folderName, 'Папка');
-
-        $existingFolder = self::findChildFolderByName($parentFolder, $folderName, $currentUserId);
-
-        if ($existingFolder instanceof Folder) {
-            return $existingFolder;
-        }
-
-        $createdFolder = $parentFolder->addSubFolder([
-            'NAME' => $folderName,
-            'CREATED_BY' => $currentUserId,
-        ], [], true);
-
-        if ($createdFolder instanceof Folder) {
-            return $createdFolder;
-        }
-
-        $errors = self::collectFolderErrors($parentFolder);
-
-        throw new RuntimeException(
-            'DISK_FOLDER_CREATE_ERROR'
-            . (!empty($errors) ? ': ' . implode(' | ', $errors) : '')
-        );
-    }
-
-    protected static function findChildFolderByName(Folder $parentFolder, string $folderName, int $currentUserId): ?Folder
-    {
-        $securityContext = Driver::getInstance()->getFakeSecurityContext($currentUserId);
-
-        $children = $parentFolder->getChildren($securityContext);
-
-        foreach ($children as $child) {
-            if (!$child instanceof Folder) {
-                continue;
-            }
-
-            if ((string)$child->getName() === $folderName) {
-                return $child;
-            }
-        }
-
-        return null;
-    }
-
-    protected static function collectFolderErrors(Folder $folder): array
-    {
-        $errors = [];
-
-        if (!method_exists($folder, 'getErrors')) {
-            return $errors;
-        }
-
-        foreach ((array)$folder->getErrors() as $error) {
-            if (is_object($error) && method_exists($error, 'getMessage')) {
-                $errors[] = $error->getMessage();
-            } else {
-                $errors[] = (string)$error;
-            }
-        }
-
-        return $errors;
+        window.location.href = BASE_PATH + '/index.php';
+    } catch (e) {
+        var message = (e && (e.error || e.message)) ? (e.error || e.message) : 'UNKNOWN_ERROR';
+        alert('Не удалось удалить сайт: ' + message);
     }
 }
 
-Как проверить
 
-Если у сайта ещё не создана папка диска, просто открой страницу с компонентом disk или нажми кнопку создания корня сайта.
+---
 
-Если у сайта уже есть старый disk_folder_id, он будет использоваться как раньше. Это специально, чтобы не потерять текущие файлы.
+3. Добавь обработчик кнопки
 
-Для тестового сайта можно сбросить папку, чтобы проверить создание в группе:
+Внизу, рядом с остальными addEventListener, после блока:
 
-UPDATE sitebuilder.site
-SET disk_folder_id = NULL
-WHERE id = 11;
+document.getElementById('moveBlockDownBtn').addEventListener('click', function () { moveBlock('down'); });
 
-Потом открой публичную страницу сайта с блоком «Диск». Должна появиться структура в диске группы:
+добавь:
 
-Группа SiteBuilder: 321
-└── Диск группы
-    └── SiteBuilder
-        └── site_11 - 321
+var deleteSiteBtn = document.getElementById('deleteSiteBtn');
+if (deleteSiteBtn) {
+    deleteSiteBtn.addEventListener('click', deleteCurrentSite);
+}
 
-Если при открытии будет ошибка GROUP_DISK_STORAGE_NOT_FOUND, значит у рабочей группы ещё не создано хранилище диска в Битрикс24. Тогда компонент автоматически должен уйти в fallback на общий диск 250.
+
+---
+
+4. Проверка
+
+Открой редактор сайта и нажми «Удалить сайт».
+
+После подтверждения должен уйти запрос:
+
+action=site.delete
+id=<siteId>
+
+Если пользователь владелец сайта, API вернёт:
+
+{
+  "ok": true,
+  "handler": "site"
+}
+
+и тебя перекинет на:
+
+/local/sitebuilder/index.php
+
+Если будет ошибка, скорее всего это будет OWNER_REQUIRED или ACCESS_DENIED, потому что серверная проверка уже стоит здесь:
+
+sb_require_owner($id);
