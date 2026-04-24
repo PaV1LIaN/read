@@ -1,4 +1,18 @@
-storage_db.php
+Замени файл:
+
+/local/sitebuilder/lib/storage_db.php
+
+на этот полный код. Я добавил поддержку:
+
+bitrix_group_id
+bitrix_group_created_by
+bitrix_group_created_at
+
+и теперь site.get / site.list будут возвращать:
+
+bitrixGroupId
+bitrixGroupCreatedBy
+bitrixGroupCreatedAt
 
 <?php
 
@@ -12,13 +26,16 @@ function sb_read_sites(): array
             home_page_id,
             disk_folder_id,
             top_menu_id,
+            bitrix_group_id,
+            bitrix_group_created_by,
+            bitrix_group_created_at,
             settings_json,
             layout_json,
             created_by,
             created_at,
             updated_by,
             updated_at
-        FROM site
+        FROM sitebuilder.site
         ORDER BY id ASC
     ");
 
@@ -52,6 +69,9 @@ function sb_write_sites(array $sites): bool
                     home_page_id,
                     disk_folder_id,
                     top_menu_id,
+                    bitrix_group_id,
+                    bitrix_group_created_by,
+                    bitrix_group_created_at,
                     settings_json,
                     layout_json,
                     created_by,
@@ -65,6 +85,9 @@ function sb_write_sites(array $sites): bool
                     :home_page_id,
                     :disk_folder_id,
                     :top_menu_id,
+                    :bitrix_group_id,
+                    :bitrix_group_created_by,
+                    :bitrix_group_created_at,
                     :settings_json::jsonb,
                     :layout_json::jsonb,
                     :created_by,
@@ -79,6 +102,9 @@ function sb_write_sites(array $sites): bool
                     home_page_id = EXCLUDED.home_page_id,
                     disk_folder_id = EXCLUDED.disk_folder_id,
                     top_menu_id = EXCLUDED.top_menu_id,
+                    bitrix_group_id = EXCLUDED.bitrix_group_id,
+                    bitrix_group_created_by = EXCLUDED.bitrix_group_created_by,
+                    bitrix_group_created_at = EXCLUDED.bitrix_group_created_at,
                     settings_json = EXCLUDED.settings_json,
                     layout_json = EXCLUDED.layout_json,
                     created_by = EXCLUDED.created_by,
@@ -92,6 +118,9 @@ function sb_write_sites(array $sites): bool
                 ':home_page_id' => !empty($site['homePageId']) ? (int)$site['homePageId'] : null,
                 ':disk_folder_id' => !empty($site['diskFolderId']) ? (int)$site['diskFolderId'] : null,
                 ':top_menu_id' => !empty($site['topMenuId']) ? (int)$site['topMenuId'] : null,
+                ':bitrix_group_id' => !empty($site['bitrixGroupId']) ? (int)$site['bitrixGroupId'] : null,
+                ':bitrix_group_created_by' => !empty($site['bitrixGroupCreatedBy']) ? (int)$site['bitrixGroupCreatedBy'] : null,
+                ':bitrix_group_created_at' => !empty($site['bitrixGroupCreatedAt']) ? (string)$site['bitrixGroupCreatedAt'] : null,
                 ':settings_json' => json_encode($site['settings'] ?? [], JSON_UNESCAPED_UNICODE),
                 ':layout_json' => json_encode($site['layout'] ?? [], JSON_UNESCAPED_UNICODE),
                 ':created_by' => isset($site['createdBy']) ? (int)$site['createdBy'] : null,
@@ -132,7 +161,7 @@ function sb_read_pages(): array
             created_at,
             updated_by,
             updated_at
-        FROM page
+        FROM sitebuilder.page
         ORDER BY site_id ASC, sort ASC, id ASC
     ");
 
@@ -244,7 +273,7 @@ function sb_read_blocks(): array
             created_at,
             updated_by,
             updated_at
-        FROM block
+        FROM sitebuilder.block
         ORDER BY page_id ASC, sort ASC, id ASC
     ");
 
@@ -343,6 +372,11 @@ function sb_map_site_row(array $row): array
         'homePageId' => !empty($row['home_page_id']) ? (int)$row['home_page_id'] : 0,
         'diskFolderId' => !empty($row['disk_folder_id']) ? (int)$row['disk_folder_id'] : 0,
         'topMenuId' => !empty($row['top_menu_id']) ? (int)$row['top_menu_id'] : 0,
+
+        'bitrixGroupId' => !empty($row['bitrix_group_id']) ? (int)$row['bitrix_group_id'] : 0,
+        'bitrixGroupCreatedBy' => !empty($row['bitrix_group_created_by']) ? (int)$row['bitrix_group_created_by'] : 0,
+        'bitrixGroupCreatedAt' => !empty($row['bitrix_group_created_at']) ? (string)$row['bitrix_group_created_at'] : '',
+
         'settings' => sb_json_decode_assoc($row['settings_json'] ?? '{}'),
         'layout' => sb_json_decode_assoc($row['layout_json'] ?? '{}'),
         'createdBy' => isset($row['created_by']) ? (int)$row['created_by'] : 0,
@@ -385,3 +419,24 @@ function sb_map_block_row(array $row): array
         'updatedAt' => (string)($row['updated_at'] ?? ''),
     ];
 }
+
+После замены проверь:
+
+fetch('/local/sitebuilder/api.php', {
+  method: 'POST',
+  headers: {
+    'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8'
+  },
+  body: new URLSearchParams({
+    action: 'site.get',
+    siteId: '11',
+    sessid: BX.bitrix_sessid()
+  }),
+  credentials: 'same-origin'
+})
+.then(r => r.json())
+.then(console.log);
+
+В ответе у сайта должно появиться:
+
+"bitrixGroupId": 2
