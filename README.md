@@ -1,22 +1,27 @@
-typeof BX !== 'undefined'
-true
-typeof BX !== 'undefined' && typeof BX.bitrix_sessid === 'function' ? BX.bitrix_sessid() : 'NO_SESSID'
-'01b508fb9a23c3b207d3d7de3254634c'
-(async function () {
-  const sessid = BX.bitrix_sessid();
+400 Bad Request уже значит, что sessid прошёл дальше, но сам API вернул ошибку по данным/логике.
 
-  console.log('SESSID:', sessid);
+Сейчас нужно увидеть тело ответа, там будет точная причина. В консоли после выполнения должны появиться строки:
 
-  const fd = new FormData();
-  fd.append('siteId', '11');
-  fd.append('sessid', sessid);
+STATUS:
+TEXT:
+JSON:
 
-  const r = await fetch('/local/sitebuilder/api.php?action=site.syncAccess', {
-    method: 'POST',
-    body: fd,
-    credentials: 'same-origin'
-  });
+Ты прислал только строку Network про 400, а не сам TEXT.
 
+Выполни вот так и дождись вывода:
+
+fetch('/local/sitebuilder/api.php?action=site.syncAccess', {
+  method: 'POST',
+  headers: {
+    'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8'
+  },
+  body: new URLSearchParams({
+    siteId: '11',
+    sessid: BX.bitrix_sessid()
+  }),
+  credentials: 'same-origin'
+})
+.then(async function (r) {
   const text = await r.text();
 
   console.log('STATUS:', r.status);
@@ -27,6 +32,27 @@ typeof BX !== 'undefined' && typeof BX.bitrix_sessid === 'function' ? BX.bitrix_
   } catch (e) {
     console.log('NOT JSON');
   }
-})();
-Promise {<pending>}
-VM496:10  POST https://portal24.itsnn.ru/local/sitebuilder/api.php?action=site.syncAccess 400 (Bad Request)
+})
+.catch(console.error);
+
+Если снова будет 400, скопируй сюда именно строку:
+
+TEXT: ...
+
+Ещё можно параллельно проверить, видит ли API сайт №11:
+
+fetch('/local/sitebuilder/api.php?action=site.get', {
+  method: 'POST',
+  headers: {
+    'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8'
+  },
+  body: new URLSearchParams({
+    siteId: '11',
+    sessid: BX.bitrix_sessid()
+  }),
+  credentials: 'same-origin'
+})
+.then(r => r.text())
+.then(console.log);
+
+Если site.get работает, а site.syncAccess даёт 400, значит проблема уже внутри нового action или SiteAccessSyncService.
