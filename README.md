@@ -1,33 +1,7 @@
-403 сейчас почти точно из-за пустого sessid.
-
-Ты проверил:
-
-document.querySelector('.sb-disk')?.getAttribute('data-sessid')
-
-и получил:
-
-undefined
-
-Значит ты выполняешь проверку не на странице сайта/редактора, где есть компонент и Bitrix-сессия, а на странице API или другой странице без BX.
-
-Как правильно проверить
-
-Открой не API-ссылку, а страницу sitebuilder, например:
-
-/local/sitebuilder/index.php
-
-или страницу редактора/админки, где ты создаешь сайты.
-
-Там в консоли сначала проверь:
-
 typeof BX !== 'undefined'
-
-Потом:
-
+true
 typeof BX !== 'undefined' && typeof BX.bitrix_sessid === 'function' ? BX.bitrix_sessid() : 'NO_SESSID'
-
-Если вернулся нормальный хеш, тогда запускай:
-
+'01b508fb9a23c3b207d3d7de3254634c'
 (async function () {
   const sessid = BX.bitrix_sessid();
 
@@ -54,23 +28,5 @@ typeof BX !== 'undefined' && typeof BX.bitrix_sessid === 'function' ? BX.bitrix_
     console.log('NOT JSON');
   }
 })();
-
-Почему GET дает 405
-
-Это нормально:
-
-GET /local/sitebuilder/api.php?action=site.syncAccess → 405
-
-Твой API принимает только POST.
-
-Если на странице sitebuilder BX тоже нет
-
-Тогда нужно передавать sessid прямо из PHP в страницу. В index.php или редакторе, где ты делаешь запросы к API, должен быть доступен:
-
-<?= bitrix_sessid() ?>
-
-И JS должен отправлять:
-
-fd.append('sessid', window.BX ? BX.bitrix_sessid() : '...');
-
-Но сначала проверь именно с нормальной страницы sitebuilder, не с URL api.php?action=site.syncAccess.
+Promise {<pending>}
+VM496:10  POST https://portal24.itsnn.ru/local/sitebuilder/api.php?action=site.syncAccess 400 (Bad Request)
