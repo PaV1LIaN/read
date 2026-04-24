@@ -1,15 +1,3 @@
-400 Bad Request уже значит, что sessid прошёл дальше, но сам API вернул ошибку по данным/логике.
-
-Сейчас нужно увидеть тело ответа, там будет точная причина. В консоли после выполнения должны появиться строки:
-
-STATUS:
-TEXT:
-JSON:
-
-Ты прислал только строку Network про 400, а не сам TEXT.
-
-Выполни вот так и дождись вывода:
-
 fetch('/local/sitebuilder/api.php?action=site.syncAccess', {
   method: 'POST',
   headers: {
@@ -34,13 +22,19 @@ fetch('/local/sitebuilder/api.php?action=site.syncAccess', {
   }
 })
 .catch(console.error);
-
-Если снова будет 400, скопируй сюда именно строку:
-
-TEXT: ...
-
-Ещё можно параллельно проверить, видит ли API сайт №11:
-
+Promise {<pending>}
+[[Prototype]]
+: 
+Promise
+[[PromiseState]]
+: 
+"fulfilled"
+[[PromiseResult]]
+: 
+undefined
+VM582:1 
+ POST https://portal24.itsnn.ru/local/sitebuilder/api.php?action=site.syncAccess 400 (Bad Request)
+(anonymous)	@	VM582:1
 fetch('/local/sitebuilder/api.php?action=site.get', {
   method: 'POST',
   headers: {
@@ -54,5 +48,16 @@ fetch('/local/sitebuilder/api.php?action=site.get', {
 })
 .then(r => r.text())
 .then(console.log);
-
-Если site.get работает, а site.syncAccess даёт 400, значит проблема уже внутри нового action или SiteAccessSyncService.
+Promise {<pending>}
+[[Prototype]]
+: 
+Promise
+[[PromiseState]]
+: 
+"fulfilled"
+[[PromiseResult]]
+: 
+undefined
+VM586:1 
+ POST https://portal24.itsnn.ru/local/sitebuilder/api.php?action=site.get 400 (Bad Request)
+(anonymous)	@	VM586:1
