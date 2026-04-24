@@ -1,39 +1,87 @@
-Тогда следующий правильный этап — сделать, чтобы права из группы Битрикс24 учитывались не только после ручной кнопки “Синхронизировать права”, а прямо в проверках доступа SiteBuilder.
+<?php
 
-Сейчас схема такая:
+require_once __DIR__ . '/json.php';
+require_once __DIR__ . '/response.php';
 
-Группа Битрикс24 → кнопка синхронизации → sitebuilder.access → доступ
+if (!function_exists('sb_user_access_code')) {
+    function sb_user_access_code(): string
+    {
+        global $USER;
+        return 'U' . (int)$USER->GetID();
+    }
+}
 
-Дальше лучше сделать так:
+if (!function_exists('sb_get_role')) {
+    function sb_get_role(int $siteId, string $accessCode): ?string
+    {
+        $access = sb_read_access();
 
-Пользователь заходит в редактор / публичную страницу
-    ↓
-SiteBuilder проверяет sitebuilder.access
-    ↓
-Если доступа нет — проверяет участие в группе Битрикс24
-    ↓
-Если пользователь есть в группе — автоматически даёт доступ по роли
+        foreach ($access as $row) {
+            if (
+                (int)($row['siteId'] ?? 0) === $siteId
+                && (string)($row['accessCode'] ?? '') === $accessCode
+            ) {
+                return (string)($row['role'] ?? '');
+            }
+        }
 
-То есть:
+        return null;
+    }
+}
 
-Владелец группы      → OWNER
-Модератор группы    → EDITOR
-Участник группы     → VIEWER
+if (!function_exists('sb_role_rank')) {
+    function sb_role_rank(?string $role): int
+    {
+        switch ((string)$role) {
+            case 'VIEWER':
+                return 1;
+            case 'EDITOR':
+                return 2;
+            case 'ADMIN':
+                return 3;
+            case 'OWNER':
+                return 4;
+            default:
+                return 0;
+        }
+    }
+}
 
-Это нужно, чтобы не было ситуации: пользователя добавили в группу Битрикс24, но он не видит сайт, пока кто-то вручную не нажмёт синхронизацию.
+if (!function_exists('sb_require_site_role')) {
+    function sb_require_site_role(int $siteId, int $minRank): void
+    {
+        $role = sb_get_role($siteId, sb_user_access_code());
 
-Мне нужен файл, где у тебя объявлены функции прав:
+        if (sb_role_rank($role) < $minRank) {
+            sb_json_error('ACCESS_DENIED', 403);
+        }
+    }
+}
 
-sb_require_owner()
-sb_require_editor()
-sb_require_viewer()
-sb_user_access_code()
+if (!function_exists('sb_require_owner')) {
+    function sb_require_owner(int $siteId): void
+    {
+        sb_require_site_role($siteId, 4);
+    }
+}
 
-Скорее всего это один из файлов:
+if (!function_exists('sb_require_admin')) {
+    function sb_require_admin(int $siteId): void
+    {
+        sb_require_site_role($siteId, 3);
+    }
+}
 
-/local/sitebuilder/lib/access.php
-/local/sitebuilder/lib/storage.php
-/local/sitebuilder/api/handlers/access.php
-/local/sitebuilder/api/bootstrap.php
+if (!function_exists('sb_require_editor')) {
+    function sb_require_editor(int $siteId): void
+    {
+        sb_require_site_role($siteId, 2);
+    }
+}
 
-Пришли файл, где есть эти функции. Я поправлю его так, чтобы права из группы Битрикс24 стали fallback-механизмом, а ручная кнопка синхронизации осталась для явного обновления таблицы sitebuilder.access.
+if (!function_exists('sb_require_viewer')) {
+    function sb_require_viewer(int $siteId): void
+    {
+        sb_require_site_role($siteId, 1);
+    }
+}
