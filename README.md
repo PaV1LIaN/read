@@ -1,6 +1,99 @@
+Ниже полный готовый файл:
+
 <?php
 
 global $USER;
+
+$siteBitrixGroupServicePath = $_SERVER['DOCUMENT_ROOT'] . '/local/sitebuilder/lib/SiteBitrixGroupService.php';
+
+if (file_exists($siteBitrixGroupServicePath)) {
+    require_once $siteBitrixGroupServicePath;
+}
+
+if (!function_exists('sb_site_create_bitrix_group_safe')) {
+    function sb_site_create_bitrix_group_safe(int $siteId, string $siteName, int $userId): array
+    {
+        $result = [
+            'bitrixGroupId' => 0,
+            'bitrixGroupError' => '',
+        ];
+
+        if ($siteId <= 0) {
+            $result['bitrixGroupError'] = 'EMPTY_SITE_ID';
+            return $result;
+        }
+
+        if ($userId <= 0) {
+            $result['bitrixGroupError'] = 'EMPTY_USER_ID';
+            return $result;
+        }
+
+        if (!class_exists('SiteBitrixGroupService')) {
+            $result['bitrixGroupError'] = 'SiteBitrixGroupService.php не подключен';
+            return $result;
+        }
+
+        try {
+            $groupId = SiteBitrixGroupService::createForSite([
+                'id' => $siteId,
+                'name' => $siteName,
+            ], $userId);
+
+            $result['bitrixGroupId'] = (int)$groupId;
+        } catch (Throwable $e) {
+            $result['bitrixGroupError'] = $e->getMessage();
+        }
+
+        return $result;
+    }
+}
+
+if (!function_exists('sb_site_apply_bitrix_group_meta')) {
+    function sb_site_apply_bitrix_group_meta(array &$sites, int $siteId, int $groupId, int $userId): ?array
+    {
+        $updatedSite = null;
+        $nowIso = date('c');
+
+        foreach ($sites as &$site) {
+            if ((int)($site['id'] ?? 0) !== $siteId) {
+                continue;
+            }
+
+            $site['bitrixGroupId'] = $groupId;
+            $site['bitrixGroupCreatedBy'] = $userId;
+            $site['bitrixGroupCreatedAt'] = $nowIso;
+            $site['updatedAt'] = $nowIso;
+            $site['updatedBy'] = $userId;
+
+            $updatedSite = $site;
+            break;
+        }
+        unset($site);
+
+        if ($groupId > 0 && function_exists('sb_db_execute')) {
+            try {
+                sb_db_execute("
+                    UPDATE sitebuilder.site
+                    SET
+                        bitrix_group_id = :bitrix_group_id,
+                        bitrix_group_created_by = :created_by,
+                        bitrix_group_created_at = now()
+                    WHERE id = :site_id
+                ", [
+                    ':bitrix_group_id' => $groupId,
+                    ':created_by' => $userId,
+                    ':site_id' => $siteId,
+                ]);
+            } catch (Throwable $e) {
+                // Не валим создание сайта из-за ошибки записи меты группы.
+            }
+        } else {
+            sb_write_sites($sites);
+        }
+
+        return $updatedSite;
+    }
+}
 
 if ($action === 'site.list') {
     $sites = sb_read_sites();
@@ -59,6 +152,8 @@ if ($action === 'site.create') {
         sb_json_error('NAME_REQUIRED', 422);
     }
 
+    $currentUserId = (int)$USER->GetID();
+
     $sites = sb_read_sites();
 
     $maxId = 0;
@@ -86,13 +181,18 @@ if ($action === 'site.create') {
         'id' => $id,
         'name' => $name,
         'slug' => $slug,
-        'createdBy' => (int)$USER->GetID(),
+        'createdBy' => $currentUserId,
         'createdAt' => date('c'),
         'updatedAt' => date('c'),
-        'updatedBy' => (int)$USER->GetID(),
+        'updatedBy' => $currentUserId,
         'homePageId' => 0,
         'diskFolderId' => 0,
         'topMenuId' => 0,
+
+        'bitrixGroupId' => 0,
+        'bitrixGroupCreatedBy' => 0,
+        'bitrixGroupCreatedAt' => '',
+
         'settings' => [
             'containerWidth' => 1100,
             'accent' => '#2563eb',
@@ -113,19 +213,56 @@ if ($action === 'site.create') {
     sb_write_sites($sites);
 
     $access = sb_read_access();
-    $access[] = [
-        'siteId' => $id,
-        'accessCode' => 'U' . (int)$USER->GetID(),
-        'role' => 'OWNER',
-        'createdBy' => (int)$USER->GetID(),
-        'createdAt' => date('c'),
-        'updatedAt' => date('c'),
-        'updatedBy' => (int)$USER->GetID(),
-    ];
-    sb_write_access($access);
+    $ownerAccessCode = 'U' . $currentUserId;
+
+    $ownerAccessExists = false;
+    foreach ($access as $row) {
+        if (
+            (int)($row['siteId'] ?? 0) === $id
+            && (string)($row['accessCode'] ?? '') === $ownerAccessCode
+        ) {
+            $ownerAccessExists = true;
+            break;
+        }
+    }
+
+    if (!$ownerAccessExists) {
+        $access[] = [
+            'siteId' => $id,
+            'accessCode' => $ownerAccessCode,
+            'role' => 'OWNER',
+            'createdBy' => $currentUserId,
+            'createdAt' => date('c'),
+            'updatedAt' => date('c'),
+            'updatedBy' => $currentUserId,
+        ];
+
+        sb_write_access($access);
+    }
+
+    $bitrixGroupMeta = sb_site_create_bitrix_group_safe($id, $name, $currentUserId);
+
+    if ((int)$bitrixGroupMeta['bitrixGroupId'] > 0) {
+        $updatedSite = sb_site_apply_bitrix_group_meta(
+            $sites,
+            $id,
+            (int)$bitrixGroupMeta['bitrixGroupId'],
+            $currentUserId
+        );
+
+        if ($updatedSite) {
+            $site = $updatedSite;
+        } else {
+            $site['bitrixGroupId'] = (int)$bitrixGroupMeta['bitrixGroupId'];
+            $site['bitrixGroupCreatedBy'] = $currentUserId;
+            $site['bitrixGroupCreatedAt'] = date('c');
+        }
+    }
 
     sb_json_ok([
         'site' => $site,
+        'bitrixGroupId' => (int)$bitrixGroupMeta['bitrixGroupId'],
+        'bitrixGroupError' => (string)$bitrixGroupMeta['bitrixGroupError'],
         'handler' => 'site',
         'file' => __FILE__,
     ]);
@@ -344,3 +481,12 @@ sb_json_error('NOT_MOVED_YET', 501, [
     'action' => $action,
     'file' => __FILE__,
 ]);
+
+После замены проверь создание сайта. В ответе должны появиться поля:
+
+{
+  "bitrixGroupId": 123,
+  "bitrixGroupError": ""
+}
+
+Если bitrixGroupId будет 0, пришли значение bitrixGroupError.
