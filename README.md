@@ -1,112 +1,301 @@
-Да, сначала сделаем безопасную кнопку «Удалить сайт» в редакторе.
+Да, возвращаемся к этапу «Создать группу Битрикс24 для старых сайтов».
 
-На первом этапе удаляем только сайт из SiteBuilder: страницы, блоки, меню, доступы, шаблоны, layout.
-Группу Битрикс24 и файлы диска пока не удаляем автоматически, чтобы случайно не потерять документы. Это лучше сделать отдельной кнопкой позже.
+Сейчас новые сайты создаются с группой автоматически, а старые сайты могут быть с:
+
+bitrixGroupId = 0
+
+Сделаем кнопку в редакторе:
+
+Создать группу Битрикс24
+
+Она будет видна только если у сайта группы ещё нет.
 
 
 ---
 
-1. Добавь кнопку в верхнюю панель
+1. В api/index.php добавь action
 
-В editor.php найди блок:
+Файл:
 
-<div class="sb-editor-topline-actions">
-    <a class="sb-btn sb-btn-light sb-btn-small" href="<?= htmlspecialchars($basePath, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?>/public.php?siteId=<?= (int)$siteId ?>" target="_blank">Открыть публичную</a>
-    <a class="sb-btn sb-btn-light sb-btn-small" href="<?= htmlspecialchars($basePath, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?>/layout.php?siteId=<?= (int)$siteId ?>">Layout</a>
-    <a class="sb-btn sb-btn-light sb-btn-small" href="<?= htmlspecialchars($basePath, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?>/menu.php?siteId=<?= (int)$siteId ?>">Меню</a>
+/local/sitebuilder/api/index.php
+
+В список site actions добавь:
+
+'site.ensureGroup',
+
+Пример:
+
+$siteActions = [
+    'site.list',
+    'site.get',
+    'site.create',
+    'site.update',
+    'site.delete',
+    'site.setHome',
+    'site.syncAccess',
+    'site.ensureGroup',
+];
+
+
+---
+
+2. В site.php добавь action site.ensureGroup
+
+Файл:
+
+/local/sitebuilder/api/handlers/site.php
+
+Вставь этот блок перед финальным:
+
+sb_json_error('NOT_MOVED_YET', 501, [
+
+Код:
+
+if ($action === 'site.ensureGroup') {
+    $siteId = (int)($_POST['siteId'] ?? 0);
+
+    if ($siteId <= 0) {
+        sb_json_error('SITE_ID_REQUIRED', 422);
+    }
+
+    sb_require_owner($siteId);
+
+    $site = sb_find_site($siteId);
+
+    if (!$site) {
+        sb_json_error('SITE_NOT_FOUND', 404);
+    }
+
+    $currentUserId = (int)$USER->GetID();
+
+    $bitrixGroupId = (int)(
+        $site['bitrixGroupId']
+        ?? $site['bitrix_group_id']
+        ?? 0
+    );
+
+    if ($bitrixGroupId > 0) {
+        sb_json_ok([
+            'site' => $site,
+            'bitrixGroupId' => $bitrixGroupId,
+            'created' => false,
+            'handler' => 'site',
+            'action' => 'site.ensureGroup',
+            'file' => __FILE__,
+        ]);
+    }
+
+    if (!class_exists('SiteBitrixGroupService')) {
+        sb_json_error('SiteBitrixGroupService.php не подключен', 500, [
+            'handler' => 'site',
+            'action' => 'site.ensureGroup',
+            'file' => __FILE__,
+        ]);
+    }
+
+    try {
+        $bitrixGroupId = SiteBitrixGroupService::createForSite([
+            'id' => $siteId,
+            'name' => (string)($site['name'] ?? ('Сайт #' . $siteId)),
+        ], $currentUserId);
+
+        if ($bitrixGroupId <= 0) {
+            throw new RuntimeException('BITRIX_GROUP_CREATE_EMPTY_ID');
+        }
+
+        sb_db_execute("
+            UPDATE sitebuilder.site
+            SET
+                bitrix_group_id = :bitrix_group_id,
+                bitrix_group_created_by = :created_by,
+                bitrix_group_created_at = now()
+            WHERE id = :site_id
+        ", [
+            ':bitrix_group_id' => $bitrixGroupId,
+            ':created_by' => $currentUserId,
+            ':site_id' => $siteId,
+        ]);
+
+        $site = sb_find_site($siteId);
+
+        sb_json_ok([
+            'site' => $site,
+            'bitrixGroupId' => $bitrixGroupId,
+            'created' => true,
+            'handler' => 'site',
+            'action' => 'site.ensureGroup',
+            'file' => __FILE__,
+        ]);
+    } catch (Throwable $e) {
+        sb_json_error($e->getMessage(), 500, [
+            'handler' => 'site',
+            'action' => 'site.ensureGroup',
+            'file' => __FILE__,
+        ]);
+    }
+}
+
+
+---
+
+3. В editor.php добавь кнопку в блок группы
+
+В блоке «Группа Битрикс24 и права» найди:
+
+<div class="sb-editor-inspector-actions">
+    <a class="sb-btn sb-btn-light" href="#" target="_blank" id="openBitrixGroupBtn">Открыть группу</a>
+    <button class="sb-btn sb-btn-primary" type="button" id="syncAccessBtn">Синхронизировать права</button>
 </div>
 
 Замени на:
 
-<div class="sb-editor-topline-actions">
-    <a class="sb-btn sb-btn-light sb-btn-small" href="<?= htmlspecialchars($basePath, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?>/public.php?siteId=<?= (int)$siteId ?>" target="_blank">Открыть публичную</a>
-    <a class="sb-btn sb-btn-light sb-btn-small" href="<?= htmlspecialchars($basePath, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?>/layout.php?siteId=<?= (int)$siteId ?>">Layout</a>
-    <a class="sb-btn sb-btn-light sb-btn-small" href="<?= htmlspecialchars($basePath, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?>/menu.php?siteId=<?= (int)$siteId ?>">Меню</a>
-    <button class="sb-btn sb-btn-danger sb-btn-small" type="button" id="deleteSiteBtn">Удалить сайт</button>
+<div class="sb-editor-inspector-actions">
+    <button class="sb-btn sb-btn-primary" type="button" id="ensureBitrixGroupBtn">Создать группу Битрикс24</button>
+    <a class="sb-btn sb-btn-light" href="#" target="_blank" id="openBitrixGroupBtn">Открыть группу</a>
+    <button class="sb-btn sb-btn-primary" type="button" id="syncAccessBtn">Синхронизировать права</button>
 </div>
 
 
 ---
 
-2. Добавь JS-функцию удаления сайта
+4. В JS обнови renderBitrixGroupPanel()
 
-Внутри <script>, рядом с другими async function, например после loadSite(), добавь:
+Найди внутри функции:
 
-async function deleteCurrentSite() {
-    var siteName = state.site && state.site.name ? state.site.name : ('siteId ' + siteId);
+var openBtn = document.getElementById('openBitrixGroupBtn');
+var syncBtn = document.getElementById('syncAccessBtn');
 
-    var firstConfirm = confirm(
-        'Удалить сайт "' + siteName + '"?\n\n' +
-        'Будут удалены страницы, блоки, меню, доступы, шаблоны и layout внутри SiteBuilder.\n' +
-        'Группа Битрикс24 и файлы диска сейчас не удаляются автоматически.'
-    );
+Сделай так:
 
-    if (!firstConfirm) {
-        return;
+var openBtn = document.getElementById('openBitrixGroupBtn');
+var syncBtn = document.getElementById('syncAccessBtn');
+var ensureBtn = document.getElementById('ensureBitrixGroupBtn');
+
+И ниже добавь:
+
+if (ensureBtn) {
+    if (groupId > 0) {
+        ensureBtn.classList.add('sb-hidden');
+    } else {
+        ensureBtn.classList.remove('sb-hidden');
+    }
+}
+
+Полная логика кнопок должна быть такой:
+
+if (openBtn) {
+    if (groupId > 0 && groupUrl) {
+        openBtn.href = groupUrl;
+        openBtn.classList.remove('sb-hidden');
+    } else {
+        openBtn.href = '#';
+        openBtn.classList.add('sb-hidden');
+    }
+}
+
+if (syncBtn) {
+    syncBtn.disabled = groupId <= 0;
+    syncBtn.title = groupId > 0 ? '' : 'Сначала нужно создать группу Битрикс24';
+
+    if (groupId > 0) {
+        syncBtn.classList.remove('sb-hidden');
+    } else {
+        syncBtn.classList.add('sb-hidden');
+    }
+}
+
+if (ensureBtn) {
+    if (groupId > 0) {
+        ensureBtn.classList.add('sb-hidden');
+    } else {
+        ensureBtn.classList.remove('sb-hidden');
+    }
+}
+
+
+---
+
+5. Добавь JS-функцию создания группы
+
+В editor.php внутри <script>, рядом с syncAccessFromBitrixGroup(), добавь:
+
+async function ensureBitrixGroup() {
+    var resultNode = document.getElementById('syncAccessResult');
+    var btn = document.getElementById('ensureBitrixGroupBtn');
+
+    if (resultNode) {
+        resultNode.classList.remove('sb-hidden', 'is-success', 'is-error');
+        resultNode.textContent = 'Создание группы Битрикс24...';
     }
 
-    var secondConfirm = confirm(
-        'Подтверди удаление ещё раз.\n\n' +
-        'Это действие нельзя будет отменить через интерфейс SiteBuilder.'
-    );
-
-    if (!secondConfirm) {
-        return;
+    if (btn) {
+        btn.disabled = true;
     }
 
     try {
-        await api('site.delete', {
-            id: siteId
+        var res = await api('site.ensureGroup', {
+            siteId: siteId
         });
 
-        alert('Сайт удалён');
+        state.site = res.site || state.site;
 
-        window.location.href = BASE_PATH + '/index.php';
+        if (resultNode) {
+            resultNode.classList.add('is-success');
+            resultNode.textContent =
+                res.created
+                    ? 'Группа Битрикс24 создана. ID группы: ' + Number(res.bitrixGroupId || 0)
+                    : 'Группа уже была создана. ID группы: ' + Number(res.bitrixGroupId || 0);
+        }
+
+        await loadSite();
     } catch (e) {
-        var message = (e && (e.error || e.message)) ? (e.error || e.message) : 'UNKNOWN_ERROR';
-        alert('Не удалось удалить сайт: ' + message);
+        if (resultNode) {
+            resultNode.classList.add('is-error');
+            resultNode.textContent = 'Ошибка создания группы: ' + ((e && (e.error || e.message)) || 'UNKNOWN_ERROR');
+        }
+    } finally {
+        if (btn) {
+            btn.disabled = false;
+        }
+
+        renderBitrixGroupPanel();
     }
 }
 
 
 ---
 
-3. Добавь обработчик кнопки
+6. Добавь обработчик кнопки
 
-Внизу, рядом с остальными addEventListener, после блока:
+Внизу, рядом с обработчиком syncAccessBtn, добавь:
 
-document.getElementById('moveBlockDownBtn').addEventListener('click', function () { moveBlock('down'); });
-
-добавь:
-
-var deleteSiteBtn = document.getElementById('deleteSiteBtn');
-if (deleteSiteBtn) {
-    deleteSiteBtn.addEventListener('click', deleteCurrentSite);
+var ensureBitrixGroupBtn = document.getElementById('ensureBitrixGroupBtn');
+if (ensureBitrixGroupBtn) {
+    ensureBitrixGroupBtn.addEventListener('click', ensureBitrixGroup);
 }
 
 
 ---
 
-4. Проверка
+Проверка
 
-Открой редактор сайта и нажми «Удалить сайт».
+Открой старый сайт, у которого:
 
-После подтверждения должен уйти запрос:
+bitrixGroupId = 0
 
-action=site.delete
-id=<siteId>
+В правом блоке должна появиться кнопка:
 
-Если пользователь владелец сайта, API вернёт:
+Создать группу Битрикс24
+
+После нажатия должен вернуться ответ:
 
 {
   "ok": true,
-  "handler": "site"
+  "bitrixGroupId": 3,
+  "created": true
 }
 
-и тебя перекинет на:
+После этого кнопка «Создать группу Битрикс24» скроется, а появятся:
 
-/local/sitebuilder/index.php
-
-Если будет ошибка, скорее всего это будет OWNER_REQUIRED или ACCESS_DENIED, потому что серверная проверка уже стоит здесь:
-
-sb_require_owner($id);
+Открыть группу
+Синхронизировать права
