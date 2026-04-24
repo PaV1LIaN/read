@@ -1,3 +1,24 @@
+Замени файл:
+
+/local/sitebuilder/index.php
+
+на этот вариант. Я добавил:
+
+отображение роли текущего пользователя;
+
+ссылку на группу Битрикс24;
+
+кнопку синхронизации прав для OWNER;
+
+кнопку удаления сайта для OWNER;
+
+кнопку редактора только для EDITOR / OWNER / ADMIN;
+
+публичную страницу для всех, кто видит сайт;
+
+поддержку site.ensureGroup, если у сайта вдруг нет группы.
+
+
 <?php
 require $_SERVER['DOCUMENT_ROOT'] . '/bitrix/modules/main/include/prolog_before.php';
 
@@ -22,6 +43,69 @@ $basePath = rtrim(str_replace($_SERVER['DOCUMENT_ROOT'], '', __DIR__), '/');
     <?php $APPLICATION->ShowHead(); ?>
     <link rel="stylesheet" href="<?= htmlspecialchars($basePath, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?>/assets/admin/admin.css">
     <link rel="stylesheet" href="<?= htmlspecialchars($basePath, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?>/assets/admin/dashboard.css">
+
+    <style>
+        .sb-role-badge {
+            display: inline-flex;
+            align-items: center;
+            min-height: 24px;
+            padding: 0 8px;
+            border-radius: 999px;
+            font-size: 12px;
+            font-weight: 700;
+            white-space: nowrap;
+        }
+
+        .sb-role-badge--owner {
+            background: #dcfce7;
+            color: #166534;
+        }
+
+        .sb-role-badge--admin {
+            background: #e0f2fe;
+            color: #075985;
+        }
+
+        .sb-role-badge--editor {
+            background: #eef2ff;
+            color: #3730a3;
+        }
+
+        .sb-role-badge--viewer {
+            background: #f3f4f6;
+            color: #374151;
+        }
+
+        .sb-group-cell {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+            min-width: 150px;
+        }
+
+        .sb-group-cell__id {
+            font-size: 12px;
+            color: #6b7280;
+        }
+
+        .sb-actions-stack {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 6px;
+            min-width: 260px;
+        }
+
+        .sb-actions-stack .sb-btn {
+            height: 30px;
+            padding: 0 9px;
+            font-size: 12px;
+        }
+
+        .sb-muted {
+            color: #9ca3af;
+            font-size: 12px;
+        }
+    </style>
 </head>
 <body class="sb-admin-body">
 <div class="sb-page">
@@ -55,11 +139,11 @@ $basePath = rtrim(str_replace($_SERVER['DOCUMENT_ROOT'], '', __DIR__), '/');
                     <tr>
                         <th>ID</th>
                         <th>Сайт</th>
+                        <th>Роль</th>
                         <th>Slug</th>
-                        <th>Домашняя страница</th>
-                        <th>Меню</th>
+                        <th>Домашняя</th>
+                        <th>Группа Битрикс24</th>
                         <th>Диск</th>
-                        <th>Создан</th>
                         <th>Изменен</th>
                         <th>Действия</th>
                     </tr>
@@ -116,6 +200,7 @@ $basePath = rtrim(str_replace($_SERVER['DOCUMENT_ROOT'], '', __DIR__), '/');
             output.textContent = data;
             return;
         }
+
         try {
             output.textContent = JSON.stringify(data, null, 2);
         } catch (e) {
@@ -136,6 +221,7 @@ $basePath = rtrim(str_replace($_SERVER['DOCUMENT_ROOT'], '', __DIR__), '/');
         if (typeof window.BX !== 'undefined' && typeof BX.bitrix_sessid === 'function') {
             return BX.bitrix_sessid();
         }
+
         return '<?= CUtil::JSEscape(bitrix_sessid()) ?>';
     }
 
@@ -156,7 +242,17 @@ $basePath = rtrim(str_replace($_SERVER['DOCUMENT_ROOT'], '', __DIR__), '/');
             }, data || {}),
             onsuccess: function (res) {
                 print(res);
-                if (typeof onSuccess === 'function') onSuccess(res);
+
+                if (res && res.ok === true) {
+                    if (typeof onSuccess === 'function') {
+                        onSuccess(res);
+                    }
+                    return;
+                }
+
+                if (typeof onFailure === 'function') {
+                    onFailure(res || {error: 'UNKNOWN'});
+                }
             },
             onfailure: function (err) {
                 print({
@@ -164,7 +260,10 @@ $basePath = rtrim(str_replace($_SERVER['DOCUMENT_ROOT'], '', __DIR__), '/');
                     error: 'AJAX_ERROR',
                     detail: err
                 });
-                if (typeof onFailure === 'function') onFailure(err);
+
+                if (typeof onFailure === 'function') {
+                    onFailure(err);
+                }
             }
         });
     }
@@ -177,7 +276,97 @@ $basePath = rtrim(str_replace($_SERVER['DOCUMENT_ROOT'], '', __DIR__), '/');
         if (flag) {
             return '<span class="sb-status-badge success">Да</span>';
         }
+
         return '<span class="sb-status-badge warning">Нет</span>';
+    }
+
+    function roleRank(role) {
+        role = String(role || '');
+
+        if (role === 'OWNER') return 4;
+        if (role === 'ADMIN') return 3;
+        if (role === 'EDITOR') return 2;
+        if (role === 'VIEWER') return 1;
+
+        return 0;
+    }
+
+    function roleBadge(role) {
+        role = String(role || 'VIEWER');
+
+        var cls = 'sb-role-badge--viewer';
+
+        if (role === 'OWNER') {
+            cls = 'sb-role-badge--owner';
+        } else if (role === 'ADMIN') {
+            cls = 'sb-role-badge--admin';
+        } else if (role === 'EDITOR') {
+            cls = 'sb-role-badge--editor';
+        }
+
+        return '<span class="sb-role-badge ' + cls + '">' + escapeHtml(role) + '</span>';
+    }
+
+    function getBitrixGroupUrl(site) {
+        var groupId = Number(site.bitrixGroupId || 0);
+
+        if (site.bitrixGroupUrl) {
+            return String(site.bitrixGroupUrl);
+        }
+
+        if (groupId > 0) {
+            return '/workgroups/group/' + groupId + '/';
+        }
+
+        return '';
+    }
+
+    function renderGroupCell(site, userRoleRank) {
+        var groupId = Number(site.bitrixGroupId || 0);
+        var groupUrl = getBitrixGroupUrl(site);
+
+        if (groupId > 0) {
+            return ''
+                + '<div class="sb-group-cell">'
+                + '  <div class="sb-group-cell__id">ID группы: ' + groupId + '</div>'
+                + '  <a class="sb-btn sb-btn-light sb-btn-small" href="' + escapeHtml(groupUrl) + '" target="_blank">Открыть группу</a>'
+                + '</div>';
+        }
+
+        if (userRoleRank >= 4) {
+            return ''
+                + '<div class="sb-group-cell">'
+                + '  <span class="sb-muted">Группа не создана</span>'
+                + '  <button class="sb-btn sb-btn-primary sb-btn-small" type="button" data-action="ensure-group" data-site-id="' + Number(site.id || 0) + '">Создать группу</button>'
+                + '</div>';
+        }
+
+        return '<span class="sb-muted">Нет группы</span>';
+    }
+
+    function renderActions(site, userRoleRank) {
+        var siteId = Number(site.id || 0);
+        var groupId = Number(site.bitrixGroupId || 0);
+
+        var html = '<div class="sb-actions-stack">';
+
+        html += '<a class="sb-btn sb-btn-light sb-btn-small" href="' + BASE_PATH + '/public.php?siteId=' + siteId + '" target="_blank">Публичная</a>';
+
+        if (userRoleRank >= 2) {
+            html += '<a class="sb-btn sb-btn-primary sb-btn-small" href="' + BASE_PATH + '/editor.php?siteId=' + siteId + '">Редактор</a>';
+        }
+
+        if (userRoleRank >= 4 && groupId > 0) {
+            html += '<button class="sb-btn sb-btn-light sb-btn-small" type="button" data-action="sync-access" data-site-id="' + siteId + '">Синхр. права</button>';
+        }
+
+        if (userRoleRank >= 4) {
+            html += '<button class="sb-btn sb-btn-danger sb-btn-small" type="button" data-action="delete-site" data-site-id="' + siteId + '" data-site-name="' + escapeHtml(site.name || '') + '">Удалить</button>';
+        }
+
+        html += '</div>';
+
+        return html;
     }
 
     function renderSitesTable(sites) {
@@ -190,10 +379,13 @@ $basePath = rtrim(str_replace($_SERVER['DOCUMENT_ROOT'], '', __DIR__), '/');
         sitesCountBadge.textContent = sites.length + ' сайтов';
 
         var html = '';
+
         for (var i = 0; i < sites.length; i++) {
             var s = sites[i];
             var status = siteStatus(s);
             var statusClass = status === 'published' ? 'success' : 'warning';
+            var currentUserRole = String(s.currentUserRole || 'VIEWER');
+            var currentUserRoleRank = roleRank(currentUserRole);
 
             html += ''
                 + '<tr>'
@@ -201,18 +393,16 @@ $basePath = rtrim(str_replace($_SERVER['DOCUMENT_ROOT'], '', __DIR__), '/');
                 + '  <td>'
                 + '    <div class="sb-site-cell">'
                 + '      <div class="sb-site-cell__title">' + escapeHtml(s.name || '') + '</div>'
-                + '      <div class="sb-site-cell__meta">' + escapeHtml(s.code || '') + '</div>'
+                + '      <div class="sb-site-cell__meta">created: ' + escapeHtml(s.createdAt || '—') + '</div>'
                 + '    </div>'
                 + '  </td>'
+                + '  <td>' + roleBadge(currentUserRole) + '</td>'
                 + '  <td>' + escapeHtml(s.slug || '') + '</td>'
                 + '  <td><span class="sb-status-badge ' + statusClass + '">' + escapeHtml(status) + '</span></td>'
-                + '  <td>' + yesNoBadge(Number(s.topMenuId || 0) > 0) + '</td>'
+                + '  <td>' + renderGroupCell(s, currentUserRoleRank) + '</td>'
                 + '  <td>' + yesNoBadge(Number(s.diskFolderId || 0) > 0) + '</td>'
-                + '  <td>' + escapeHtml(s.createdAt || '—') + '</td>'
                 + '  <td>' + escapeHtml(s.updatedAt || '—') + '</td>'
-                + '  <td>'
-                + '    <a class="sb-btn sb-btn-light sb-btn-small" href="' + BASE_PATH + '/editor.php?siteId=' + Number(s.id || 0) + '">Открыть</a>'
-                + '  </td>'
+                + '  <td>' + renderActions(s, currentUserRoleRank) + '</td>'
                 + '</tr>';
         }
 
@@ -231,7 +421,9 @@ $basePath = rtrim(str_replace($_SERVER['DOCUMENT_ROOT'], '', __DIR__), '/');
             var haystack = [
                 site.name || '',
                 site.slug || '',
-                site.code || ''
+                site.code || '',
+                site.currentUserRole || '',
+                String(site.bitrixGroupId || '')
             ].join(' ').toLowerCase();
 
             return haystack.indexOf(query) !== -1;
@@ -278,14 +470,121 @@ $basePath = rtrim(str_replace($_SERVER['DOCUMENT_ROOT'], '', __DIR__), '/');
             nameInput.value = '';
             slugInput.value = '';
             loadSites();
+        }, function (err) {
+            var message = err && (err.error || err.message) ? (err.error || err.message) : 'UNKNOWN_ERROR';
+            alert('Не удалось создать сайт: ' + message);
         });
     }
 
+    function syncAccess(siteId) {
+        api('site.syncAccess', {
+            siteId: siteId
+        }, function (res) {
+            var result = res.result || {};
+
+            alert(
+                'Права синхронизированы.\n\n' +
+                'Создано: ' + Number(result.created || 0) + '\n' +
+                'Обновлено: ' + Number(result.updated || 0) + '\n' +
+                'Удалено: ' + Number(result.removed || 0) + '\n' +
+                'Без изменений: ' + Number(result.kept || 0)
+            );
+
+            loadSites();
+        }, function (err) {
+            var message = err && (err.error || err.message) ? (err.error || err.message) : 'UNKNOWN_ERROR';
+            alert('Не удалось синхронизировать права: ' + message);
+        });
+    }
+
+    function ensureGroup(siteId) {
+        api('site.ensureGroup', {
+            siteId: siteId
+        }, function (res) {
+            alert(
+                res.created
+                    ? 'Группа Битрикс24 создана. ID: ' + Number(res.bitrixGroupId || 0)
+                    : 'Группа уже была создана. ID: ' + Number(res.bitrixGroupId || 0)
+            );
+
+            loadSites();
+        }, function (err) {
+            var message = err && (err.error || err.message) ? (err.error || err.message) : 'UNKNOWN_ERROR';
+            alert('Не удалось создать группу: ' + message);
+        });
+    }
+
+    function deleteSite(siteId, siteName) {
+        var name = siteName || ('siteId ' + siteId);
+
+        var firstConfirm = confirm(
+            'Удалить сайт "' + name + '"?\n\n' +
+            'Будут удалены страницы, блоки, меню, доступы, шаблоны и layout внутри SiteBuilder.\n' +
+            'Группа Битрикс24 и файлы диска сейчас не удаляются автоматически.'
+        );
+
+        if (!firstConfirm) {
+            return;
+        }
+
+        var secondConfirm = confirm(
+            'Подтверди удаление ещё раз.\n\n' +
+            'Это действие нельзя будет отменить через интерфейс SiteBuilder.'
+        );
+
+        if (!secondConfirm) {
+            return;
+        }
+
+        api('site.delete', {
+            id: siteId
+        }, function () {
+            alert('Сайт удалён');
+            loadSites();
+        }, function (err) {
+            var message = err && (err.error || err.message) ? (err.error || err.message) : 'UNKNOWN_ERROR';
+            alert('Не удалось удалить сайт: ' + message);
+        });
+    }
+
+    sitesTableBody.addEventListener('click', function (e) {
+        var btn = e.target.closest('[data-action]');
+        if (!btn) {
+            return;
+        }
+
+        var action = btn.getAttribute('data-action');
+        var siteId = Number(btn.getAttribute('data-site-id') || 0);
+
+        if (siteId <= 0) {
+            return;
+        }
+
+        if (action === 'sync-access') {
+            syncAccess(siteId);
+            return;
+        }
+
+        if (action === 'ensure-group') {
+            ensureGroup(siteId);
+            return;
+        }
+
+        if (action === 'delete-site') {
+            deleteSite(siteId, btn.getAttribute('data-site-name') || '');
+        }
+    });
+
     document.getElementById('createSiteBtn').addEventListener('click', createSite);
+
     document.getElementById('createSiteQuickBtn').addEventListener('click', function () {
         document.getElementById('siteName').focus();
-        window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' });
+        window.scrollTo({
+            top: document.body.scrollHeight,
+            behavior: 'smooth'
+        });
     });
+
     document.getElementById('reloadBtn').addEventListener('click', loadSites);
     searchInput.addEventListener('input', applySearch);
 
@@ -305,3 +604,9 @@ $basePath = rtrim(str_replace($_SERVER['DOCUMENT_ROOT'], '', __DIR__), '/');
 </script>
 </body>
 </html>
+
+После замены открой:
+
+/local/sitebuilder/index.php
+
+и проверь, что в таблице появились роль, группа Битрикс24 и кнопки с учетом прав.
