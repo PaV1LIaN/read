@@ -1,58 +1,98 @@
-Дальше обязательно закрываем создание сайта на сервере, потому что кнопку мы скрыли, но обычный пользователь теоретически может дернуть API руками.
+<?php
 
-1. Закрываем site.create для не-админов
+require_once __DIR__ . '/bootstrap.php';
 
-Файл:
+$action = (string)($_POST['action'] ?? '');
 
-/local/sitebuilder/api/handlers/site.php
-
-Найди блок:
-
-if ($action === 'site.create') {
-
-И сразу после него добавь:
-
-if (!$USER->IsAdmin()) {
-    sb_json_error('BITRIX_ADMIN_REQUIRED', 403);
+if ($action === 'ping') {
+    require __DIR__ . '/handlers/common.php';
+    exit;
 }
 
-Должно получиться так:
-
-if ($action === 'site.create') {
-    if (!$USER->IsAdmin()) {
-        sb_json_error('BITRIX_ADMIN_REQUIRED', 403);
-    }
-
-    $name = trim((string)($_POST['name'] ?? ''));
-    if ($name === '') {
-        sb_json_error('NAME_REQUIRED', 422);
-    }
-
-    // дальше твой существующий код создания сайта
+if (
+    $action === 'site.list' ||
+    $action === 'site.get' ||
+    $action === 'site.create' ||
+    $action === 'site.update' ||
+    $action === 'site.delete' ||
+    $action === 'site.setHome' ||
+	$action === 'site.syncAccess' ||
+    $action === 'site.ensureGroup'
+) {
+    require __DIR__ . '/handlers/site.php';
+    exit;
 }
 
-После этого обычный пользователь не сможет создать сайт даже через консоль/API.
+if (
+    $action === 'page.list' ||
+    $action === 'page.create' ||
+    $action === 'page.delete' ||
+    $action === 'page.duplicate' ||
+    $action === 'page.updateMeta' ||
+    $action === 'page.setStatus' ||
+    $action === 'page.setParent' ||
+    $action === 'page.move'
+) {
+    require __DIR__ . '/handlers/page.php';
+    exit;
+}
 
+if (
+    $action === 'menu.list' ||
+    $action === 'menu.create' ||
+    $action === 'menu.update' ||
+    $action === 'menu.delete' ||
+    $action === 'menu.setTop' ||
+    $action === 'menu.item.add' ||
+    $action === 'menu.item.update' ||
+    $action === 'menu.item.delete' ||
+    $action === 'menu.item.move'
+) {
+    require __DIR__ . '/handlers/menu.php';
+    exit;
+}
 
----
+if (
+    $action === 'block.list' ||
+    $action === 'block.create' ||
+    $action === 'block.update' ||
+    $action === 'block.delete' ||
+    $action === 'block.duplicate' ||
+    $action === 'block.move' ||
+    $action === 'block.reorder'
+) {
+    require __DIR__ . '/handlers/block.php';
+    exit;
+}
 
-2. После этого я бы сделал следующий этап
+if (
+    $action === 'file.list' ||
+    $action === 'file.upload' ||
+    $action === 'file.delete'
+) {
+    require __DIR__ . '/handlers/file.php';
+    exit;
+}
 
-Следующий логичный шаг — разделить режимы главной страницы:
+if (
+    $action === 'layout.get' ||
+    $action === 'layout.updateSettings' ||
+    $action === 'layout.block.list' ||
+    $action === 'layout.block.create' ||
+    $action === 'layout.block.update' ||
+    $action === 'layout.block.delete' ||
+    $action === 'layout.block.move'
+) {
+    require __DIR__ . '/handlers/layout.php';
+    exit;
+}
 
-Администратор Битрикс24:
-- видит все сайты;
-- может создавать сайты;
-- может удалять сайты;
-- может открыть группу;
-- может синхронизировать права.
+if (strpos($action, 'page.') === 0) {
+    require __DIR__ . '/handlers/page.php';
+    exit;
+}
 
-Обычный пользователь:
-- видит только сайты, где есть доступ через sitebuilder.access или группу Битрикс24;
-- может открыть публичную страницу;
-- может открыть редактор только если EDITOR/OWNER;
-- не видит создание сайта.
-
-Сейчас site.list уже фильтрует по доступу. Но администратору Битрикс24 лучше показывать все сайты, даже если он не записан в sitebuilder.access.
-
-Для этого следующим шагом поправим site.list.
+sb_json_error('UNKNOWN_ACTION', 400, [
+    'action' => $action,
+    'file' => __FILE__,
+]);
