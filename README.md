@@ -1,14 +1,4 @@
-GET по ссылке в браузере — это нормально, там будет:
-
-{
-  "ok": false,
-  "error": "METHOD_NOT_ALLOWED"
-}
-
-А вот POST 403 почти наверняка из-за того, что в запросе нет sessid.
-
-Попробуй так в консоли:
-
+GET https://portal24.itsnn.ru/local/sitebuilder/api.php?action=site.syncAccess 405 (Method Not Allowed)
 const fd = new FormData();
 
 fd.append('siteId', '11');
@@ -35,23 +25,9 @@ fetch('/local/sitebuilder/api.php?action=site.syncAccess', {
     } catch (e) {}
   })
   .catch(console.error);
-
-Если всё нормально, должен быть ответ примерно:
-
-{
-  "ok": true,
-  "result": {
-    "siteId": 11,
-    "bitrixGroupId": 2,
-    "created": 0,
-    "updated": 0,
-    "removed": 0,
-    "kept": 1
-  }
-}
-
-Если снова будет 403, пришли именно то, что выведет:
-
+Promise {<pending>}
+VM30:12  POST https://portal24.itsnn.ru/local/sitebuilder/api.php?action=site.syncAccess 403 (Forbidden)
+(anonymous) @ VM30:12
 console.log('TEXT:', text);
-
-Потому что там будет понятно, это BAD_SESSID, ACCESS_DENIED, OWNER_REQUIRED или другая ошибка.
+VM34:1 Uncaught ReferenceError: text is not defined
+    at <anonymous>:1:22
