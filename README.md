@@ -1,73 +1,202 @@
-Отлично. Тогда следующий шаг — доделать связку группы Битрикс24 с диском сайта.
+<?php
 
-Сейчас у нас уже есть:
+use Bitrix\Disk\Folder;
 
-sitebuilder.site.bitrix_group_id
-site.syncAccess
-кнопка синхронизации прав
+class SiteDiskInitializer
+{
+    /**
+     * Укажи ID папки в "Общий диск", внутри которой нужно создавать папки сайтов.
+     * Например, заранее руками создай в Общем диске папку "SiteBuilder" и подставь ее ID сюда.
+     */
+    protected const SHARED_ROOT_FOLDER_ID = 250;
 
-Теперь надо сделать так, чтобы диск сайта хранился не просто в общей папке, а был логически связан с группой сайта.
+    public static function ensureSiteRootFolder(int $siteId, int $currentUserId, string $siteName = ''): int
+    {
+        $existing = SiteRepository::getRootDiskFolderId($siteId);
+        if ($existing !== null && $existing > 0) {
+            return $existing;
+        }
 
-Следующий этап
+        $site = SiteRepository::getById($siteId);
+        if (!$site) {
+            throw new RuntimeException('SITE_NOT_FOUND');
+        }
 
-Делаем метод:
+        $sharedRootFolder = self::getSharedRootFolder();
+        if (!$sharedRootFolder instanceof Folder) {
+            throw new RuntimeException('SHARED_DISK_ROOT_FOLDER_NOT_FOUND');
+        }
 
-Сайт → bitrixGroupId → Диск группы → папка SiteBuilder/site_<id>
+        $folderBaseName = $siteName !== ''
+            ? ('Сайт ' . $siteName)
+            : ('Сайт ' . (string)$site['name']);
 
-То есть структура должна стать такой:
+        $folderName = DiskNameSanitizer::sanitizeFolderName($folderBaseName, 'Сайт');
 
-Группа Битрикс24: SiteBuilder: 321
-└── Диск группы
-    └── SiteBuilder
-        └── site_11
-            └── файлы сайта
+        $siteFolder = $sharedRootFolder->addSubFolder([
+            'NAME' => $folderName,
+            'CREATED_BY' => $currentUserId,
+        ], [], true);
 
-Это будет правильнее, чем хранить все сайты в одном общем диске.
+        if (!$siteFolder instanceof Folder) {
+            $errors = [];
 
-Почему это важно
+            if (method_exists($sharedRootFolder, 'getErrors')) {
+                foreach ((array)$sharedRootFolder->getErrors() as $error) {
+                    if (is_object($error) && method_exists($error, 'getMessage')) {
+                        $errors[] = $error->getMessage();
+                    } else {
+                        $errors[] = (string)$error;
+                    }
+                }
+            }
 
-Тогда получится нормальная архитектура:
+            throw new RuntimeException(
+                'DISK_SITE_ROOT_CREATE_ERROR' . (!empty($errors) ? ': ' . implode(' | ', $errors) : '')
+            );
+        }
 
-Группа Битрикс24 отвечает за участников
-sitebuilder.access отвечает за точные роли конструктора
-Диск группы отвечает за файлы сайта
+        SiteRepository::updateRootDiskFolderId($siteId, (int)$siteFolder->getId());
 
-И дальше можно будет сделать:
+        return (int)$siteFolder->getId();
+    }
 
-Добавили пользователя в группу Битрикс24
-→ нажали "Синхронизировать права"
-→ пользователь получил доступ к сайту
-→ диск сайта тоже живет внутри рабочей группы
+    protected static function getSharedRootFolder(): Folder
+    {
+        $folderId = (int)self::SHARED_ROOT_FOLDER_ID;
+        if ($folderId <= 0) {
+            throw new RuntimeException('SHARED_ROOT_FOLDER_ID_NOT_CONFIGURED');
+        }
 
-Что мне нужно от тебя
+        $folder = Folder::loadById($folderId);
+        if (!$folder instanceof Folder) {
+            throw new RuntimeException('SHARED_ROOT_FOLDER_NOT_FOUND');
+        }
 
-Пришли текущие файлы:
-
-/local/sitebuilder/components/disk/lib/SiteDiskInitializer.php
-/local/sitebuilder/components/disk/lib/DiskRootResolver.php
-
-Если есть ещё файл, где выбирается хранилище диска, например:
-
-DiskBitrixStorageAdapter.php
-DiskContextFactory.php
-DiskSettingsRepository.php
-
-то лучше пришли и его, но начать можно с первых двух.
-
-Я поправлю так, чтобы:
-
-1. сначала искался bitrixGroupId сайта;
-
-
-2. если он есть — использовался диск группы;
-
-
-3. если диска группы нет или группа не найдена — был fallback на текущий общий диск;
-
-
-4. папка сайта создавалась в группе автоматически;
-
-
-5. текущий компонент disk продолжил работать без переделки фронта.
+        return $folder;
+    }
+}
 
 
+<?php
+
+class DiskRootResolver
+{
+    public static function resolve(DiskContext $context, array $settings, bool $autoCreate = false): ?int
+    {
+        $result = self::resolveWithSource($context, $settings, $autoCreate);
+        return $result['rootFolderId'];
+    }
+
+    public static function resolveWithSource(DiskContext $context, array $settings, bool $autoCreate = false): array
+    {
+        $rootMode = (string)($settings['rootMode'] ?? 'site');
+
+        if ($rootMode === 'block') {
+            if (!empty($settings['rootFolderId'])) {
+                return [
+                    'rootFolderId' => (int)$settings['rootFolderId'],
+                    'source' => 'block',
+                ];
+            }
+
+            if ($autoCreate) {
+                $folderId = BlockDiskInitializer::ensureBlockRootFolder(
+                    $context->siteId,
+                    $context->pageId,
+                    $context->blockId,
+                    $context->currentUserId,
+                    (string)($settings['title'] ?? '')
+                );
+
+                return [
+                    'rootFolderId' => $folderId,
+                    'source' => 'block',
+                ];
+            }
+        }
+
+        $siteRootFolderId = SiteRepository::getRootDiskFolderId($context->siteId);
+        if ($siteRootFolderId !== null && $siteRootFolderId > 0) {
+            return [
+                'rootFolderId' => $siteRootFolderId,
+                'source' => 'site',
+            ];
+        }
+
+        if ($autoCreate && !empty($settings['useSiteRootFallback'])) {
+            $site = SiteRepository::getById($context->siteId);
+            if (!$site) {
+                throw new RuntimeException('SITE_NOT_FOUND');
+            }
+
+            $folderId = SiteDiskInitializer::ensureSiteRootFolder(
+                $context->siteId,
+                $context->currentUserId,
+                (string)$site['name']
+            );
+
+            return [
+                'rootFolderId' => $folderId,
+                'source' => 'site',
+            ];
+        }
+
+        return [
+            'rootFolderId' => null,
+            'source' => 'none',
+        ];
+    }
+}
+
+<?php
+
+class DiskSettingsRepository
+{
+    public static function getByBlockId(int $blockId): array
+    {
+        $block = DiskSitebuilderBridge::getBlockById($blockId);
+        if (!$block) {
+            throw new RuntimeException('BLOCK_NOT_FOUND');
+        }
+
+        return DiskSitebuilderBridge::normalizeDiskProps($block['props'] ?? []);
+    }
+
+    public static function createDefault(array $data): bool
+    {
+        $blockId = (int)($data['block_id'] ?? 0);
+        if ($blockId <= 0) {
+            throw new RuntimeException('INVALID_BLOCK_ID');
+        }
+
+        $default = DiskSitebuilderBridge::normalizeDiskProps([]);
+        return DiskSitebuilderBridge::saveBlockProps($blockId, $default);
+    }
+
+    public static function save(int $blockId, array $settings): bool
+    {
+        $current = self::getByBlockId($blockId);
+        $merged = array_merge($current, $settings);
+        $normalized = DiskSitebuilderBridge::normalizeDiskProps($merged);
+
+        return DiskSitebuilderBridge::saveBlockProps($blockId, $normalized);
+    }
+
+    public static function ensureExistsForBlock(int $blockId, int $siteId, int $pageId, ?int $createdBy = null): array
+    {
+        $block = DiskSitebuilderBridge::getBlockById($blockId);
+        if (!$block) {
+            throw new RuntimeException('BLOCK_NOT_FOUND');
+        }
+
+        $props = $block['props'] ?? [];
+        $normalized = DiskSitebuilderBridge::normalizeDiskProps($props);
+
+        if (($block['props'] ?? []) !== $normalized) {
+            DiskSitebuilderBridge::saveBlockProps($blockId, $normalized);
+        }
+
+        return $normalized;
+    }
+}
