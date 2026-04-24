@@ -1,8 +1,4 @@
-Замени файл:
-
-/local/sitebuilder/editor.php
-
-на этот полный код:
+Вот полный index.php:
 
 <?php
 require $_SERVER['DOCUMENT_ROOT'] . '/bitrix/modules/main/include/prolog_before.php';
@@ -19,909 +15,310 @@ CJSCore::Init(['ajax']);
 header('Content-Type: text/html; charset=UTF-8');
 
 $basePath = rtrim(str_replace($_SERVER['DOCUMENT_ROOT'], '', __DIR__), '/');
-$siteId = (int)($_GET['siteId'] ?? 0);
-
-if ($siteId <= 0) {
-    ?>
-    <!doctype html>
-    <html lang="ru">
-    <head>
-        <meta charset="UTF-8">
-        <title>SiteBuilder / Editor</title>
-        <?php $APPLICATION->ShowHead(); ?>
-        <link rel="stylesheet" href="<?= htmlspecialchars($basePath, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?>/assets/admin/admin.css">
-    </head>
-    <body class="sb-admin-body">
-    <div class="sb-page">
-        <h1 class="sb-title">Не передан siteId</h1>
-        <p><a class="sb-back-link" href="<?= htmlspecialchars($basePath, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?>/index.php">Вернуться к списку сайтов</a></p>
-    </div>
-    </body>
-    </html>
-    <?php
-    exit;
-}
+$canCreateSite = $USER->IsAdmin();
+$isBitrixAdmin = $USER->IsAdmin();
 ?>
 <!doctype html>
 <html lang="ru">
 <head>
     <meta charset="UTF-8">
-    <title>SiteBuilder / Editor</title>
+    <title>SiteBuilder</title>
     <?php $APPLICATION->ShowHead(); ?>
     <link rel="stylesheet" href="<?= htmlspecialchars($basePath, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?>/assets/admin/admin.css">
+    <link rel="stylesheet" href="<?= htmlspecialchars($basePath, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?>/assets/admin/dashboard.css">
+
     <style>
-        .sb-editor-shell {
-            display: grid;
-            grid-template-columns: 320px minmax(0, 1fr) 360px;
-            gap: 20px;
-            align-items: start;
-        }
-
-        .sb-editor-col {
-            min-width: 0;
-        }
-
-        .sb-editor-sticky {
-            position: sticky;
-            top: 16px;
-        }
-
-        .sb-editor-topline {
-            display: flex;
-            justify-content: space-between;
-            align-items: flex-start;
-            gap: 16px;
-            margin-bottom: 18px;
-        }
-
-        .sb-editor-topline-note {
-            margin: 0;
-            color: #6b7280;
-            font-size: 14px;
-            max-width: 860px;
-            line-height: 1.5;
-        }
-
-        .sb-editor-topline-actions {
-            display: flex;
-            flex-wrap: wrap;
-            gap: 8px;
-            justify-content: flex-end;
-        }
-
-        .sb-editor-section-head {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            gap: 12px;
-            margin-bottom: 14px;
-        }
-
-        .sb-editor-section-head .sb-panel-title {
-            margin: 0;
-        }
-
-        .sb-editor-create {
-            padding-bottom: 14px;
-            margin-bottom: 14px;
-            border-bottom: 1px solid #eef2f7;
-        }
-
-        .sb-editor-pages {
-            display: flex;
-            flex-direction: column;
-            gap: 10px;
-        }
-
-        .sb-editor-page-item {
-            border: 1px solid #e5e7eb;
-            border-radius: 14px;
-            background: #fafafa;
-            padding: 12px;
-            cursor: pointer;
-            transition: border-color .15s ease, background .15s ease, box-shadow .15s ease;
-        }
-
-        .sb-editor-page-item:hover {
-            border-color: #c7d2fe;
-            background: #fcfcff;
-        }
-
-        .sb-editor-page-item.is-active {
-            border-color: #2563eb;
-            background: #eff6ff;
-            box-shadow: 0 6px 18px rgba(37, 99, 235, 0.12);
-        }
-
-        .sb-editor-page-top {
-            display: flex;
-            justify-content: space-between;
-            align-items: flex-start;
-            gap: 12px;
-        }
-
-        .sb-editor-page-title {
-            margin: 0 0 6px;
-            font-size: 15px;
-            font-weight: 700;
-            color: #111827;
-            line-height: 1.2;
-        }
-
-        .sb-editor-page-meta {
-            display: flex;
-            flex-wrap: wrap;
-            gap: 6px;
-            margin-top: 8px;
-        }
-
-        .sb-editor-chip {
+        .sb-role-badge {
             display: inline-flex;
             align-items: center;
             min-height: 24px;
             padding: 0 8px;
             border-radius: 999px;
-            background: #f3f4f6;
-            color: #4b5563;
             font-size: 12px;
-            font-weight: 600;
+            font-weight: 700;
+            white-space: nowrap;
         }
 
-        .sb-editor-chip--blue {
-            background: #eef2ff;
-            color: #3730a3;
-        }
-
-        .sb-editor-chip--green {
+        .sb-role-badge--owner {
             background: #dcfce7;
             color: #166534;
         }
 
-        .sb-editor-chip--yellow {
-            background: #fef3c7;
-            color: #92400e;
+        .sb-role-badge--admin {
+            background: #e0f2fe;
+            color: #075985;
         }
 
-        .sb-editor-page-actions,
-        .sb-editor-block-actions,
-        .sb-editor-inspector-actions {
-            display: flex;
-            flex-wrap: wrap;
-            gap: 8px;
-            margin-top: 12px;
-        }
-
-        .sb-editor-page-actions .sb-btn,
-        .sb-editor-block-actions .sb-btn,
-        .sb-editor-inspector-actions .sb-btn {
-            height: 32px;
-            padding: 0 10px;
-            font-size: 12px;
-        }
-
-        .sb-editor-canvas {
-            background: #ffffff;
-            border: 1px solid #e5e7eb;
-            border-radius: 18px;
-            box-shadow: 0 2px 8px rgba(15, 23, 42, 0.04);
-            overflow: hidden;
-        }
-
-        .sb-editor-canvas-head {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            gap: 12px;
-            padding: 14px 18px;
-            border-bottom: 1px solid #e5e7eb;
-            background: #f9fafb;
-        }
-
-        .sb-editor-canvas-title {
-            margin: 0;
-            font-size: 18px;
-            font-weight: 700;
-            color: #111827;
-        }
-
-        .sb-editor-canvas-sub {
-            margin: 4px 0 0;
-            font-size: 13px;
-            color: #6b7280;
-        }
-
-        .sb-editor-canvas-body {
-            background: #f8fafc;
-            padding: 24px;
-            min-height: 720px;
-        }
-
-        .sb-editor-page {
-            max-width: 980px;
-            margin: 0 auto;
-            background: #fff;
-            border: 1px solid #e5e7eb;
-            border-radius: 20px;
-            min-height: 620px;
-            padding: 24px;
-            box-shadow: 0 12px 28px rgba(15, 23, 42, 0.06);
-        }
-
-        .sb-editor-page-heading {
-            margin: 0 0 18px;
-            font-size: 30px;
-            line-height: 1.15;
-            font-weight: 700;
-            color: #111827;
-        }
-
-        .sb-editor-addbar {
-            display: grid;
-            grid-template-columns: repeat(4, minmax(0, 1fr));
-            gap: 10px;
-            margin-bottom: 18px;
-        }
-
-        .sb-editor-add-card {
-            border: 1px solid #dbe3f0;
-            border-radius: 14px;
-            background: #fff;
-            padding: 12px;
-            text-align: left;
-            cursor: pointer;
-            transition: border-color .15s ease, transform .15s ease, box-shadow .15s ease;
-        }
-
-        .sb-editor-add-card:hover {
-            border-color: #93c5fd;
-            transform: translateY(-1px);
-            box-shadow: 0 8px 18px rgba(37, 99, 235, 0.08);
-        }
-
-        .sb-editor-add-card__title {
-            display: block;
-            font-size: 14px;
-            font-weight: 700;
-            color: #111827;
-            margin-bottom: 4px;
-        }
-
-        .sb-editor-add-card__text {
-            display: block;
-            font-size: 12px;
-            color: #6b7280;
-            line-height: 1.4;
-        }
-
-        .sb-editor-blocks {
-            display: flex;
-            flex-direction: column;
-            gap: 14px;
-        }
-
-        .sb-editor-block {
-            border: 1px solid #e5e7eb;
-            border-radius: 16px;
-            background: #fff;
-            padding: 14px;
-            transition: border-color .15s ease, box-shadow .15s ease, background .15s ease;
-            cursor: pointer;
-        }
-
-        .sb-editor-block:hover {
-            border-color: #c7d2fe;
-            box-shadow: 0 8px 20px rgba(37, 99, 235, 0.08);
-        }
-
-        .sb-editor-block.is-active {
-            border-color: #2563eb;
-            background: #f8fbff;
-            box-shadow: 0 10px 24px rgba(37, 99, 235, 0.12);
-        }
-
-        .sb-editor-block-head {
-            display: flex;
-            justify-content: space-between;
-            align-items: flex-start;
-            gap: 12px;
-            margin-bottom: 10px;
-        }
-
-        .sb-editor-block-title {
-            margin: 0;
-            font-size: 14px;
-            font-weight: 700;
-            color: #111827;
-        }
-
-        .sb-editor-block-preview {
-            border: 1px solid #eef2f7;
-            background: #fff;
-            border-radius: 12px;
-            padding: 12px;
-            font-size: 14px;
-            line-height: 1.6;
-            color: #374151;
-            min-height: 52px;
-        }
-
-        .sb-editor-empty-big {
-            padding: 30px 20px;
-            text-align: center;
-            color: #6b7280;
-            border: 1px dashed #d1d5db;
-            border-radius: 16px;
-            background: #fff;
-        }
-
-        .sb-editor-empty-big strong {
-            display: block;
-            color: #111827;
-            margin-bottom: 6px;
-            font-size: 16px;
-        }
-
-        .sb-editor-note {
-            font-size: 13px;
-            color: #6b7280;
-            line-height: 1.5;
-            margin-top: -2px;
-            margin-bottom: 12px;
-        }
-
-        .sb-editor-json-actions {
-            display: flex;
-            flex-wrap: wrap;
-            gap: 8px;
-            margin-top: 12px;
-        }
-
-        .sb-editor-divider {
-            border-top: 1px solid #eef2f7;
-            margin-top: 14px;
-        }
-
-        .sb-editor-group-box {
-            border: 1px solid #e5e7eb;
-            border-radius: 14px;
-            background: #f9fafb;
-            padding: 12px;
-        }
-
-        .sb-editor-group-row {
-            display: flex;
-            justify-content: space-between;
-            gap: 12px;
-            font-size: 13px;
-            margin-bottom: 8px;
-        }
-
-        .sb-editor-group-row:last-child {
-            margin-bottom: 0;
-        }
-
-        .sb-editor-group-label {
-            color: #6b7280;
-        }
-
-        .sb-editor-group-value {
-            color: #111827;
-            font-weight: 700;
-            text-align: right;
-        }
-
-        .sb-editor-sync-result {
-            margin-top: 12px;
-            padding: 10px 12px;
-            border-radius: 12px;
-            background: #f8fafc;
-            border: 1px solid #e5e7eb;
-            font-size: 13px;
-            color: #374151;
-            line-height: 1.5;
-            white-space: pre-line;
-        }
-
-        .sb-editor-sync-result.is-success {
-            background: #f0fdf4;
-            border-color: #bbf7d0;
-            color: #166534;
-        }
-
-        .sb-editor-sync-result.is-error {
-            background: #fef2f2;
-            border-color: #fecaca;
-            color: #991b1b;
-        }
-
-        .sb-access-form {
-            display: grid;
-            grid-template-columns: 1fr 130px;
-            gap: 10px;
-            align-items: end;
-        }
-
-        .sb-access-list {
-            display: flex;
-            flex-direction: column;
-            gap: 8px;
-            margin-top: 14px;
-        }
-
-        .sb-access-item {
-            display: flex;
-            justify-content: space-between;
-            gap: 10px;
-            align-items: center;
-            padding: 10px 12px;
-            border: 1px solid #e5e7eb;
-            border-radius: 12px;
-            background: #f9fafb;
-        }
-
-        .sb-access-user {
-            min-width: 0;
-        }
-
-        .sb-access-user__name {
-            font-size: 13px;
-            font-weight: 700;
-            color: #111827;
-            overflow: hidden;
-            text-overflow: ellipsis;
-            white-space: nowrap;
-        }
-
-        .sb-access-user__meta {
-            margin-top: 3px;
-            font-size: 12px;
-            color: #6b7280;
-        }
-
-        .sb-access-role {
-            display: inline-flex;
-            align-items: center;
-            min-height: 24px;
-            padding: 0 8px;
-            border-radius: 999px;
+        .sb-role-badge--editor {
             background: #eef2ff;
             color: #3730a3;
+        }
+
+        .sb-role-badge--viewer {
+            background: #f3f4f6;
+            color: #374151;
+        }
+
+        .sb-group-cell {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+            min-width: 150px;
+        }
+
+        .sb-group-cell__id {
             font-size: 12px;
+            color: #6b7280;
+        }
+
+        .sb-actions-stack {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 6px;
+            min-width: 180px;
+        }
+
+        .sb-actions-stack .sb-btn {
+            height: 30px;
+            padding: 0 9px;
+            font-size: 12px;
+        }
+
+        .sb-muted {
+            color: #9ca3af;
+            font-size: 12px;
+        }
+
+        .sb-user-sites-table .sb-site-cell__title {
+            font-size: 15px;
             font-weight: 700;
         }
 
-        .sb-access-actions {
-            display: flex;
-            align-items: center;
-            gap: 8px;
-            flex-shrink: 0;
+        .sb-user-sites-table .sb-actions-stack {
+            justify-content: flex-end;
         }
 
-        .sb-access-message {
-            margin-top: 12px;
-            padding: 10px 12px;
-            border-radius: 12px;
+        .sb-modal[hidden] {
+            display: none !important;
+        }
+
+        .sb-modal {
+            position: fixed;
+            inset: 0;
+            z-index: 10000;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 24px;
+        }
+
+        .sb-modal__backdrop {
+            position: absolute;
+            inset: 0;
+            background: rgba(15, 23, 42, 0.45);
+            backdrop-filter: blur(4px);
+        }
+
+        .sb-modal__dialog {
+            position: relative;
+            width: min(520px, 100%);
+            background: #fff;
+            border-radius: 20px;
+            box-shadow: 0 24px 70px rgba(15, 23, 42, 0.28);
+            overflow: hidden;
             border: 1px solid #e5e7eb;
-            background: #f8fafc;
+        }
+
+        .sb-modal__head {
+            display: flex;
+            justify-content: space-between;
+            gap: 16px;
+            padding: 20px 22px;
+            border-bottom: 1px solid #eef2f7;
+            background: #f9fafb;
+        }
+
+        .sb-modal__title {
+            margin: 0;
+            font-size: 20px;
+            font-weight: 800;
+            color: #111827;
+        }
+
+        .sb-modal__subtitle {
+            margin: 6px 0 0;
             font-size: 13px;
-            color: #374151;
+            color: #6b7280;
             line-height: 1.45;
         }
 
-        .sb-access-message.is-success {
-            background: #f0fdf4;
-            border-color: #bbf7d0;
-            color: #166534;
+        .sb-modal__close {
+            width: 34px;
+            height: 34px;
+            border: 1px solid #e5e7eb;
+            border-radius: 10px;
+            background: #fff;
+            cursor: pointer;
+            font-size: 22px;
+            line-height: 1;
+            color: #6b7280;
         }
 
-        .sb-access-message.is-error {
-            background: #fef2f2;
-            border-color: #fecaca;
-            color: #991b1b;
+        .sb-modal__close:hover {
+            background: #f3f4f6;
+            color: #111827;
         }
 
-        @media (max-width: 1440px) {
-            .sb-editor-shell {
-                grid-template-columns: 300px minmax(0, 1fr) 330px;
-            }
-
-            .sb-editor-addbar {
-                grid-template-columns: repeat(2, minmax(0, 1fr));
-            }
+        .sb-modal__body {
+            padding: 22px;
         }
 
-        @media (max-width: 1180px) {
-            .sb-editor-shell {
-                grid-template-columns: 320px minmax(0, 1fr);
-            }
-
-            .sb-editor-col--right {
-                grid-column: 1 / -1;
-            }
-
-            .sb-editor-sticky {
-                position: static;
-            }
-        }
-
-        @media (max-width: 900px) {
-            .sb-editor-topline {
-                flex-direction: column;
-                align-items: stretch;
-            }
-
-            .sb-editor-topline-actions {
-                justify-content: flex-start;
-            }
-
-            .sb-editor-shell {
-                grid-template-columns: 1fr;
-            }
-
-            .sb-editor-addbar {
-                grid-template-columns: 1fr;
-            }
-
-            .sb-access-form {
-                grid-template-columns: 1fr;
-            }
-
-            .sb-access-item {
-                align-items: flex-start;
-                flex-direction: column;
-            }
+        .sb-modal__footer {
+            display: flex;
+            justify-content: flex-end;
+            gap: 10px;
+            padding: 16px 22px;
+            border-top: 1px solid #eef2f7;
+            background: #f9fafb;
         }
     </style>
 </head>
 <body class="sb-admin-body">
 <div class="sb-page">
-    <div class="sb-topbar">
-        <div class="sb-topbar-left">
-            <a class="sb-back-link" href="<?= htmlspecialchars($basePath, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?>/index.php">← К списку сайтов</a>
-            <h1 class="sb-title">Редактор сайта</h1>
-            <p class="sb-subtitle">siteId = <?= (int)$siteId ?></p>
-        </div>
-    </div>
+    <div class="sb-dashboard">
+        <header class="sb-dashboard-topbar">
+            <div class="sb-dashboard-topbar__main">
+                <h1 class="sb-dashboard-title">SiteBuilder</h1>
+                <p class="sb-dashboard-subtitle">
+                    Управление сайтами конструктора
+                </p>
+            </div>
 
-    <div class="sb-editor-topline">
-        <p class="sb-editor-topline-note">
-            Слева — структура страниц. По центру — полотно текущей страницы. Справа — свойства выбранной страницы или блока.
-        </p>
-        <div class="sb-editor-topline-actions">
-            <a class="sb-btn sb-btn-light sb-btn-small" href="<?= htmlspecialchars($basePath, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?>/public.php?siteId=<?= (int)$siteId ?>" target="_blank">Открыть публичную</a>
-            <a class="sb-btn sb-btn-light sb-btn-small" href="<?= htmlspecialchars($basePath, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?>/layout.php?siteId=<?= (int)$siteId ?>">Layout</a>
-            <a class="sb-btn sb-btn-light sb-btn-small" href="<?= htmlspecialchars($basePath, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?>/menu.php?siteId=<?= (int)$siteId ?>">Меню</a>
-            <button class="sb-btn sb-btn-danger sb-btn-small" type="button" id="deleteSiteBtn">Удалить сайт</button>
-        </div>
-    </div>
+            <div class="sb-dashboard-actions">
+                <input class="sb-dashboard-search" type="text" id="dashboardSearch" placeholder="Поиск по сайтам">
+                <button class="sb-btn sb-btn-light" type="button" id="reloadBtn">Обновить</button>
 
-    <div class="sb-editor-shell">
-        <div class="sb-editor-col">
-            <div class="sb-editor-sticky">
-                <div class="sb-panel">
-                    <div class="sb-editor-section-head">
-                        <h2 class="sb-panel-title">Страницы</h2>
-                        <span class="sb-badge">siteId <?= (int)$siteId ?></span>
-                    </div>
+                <?php if ($canCreateSite): ?>
+                    <button class="sb-btn sb-btn-primary" type="button" id="createSiteQuickBtn">Создать сайт</button>
+                <?php endif; ?>
+            </div>
+        </header>
 
-                    <div class="sb-editor-create">
-                        <div class="sb-form-row align-end">
-                            <div class="sb-field">
-                                <label for="newPageTitle">Название страницы</label>
-                                <input class="sb-input" type="text" id="newPageTitle" placeholder="Например: Главная">
-                            </div>
-                        </div>
-
-                        <div class="sb-form-row align-end" style="margin-top:12px;">
-                            <div class="sb-field">
-                                <label for="newPageSlug">Slug</label>
-                                <input class="sb-input" type="text" id="newPageSlug" placeholder="Например: home">
-                            </div>
-
-                            <div class="sb-field">
-                                <label for="newPageParentId">Родитель</label>
-                                <select class="sb-select" id="newPageParentId">
-                                    <option value="0">Без родителя</option>
-                                </select>
-                            </div>
-                        </div>
-
-                        <div class="sb-form-row" style="margin-top:12px;">
-                            <button class="sb-btn sb-btn-primary" type="button" id="createPageBtn">Создать страницу</button>
-                        </div>
-                    </div>
-
-                    <div id="pagesList" class="sb-editor-pages">
-                        <div class="sb-empty">Загрузка страниц...</div>
-                    </div>
+        <section class="sb-dash-card">
+            <div class="sb-dash-card__head">
+                <h2>Список сайтов</h2>
+                <div class="sb-dash-toolbar">
+                    <span class="sb-badge" id="sitesCountBadge">0 сайтов</span>
                 </div>
             </div>
-        </div>
 
-        <div class="sb-editor-col">
-            <div class="sb-editor-canvas">
-                <div class="sb-editor-canvas-head">
-                    <div>
-                        <h2 class="sb-editor-canvas-title" id="canvasPageTitle">Страница</h2>
-                        <p class="sb-editor-canvas-sub" id="canvasPageMeta">Выберите страницу слева</p>
-                    </div>
-                    <div class="sb-toolbar">
-                        <button class="sb-btn sb-btn-light sb-btn-small" type="button" id="movePageUpBtn">Страницу ↑</button>
-                        <button class="sb-btn sb-btn-light sb-btn-small" type="button" id="movePageDownBtn">Страницу ↓</button>
-                        <button class="sb-btn sb-btn-primary sb-btn-small" type="button" id="publishPageBtn">Опубликовать</button>
-                    </div>
-                </div>
+            <div class="sb-dash-table-wrap">
+                <table class="sb-dash-table <?= $isBitrixAdmin ? '' : 'sb-user-sites-table' ?>">
+                    <thead>
+                    <?php if ($isBitrixAdmin): ?>
+                        <tr>
+                            <th>ID</th>
+                            <th>Сайт</th>
+                            <th>Роль</th>
+                            <th>Slug</th>
+                            <th>Домашняя</th>
+                            <th>Группа Битрикс24</th>
+                            <th>Диск</th>
+                            <th>Изменен</th>
+                            <th>Действия</th>
+                        </tr>
+                    <?php else: ?>
+                        <tr>
+                            <th>Сайт</th>
+                            <th style="text-align:right;">Действия</th>
+                        </tr>
+                    <?php endif; ?>
+                    </thead>
 
-                <div class="sb-editor-canvas-body">
-                    <div class="sb-editor-page">
-                        <h2 class="sb-editor-page-heading" id="pagePreviewHeading">Выберите страницу</h2>
-
-                        <div class="sb-editor-addbar">
-                            <button class="sb-editor-add-card" type="button" data-add-block="heading">
-                                <span class="sb-editor-add-card__title">Заголовок</span>
-                                <span class="sb-editor-add-card__text">Большой заголовок или подзаголовок секции</span>
-                            </button>
-                            <button class="sb-editor-add-card" type="button" data-add-block="text">
-                                <span class="sb-editor-add-card__title">Текст</span>
-                                <span class="sb-editor-add-card__text">Абзацы, списки и обычный контент</span>
-                            </button>
-                            <button class="sb-editor-add-card" type="button" data-add-block="button">
-                                <span class="sb-editor-add-card__title">Кнопка</span>
-                                <span class="sb-editor-add-card__text">CTA-кнопка со ссылкой</span>
-                            </button>
-                            <button class="sb-editor-add-card" type="button" data-add-block="html">
-                                <span class="sb-editor-add-card__title">HTML</span>
-                                <span class="sb-editor-add-card__text">Произвольный HTML-блок</span>
-                            </button>
-                            <button class="sb-editor-add-card" type="button" data-add-block="disk">
-                                <span class="sb-editor-add-card__title">Диск</span>
-                                <span class="sb-editor-add-card__text">Файлы, папки, загрузка и доступы в контексте сайта</span>
-                            </button>
-                        </div>
-
-                        <div id="blocksList" class="sb-editor-blocks">
-                            <div class="sb-editor-empty-big">
-                                <strong>Страница не выбрана</strong>
-                                Выбери страницу слева, чтобы редактировать ее блоки
-                            </div>
-                        </div>
-                    </div>
-                </div>
+                    <tbody id="sitesTableBody">
+                    <tr>
+                        <td colspan="<?= $isBitrixAdmin ? 9 : 2 ?>">Загрузка...</td>
+                    </tr>
+                    </tbody>
+                </table>
             </div>
-        </div>
+        </section>
 
-        <div class="sb-editor-col sb-editor-col--right">
-            <div class="sb-editor-sticky">
-                <div class="sb-panel">
-                    <h2 class="sb-panel-title">Свойства страницы</h2>
-                    <p class="sb-editor-note">Здесь меняются заголовок, slug и статус текущей страницы.</p>
+        <?php if ($canCreateSite): ?>
+            <div class="sb-modal" id="createSiteModal" hidden>
+                <div class="sb-modal__backdrop" data-close-create-modal></div>
 
-                    <div class="sb-field">
-                        <label for="pageTitleInput">Название</label>
-                        <input class="sb-input" type="text" id="pageTitleInput">
+                <div class="sb-modal__dialog">
+                    <div class="sb-modal__head">
+                        <div>
+                            <h2 class="sb-modal__title">Создать сайт</h2>
+                            <p class="sb-modal__subtitle">
+                                Новый сайт автоматически получит рабочую группу Битрикс24.
+                            </p>
+                        </div>
+
+                        <button class="sb-modal__close" type="button" data-close-create-modal>×</button>
                     </div>
 
-                    <div class="sb-field" style="margin-top:12px;">
-                        <label for="pageSlugInput">Slug</label>
-                        <input class="sb-input" type="text" id="pageSlugInput">
-                    </div>
-
-                    <div class="sb-field" style="margin-top:12px;">
-                        <label for="pageStatusInput">Статус</label>
-                        <select class="sb-select" id="pageStatusInput">
-                            <option value="draft">draft</option>
-                            <option value="published">published</option>
-                        </select>
-                    </div>
-
-                    <div class="sb-field" style="margin-top:12px;">
-                        <label for="pageParentInput">Родительская страница</label>
-                        <select class="sb-select" id="pageParentInput">
-                            <option value="0">Без родителя</option>
-                        </select>
-                    </div>
-
-                    <div class="sb-editor-inspector-actions">
-                        <button class="sb-btn sb-btn-primary" type="button" id="savePageBtn">Сохранить страницу</button>
-                        <button class="sb-btn sb-btn-danger" type="button" id="deletePageBtn">Удалить страницу</button>
-                    </div>
-                </div>
-
-                <div class="sb-panel">
-                    <h2 class="sb-panel-title">Свойства блока</h2>
-                    <div id="blockInspectorEmpty" class="sb-empty">
-                        Выбери блок в центре страницы
-                    </div>
-
-                    <div id="blockInspector" class="sb-hidden">
+                    <div class="sb-modal__body">
                         <div class="sb-field">
-                            <label for="blockTypeInput">Тип</label>
-                            <input class="sb-input" type="text" id="blockTypeInput" disabled>
-                        </div>
-
-                        <div id="diskBlockForm" class="sb-hidden" style="margin-top:12px;">
-                            <div class="sb-field">
-                                <label for="diskTitleInput">Заголовок блока</label>
-                                <input class="sb-input" type="text" id="diskTitleInput">
-                            </div>
-
-                            <div class="sb-field" style="margin-top:12px;">
-                                <label for="diskRootModeInput">Режим корня</label>
-                                <select class="sb-select" id="diskRootModeInput">
-                                    <option value="site">Корень сайта</option>
-                                    <option value="block">Папка блока</option>
-                                </select>
-                            </div>
-
-                            <div class="sb-field" style="margin-top:12px;">
-                                <label for="diskViewModeInput">Вид</label>
-                                <select class="sb-select" id="diskViewModeInput">
-                                    <option value="table">Таблица</option>
-                                    <option value="grid">Плитка</option>
-                                </select>
-                            </div>
-
-                            <div class="sb-field" style="margin-top:12px;">
-                                <label for="diskPermissionModeInput">Режим прав</label>
-                                <select class="sb-select" id="diskPermissionModeInput">
-                                    <option value="inherit_site">Наследовать права сайта</option>
-                                    <option value="custom">Собственные ограничения блока</option>
-                                </select>
-                            </div>
-
-                            <div class="sb-field" style="margin-top:12px;">
-                                <label for="diskMaxFileSizeInput">Максимальный размер файла</label>
-                                <input class="sb-input" type="number" id="diskMaxFileSizeInput" min="0">
-                            </div>
-
-                            <div class="sb-field" style="margin-top:12px;">
-                                <label for="diskAllowedExtensionsInput">Разрешенные расширения</label>
-                                <input class="sb-input" type="text" id="diskAllowedExtensionsInput" placeholder="pdf docx xlsx png jpg">
-                            </div>
-
-                            <div class="sb-form-row" style="margin-top:12px;">
-                                <label><input type="checkbox" id="diskAllowUploadInput"> Загрузка</label>
-                                <label><input type="checkbox" id="diskAllowCreateFolderInput"> Создание папок</label>
-                            </div>
-
-                            <div class="sb-form-row" style="margin-top:12px;">
-                                <label><input type="checkbox" id="diskAllowRenameInput"> Переименование</label>
-                                <label><input type="checkbox" id="diskAllowDeleteInput"> Удаление</label>
-                            </div>
-
-                            <div class="sb-form-row" style="margin-top:12px;">
-                                <label><input type="checkbox" id="diskAllowDownloadInput"> Скачивание</label>
-                                <label><input type="checkbox" id="diskShowSearchInput"> Показывать поиск</label>
-                            </div>
-
-                            <div class="sb-form-row" style="margin-top:12px;">
-                                <label><input type="checkbox" id="diskShowBreadcrumbsInput"> Показывать breadcrumbs</label>
-                                <label><input type="checkbox" id="diskUseSiteRootFallbackInput"> Использовать корень сайта как fallback</label>
-                            </div>
-
-                            <div class="sb-editor-divider"></div>
+                            <label for="siteName">Название сайта</label>
+                            <input class="sb-input" type="text" id="siteName" placeholder="Например: Корпоративный портал">
                         </div>
 
                         <div class="sb-field" style="margin-top:12px;">
-                            <label for="blockContentInput">Контент (JSON)</label>
-                            <textarea class="sb-textarea" id="blockContentInput"></textarea>
-                        </div>
-
-                        <div class="sb-field" style="margin-top:12px;">
-                            <label for="blockPropsInput">Свойства (JSON)</label>
-                            <textarea class="sb-textarea" id="blockPropsInput"></textarea>
-                        </div>
-
-                        <div class="sb-editor-json-actions">
-                            <button class="sb-btn sb-btn-primary" type="button" id="saveBlockBtn">Сохранить блок</button>
-                            <button class="sb-btn sb-btn-light" type="button" id="duplicateBlockBtn">Дублировать</button>
-                            <button class="sb-btn sb-btn-light" type="button" id="moveBlockUpBtn">Блок ↑</button>
-                            <button class="sb-btn sb-btn-light" type="button" id="moveBlockDownBtn">Блок ↓</button>
-                            <button class="sb-btn sb-btn-danger" type="button" id="deleteBlockBtn">Удалить</button>
-                        </div>
-                    </div>
-                </div>
-
-                <div class="sb-panel">
-                    <h2 class="sb-panel-title">Группа Битрикс24 и права</h2>
-                    <p class="sb-editor-note">
-                        Участники группы Битрикс24 могут синхронизироваться с правами сайта.
-                    </p>
-
-                    <div class="sb-editor-group-box">
-                        <div class="sb-editor-group-row">
-                            <span class="sb-editor-group-label">ID группы</span>
-                            <span class="sb-editor-group-value" id="bitrixGroupIdText">—</span>
-                        </div>
-
-                        <div class="sb-editor-group-row">
-                            <span class="sb-editor-group-label">Создана</span>
-                            <span class="sb-editor-group-value" id="bitrixGroupCreatedAtText">—</span>
-                        </div>
-
-                        <div class="sb-editor-group-row">
-                            <span class="sb-editor-group-label">Связь</span>
-                            <span class="sb-editor-group-value" id="bitrixGroupStatusText">—</span>
+                            <label for="siteSlug">Slug</label>
+                            <input class="sb-input" type="text" id="siteSlug" placeholder="Например: corp-portal">
                         </div>
                     </div>
 
-                    <div class="sb-editor-inspector-actions">
-                        <button class="sb-btn sb-btn-primary" type="button" id="ensureBitrixGroupBtn">Создать группу Битрикс24</button>
-                        <a class="sb-btn sb-btn-light" href="#" target="_blank" id="openBitrixGroupBtn">Открыть группу</a>
-                        <button class="sb-btn sb-btn-primary" type="button" id="syncAccessBtn">Синхронизировать права</button>
+                    <div class="sb-modal__footer">
+                        <button class="sb-btn sb-btn-light" type="button" data-close-create-modal>Отмена</button>
+                        <button class="sb-btn sb-btn-primary" type="button" id="createSiteBtn">Создать</button>
                     </div>
-
-                    <div id="syncAccessResult" class="sb-editor-sync-result sb-hidden"></div>
-                </div>
-
-                <div class="sb-panel" id="siteAccessPanel" hidden>
-                    <h2 class="sb-panel-title">Права пользователей</h2>
-                    <p class="sb-editor-note">
-                        Выдай пользователю роль на сайте. Если у сайта есть группа Битрикс24, пользователь будет добавлен туда автоматически.
-                    </p>
-
-                    <div class="sb-access-form">
-                        <div class="sb-field">
-                            <label for="accessUserIdInput">ID пользователя</label>
-                            <input class="sb-input" type="number" id="accessUserIdInput" min="1" placeholder="Например: 99">
-                        </div>
-
-                        <div class="sb-field">
-                            <label for="accessRoleInput">Роль</label>
-                            <select class="sb-select" id="accessRoleInput">
-                                <option value="VIEWER">VIEWER</option>
-                                <option value="EDITOR">EDITOR</option>
-                                <option value="ADMIN">ADMIN</option>
-                                <option value="OWNER">OWNER</option>
-                            </select>
-                        </div>
-                    </div>
-
-                    <div class="sb-editor-inspector-actions">
-                        <button class="sb-btn sb-btn-primary" type="button" id="grantAccessBtn">Выдать роль</button>
-                        <button class="sb-btn sb-btn-light" type="button" id="reloadAccessBtn">Обновить</button>
-                    </div>
-
-                    <div id="accessMessage" class="sb-access-message sb-hidden"></div>
-
-                    <div id="accessList" class="sb-access-list">
-                        <div class="sb-empty">Загрузка прав...</div>
-                    </div>
-                </div>
-
-                <div class="sb-panel">
-                    <h2 class="sb-panel-title">Ответ API</h2>
-                    <div id="output" class="sb-output">Здесь будут ответы API...</div>
                 </div>
             </div>
-        </div>
+        <?php endif; ?>
+
+        <?php if ($isBitrixAdmin): ?>
+            <section class="sb-dash-card">
+                <div class="sb-dash-card__head">
+                    <h2>Отладка</h2>
+                </div>
+                <div id="output" class="sb-output">Здесь будут ответы API...</div>
+            </section>
+        <?php else: ?>
+            <div id="output" style="display:none;"></div>
+        <?php endif; ?>
     </div>
 </div>
 
-<script src="/bitrix/js/main/core/core.js"></script>
 <script>
 (function () {
     var BASE_PATH = '<?= CUtil::JSEscape($basePath) ?>';
     var API_URL = BASE_PATH + '/api.php';
-    var siteId = <?= (int)$siteId ?>;
-
-    var state = {
-        site: null,
-        pages: [],
-        currentPageId: 0,
-        blocks: [],
-        currentBlockId: 0,
-        accessItems: []
-    };
+    var CAN_CREATE_SITE = <?= $canCreateSite ? 'true' : 'false' ?>;
+    var IS_BITRIX_ADMIN = <?= $isBitrixAdmin ? 'true' : 'false' ?>;
 
     var output = document.getElementById('output');
-    var pagesList = document.getElementById('pagesList');
-    var blocksList = document.getElementById('blocksList');
-    var newPageParentId = document.getElementById('newPageParentId');
+    var sitesTableBody = document.getElementById('sitesTableBody');
+    var sitesCountBadge = document.getElementById('sitesCountBadge');
+    var searchInput = document.getElementById('dashboardSearch');
+
+    var allSites = [];
 
     function print(data) {
+        if (!output) {
+            return;
+        }
+
+        if (typeof data === 'string') {
+            output.textContent = data;
+            return;
+        }
+
         try {
-            output.textContent = typeof data === 'string' ? data : JSON.stringify(data, null, 2);
+            output.textContent = JSON.stringify(data, null, 2);
         } catch (e) {
             output.textContent = String(data);
         }
@@ -937,840 +334,380 @@ if ($siteId <= 0) {
     }
 
     function getSessid() {
-        if (window.BX && typeof BX.bitrix_sessid === 'function') {
+        if (typeof window.BX !== 'undefined' && typeof BX.bitrix_sessid === 'function') {
             return BX.bitrix_sessid();
         }
+
+        return '<?= CUtil::JSEscape(bitrix_sessid()) ?>';
+    }
+
+    function api(action, data, onSuccess, onFailure) {
+        if (typeof window.BX === 'undefined' || typeof BX.ajax !== 'function') {
+            print('BX.ajax не загружен');
+            return;
+        }
+
+        BX.ajax({
+            url: API_URL,
+            method: 'POST',
+            dataType: 'json',
+            timeout: 60,
+            data: Object.assign({
+                action: action,
+                sessid: getSessid()
+            }, data || {}),
+            onsuccess: function (res) {
+                print(res);
+
+                if (res && res.ok === true) {
+                    if (typeof onSuccess === 'function') {
+                        onSuccess(res);
+                    }
+                    return;
+                }
+
+                if (typeof onFailure === 'function') {
+                    onFailure(res || {error: 'UNKNOWN'});
+                }
+            },
+            onfailure: function (err) {
+                print({
+                    ok: false,
+                    error: 'AJAX_ERROR',
+                    detail: err
+                });
+
+                if (typeof onFailure === 'function') {
+                    onFailure(err);
+                }
+            }
+        });
+    }
+
+    function siteStatus(site) {
+        return Number(site.homePageId || 0) > 0 ? 'published' : 'draft';
+    }
+
+    function yesNoBadge(flag) {
+        if (flag) {
+            return '<span class="sb-status-badge success">Да</span>';
+        }
+
+        return '<span class="sb-status-badge warning">Нет</span>';
+    }
+
+    function roleRank(role) {
+        role = String(role || '');
+
+        if (role === 'OWNER') return 4;
+        if (role === 'ADMIN') return 3;
+        if (role === 'EDITOR') return 2;
+        if (role === 'VIEWER') return 1;
+
+        return 0;
+    }
+
+    function roleBadge(role) {
+        role = String(role || 'VIEWER');
+
+        var cls = 'sb-role-badge--viewer';
+
+        if (role === 'OWNER') {
+            cls = 'sb-role-badge--owner';
+        } else if (role === 'ADMIN') {
+            cls = 'sb-role-badge--admin';
+        } else if (role === 'EDITOR') {
+            cls = 'sb-role-badge--editor';
+        }
+
+        return '<span class="sb-role-badge ' + cls + '">' + escapeHtml(role) + '</span>';
+    }
+
+    function getBitrixGroupUrl(site) {
+        var groupId = Number(site.bitrixGroupId || 0);
+
+        if (site.bitrixGroupUrl) {
+            return String(site.bitrixGroupUrl);
+        }
+
+        if (groupId > 0) {
+            return '/workgroups/group/' + groupId + '/';
+        }
+
         return '';
     }
 
-    function api(action, data) {
-        return new Promise(function (resolve, reject) {
-            BX.ajax({
-                url: API_URL,
-                method: 'POST',
-                dataType: 'json',
-                timeout: 60,
-                data: Object.assign({
-                    action: action,
-                    sessid: getSessid()
-                }, data || {}),
-                onsuccess: function (res) {
-                    print(res);
-                    if (res && res.ok) {
-                        resolve(res);
-                    } else {
-                        reject(res || {error: 'UNKNOWN'});
-                    }
-                },
-                onfailure: function (err) {
-                    reject(err);
-                }
-            });
-        });
-    }
-
-    function getCurrentPage() {
-        return state.pages.find(function (page) {
-            return Number(page.id || 0) === state.currentPageId;
-        }) || null;
-    }
-
-    function getCurrentBlock() {
-        return state.blocks.find(function (block) {
-            return Number(block.id || 0) === state.currentBlockId;
-        }) || null;
-    }
-
-    function pageHasChildren(pageId) {
-        return state.pages.some(function (page) {
-            return Number(page.parentId || 0) === Number(pageId || 0);
-        });
-    }
-
-    function buildPageTree(pages, parentId, depth, result) {
-        result = result || [];
-        depth = depth || 0;
-
-        var branch = pages
-            .filter(function (page) {
-                return Number(page.parentId || 0) === Number(parentId || 0);
-            })
-            .sort(function (a, b) {
-                var sortCmp = Number(a.sort || 0) - Number(b.sort || 0);
-                if (sortCmp !== 0) return sortCmp;
-                return Number(a.id || 0) - Number(b.id || 0);
-            });
-
-        branch.forEach(function (page) {
-            result.push({
-                page: page,
-                depth: depth
-            });
-            buildPageTree(pages, Number(page.id || 0), depth + 1, result);
-        });
-
-        return result;
-    }
-
-    async function loadSite() {
-        var res = await api('site.get', {siteId: siteId});
-        state.site = res.site || null;
-        renderBitrixGroupPanel();
-    }
-
-    function renderBitrixGroupPanel() {
-        var site = state.site || {};
+    function renderGroupCell(site, userRoleRank) {
         var groupId = Number(site.bitrixGroupId || 0);
-        var groupUrl = site.bitrixGroupUrl || (groupId > 0 ? '/workgroups/group/' + groupId + '/' : '');
-        var createdAt = site.bitrixGroupCreatedAt || '';
+        var groupUrl = getBitrixGroupUrl(site);
 
-        var groupIdText = document.getElementById('bitrixGroupIdText');
-        var createdAtText = document.getElementById('bitrixGroupCreatedAtText');
-        var statusText = document.getElementById('bitrixGroupStatusText');
-        var openBtn = document.getElementById('openBitrixGroupBtn');
-        var syncBtn = document.getElementById('syncAccessBtn');
-        var ensureBtn = document.getElementById('ensureBitrixGroupBtn');
-
-        if (groupIdText) {
-            groupIdText.textContent = groupId > 0 ? String(groupId) : 'Не создана';
+        if (groupId > 0) {
+            return ''
+                + '<div class="sb-group-cell">'
+                + '  <div class="sb-group-cell__id">ID группы: ' + groupId + '</div>'
+                + '  <a class="sb-btn sb-btn-light sb-btn-small" href="' + escapeHtml(groupUrl) + '" target="_blank">Открыть группу</a>'
+                + '</div>';
         }
 
-        if (createdAtText) {
-            createdAtText.textContent = createdAt || '—';
+        if (userRoleRank >= 4) {
+            return ''
+                + '<div class="sb-group-cell">'
+                + '  <span class="sb-muted">Группа не создана</span>'
+                + '  <button class="sb-btn sb-btn-primary sb-btn-small" type="button" data-action="ensure-group" data-site-id="' + Number(site.id || 0) + '">Создать группу</button>'
+                + '</div>';
         }
 
-        if (statusText) {
-            statusText.textContent = groupId > 0 ? 'Группа привязана' : 'Группа не привязана';
-        }
-
-        if (openBtn) {
-            if (groupId > 0 && groupUrl) {
-                openBtn.href = groupUrl;
-                openBtn.classList.remove('sb-hidden');
-            } else {
-                openBtn.href = '#';
-                openBtn.classList.add('sb-hidden');
-            }
-        }
-
-        if (syncBtn) {
-            syncBtn.disabled = groupId <= 0;
-            syncBtn.title = groupId > 0 ? '' : 'Сначала нужно создать группу Битрикс24';
-
-            if (groupId > 0) {
-                syncBtn.classList.remove('sb-hidden');
-            } else {
-                syncBtn.classList.add('sb-hidden');
-            }
-        }
-
-        if (ensureBtn) {
-            if (groupId > 0) {
-                ensureBtn.classList.add('sb-hidden');
-            } else {
-                ensureBtn.classList.remove('sb-hidden');
-            }
-        }
+        return '<span class="sb-muted">Нет группы</span>';
     }
 
-    async function ensureBitrixGroup() {
-        var resultNode = document.getElementById('syncAccessResult');
-        var btn = document.getElementById('ensureBitrixGroupBtn');
+    function renderActions(site, userRoleRank) {
+        var siteId = Number(site.id || 0);
+        var groupId = Number(site.bitrixGroupId || 0);
 
-        if (resultNode) {
-            resultNode.classList.remove('sb-hidden', 'is-success', 'is-error');
-            resultNode.textContent = 'Создание группы Битрикс24...';
+        var html = '<div class="sb-actions-stack">';
+
+        html += '<a class="sb-btn sb-btn-light sb-btn-small" href="' + BASE_PATH + '/public.php?siteId=' + siteId + '" target="_blank">Публичная</a>';
+
+        if (userRoleRank >= 2) {
+            html += '<a class="sb-btn sb-btn-primary sb-btn-small" href="' + BASE_PATH + '/editor.php?siteId=' + siteId + '">Редактор</a>';
         }
 
-        if (btn) {
-            btn.disabled = true;
+        if (userRoleRank >= 4 && groupId > 0) {
+            html += '<button class="sb-btn sb-btn-light sb-btn-small" type="button" data-action="sync-access" data-site-id="' + siteId + '">Синхр. права</button>';
         }
 
-        try {
-            var res = await api('site.ensureGroup', {
-                siteId: siteId
-            });
-
-            state.site = res.site || state.site;
-
-            if (resultNode) {
-                resultNode.classList.add('is-success');
-                resultNode.textContent =
-                    res.created
-                        ? 'Группа Битрикс24 создана. ID группы: ' + Number(res.bitrixGroupId || 0)
-                        : 'Группа уже была создана. ID группы: ' + Number(res.bitrixGroupId || 0);
-            }
-
-            await loadSite();
-        } catch (e) {
-            if (resultNode) {
-                resultNode.classList.add('is-error');
-                resultNode.textContent = 'Ошибка создания группы: ' + ((e && (e.error || e.message)) || 'UNKNOWN_ERROR');
-            }
-        } finally {
-            if (btn) {
-                btn.disabled = false;
-            }
-
-            renderBitrixGroupPanel();
+        if (userRoleRank >= 4) {
+            html += '<button class="sb-btn sb-btn-danger sb-btn-small" type="button" data-action="delete-site" data-site-id="' + siteId + '" data-site-name="' + escapeHtml(site.name || '') + '">Удалить</button>';
         }
+
+        html += '</div>';
+
+        return html;
     }
 
-    async function syncAccessFromBitrixGroup() {
-        var resultNode = document.getElementById('syncAccessResult');
-        var btn = document.getElementById('syncAccessBtn');
+    function renderUserActions(site, userRoleRank) {
+        var siteId = Number(site.id || 0);
+        var html = '<div class="sb-actions-stack">';
 
-        if (resultNode) {
-            resultNode.classList.remove('sb-hidden', 'is-success', 'is-error');
-            resultNode.textContent = 'Синхронизация...';
+        html += '<a class="sb-btn sb-btn-light sb-btn-small" href="' + BASE_PATH + '/public.php?siteId=' + siteId + '" target="_blank">Открыть</a>';
+
+        if (userRoleRank >= 2) {
+            html += '<a class="sb-btn sb-btn-primary sb-btn-small" href="' + BASE_PATH + '/editor.php?siteId=' + siteId + '">Редактор</a>';
         }
 
-        if (btn) {
-            btn.disabled = true;
+        html += '</div>';
+
+        return html;
+    }
+
+    function renderSitesTable(sites) {
+        var colspan = IS_BITRIX_ADMIN ? 9 : 2;
+
+        if (!Array.isArray(sites) || !sites.length) {
+            sitesTableBody.innerHTML = '<tr><td colspan="' + colspan + '">Сайтов пока нет</td></tr>';
+            sitesCountBadge.textContent = '0 сайтов';
+            return;
         }
 
-        try {
-            var res = await api('site.syncAccess', {
-                siteId: siteId
-            });
+        sitesCountBadge.textContent = sites.length + ' сайтов';
 
+        var html = '';
+
+        for (var i = 0; i < sites.length; i++) {
+            var s = sites[i];
+            var siteId = Number(s.id || 0);
+            var currentUserRole = String(s.currentUserRole || 'VIEWER');
+            var currentUserRoleRank = roleRank(currentUserRole);
+
+            if (!IS_BITRIX_ADMIN) {
+                html += ''
+                    + '<tr>'
+                    + '  <td>'
+                    + '    <div class="sb-site-cell">'
+                    + '      <div class="sb-site-cell__title">' + escapeHtml(s.name || '') + '</div>'
+                    + '    </div>'
+                    + '  </td>'
+                    + '  <td style="text-align:right;">' + renderUserActions(s, currentUserRoleRank) + '</td>'
+                    + '</tr>';
+
+                continue;
+            }
+
+            var status = siteStatus(s);
+            var statusClass = status === 'published' ? 'success' : 'warning';
+
+            html += ''
+                + '<tr>'
+                + '  <td>' + siteId + '</td>'
+                + '  <td>'
+                + '    <div class="sb-site-cell">'
+                + '      <div class="sb-site-cell__title">' + escapeHtml(s.name || '') + '</div>'
+                + '      <div class="sb-site-cell__meta">created: ' + escapeHtml(s.createdAt || '—') + '</div>'
+                + '    </div>'
+                + '  </td>'
+                + '  <td>' + roleBadge(currentUserRole) + '</td>'
+                + '  <td>' + escapeHtml(s.slug || '') + '</td>'
+                + '  <td><span class="sb-status-badge ' + statusClass + '">' + escapeHtml(status) + '</span></td>'
+                + '  <td>' + renderGroupCell(s, currentUserRoleRank) + '</td>'
+                + '  <td>' + yesNoBadge(Number(s.diskFolderId || 0) > 0) + '</td>'
+                + '  <td>' + escapeHtml(s.updatedAt || '—') + '</td>'
+                + '  <td>' + renderActions(s, currentUserRoleRank) + '</td>'
+                + '</tr>';
+        }
+
+        sitesTableBody.innerHTML = html;
+    }
+
+    function applySearch() {
+        var query = String(searchInput.value || '').trim().toLowerCase();
+
+        if (!query) {
+            renderSitesTable(allSites);
+            return;
+        }
+
+        var filtered = allSites.filter(function (site) {
+            var haystack = [
+                site.name || '',
+                site.slug || '',
+                site.code || '',
+                site.currentUserRole || '',
+                String(site.bitrixGroupId || '')
+            ].join(' ').toLowerCase();
+
+            return haystack.indexOf(query) !== -1;
+        });
+
+        renderSitesTable(filtered);
+    }
+
+    function loadSites() {
+        api('site.list', {}, function (res) {
+            if (!res || res.ok !== true) {
+                sitesTableBody.innerHTML = '<tr><td colspan="' + (IS_BITRIX_ADMIN ? 9 : 2) + '">Не удалось загрузить данные</td></tr>';
+                sitesCountBadge.textContent = 'Ошибка загрузки';
+                return;
+            }
+
+            allSites = Array.isArray(res.sites) ? res.sites : [];
+            applySearch();
+        });
+    }
+
+    function openCreateSiteModal() {
+        if (!CAN_CREATE_SITE) {
+            return;
+        }
+
+        var modal = document.getElementById('createSiteModal');
+        if (!modal) {
+            return;
+        }
+
+        modal.hidden = false;
+
+        setTimeout(function () {
+            var nameInput = document.getElementById('siteName');
+            if (nameInput) {
+                nameInput.focus();
+            }
+        }, 50);
+    }
+
+    function closeCreateSiteModal() {
+        var modal = document.getElementById('createSiteModal');
+        if (!modal) {
+            return;
+        }
+
+        modal.hidden = true;
+    }
+
+    function createSite() {
+        if (!CAN_CREATE_SITE) {
+            alert('Создавать сайты может только администратор Битрикс24');
+            return;
+        }
+
+        var nameInput = document.getElementById('siteName');
+        var slugInput = document.getElementById('siteSlug');
+
+        if (!nameInput || !slugInput) {
+            alert('Форма создания сайта не найдена');
+            return;
+        }
+
+        var name = (nameInput.value || '').trim();
+        var slug = (slugInput.value || '').trim();
+
+        if (!name) {
+            alert('Введите название сайта');
+            nameInput.focus();
+            return;
+        }
+
+        api('site.create', {
+            name: name,
+            slug: slug
+        }, function (res) {
+            if (!res || res.ok !== true) {
+                alert('Не удалось создать сайт');
+                return;
+            }
+
+            nameInput.value = '';
+            slugInput.value = '';
+            closeCreateSiteModal();
+            loadSites();
+        }, function (err) {
+            var message = err && (err.error || err.message) ? (err.error || err.message) : 'UNKNOWN_ERROR';
+            alert('Не удалось создать сайт: ' + message);
+        });
+    }
+
+    function syncAccess(siteId) {
+        api('site.syncAccess', {
+            siteId: siteId
+        }, function (res) {
             var result = res.result || {};
 
-            if (resultNode) {
-                resultNode.classList.add('is-success');
-                resultNode.textContent =
-                    'Права синхронизированы.\n' +
-                    'Создано: ' + Number(result.created || 0) + '\n' +
-                    'Обновлено: ' + Number(result.updated || 0) + '\n' +
-                    'Удалено: ' + Number(result.removed || 0) + '\n' +
-                    'Без изменений: ' + Number(result.kept || 0);
-            }
+            alert(
+                'Права синхронизированы.\n\n' +
+                'Создано: ' + Number(result.created || 0) + '\n' +
+                'Обновлено: ' + Number(result.updated || 0) + '\n' +
+                'Удалено: ' + Number(result.removed || 0) + '\n' +
+                'Без изменений: ' + Number(result.kept || 0)
+            );
 
-            await loadSite();
-            await loadAccessList();
-        } catch (e) {
-            if (resultNode) {
-                resultNode.classList.add('is-error');
-                resultNode.textContent = 'Ошибка синхронизации: ' + ((e && (e.error || e.message)) || 'UNKNOWN_ERROR');
-            }
-        } finally {
-            if (btn) {
-                btn.disabled = false;
-            }
-
-            renderBitrixGroupPanel();
-        }
-    }
-
-    function setAccessMessage(message, type) {
-        var node = document.getElementById('accessMessage');
-        if (!node) return;
-
-        node.classList.remove('sb-hidden', 'is-success', 'is-error');
-
-        if (type === 'success') {
-            node.classList.add('is-success');
-        }
-
-        if (type === 'error') {
-            node.classList.add('is-error');
-        }
-
-        node.textContent = message || '';
-    }
-
-    function hideAccessMessage() {
-        var node = document.getElementById('accessMessage');
-        if (!node) return;
-
-        node.classList.add('sb-hidden');
-        node.textContent = '';
-    }
-
-    function renderAccessList() {
-        var panel = document.getElementById('siteAccessPanel');
-        var list = document.getElementById('accessList');
-
-        if (!panel || !list) return;
-
-        panel.hidden = false;
-
-        var items = Array.isArray(state.accessItems) ? state.accessItems : [];
-
-        if (!items.length) {
-            list.innerHTML = '<div class="sb-empty">Права пока не выданы</div>';
-            return;
-        }
-
-        list.innerHTML = items.map(function (item) {
-            var userId = Number(item.userId || 0);
-            var userName = item.userName || ('Пользователь #' + userId);
-            var role = item.role || '';
-
-            return ''
-                + '<div class="sb-access-item" data-access-user-id="' + userId + '">'
-                + '  <div class="sb-access-user">'
-                + '      <div class="sb-access-user__name">' + escapeHtml(userName) + '</div>'
-                + '      <div class="sb-access-user__meta">U' + userId + ' · ' + escapeHtml(item.accessCode || '') + '</div>'
-                + '  </div>'
-                + '  <div class="sb-access-actions">'
-                + '      <span class="sb-access-role">' + escapeHtml(role) + '</span>'
-                + '      <button class="sb-btn sb-btn-danger sb-btn-small" type="button" data-access-remove-user="' + userId + '">Удалить</button>'
-                + '  </div>'
-                + '</div>';
-        }).join('');
-    }
-
-    async function loadAccessList() {
-        var panel = document.getElementById('siteAccessPanel');
-        if (!panel) return;
-
-        try {
-            var res = await api('site.accessList', {
-                siteId: siteId
-            });
-
-            state.accessItems = Array.isArray(res.items) ? res.items : [];
-            renderAccessList();
-        } catch (e) {
-            panel.hidden = true;
-        }
-    }
-
-    async function grantAccessRole() {
-        var userIdInput = document.getElementById('accessUserIdInput');
-        var roleInput = document.getElementById('accessRoleInput');
-
-        if (!userIdInput || !roleInput) return;
-
-        var userId = Number(userIdInput.value || 0);
-        var role = String(roleInput.value || '').trim();
-
-        if (userId <= 0) {
-            setAccessMessage('Укажи ID пользователя', 'error');
-            userIdInput.focus();
-            return;
-        }
-
-        if (!role) {
-            setAccessMessage('Выбери роль', 'error');
-            return;
-        }
-
-        try {
-            setAccessMessage('Сохраняю права...', '');
-
-            var res = await api('site.accessSet', {
-                siteId: siteId,
-                userId: userId,
-                role: role
-            });
-
-            state.accessItems = Array.isArray(res.items) ? res.items : [];
-
-            userIdInput.value = '';
-
-            renderAccessList();
-
-            var groupSync = res.result && res.result.groupSync ? res.result.groupSync : null;
-            var syncText = '';
-
-            if (groupSync) {
-                if (groupSync.ok) {
-                    syncText = '\nПользователь также синхронизирован с группой Битрикс24.';
-                } else if (groupSync.error) {
-                    syncText = '\nНо с группой Битрикс24 не синхронизировался: ' + groupSync.error;
-                } else if (groupSync.message) {
-                    syncText = '\nГруппа Битрикс24: ' + groupSync.message;
-                }
-            }
-
-            setAccessMessage('Роль выдана: U' + userId + ' → ' + role + syncText, 'success');
-        } catch (e) {
-            setAccessMessage('Ошибка выдачи роли: ' + ((e && (e.error || e.message)) || 'UNKNOWN_ERROR'), 'error');
-        }
-    }
-
-    async function removeAccessRole(userId) {
-        userId = Number(userId || 0);
-
-        if (userId <= 0) return;
-
-        if (!confirm('Удалить права пользователя U' + userId + '?')) {
-            return;
-        }
-
-        try {
-            setAccessMessage('Удаляю права...', '');
-
-            var res = await api('site.accessRemove', {
-                siteId: siteId,
-                userId: userId
-            });
-
-            state.accessItems = Array.isArray(res.items) ? res.items : [];
-            renderAccessList();
-
-            setAccessMessage('Права пользователя U' + userId + ' удалены', 'success');
-        } catch (e) {
-            setAccessMessage('Ошибка удаления прав: ' + ((e && (e.error || e.message)) || 'UNKNOWN_ERROR'), 'error');
-        }
-    }
-
-    async function loadPages() {
-        var res = await api('page.list', {siteId: siteId});
-        state.pages = Array.isArray(res.pages) ? res.pages : [];
-
-        if (!state.currentPageId && state.pages.length) {
-            state.currentPageId = Number(state.pages[0].id || 0);
-        }
-
-        fillParentOptions();
-        renderPages();
-        fillPageForm();
-        updateCanvasHeader();
-    }
-
-    async function loadBlocks() {
-        if (!state.currentPageId) {
-            state.blocks = [];
-            state.currentBlockId = 0;
-            renderBlocks();
-            fillBlockForm();
-            return;
-        }
-
-        var res = await api('block.list', {pageId: state.currentPageId});
-        state.blocks = Array.isArray(res.blocks) ? res.blocks : [];
-
-        if (state.currentBlockId) {
-            var exists = state.blocks.some(function (b) {
-                return Number(b.id || 0) === state.currentBlockId;
-            });
-            if (!exists) {
-                state.currentBlockId = 0;
-            }
-        }
-
-        renderBlocks();
-        fillBlockForm();
-        updateCanvasHeader();
-    }
-
-    function fillParentOptions() {
-        var currentValue = String(newPageParentId.value || '0');
-        var html = '<option value="0">Без родителя</option>';
-
-        state.pages.forEach(function (page) {
-            html += '<option value="' + Number(page.id || 0) + '">' + escapeHtml(page.title || ('Страница #' + page.id)) + '</option>';
+            loadSites();
+        }, function (err) {
+            var message = err && (err.error || err.message) ? (err.error || err.message) : 'UNKNOWN_ERROR';
+            alert('Не удалось синхронизировать права: ' + message);
         });
-
-        newPageParentId.innerHTML = html;
-        newPageParentId.value = currentValue;
     }
 
-    function renderPages() {
-        if (!state.pages.length) {
-            pagesList.innerHTML = '<div class="sb-empty">Страниц пока нет</div>';
-            return;
-        }
+    function ensureGroup(siteId) {
+        api('site.ensureGroup', {
+            siteId: siteId
+        }, function (res) {
+            alert(
+                res.created
+                    ? 'Группа Битрикс24 создана. ID: ' + Number(res.bitrixGroupId || 0)
+                    : 'Группа уже была создана. ID: ' + Number(res.bitrixGroupId || 0)
+            );
 
-        var tree = buildPageTree(state.pages, 0, 0, []);
-
-        pagesList.innerHTML = tree.map(function (item) {
-            var page = item.page;
-            var depth = item.depth;
-            var active = Number(page.id || 0) === state.currentPageId ? ' is-active' : '';
-            var hasChildren = pageHasChildren(page.id);
-            var status = String(page.status || 'draft');
-
-            return ''
-                + '<div class="sb-editor-page-item' + active + '" data-page-id="' + Number(page.id || 0) + '" style="margin-left:' + (depth * 18) + 'px;">'
-                + '  <div class="sb-editor-page-top">'
-                + '      <div>'
-                + '          <h3 class="sb-editor-page-title">' + escapeHtml(page.title || '') + '</h3>'
-                + '          <div class="sb-editor-page-meta">'
-                +               '<span class="sb-editor-chip">' + escapeHtml(page.slug || '') + '</span>'
-                +               '<span class="sb-editor-chip ' + (status === 'published' ? 'sb-editor-chip--green' : 'sb-editor-chip--yellow') + '">' + escapeHtml(status) + '</span>'
-                +               (hasChildren ? '<span class="sb-editor-chip sb-editor-chip--blue">section</span>' : '')
-                + '          </div>'
-                + '      </div>'
-                + '  </div>'
-                + '  <div class="sb-editor-page-actions">'
-                + '      <button class="sb-btn sb-btn-light" type="button" data-select-page="' + Number(page.id || 0) + '">Открыть</button>'
-                + '  </div>'
-                + '</div>';
-        }).join('');
-    }
-
-    function updateCanvasHeader() {
-        var page = getCurrentPage();
-        var pageTitle = document.getElementById('canvasPageTitle');
-        var pageMeta = document.getElementById('canvasPageMeta');
-        var previewHeading = document.getElementById('pagePreviewHeading');
-
-        if (!page) {
-            pageTitle.textContent = 'Страница';
-            pageMeta.textContent = 'Выберите страницу слева';
-            previewHeading.textContent = 'Выберите страницу';
-            return;
-        }
-
-        pageTitle.textContent = page.title || 'Страница';
-        pageMeta.textContent = 'slug: ' + (page.slug || '') + ' · статус: ' + (page.status || 'draft') + ' · блоков: ' + state.blocks.length;
-        previewHeading.textContent = page.title || 'Страница';
-    }
-
-    function blockPreviewText(block) {
-        var type = String(block.type || '');
-        var content = block.content || {};
-        var props = block.props || {};
-
-        if (type === 'heading') {
-            return content.text || '[пустой заголовок]';
-        }
-
-        if (type === 'text') {
-            return content.text || '[пустой текст]';
-        }
-
-        if (type === 'button') {
-            return (content.label || 'Кнопка') + (content.href ? ' → ' + content.href : '');
-        }
-
-        if (type === 'html') {
-            return (content.html || '').slice(0, 220) || '[пустой HTML]';
-        }
-
-        if (type === 'disk') {
-            var title = props.title || 'Файлы';
-            var mode = props.rootMode || 'site';
-            var view = props.viewMode || 'table';
-
-            return 'Компонент "Диск": ' + title + ' · rootMode=' + mode + ' · view=' + view;
-        }
-
-        try {
-            return JSON.stringify(content);
-        } catch (e) {
-            return '[контент блока]';
-        }
-    }
-
-    function renderBlocks() {
-        if (!state.currentPageId) {
-            blocksList.innerHTML = ''
-                + '<div class="sb-editor-empty-big">'
-                + '   <strong>Страница не выбрана</strong>'
-                + '   Выбери страницу слева, чтобы редактировать блоки'
-                + '</div>';
-            return;
-        }
-
-        if (!state.blocks.length) {
-            blocksList.innerHTML = ''
-                + '<div class="sb-editor-empty-big">'
-                + '   <strong>На странице пока нет блоков</strong>'
-                + '   Добавь первый блок через панель сверху'
-                + '</div>';
-            return;
-        }
-
-        blocksList.innerHTML = state.blocks.map(function (block) {
-            var active = Number(block.id || 0) === state.currentBlockId ? ' is-active' : '';
-
-            return ''
-                + '<div class="sb-editor-block' + active + '" data-block-id="' + Number(block.id || 0) + '">'
-                + '  <div class="sb-editor-block-head">'
-                + '      <div>'
-                + '          <h3 class="sb-editor-block-title">' + escapeHtml(block.type || 'block') + '</h3>'
-                + '          <div class="sb-editor-chip">block #' + Number(block.id || 0) + '</div>'
-                + '      </div>'
-                + '  </div>'
-                + '  <div class="sb-editor-block-preview">' + escapeHtml(blockPreviewText(block)) + '</div>'
-                + '  <div class="sb-editor-block-actions">'
-                + '      <button class="sb-btn sb-btn-light" type="button" data-select-block="' + Number(block.id || 0) + '">Выбрать</button>'
-                + '  </div>'
-                + '</div>';
-        }).join('');
-    }
-
-    function fillPageForm() {
-        var page = getCurrentPage();
-
-        fillPageParentEditorOptions();
-
-        document.getElementById('pageTitleInput').value = page ? (page.title || '') : '';
-        document.getElementById('pageSlugInput').value = page ? (page.slug || '') : '';
-        document.getElementById('pageStatusInput').value = page ? (page.status || 'draft') : 'draft';
-
-        var parentSelect = document.getElementById('pageParentInput');
-        if (parentSelect) {
-            parentSelect.value = page ? String(page.parentId || 0) : '0';
-        }
-    }
-
-    function fillBlockForm() {
-        var block = getCurrentBlock();
-        var emptyNode = document.getElementById('blockInspectorEmpty');
-        var formNode = document.getElementById('blockInspector');
-        var diskForm = document.getElementById('diskBlockForm');
-
-        if (!block) {
-            emptyNode.classList.remove('sb-hidden');
-            formNode.classList.add('sb-hidden');
-            if (diskForm) diskForm.classList.add('sb-hidden');
-
-            document.getElementById('blockTypeInput').value = '';
-            document.getElementById('blockContentInput').value = '';
-            document.getElementById('blockPropsInput').value = '';
-            return;
-        }
-
-        emptyNode.classList.add('sb-hidden');
-        formNode.classList.remove('sb-hidden');
-
-        document.getElementById('blockTypeInput').value = block.type || '';
-
-        var content = block.content || {};
-        var props = block.props || {};
-
-        document.getElementById('blockContentInput').value = JSON.stringify(content, null, 2);
-        document.getElementById('blockPropsInput').value = JSON.stringify(props, null, 2);
-
-        if (block.type === 'disk') {
-            if (diskForm) diskForm.classList.remove('sb-hidden');
-
-            document.getElementById('diskTitleInput').value = props.title || 'Файлы';
-            document.getElementById('diskRootModeInput').value = props.rootMode || 'site';
-            document.getElementById('diskViewModeInput').value = props.viewMode || 'table';
-            document.getElementById('diskPermissionModeInput').value = props.permissionMode || 'inherit_site';
-            document.getElementById('diskMaxFileSizeInput').value = props.maxFileSize || 52428800;
-            document.getElementById('diskAllowedExtensionsInput').value = Array.isArray(props.allowedExtensions) ? props.allowedExtensions.join(' ') : '';
-
-            document.getElementById('diskAllowUploadInput').checked = !!props.allowUpload;
-            document.getElementById('diskAllowCreateFolderInput').checked = !!props.allowCreateFolder;
-            document.getElementById('diskAllowRenameInput').checked = !!props.allowRename;
-            document.getElementById('diskAllowDeleteInput').checked = !!props.allowDelete;
-            document.getElementById('diskAllowDownloadInput').checked = !!props.allowDownload;
-            document.getElementById('diskShowSearchInput').checked = !!props.showSearch;
-            document.getElementById('diskShowBreadcrumbsInput').checked = !!props.showBreadcrumbs;
-            document.getElementById('diskUseSiteRootFallbackInput').checked = !!props.useSiteRootFallback;
-        } else {
-            if (diskForm) diskForm.classList.add('sb-hidden');
-        }
-    }
-
-    async function createPage() {
-        var title = (document.getElementById('newPageTitle').value || '').trim();
-        var slug = (document.getElementById('newPageSlug').value || '').trim();
-        var parentId = Number(document.getElementById('newPageParentId').value || 0);
-
-        if (!title) {
-            alert('Введите название страницы');
-            return;
-        }
-
-        await api('page.create', {
-            siteId: siteId,
-            title: title,
-            slug: slug,
-            parentId: parentId
+            loadSites();
+        }, function (err) {
+            var message = err && (err.error || err.message) ? (err.error || err.message) : 'UNKNOWN_ERROR';
+            alert('Не удалось создать группу: ' + message);
         });
-
-        document.getElementById('newPageTitle').value = '';
-        document.getElementById('newPageSlug').value = '';
-        document.getElementById('newPageParentId').value = '0';
-
-        await loadPages();
-        await loadBlocks();
     }
 
-    async function savePage() {
-        if (!state.currentPageId) return;
-
-        var parentId = Number(document.getElementById('pageParentInput').value || 0);
-
-        await api('page.updateMeta', {
-            id: state.currentPageId,
-            title: document.getElementById('pageTitleInput').value.trim(),
-            slug: document.getElementById('pageSlugInput').value.trim(),
-            parentId: parentId
-        });
-
-        await api('page.setStatus', {
-            id: state.currentPageId,
-            status: document.getElementById('pageStatusInput').value
-        });
-
-        await loadPages();
-        await loadBlocks();
-    }
-
-    async function deletePage() {
-        if (!state.currentPageId) return;
-        if (!confirm('Удалить страницу?')) return;
-
-        var idToDelete = state.currentPageId;
-        await api('page.delete', {id: idToDelete});
-
-        if (state.currentPageId === idToDelete) {
-            state.currentPageId = 0;
-        }
-
-        await loadPages();
-        await loadBlocks();
-    }
-
-    async function movePage(dir) {
-        if (!state.currentPageId) return;
-        await api('page.move', {id: state.currentPageId, dir: dir});
-        await loadPages();
-    }
-
-    async function createBlock(type) {
-        if (!state.currentPageId) {
-            alert('Сначала выберите страницу');
-            return;
-        }
-
-        var content = {};
-        var props = {};
-
-        if (type === 'heading') {
-            content = { text: 'Новый заголовок' };
-        } else if (type === 'text') {
-            content = { text: 'Новый текстовый блок' };
-        } else if (type === 'button') {
-            content = { label: 'Кнопка', href: '#' };
-        } else if (type === 'html') {
-            content = { html: '<div>Новый HTML блок</div>' };
-        } else if (type === 'disk') {
-            content = {};
-            props = {
-                title: 'Файлы',
-                rootMode: 'site',
-                rootFolderId: null,
-                viewMode: 'table',
-                allowUpload: true,
-                allowCreateFolder: true,
-                allowRename: true,
-                allowDelete: false,
-                allowDownload: true,
-                showSearch: true,
-                showBreadcrumbs: true,
-                defaultSort: 'updatedAt',
-                defaultSortDirection: 'desc',
-                allowedExtensions: [],
-                maxFileSize: 52428800,
-                permissionMode: 'inherit_site',
-                useSiteRootFallback: true
-            };
-        }
-
-        await api('block.create', {
-            pageId: state.currentPageId,
-            type: type,
-            content: JSON.stringify(content),
-            props: JSON.stringify(props)
-        });
-
-        await loadBlocks();
-    }
-
-    async function saveBlock() {
-        var block = getCurrentBlock();
-        if (!block) return;
-
-        var content;
-        var props;
-
-        try {
-            content = JSON.parse(document.getElementById('blockContentInput').value || '{}');
-        } catch (e) {
-            alert('Контент блока должен быть валидным JSON');
-            return;
-        }
-
-        try {
-            props = JSON.parse(document.getElementById('blockPropsInput').value || '{}');
-        } catch (e) {
-            alert('Свойства блока должны быть валидным JSON');
-            return;
-        }
-
-        if (block.type === 'disk') {
-            props = {
-                title: document.getElementById('diskTitleInput').value.trim() || 'Файлы',
-                rootMode: document.getElementById('diskRootModeInput').value,
-                rootFolderId: props.rootFolderId || null,
-                viewMode: document.getElementById('diskViewModeInput').value,
-                permissionMode: document.getElementById('diskPermissionModeInput').value,
-                maxFileSize: Number(document.getElementById('diskMaxFileSizeInput').value || 0),
-                allowedExtensions: String(document.getElementById('diskAllowedExtensionsInput').value || '')
-                    .trim()
-                    .split(/\s+/)
-                    .filter(Boolean),
-
-                allowUpload: document.getElementById('diskAllowUploadInput').checked,
-                allowCreateFolder: document.getElementById('diskAllowCreateFolderInput').checked,
-                allowRename: document.getElementById('diskAllowRenameInput').checked,
-                allowDelete: document.getElementById('diskAllowDeleteInput').checked,
-                allowDownload: document.getElementById('diskAllowDownloadInput').checked,
-                showSearch: document.getElementById('diskShowSearchInput').checked,
-                showBreadcrumbs: document.getElementById('diskShowBreadcrumbsInput').checked,
-                useSiteRootFallback: document.getElementById('diskUseSiteRootFallbackInput').checked,
-                defaultSort: props.defaultSort || 'updatedAt',
-                defaultSortDirection: props.defaultSortDirection || 'desc'
-            };
-
-            document.getElementById('blockPropsInput').value = JSON.stringify(props, null, 2);
-        }
-
-        await api('block.update', {
-            id: block.id,
-            content: JSON.stringify(content),
-            props: JSON.stringify(props)
-        });
-
-        await loadBlocks();
-    }
-
-    async function duplicateBlock() {
-        var block = getCurrentBlock();
-        if (!block) return;
-
-        await api('block.duplicate', {id: block.id});
-        await loadBlocks();
-    }
-
-    async function deleteBlock() {
-        var block = getCurrentBlock();
-        if (!block) return;
-        if (!confirm('Удалить блок?')) return;
-
-        await api('block.delete', {id: block.id});
-        state.currentBlockId = 0;
-        await loadBlocks();
-    }
-
-    async function moveBlock(dir) {
-        var block = getCurrentBlock();
-        if (!block) return;
-
-        await api('block.move', {
-            id: block.id,
-            dir: dir
-        });
-
-        await loadBlocks();
-    }
-
-    async function deleteCurrentSite() {
-        var siteName = state.site && state.site.name ? state.site.name : ('siteId ' + siteId);
+    function deleteSite(siteId, siteName) {
+        var name = siteName || ('siteId ' + siteId);
 
         var firstConfirm = confirm(
-            'Удалить сайт "' + siteName + '"?\n\n' +
+            'Удалить сайт "' + name + '"?\n\n' +
             'Будут удалены страницы, блоки, меню, доступы, шаблоны и layout внутри SiteBuilder.\n' +
             'Группа Битрикс24 и файлы диска сейчас не удаляются автоматически.'
         );
@@ -1788,99 +725,67 @@ if ($siteId <= 0) {
             return;
         }
 
-        try {
-            await api('site.delete', {
-                id: siteId
-            });
-
+        api('site.delete', {
+            id: siteId
+        }, function () {
             alert('Сайт удалён');
-            window.location.href = BASE_PATH + '/index.php';
-        } catch (e) {
-            var message = (e && (e.error || e.message)) ? (e.error || e.message) : 'UNKNOWN_ERROR';
+            loadSites();
+        }, function (err) {
+            var message = err && (err.error || err.message) ? (err.error || err.message) : 'UNKNOWN_ERROR';
             alert('Не удалось удалить сайт: ' + message);
+        });
+    }
+
+    sitesTableBody.addEventListener('click', function (e) {
+        var btn = e.target.closest('[data-action]');
+        if (!btn) {
+            return;
         }
-    }
 
-    pagesList.addEventListener('click', async function (e) {
-        var item = e.target.closest('[data-page-id]');
-        if (!item) return;
+        var action = btn.getAttribute('data-action');
+        var siteId = Number(btn.getAttribute('data-site-id') || 0);
 
-        state.currentPageId = Number(item.getAttribute('data-page-id') || 0);
-        state.currentBlockId = 0;
-        renderPages();
-        fillPageForm();
-        await loadBlocks();
+        if (siteId <= 0) {
+            return;
+        }
+
+        if (action === 'sync-access') {
+            syncAccess(siteId);
+            return;
+        }
+
+        if (action === 'ensure-group') {
+            ensureGroup(siteId);
+            return;
+        }
+
+        if (action === 'delete-site') {
+            deleteSite(siteId, btn.getAttribute('data-site-name') || '');
+        }
     });
 
-    blocksList.addEventListener('click', function (e) {
-        var item = e.target.closest('[data-block-id]');
-        if (!item) return;
+    var createSiteBtn = document.getElementById('createSiteBtn');
+    if (createSiteBtn) {
+        createSiteBtn.addEventListener('click', createSite);
+    }
 
-        state.currentBlockId = Number(item.getAttribute('data-block-id') || 0);
-        renderBlocks();
-        fillBlockForm();
+    var createSiteQuickBtn = document.getElementById('createSiteQuickBtn');
+    if (createSiteQuickBtn) {
+        createSiteQuickBtn.addEventListener('click', openCreateSiteModal);
+    }
+
+    document.querySelectorAll('[data-close-create-modal]').forEach(function (btn) {
+        btn.addEventListener('click', closeCreateSiteModal);
     });
 
-    document.getElementById('createPageBtn').addEventListener('click', createPage);
-    document.getElementById('savePageBtn').addEventListener('click', savePage);
-    document.getElementById('deletePageBtn').addEventListener('click', deletePage);
-    document.getElementById('movePageUpBtn').addEventListener('click', function () { movePage('up'); });
-    document.getElementById('movePageDownBtn').addEventListener('click', function () { movePage('down'); });
-    document.getElementById('publishPageBtn').addEventListener('click', async function () {
-        if (!state.currentPageId) return;
-        await api('page.setStatus', {id: state.currentPageId, status: 'published'});
-        await loadPages();
+    document.addEventListener('keydown', function (e) {
+        if (e.key === 'Escape') {
+            closeCreateSiteModal();
+        }
     });
 
-    document.querySelectorAll('[data-add-block]').forEach(function (btn) {
-        btn.addEventListener('click', function () {
-            createBlock(btn.getAttribute('data-add-block'));
-        });
-    });
-
-    document.getElementById('saveBlockBtn').addEventListener('click', saveBlock);
-    document.getElementById('duplicateBlockBtn').addEventListener('click', duplicateBlock);
-    document.getElementById('deleteBlockBtn').addEventListener('click', deleteBlock);
-    document.getElementById('moveBlockUpBtn').addEventListener('click', function () { moveBlock('up'); });
-    document.getElementById('moveBlockDownBtn').addEventListener('click', function () { moveBlock('down'); });
-
-    var deleteSiteBtn = document.getElementById('deleteSiteBtn');
-    if (deleteSiteBtn) {
-        deleteSiteBtn.addEventListener('click', deleteCurrentSite);
-    }
-
-    var syncAccessBtn = document.getElementById('syncAccessBtn');
-    if (syncAccessBtn) {
-        syncAccessBtn.addEventListener('click', syncAccessFromBitrixGroup);
-    }
-
-    var ensureBitrixGroupBtn = document.getElementById('ensureBitrixGroupBtn');
-    if (ensureBitrixGroupBtn) {
-        ensureBitrixGroupBtn.addEventListener('click', ensureBitrixGroup);
-    }
-
-    var grantAccessBtn = document.getElementById('grantAccessBtn');
-    if (grantAccessBtn) {
-        grantAccessBtn.addEventListener('click', grantAccessRole);
-    }
-
-    var reloadAccessBtn = document.getElementById('reloadAccessBtn');
-    if (reloadAccessBtn) {
-        reloadAccessBtn.addEventListener('click', function () {
-            hideAccessMessage();
-            loadAccessList();
-        });
-    }
-
-    var accessList = document.getElementById('accessList');
-    if (accessList) {
-        accessList.addEventListener('click', function (e) {
-            var btn = e.target.closest('[data-access-remove-user]');
-            if (!btn) return;
-
-            removeAccessRole(Number(btn.getAttribute('data-access-remove-user') || 0));
-        });
-    }
+    document.getElementById('reloadBtn').addEventListener('click', loadSites);
+    searchInput.addEventListener('input', applySearch);
 
     window.onerror = function (message, source, lineno, colno, error) {
         print({
@@ -1893,43 +798,7 @@ if ($siteId <= 0) {
         });
     };
 
-    (async function init() {
-        try {
-            await loadSite();
-            await loadAccessList();
-            await loadPages();
-            await loadBlocks();
-        } catch (e) {
-            print(e);
-            alert('Не удалось загрузить редактор');
-        }
-    })();
-
-    function fillPageParentEditorOptions() {
-        var select = document.getElementById('pageParentInput');
-        if (!select) return;
-
-        var currentPageId = Number(state.currentPageId || 0);
-        var currentValue = String(select.value || '0');
-
-        var html = '<option value="0">Без родителя</option>';
-
-        state.pages.forEach(function (page) {
-            var id = Number(page.id || 0);
-
-            if (id === currentPageId) {
-                return;
-            }
-
-            html += '<option value="' + id + '">' + escapeHtml(page.title || ('Страница #' + id)) + '</option>';
-        });
-
-        select.innerHTML = html;
-
-        if (currentValue && select.querySelector('option[value="' + currentValue + '"]')) {
-            select.value = currentValue;
-        }
-    }
+    loadSites();
 })();
 </script>
 </body>
