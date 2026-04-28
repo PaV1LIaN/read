@@ -1,521 +1,522 @@
-Да, следующий этап — **секции сайтов**.
+Дальше делаем **отображение сайтов по секциям на главной странице**.
 
-Сделаем сначала backend: таблица, API секций и поле `sectionId` у сайта. После проверки добавим группировку на главной странице.
+Итог будет такой:
 
----
-
-## 1. Выполни SQL
-
-```sql
-CREATE TABLE IF NOT EXISTS sitebuilder.site_section (
-    id bigserial PRIMARY KEY,
-    name varchar(255) NOT NULL,
-    sort int NOT NULL DEFAULT 500,
-    created_by int NULL,
-    created_at timestamp without time zone DEFAULT now(),
-    updated_by int NULL,
-    updated_at timestamp without time zone DEFAULT now()
-);
-
-ALTER TABLE sitebuilder.site
-ADD COLUMN IF NOT EXISTS section_id bigint NULL;
-
-CREATE INDEX IF NOT EXISTS ix_site_section_sort
-ON sitebuilder.site_section(sort, id);
-
-CREATE INDEX IF NOT EXISTS ix_site_section_id
-ON sitebuilder.site(section_id);
-```
-
----
-
-## 2. В `storage_db.php` добавь `section_id`
-
-Файл:
+Для обычного пользователя:
 
 ```text
-/local/sitebuilder/lib/storage_db.php
+Информационные порталы
+  321
+  Информационный портал "Сервис Строка"
+
+Без секции
+  Другой сайт
 ```
 
-### В `sb_read_sites()` в SELECT добавь:
+Для администратора Битрикс24:
 
-```sql
-section_id,
+```text
+ID | Сайт | Секция | Роль | Slug | ...
 ```
+
+И будет возможность назначить сайт в секцию через выпадающий список.
+
+---
+
+## 1. В `index.php` в `<style>` добавь
+
+```css
+.sb-section-group {
+    margin-bottom: 18px;
+}
+
+.sb-section-title {
+    margin: 0 0 8px;
+    font-size: 15px;
+    font-weight: 800;
+    color: #111827;
+}
+
+.sb-section-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.sb-site-section-select {
+    min-width: 180px;
+    height: 32px;
+    border: 1px solid #d1d5db;
+    border-radius: 10px;
+    padding: 0 8px;
+    background: #fff;
+    font-size: 12px;
+}
+```
+
+---
+
+## 2. В верхних кнопках добавь кнопку создания секции
+
+Найди:
+
+```php
+<?php if ($canCreateSite): ?>
+    <button class="sb-btn sb-btn-primary" type="button" id="createSiteQuickBtn">Создать сайт</button>
+<?php endif; ?>
+```
+
+Замени на:
+
+```php
+<?php if ($canCreateSite): ?>
+    <button class="sb-btn sb-btn-light" type="button" id="createSectionBtn">Создать секцию</button>
+    <button class="sb-btn sb-btn-primary" type="button" id="createSiteQuickBtn">Создать сайт</button>
+<?php endif; ?>
+```
+
+---
+
+## 3. В таблицу администратора добавь колонку «Секция»
+
+В `<thead>` для админа было:
+
+```php
+<th>ID</th>
+<th>Сайт</th>
+<th>Роль</th>
+<th>Slug</th>
+```
+
+Сделай так:
+
+```php
+<th>ID</th>
+<th>Сайт</th>
+<th>Секция</th>
+<th>Роль</th>
+<th>Slug</th>
+```
+
+И везде, где для админа стоит `colspan="9"`, поменяй на `10`.
 
 Например:
 
 ```php
-$rows = sb_db_fetch_all("
-    SELECT
-        id,
-        name,
-        slug,
-        section_id,
-        home_page_id,
-        disk_folder_id,
-        top_menu_id,
-        bitrix_group_id,
-        bitrix_group_created_by,
-        bitrix_group_created_at,
-        settings_json,
-        layout_json,
-        created_by,
-        created_at,
-        updated_by,
-        updated_at
-    FROM sitebuilder.site
-    ORDER BY id ASC
-");
-```
-
-### В `sb_write_sites()` добавь `section_id`
-
-В `INSERT INTO sitebuilder.site (...)` добавь:
-
-```sql
-section_id,
-```
-
-После `slug,`:
-
-```sql
-slug,
-section_id,
-home_page_id,
-```
-
-В `VALUES (...)` добавь:
-
-```sql
-:section_id,
-```
-
-После `:slug,`:
-
-```sql
-:slug,
-:section_id,
-:home_page_id,
-```
-
-В `DO UPDATE SET` добавь:
-
-```sql
-section_id = EXCLUDED.section_id,
-```
-
-После:
-
-```sql
-slug = EXCLUDED.slug,
-```
-
-должно быть:
-
-```sql
-slug = EXCLUDED.slug,
-section_id = EXCLUDED.section_id,
-home_page_id = EXCLUDED.home_page_id,
-```
-
-В массив параметров добавь:
-
-```php
-':section_id' => !empty($site['sectionId']) ? (int)$site['sectionId'] : null,
-```
-
-После:
-
-```php
-':slug' => (string)($site['slug'] ?? ''),
+<td colspan="<?= $isBitrixAdmin ? 10 : 2 ?>">Загрузка...</td>
 ```
 
 ---
 
-## 3. В `sb_map_site_row()` добавь `sectionId`
+## 4. Добавь модальное окно создания секции
 
-В функции:
-
-```php
-function sb_map_site_row(array $row): array
-```
-
-после:
+Поставь рядом с модальным окном создания сайта:
 
 ```php
-'slug' => (string)$row['slug'],
-```
+<?php if ($canCreateSite): ?>
+    <div class="sb-modal" id="createSectionModal" hidden>
+        <div class="sb-modal__backdrop" data-close-section-modal></div>
 
-добавь:
+        <div class="sb-modal__dialog">
+            <div class="sb-modal__head">
+                <div>
+                    <h2 class="sb-modal__title">Создать секцию</h2>
+                    <p class="sb-modal__subtitle">
+                        Секция нужна для группировки сайтов на главной странице.
+                    </p>
+                </div>
 
-```php
-'sectionId' => !empty($row['section_id']) ? (int)$row['section_id'] : 0,
+                <button class="sb-modal__close" type="button" data-close-section-modal>×</button>
+            </div>
+
+            <div class="sb-modal__body">
+                <div class="sb-field">
+                    <label for="sectionName">Название секции</label>
+                    <input class="sb-input" type="text" id="sectionName" placeholder="Например: Информационные порталы">
+                </div>
+
+                <div class="sb-field" style="margin-top:12px;">
+                    <label for="sectionSort">Сортировка</label>
+                    <input class="sb-input" type="number" id="sectionSort" value="500">
+                </div>
+            </div>
+
+            <div class="sb-modal__footer">
+                <button class="sb-btn sb-btn-light" type="button" data-close-section-modal>Отмена</button>
+                <button class="sb-btn sb-btn-primary" type="button" id="saveSectionBtn">Создать</button>
+            </div>
+        </div>
+    </div>
+<?php endif; ?>
 ```
 
 ---
 
-## 4. Создай API-обработчик секций
+## 5. В JS добавь массив секций
 
-Создай файл:
+Найди:
 
-```text
-/local/sitebuilder/api/handlers/section.php
+```js
+var allSites = [];
 ```
 
-Код:
+Ниже добавь:
 
-```php
-<?php
+```js
+var allSections = [];
+```
 
-global $USER;
+---
 
-function sb_section_require_admin(): void
-{
-    global $USER;
+## 6. Добавь функции секций в JS
 
-    if (!$USER || !$USER->IsAdmin()) {
-        sb_json_error('BITRIX_ADMIN_REQUIRED', 403);
+Вставь рядом с другими функциями:
+
+```js
+function getSectionName(sectionId) {
+    sectionId = Number(sectionId || 0);
+
+    if (sectionId <= 0) {
+        return 'Без секции';
     }
+
+    var section = allSections.find(function (s) {
+        return Number(s.id || 0) === sectionId;
+    });
+
+    return section ? String(section.name || 'Без названия') : 'Без секции';
 }
 
-function sb_section_normalize_row(array $row): array
-{
-    return [
-        'id' => (int)($row['id'] ?? 0),
-        'name' => (string)($row['name'] ?? ''),
-        'sort' => (int)($row['sort'] ?? 500),
-        'createdBy' => isset($row['created_by']) ? (int)$row['created_by'] : 0,
-        'createdAt' => (string)($row['created_at'] ?? ''),
-        'updatedBy' => isset($row['updated_by']) ? (int)$row['updated_by'] : 0,
-        'updatedAt' => (string)($row['updated_at'] ?? ''),
-    ];
+function renderSectionSelect(site) {
+    var siteId = Number(site.id || 0);
+    var currentSectionId = Number(site.sectionId || 0);
+
+    var html = '<select class="sb-site-section-select" data-action="set-section" data-site-id="' + siteId + '">';
+    html += '<option value="0">Без секции</option>';
+
+    allSections.forEach(function (section) {
+        var id = Number(section.id || 0);
+        html += '<option value="' + id + '"' + (id === currentSectionId ? ' selected' : '') + '>'
+            + escapeHtml(section.name || '')
+            + '</option>';
+    });
+
+    html += '</select>';
+
+    return html;
 }
 
-if ($action === 'section.list') {
-    $rows = sb_db_fetch_all("
-        SELECT
-            id,
-            name,
-            sort,
-            created_by,
-            created_at,
-            updated_by,
-            updated_at
-        FROM sitebuilder.site_section
-        ORDER BY sort ASC, id ASC
-    ");
+function loadSections(callback) {
+    api('section.list', {}, function (res) {
+        allSections = Array.isArray(res.sections) ? res.sections : [];
 
-    sb_json_ok([
-        'sections' => array_map('sb_section_normalize_row', $rows),
-        'handler' => 'section',
-        'file' => __FILE__,
-    ]);
-}
-
-if ($action === 'section.create') {
-    sb_section_require_admin();
-
-    $name = trim((string)($_POST['name'] ?? ''));
-    $sort = (int)($_POST['sort'] ?? 500);
-
-    if ($name === '') {
-        sb_json_error('NAME_REQUIRED', 422);
-    }
-
-    $currentUserId = (int)$USER->GetID();
-
-    $pdo = sb_db();
-
-    $st = $pdo->prepare("
-        INSERT INTO sitebuilder.site_section (
-            name,
-            sort,
-            created_by,
-            created_at,
-            updated_by,
-            updated_at
-        ) VALUES (
-            :name,
-            :sort,
-            :created_by,
-            now(),
-            :updated_by,
-            now()
-        )
-        RETURNING
-            id,
-            name,
-            sort,
-            created_by,
-            created_at,
-            updated_by,
-            updated_at
-    ");
-
-    $st->execute([
-        ':name' => $name,
-        ':sort' => $sort,
-        ':created_by' => $currentUserId,
-        ':updated_by' => $currentUserId,
-    ]);
-
-    $row = $st->fetch(PDO::FETCH_ASSOC);
-
-    sb_json_ok([
-        'section' => sb_section_normalize_row($row ?: []),
-        'handler' => 'section',
-        'file' => __FILE__,
-    ]);
-}
-
-if ($action === 'section.update') {
-    sb_section_require_admin();
-
-    $id = (int)($_POST['id'] ?? 0);
-    $name = trim((string)($_POST['name'] ?? ''));
-    $sort = (int)($_POST['sort'] ?? 500);
-
-    if ($id <= 0) {
-        sb_json_error('ID_REQUIRED', 422);
-    }
-
-    if ($name === '') {
-        sb_json_error('NAME_REQUIRED', 422);
-    }
-
-    $currentUserId = (int)$USER->GetID();
-
-    $pdo = sb_db();
-
-    $st = $pdo->prepare("
-        UPDATE sitebuilder.site_section
-        SET
-            name = :name,
-            sort = :sort,
-            updated_by = :updated_by,
-            updated_at = now()
-        WHERE id = :id
-        RETURNING
-            id,
-            name,
-            sort,
-            created_by,
-            created_at,
-            updated_by,
-            updated_at
-    ");
-
-    $st->execute([
-        ':id' => $id,
-        ':name' => $name,
-        ':sort' => $sort,
-        ':updated_by' => $currentUserId,
-    ]);
-
-    $row = $st->fetch(PDO::FETCH_ASSOC);
-
-    if (!$row) {
-        sb_json_error('SECTION_NOT_FOUND', 404);
-    }
-
-    sb_json_ok([
-        'section' => sb_section_normalize_row($row),
-        'handler' => 'section',
-        'file' => __FILE__,
-    ]);
-}
-
-if ($action === 'section.delete') {
-    sb_section_require_admin();
-
-    $id = (int)($_POST['id'] ?? 0);
-
-    if ($id <= 0) {
-        sb_json_error('ID_REQUIRED', 422);
-    }
-
-    $pdo = sb_db();
-    $pdo->beginTransaction();
-
-    try {
-        $st = $pdo->prepare("
-            UPDATE sitebuilder.site
-            SET section_id = NULL
-            WHERE section_id = :id
-        ");
-        $st->execute([':id' => $id]);
-
-        $st = $pdo->prepare("
-            DELETE FROM sitebuilder.site_section
-            WHERE id = :id
-        ");
-        $st->execute([':id' => $id]);
-
-        $pdo->commit();
-
-        sb_json_ok([
-            'deleted' => true,
-            'id' => $id,
-            'handler' => 'section',
-            'file' => __FILE__,
-        ]);
-    } catch (Throwable $e) {
-        $pdo->rollBack();
-
-        sb_json_error($e->getMessage(), 500, [
-            'handler' => 'section',
-            'file' => __FILE__,
-        ]);
-    }
-}
-
-if ($action === 'site.setSection') {
-    sb_section_require_admin();
-
-    $siteId = (int)($_POST['siteId'] ?? 0);
-    $sectionId = (int)($_POST['sectionId'] ?? 0);
-
-    if ($siteId <= 0) {
-        sb_json_error('SITE_ID_REQUIRED', 422);
-    }
-
-    if ($sectionId > 0) {
-        $exists = sb_db_fetch_all("
-            SELECT id
-            FROM sitebuilder.site_section
-            WHERE id = :id
-            LIMIT 1
-        ", [
-            ':id' => $sectionId,
-        ]);
-
-        if (empty($exists)) {
-            sb_json_error('SECTION_NOT_FOUND', 404);
+        if (typeof callback === 'function') {
+            callback();
         }
+    }, function () {
+        allSections = [];
+
+        if (typeof callback === 'function') {
+            callback();
+        }
+    });
+}
+
+function groupSitesBySection(sites) {
+    var groups = {};
+
+    sites.forEach(function (site) {
+        var sectionId = Number(site.sectionId || 0);
+        var key = String(sectionId);
+
+        if (!groups[key]) {
+            groups[key] = {
+                sectionId: sectionId,
+                sectionName: getSectionName(sectionId),
+                sites: []
+            };
+        }
+
+        groups[key].sites.push(site);
+    });
+
+    var result = Object.keys(groups).map(function (key) {
+        return groups[key];
+    });
+
+    result.sort(function (a, b) {
+        if (a.sectionId === 0 && b.sectionId !== 0) return 1;
+        if (a.sectionId !== 0 && b.sectionId === 0) return -1;
+
+        var sectionA = allSections.find(function (s) { return Number(s.id || 0) === a.sectionId; });
+        var sectionB = allSections.find(function (s) { return Number(s.id || 0) === b.sectionId; });
+
+        var sortA = sectionA ? Number(sectionA.sort || 500) : 999999;
+        var sortB = sectionB ? Number(sectionB.sort || 500) : 999999;
+
+        if (sortA !== sortB) return sortA - sortB;
+
+        return String(a.sectionName).localeCompare(String(b.sectionName));
+    });
+
+    return result;
+}
+```
+
+---
+
+## 7. Замени `renderSitesTable`
+
+Полностью замени функцию `renderSitesTable(sites)` на эту:
+
+```js
+function renderSitesTable(sites) {
+    var colspan = IS_BITRIX_ADMIN ? 10 : 2;
+
+    if (!Array.isArray(sites) || !sites.length) {
+        sitesTableBody.innerHTML = IS_BITRIX_ADMIN
+            ? '<tr><td colspan="' + colspan + '">Сайтов пока нет</td></tr>'
+            : '<div class="sb-user-sites-empty">Сайтов пока нет</div>';
+
+        sitesCountBadge.textContent = '0 сайтов';
+        return;
     }
 
-    sb_db_execute("
-        UPDATE sitebuilder.site
-        SET
-            section_id = :section_id,
-            updated_by = :updated_by,
-            updated_at = now()
-        WHERE id = :site_id
-    ", [
-        ':site_id' => $siteId,
-        ':section_id' => $sectionId > 0 ? $sectionId : null,
-        ':updated_by' => (int)$USER->GetID(),
-    ]);
+    sitesCountBadge.textContent = sites.length + ' сайтов';
 
-    $site = sb_find_site($siteId);
+    var html = '';
 
-    sb_json_ok([
-        'site' => $site,
-        'handler' => 'section',
-        'action' => 'site.setSection',
-        'file' => __FILE__,
-    ]);
+    if (!IS_BITRIX_ADMIN) {
+        var groups = groupSitesBySection(sites);
+
+        groups.forEach(function (group) {
+            html += ''
+                + '<div class="sb-section-group">'
+                + '  <h3 class="sb-section-title">' + escapeHtml(group.sectionName) + '</h3>'
+                + '  <div class="sb-section-list">';
+
+            group.sites.forEach(function (s) {
+                var siteId = Number(s.id || 0);
+                var currentUserRole = String(s.currentUserRole || 'VIEWER');
+                var currentUserRoleRank = roleRank(currentUserRole);
+
+                html += ''
+                    + '<div class="sb-user-site-card">'
+                    + '  <a class="sb-user-site-link" href="' + BASE_PATH + '/public.php?siteId=' + siteId + '">'
+                    +        escapeHtml(s.name || '')
+                    + '  </a>'
+                    + '  <div class="sb-user-site-actions">'
+                    +        (currentUserRoleRank >= 2
+                                ? '<a class="sb-btn sb-btn-primary sb-btn-small" href="' + BASE_PATH + '/editor.php?siteId=' + siteId + '">Редактор</a>'
+                                : '')
+                    + '  </div>'
+                    + '</div>';
+            });
+
+            html += ''
+                + '  </div>'
+                + '</div>';
+        });
+
+        sitesTableBody.innerHTML = html;
+        return;
+    }
+
+    for (var i = 0; i < sites.length; i++) {
+        var s = sites[i];
+        var siteId = Number(s.id || 0);
+        var status = siteStatus(s);
+        var statusClass = status === 'published' ? 'success' : 'warning';
+        var currentUserRole = String(s.currentUserRole || 'VIEWER');
+        var currentUserRoleRank = roleRank(currentUserRole);
+
+        html += ''
+            + '<tr>'
+            + '  <td>' + siteId + '</td>'
+            + '  <td>'
+            + '    <div class="sb-site-cell">'
+            + '      <div class="sb-site-cell__title">' + escapeHtml(s.name || '') + '</div>'
+            + '      <div class="sb-site-cell__meta">created: ' + escapeHtml(s.createdAt || '—') + '</div>'
+            + '    </div>'
+            + '  </td>'
+            + '  <td>' + renderSectionSelect(s) + '</td>'
+            + '  <td>' + roleBadge(currentUserRole) + '</td>'
+            + '  <td>' + escapeHtml(s.slug || '') + '</td>'
+            + '  <td><span class="sb-status-badge ' + statusClass + '">' + escapeHtml(status) + '</span></td>'
+            + '  <td>' + renderGroupCell(s, currentUserRoleRank) + '</td>'
+            + '  <td>' + yesNoBadge(Number(s.diskFolderId || 0) > 0) + '</td>'
+            + '  <td>' + escapeHtml(s.updatedAt || '—') + '</td>'
+            + '  <td>' + renderActions(s, currentUserRoleRank) + '</td>'
+            + '</tr>';
+    }
+
+    sitesTableBody.innerHTML = html;
 }
-
-sb_json_error('NOT_MOVED_YET', 501, [
-    'handler' => 'section',
-    'action' => $action,
-    'file' => __FILE__,
-]);
 ```
 
 ---
 
-## 5. В `api/index.php` добавь роутинг секций
+## 8. Замени `loadSites`
 
-Файл:
+Было:
 
-```text
-/local/sitebuilder/api/index.php
+```js
+function loadSites() {
+    api('site.list', {}, function (res) {
+        ...
+    });
+}
 ```
 
-Перед финальным:
+Сделай так:
 
-```php
-sb_json_error('UNKNOWN_ACTION', 400, [
-```
+```js
+function loadSites() {
+    loadSections(function () {
+        api('site.list', {}, function (res) {
+            if (!res || res.ok !== true) {
+                sitesTableBody.innerHTML = IS_BITRIX_ADMIN
+                    ? '<tr><td colspan="10">Не удалось загрузить данные</td></tr>'
+                    : '<div class="sb-user-sites-empty">Не удалось загрузить данные</div>';
 
-добавь:
+                sitesCountBadge.textContent = 'Ошибка загрузки';
+                return;
+            }
 
-```php
-if (
-    $action === 'section.list' ||
-    $action === 'section.create' ||
-    $action === 'section.update' ||
-    $action === 'section.delete' ||
-    $action === 'site.setSection'
-) {
-    require __DIR__ . '/handlers/section.php';
-    exit;
+            allSites = Array.isArray(res.sites) ? res.sites : [];
+            applySearch();
+        });
+    });
 }
 ```
 
 ---
 
-## 6. Проверка через консоль
+## 9. Добавь создание секции и назначение сайта в секцию
 
-Создать секцию:
-
-```js
-fetch('/local/sitebuilder/api.php', {
-  method: 'POST',
-  headers: {'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8'},
-  body: new URLSearchParams({
-    action: 'section.create',
-    name: 'Информационные порталы',
-    sort: '100',
-    sessid: BX.bitrix_sessid()
-  }),
-  credentials: 'same-origin'
-})
-.then(r => r.json())
-.then(console.log);
-```
-
-Список секций:
+Добавь функции:
 
 ```js
-fetch('/local/sitebuilder/api.php', {
-  method: 'POST',
-  headers: {'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8'},
-  body: new URLSearchParams({
-    action: 'section.list',
-    sessid: BX.bitrix_sessid()
-  }),
-  credentials: 'same-origin'
-})
-.then(r => r.json())
-.then(console.log);
+function openSectionModal() {
+    if (!IS_BITRIX_ADMIN) return;
+
+    var modal = document.getElementById('createSectionModal');
+    if (!modal) return;
+
+    modal.hidden = false;
+
+    setTimeout(function () {
+        var input = document.getElementById('sectionName');
+        if (input) input.focus();
+    }, 50);
+}
+
+function closeSectionModal() {
+    var modal = document.getElementById('createSectionModal');
+    if (!modal) return;
+
+    modal.hidden = true;
+}
+
+function createSection() {
+    var nameInput = document.getElementById('sectionName');
+    var sortInput = document.getElementById('sectionSort');
+
+    if (!nameInput) return;
+
+    var name = String(nameInput.value || '').trim();
+    var sort = Number(sortInput && sortInput.value ? sortInput.value : 500);
+
+    if (!name) {
+        alert('Введите название секции');
+        nameInput.focus();
+        return;
+    }
+
+    api('section.create', {
+        name: name,
+        sort: sort
+    }, function () {
+        nameInput.value = '';
+        if (sortInput) sortInput.value = '500';
+
+        closeSectionModal();
+        loadSites();
+    }, function (err) {
+        var message = err && (err.error || err.message) ? (err.error || err.message) : 'UNKNOWN_ERROR';
+        alert('Не удалось создать секцию: ' + message);
+    });
+}
+
+function setSiteSection(siteId, sectionId) {
+    api('site.setSection', {
+        siteId: siteId,
+        sectionId: sectionId
+    }, function () {
+        loadSites();
+    }, function (err) {
+        var message = err && (err.error || err.message) ? (err.error || err.message) : 'UNKNOWN_ERROR';
+        alert('Не удалось назначить секцию: ' + message);
+        loadSites();
+    });
+}
 ```
 
-Назначить сайт в секцию:
+---
+
+## 10. Обработчики событий
+
+Найди обработчик:
 
 ```js
-fetch('/local/sitebuilder/api.php', {
-  method: 'POST',
-  headers: {'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8'},
-  body: new URLSearchParams({
-    action: 'site.setSection',
-    siteId: '11',
-    sectionId: '1',
-    sessid: BX.bitrix_sessid()
-  }),
-  credentials: 'same-origin'
-})
-.then(r => r.json())
-.then(console.log);
+sitesTableBody.addEventListener('click', function (e) {
 ```
 
-После этого `site.list` должен вернуть у сайта:
+После него добавь ещё один обработчик `change`:
 
-```json
-"sectionId": 1
+```js
+sitesTableBody.addEventListener('change', function (e) {
+    var select = e.target.closest('[data-action="set-section"]');
+    if (!select) return;
+
+    var siteId = Number(select.getAttribute('data-site-id') || 0);
+    var sectionId = Number(select.value || 0);
+
+    if (siteId <= 0) return;
+
+    setSiteSection(siteId, sectionId);
+});
 ```
 
-Когда это заработает, следующим сообщением добавим группировку сайтов по секциям на главной странице и админские кнопки управления секциями.
+И внизу, рядом с кнопками создания сайта, добавь:
+
+```js
+var createSectionBtn = document.getElementById('createSectionBtn');
+if (createSectionBtn) {
+    createSectionBtn.addEventListener('click', openSectionModal);
+}
+
+var saveSectionBtn = document.getElementById('saveSectionBtn');
+if (saveSectionBtn) {
+    saveSectionBtn.addEventListener('click', createSection);
+}
+
+document.querySelectorAll('[data-close-section-modal]').forEach(function (btn) {
+    btn.addEventListener('click', closeSectionModal);
+});
+```
+
+А в обработчик `Escape` добавь закрытие секционной модалки:
+
+```js
+document.addEventListener('keydown', function (e) {
+    if (e.key === 'Escape') {
+        closeCreateSiteModal();
+        closeSectionModal();
+    }
+});
+```
+
+---
+
+После этого админ сможет создавать секции и назначать сайты в секции, а обычный пользователь увидит уже сгруппированный компактный список.
