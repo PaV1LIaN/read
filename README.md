@@ -1,564 +1,363 @@
-Да, дальше делаем **поиск пользователя в правах** и одновременно убираем админский шум из `editor.php` для обычного `EDITOR`.
+Да, это ожидаемо для текущей версии `user.php`.
 
-## 1. В `editor.php` скрой админские элементы по умолчанию
+Сейчас поиск делает так:
 
-Кнопку удаления сайта замени:
-
-```html
-<button class="sb-btn sb-btn-danger sb-btn-small" type="button" id="deleteSiteBtn">Удалить сайт</button>
+```php
+'%NAME' => $query
+'%LAST_NAME' => $query
 ```
 
-на:
-
-```html
-<button class="sb-btn sb-btn-danger sb-btn-small sb-hidden" type="button" id="deleteSiteBtn">Удалить сайт</button>
-```
-
-У панели группы замени открывающий div:
-
-```html
-<div class="sb-panel">
-    <h2 class="sb-panel-title">Группа Битрикс24 и права</h2>
-```
-
-на:
-
-```html
-<div class="sb-panel" id="siteGroupPanel" hidden>
-    <h2 class="sb-panel-title">Группа Битрикс24 и права</h2>
-```
-
-Панель API замени:
-
-```html
-<div class="sb-panel">
-    <h2 class="sb-panel-title">Ответ API</h2>
-```
-
-на:
-
-```html
-<div class="sb-panel" id="apiOutputPanel" hidden>
-    <h2 class="sb-panel-title">Ответ API</h2>
-```
-
----
-
-## 2. В CSS добавь стили поиска пользователя
-
-В `<style>` добавь:
-
-```css
-.sb-access-search-wrap {
-    position: relative;
-}
-
-.sb-access-results {
-    display: none;
-    position: absolute;
-    z-index: 1000;
-    left: 0;
-    right: 0;
-    top: calc(100% + 6px);
-    max-height: 260px;
-    overflow: auto;
-    border: 1px solid #e5e7eb;
-    border-radius: 12px;
-    background: #fff;
-    box-shadow: 0 16px 40px rgba(15, 23, 42, 0.16);
-}
-
-.sb-access-results.is-open {
-    display: block;
-}
-
-.sb-access-result-item {
-    width: 100%;
-    display: block;
-    text-align: left;
-    padding: 10px 12px;
-    border: 0;
-    background: #fff;
-    cursor: pointer;
-    border-bottom: 1px solid #f3f4f6;
-}
-
-.sb-access-result-item:hover {
-    background: #f8fafc;
-}
-
-.sb-access-result-title {
-    font-size: 13px;
-    font-weight: 700;
-    color: #111827;
-}
-
-.sb-access-result-meta {
-    margin-top: 3px;
-    font-size: 12px;
-    color: #6b7280;
-}
-
-.sb-access-selected {
-    margin-top: 8px;
-    padding: 9px 10px;
-    border-radius: 12px;
-    border: 1px solid #bbf7d0;
-    background: #f0fdf4;
-    color: #166534;
-    font-size: 13px;
-    line-height: 1.4;
-}
-
-.sb-access-selected button {
-    margin-left: 8px;
-}
-```
-
----
-
-## 3. Замени форму прав пользователей
-
-В блоке `siteAccessPanel` найди:
-
-```html
-<div class="sb-access-form">
-    <div class="sb-field">
-        <label for="accessUserIdInput">ID пользователя</label>
-        <input class="sb-input" type="number" id="accessUserIdInput" min="1" placeholder="Например: 99">
-    </div>
-
-    <div class="sb-field">
-        <label for="accessRoleInput">Роль</label>
-        <select class="sb-select" id="accessRoleInput">
-            <option value="VIEWER">VIEWER</option>
-            <option value="EDITOR">EDITOR</option>
-            <option value="ADMIN">ADMIN</option>
-            <option value="OWNER">OWNER</option>
-        </select>
-    </div>
-</div>
-```
-
-Замени на:
-
-```html
-<div class="sb-access-form">
-    <div class="sb-field sb-access-search-wrap">
-        <label for="accessUserSearchInput">Пользователь</label>
-        <input class="sb-input" type="text" id="accessUserSearchInput" autocomplete="off" placeholder="ФИО, логин, email или ID">
-        <input type="hidden" id="accessUserIdInput" value="">
-
-        <div id="accessUserSearchResults" class="sb-access-results"></div>
-        <div id="accessSelectedUser" class="sb-access-selected sb-hidden"></div>
-    </div>
-
-    <div class="sb-field">
-        <label for="accessRoleInput">Роль</label>
-        <select class="sb-select" id="accessRoleInput">
-            <option value="VIEWER">VIEWER</option>
-            <option value="EDITOR">EDITOR</option>
-            <option value="ADMIN">ADMIN</option>
-            <option value="OWNER">OWNER</option>
-        </select>
-    </div>
-</div>
-```
-
----
-
-## 4. В `state` добавь поля поиска
-
-Было:
-
-```js
-var state = {
-    site: null,
-    pages: [],
-    currentPageId: 0,
-    blocks: [],
-    currentBlockId: 0,
-    accessItems: []
-};
-```
-
-Сделай:
-
-```js
-var state = {
-    site: null,
-    pages: [],
-    currentPageId: 0,
-    blocks: [],
-    currentBlockId: 0,
-    accessItems: [],
-    userSearchResults: [],
-    selectedAccessUser: null,
-    userSearchTimer: null
-};
-```
-
----
-
-## 5. Добавь функцию видимости админских панелей
-
-В JS добавь рядом с функциями прав:
-
-```js
-function setManagementPanelsVisible(canManage) {
-    var groupPanel = document.getElementById('siteGroupPanel');
-    var accessPanel = document.getElementById('siteAccessPanel');
-    var apiPanel = document.getElementById('apiOutputPanel');
-    var deleteSiteBtn = document.getElementById('deleteSiteBtn');
-
-    if (groupPanel) {
-        groupPanel.hidden = !canManage;
-    }
-
-    if (accessPanel) {
-        accessPanel.hidden = !canManage;
-    }
-
-    if (apiPanel) {
-        apiPanel.hidden = !canManage;
-    }
-
-    if (deleteSiteBtn) {
-        deleteSiteBtn.classList.toggle('sb-hidden', !canManage);
-    }
-}
-```
-
----
-
-## 6. Замени `loadAccessList()`
-
-Найди функцию `loadAccessList()` и замени полностью:
-
-```js
-async function loadAccessList() {
-    var panel = document.getElementById('siteAccessPanel');
-    if (!panel) return;
-
-    try {
-        var res = await api('site.accessList', {
-            siteId: siteId
-        });
-
-        state.accessItems = Array.isArray(res.items) ? res.items : [];
-
-        setManagementPanelsVisible(true);
-        renderBitrixGroupPanel();
-        renderAccessList();
-    } catch (e) {
-        state.accessItems = [];
-        setManagementPanelsVisible(false);
-    }
-}
-```
-
-Теперь обычный `EDITOR` не увидит:
+Если ты вводишь полное ФИО, например:
 
 ```text
-Группа Битрикс24
-Права пользователей
-Ответ API
-Удалить сайт
+Иванов Иван
 ```
 
----
+то Битрикс пытается найти строку `Иванов Иван` отдельно в поле `NAME` или отдельно в поле `LAST_NAME`, а такого поля нет. Поэтому по ID находит, а по полному ФИО нет.
 
-## 7. Добавь функции поиска пользователя
+Нужно заменить `user.php` на версию, которая разбивает ФИО на слова и ищет по `LAST_NAME`, `NAME`, `SECOND_NAME`, `LOGIN`, `EMAIL`.
 
-В JS добавь:
+Замени файл:
 
-```js
-function clearAccessUserSearchResults() {
-    var results = document.getElementById('accessUserSearchResults');
-    if (!results) return;
-
-    results.classList.remove('is-open');
-    results.innerHTML = '';
-}
-
-function renderAccessUserSearchResults(users) {
-    var results = document.getElementById('accessUserSearchResults');
-    if (!results) return;
-
-    state.userSearchResults = Array.isArray(users) ? users : [];
-
-    if (!state.userSearchResults.length) {
-        results.innerHTML = ''
-            + '<div class="sb-access-result-item">'
-            + '  <div class="sb-access-result-title">Ничего не найдено</div>'
-            + '  <div class="sb-access-result-meta">Попробуй другой запрос</div>'
-            + '</div>';
-        results.classList.add('is-open');
-        return;
-    }
-
-    results.innerHTML = state.userSearchResults.map(function (user) {
-        var id = Number(user.id || 0);
-        var title = user.title || ('Пользователь #' + id);
-        var meta = [];
-
-        if (user.login) meta.push(user.login);
-        if (user.email) meta.push(user.email);
-
-        return ''
-            + '<button class="sb-access-result-item" type="button" data-select-access-user="' + id + '">'
-            + '  <div class="sb-access-result-title">' + escapeHtml(title) + '</div>'
-            + '  <div class="sb-access-result-meta">ID: ' + id + (meta.length ? ' · ' + escapeHtml(meta.join(' · ')) : '') + '</div>'
-            + '</button>';
-    }).join('');
-
-    results.classList.add('is-open');
-}
-
-async function searchAccessUsers() {
-    var input = document.getElementById('accessUserSearchInput');
-    if (!input) return;
-
-    var query = String(input.value || '').trim();
-
-    state.selectedAccessUser = null;
-
-    var hidden = document.getElementById('accessUserIdInput');
-    if (hidden) {
-        hidden.value = '';
-    }
-
-    var selectedNode = document.getElementById('accessSelectedUser');
-    if (selectedNode) {
-        selectedNode.classList.add('sb-hidden');
-        selectedNode.innerHTML = '';
-    }
-
-    if (query === '') {
-        clearAccessUserSearchResults();
-        return;
-    }
-
-    if (!/^\d+$/.test(query) && query.length < 2) {
-        clearAccessUserSearchResults();
-        return;
-    }
-
-    try {
-        var res = await api('user.search', {
-            siteId: siteId,
-            query: query,
-            limit: 10
-        });
-
-        renderAccessUserSearchResults(Array.isArray(res.users) ? res.users : []);
-    } catch (e) {
-        renderAccessUserSearchResults([]);
-    }
-}
-
-function selectAccessUser(userId) {
-    userId = Number(userId || 0);
-
-    if (userId <= 0) return;
-
-    var user = state.userSearchResults.find(function (u) {
-        return Number(u.id || 0) === userId;
-    });
-
-    if (!user) {
-        return;
-    }
-
-    state.selectedAccessUser = user;
-
-    var hidden = document.getElementById('accessUserIdInput');
-    if (hidden) {
-        hidden.value = String(userId);
-    }
-
-    var input = document.getElementById('accessUserSearchInput');
-    if (input) {
-        input.value = user.title || ('Пользователь #' + userId);
-    }
-
-    var selectedNode = document.getElementById('accessSelectedUser');
-    if (selectedNode) {
-        var meta = [];
-
-        if (user.login) meta.push(user.login);
-        if (user.email) meta.push(user.email);
-
-        selectedNode.innerHTML = ''
-            + '<strong>' + escapeHtml(user.title || ('Пользователь #' + userId)) + '</strong>'
-            + '<br>ID: ' + userId
-            + (meta.length ? ' · ' + escapeHtml(meta.join(' · ')) : '')
-            + ' <button class="sb-btn sb-btn-light sb-btn-small" type="button" data-clear-access-user>Сбросить</button>';
-
-        selectedNode.classList.remove('sb-hidden');
-    }
-
-    clearAccessUserSearchResults();
-}
-
-function clearSelectedAccessUser() {
-    state.selectedAccessUser = null;
-
-    var hidden = document.getElementById('accessUserIdInput');
-    if (hidden) {
-        hidden.value = '';
-    }
-
-    var input = document.getElementById('accessUserSearchInput');
-    if (input) {
-        input.value = '';
-        input.focus();
-    }
-
-    var selectedNode = document.getElementById('accessSelectedUser');
-    if (selectedNode) {
-        selectedNode.classList.add('sb-hidden');
-        selectedNode.innerHTML = '';
-    }
-
-    clearAccessUserSearchResults();
-}
+```text
+/local/sitebuilder/api/handlers/user.php
 ```
 
----
+на этот:
 
-## 8. Замени `grantAccessRole()`
+```php
+<?php
 
-Найди функцию `grantAccessRole()` и замени полностью:
+global $USER;
 
-```js
-async function grantAccessRole() {
-    var userIdInput = document.getElementById('accessUserIdInput');
-    var roleInput = document.getElementById('accessRoleInput');
+if (!function_exists('sb_user_search_require_owner')) {
+    function sb_user_search_require_owner(int $siteId): void
+    {
+        global $USER;
 
-    if (!userIdInput || !roleInput) return;
-
-    var userId = Number(userIdInput.value || 0);
-    var role = String(roleInput.value || '').trim();
-
-    if (userId <= 0) {
-        setAccessMessage('Сначала найди и выбери пользователя из списка', 'error');
-
-        var searchInput = document.getElementById('accessUserSearchInput');
-        if (searchInput) {
-            searchInput.focus();
+        if ($USER && $USER->IsAdmin()) {
+            return;
         }
 
-        return;
+        sb_require_owner($siteId);
     }
+}
 
-    if (!role) {
-        setAccessMessage('Выбери роль', 'error');
-        return;
+if (!function_exists('sb_user_search_normalize_text')) {
+    function sb_user_search_normalize_text(string $value): string
+    {
+        $value = trim($value);
+        $value = str_replace('ё', 'е', $value);
+        $value = str_replace('Ё', 'Е', $value);
+
+        if (function_exists('mb_strtolower')) {
+            return mb_strtolower($value, 'UTF-8');
+        }
+
+        return strtolower($value);
     }
+}
 
-    try {
-        setAccessMessage('Сохраняю права...', '');
+if (!function_exists('sb_user_search_query_tokens')) {
+    function sb_user_search_query_tokens(string $query): array
+    {
+        $query = sb_user_search_normalize_text($query);
+        $parts = preg_split('/[\s,;]+/u', $query, -1, PREG_SPLIT_NO_EMPTY);
 
-        var res = await api('site.accessSet', {
-            siteId: siteId,
-            userId: userId,
-            role: role
-        });
+        $tokens = [];
 
-        state.accessItems = Array.isArray(res.items) ? res.items : [];
+        foreach ($parts as $part) {
+            $part = trim((string)$part);
 
-        clearSelectedAccessUser();
-        renderAccessList();
+            if ($part === '') {
+                continue;
+            }
 
-        var groupSync = res.result && res.result.groupSync ? res.result.groupSync : null;
-        var syncText = '';
+            $tokens[] = $part;
+        }
 
-        if (groupSync) {
-            if (groupSync.ok) {
-                syncText = '\nПользователь также синхронизирован с группой Битрикс24.';
-            } else if (groupSync.error) {
-                syncText = '\nНо с группой Битрикс24 не синхронизировался: ' + groupSync.error;
-            } else if (groupSync.message) {
-                syncText = '\nГруппа Битрикс24: ' + groupSync.message;
+        return array_values(array_unique($tokens));
+    }
+}
+
+if (!function_exists('sb_user_search_normalize')) {
+    function sb_user_search_normalize(array $row): array
+    {
+        $id = (int)($row['ID'] ?? 0);
+
+        $fio = trim(
+            (string)($row['LAST_NAME'] ?? '') . ' ' .
+            (string)($row['NAME'] ?? '') . ' ' .
+            (string)($row['SECOND_NAME'] ?? '')
+        );
+
+        $login = (string)($row['LOGIN'] ?? '');
+        $email = (string)($row['EMAIL'] ?? '');
+
+        $title = $fio !== '' ? $fio : ($login !== '' ? $login : ('Пользователь #' . $id));
+
+        return [
+            'id' => $id,
+            'name' => $fio,
+            'login' => $login,
+            'email' => $email,
+            'title' => $title,
+            'active' => (string)($row['ACTIVE'] ?? ''),
+        ];
+    }
+}
+
+if (!function_exists('sb_user_search_row_haystack')) {
+    function sb_user_search_row_haystack(array $row): string
+    {
+        return sb_user_search_normalize_text(implode(' ', [
+            (string)($row['ID'] ?? ''),
+            (string)($row['LOGIN'] ?? ''),
+            (string)($row['EMAIL'] ?? ''),
+            (string)($row['NAME'] ?? ''),
+            (string)($row['LAST_NAME'] ?? ''),
+            (string)($row['SECOND_NAME'] ?? ''),
+            trim(
+                (string)($row['LAST_NAME'] ?? '') . ' ' .
+                (string)($row['NAME'] ?? '') . ' ' .
+                (string)($row['SECOND_NAME'] ?? '')
+            ),
+            trim(
+                (string)($row['NAME'] ?? '') . ' ' .
+                (string)($row['LAST_NAME'] ?? '')
+            ),
+        ]));
+    }
+}
+
+if (!function_exists('sb_user_search_row_matches_tokens')) {
+    function sb_user_search_row_matches_tokens(array $row, array $tokens): bool
+    {
+        if (empty($tokens)) {
+            return false;
+        }
+
+        $haystack = sb_user_search_row_haystack($row);
+
+        foreach ($tokens as $token) {
+            if ($token === '') {
+                continue;
+            }
+
+            if (strpos($haystack, $token) === false) {
+                return false;
             }
         }
 
-        setAccessMessage('Роль выдана: U' + userId + ' → ' + role + syncText, 'success');
-    } catch (e) {
-        setAccessMessage('Ошибка выдачи роли: ' + ((e && (e.error || e.message)) || 'UNKNOWN_ERROR'), 'error');
+        return true;
     }
 }
-```
 
----
+if (!function_exists('sb_user_search_add_result')) {
+    function sb_user_search_add_result(array &$results, array $row, array $tokens, int $limit): void
+    {
+        $id = (int)($row['ID'] ?? 0);
 
-## 9. Добавь обработчики поиска
+        if ($id <= 0) {
+            return;
+        }
 
-Внизу, рядом с обработчиками кнопок, добавь:
+        if (count($results) >= $limit) {
+            return;
+        }
 
-```js
-var accessUserSearchInput = document.getElementById('accessUserSearchInput');
-if (accessUserSearchInput) {
-    accessUserSearchInput.addEventListener('input', function () {
-        clearTimeout(state.userSearchTimer);
+        if (!empty($tokens) && !sb_user_search_row_matches_tokens($row, $tokens)) {
+            return;
+        }
 
-        state.userSearchTimer = setTimeout(function () {
-            searchAccessUsers();
-        }, 300);
-    });
+        $results[$id] = sb_user_search_normalize($row);
+    }
+}
 
-    accessUserSearchInput.addEventListener('keydown', function (e) {
-        if (e.key === 'Enter') {
-            e.preventDefault();
+if (!function_exists('sb_user_search_by_filter')) {
+    function sb_user_search_by_filter(array $filter, array &$results, array $tokens, int $limit): void
+    {
+        if (count($results) >= $limit) {
+            return;
+        }
 
-            if (state.userSearchResults.length) {
-                selectAccessUser(Number(state.userSearchResults[0].id || 0));
+        $by = 'last_name';
+        $order = 'asc';
+
+        $rs = CUser::GetList(
+            $by,
+            $order,
+            $filter,
+            [
+                'FIELDS' => [
+                    'ID',
+                    'LOGIN',
+                    'EMAIL',
+                    'NAME',
+                    'LAST_NAME',
+                    'SECOND_NAME',
+                    'ACTIVE',
+                ],
+            ]
+        );
+
+        while ($row = $rs->Fetch()) {
+            sb_user_search_add_result($results, $row, $tokens, $limit);
+
+            if (count($results) >= $limit) {
+                break;
             }
         }
-    });
-}
-
-var accessUserSearchResults = document.getElementById('accessUserSearchResults');
-if (accessUserSearchResults) {
-    accessUserSearchResults.addEventListener('click', function (e) {
-        var btn = e.target.closest('[data-select-access-user]');
-        if (!btn) return;
-
-        selectAccessUser(Number(btn.getAttribute('data-select-access-user') || 0));
-    });
-}
-
-var accessSelectedUser = document.getElementById('accessSelectedUser');
-if (accessSelectedUser) {
-    accessSelectedUser.addEventListener('click', function (e) {
-        var btn = e.target.closest('[data-clear-access-user]');
-        if (!btn) return;
-
-        clearSelectedAccessUser();
-    });
-}
-
-document.addEventListener('mousedown', function (e) {
-    var wrap = e.target.closest('.sb-access-search-wrap');
-    if (!wrap) {
-        clearAccessUserSearchResults();
     }
-});
+}
+
+if (!function_exists('sb_user_search_collect_by_token')) {
+    function sb_user_search_collect_by_token(string $token, array &$results, array $tokens, int $limit): void
+    {
+        if ($token === '' || count($results) >= $limit) {
+            return;
+        }
+
+        $filters = [
+            [
+                'ACTIVE' => 'Y',
+                '%LOGIN' => $token,
+            ],
+            [
+                'ACTIVE' => 'Y',
+                '%EMAIL' => $token,
+            ],
+            [
+                'ACTIVE' => 'Y',
+                '%NAME' => $token,
+            ],
+            [
+                'ACTIVE' => 'Y',
+                '%LAST_NAME' => $token,
+            ],
+            [
+                'ACTIVE' => 'Y',
+                '%SECOND_NAME' => $token,
+            ],
+        ];
+
+        foreach ($filters as $filter) {
+            sb_user_search_by_filter($filter, $results, $tokens, $limit);
+
+            if (count($results) >= $limit) {
+                break;
+            }
+        }
+    }
+}
+
+if ($action === 'user.search') {
+    $siteId = (int)($_POST['siteId'] ?? 0);
+    $query = trim((string)($_POST['query'] ?? ''));
+    $limit = (int)($_POST['limit'] ?? 10);
+
+    $limit = max(1, min(20, $limit));
+
+    if ($siteId <= 0) {
+        sb_json_error('SITE_ID_REQUIRED', 422);
+    }
+
+    sb_user_search_require_owner($siteId);
+
+    if ($query === '') {
+        sb_json_ok([
+            'users' => [],
+            'handler' => 'user',
+            'action' => 'user.search',
+            'file' => __FILE__,
+        ]);
+    }
+
+    if (!preg_match('/^\d+$/', $query) && mb_strlen($query, 'UTF-8') < 2) {
+        sb_json_error('QUERY_TOO_SHORT', 422);
+    }
+
+    $tokens = sb_user_search_query_tokens($query);
+    $results = [];
+
+    /*
+     * Поиск по ID.
+     */
+    if (preg_match('/^\d+$/', $query)) {
+        $rs = CUser::GetByID((int)$query);
+        $row = $rs ? $rs->Fetch() : null;
+
+        if ($row && (string)($row['ACTIVE'] ?? '') === 'Y') {
+            $results[(int)$row['ID']] = sb_user_search_normalize($row);
+        }
+    }
+
+    /*
+     * Поиск по каждому слову из ФИО.
+     * Например: "Иванов Иван" ищем отдельно "Иванов" и "Иван",
+     * а потом оставляем только тех, у кого в карточке есть оба слова.
+     */
+    foreach ($tokens as $token) {
+        if (count($results) >= $limit) {
+            break;
+        }
+
+        sb_user_search_collect_by_token($token, $results, $tokens, $limit);
+    }
+
+    /*
+     * Дополнительная попытка через NAME_SEARCH, если версия Битрикса это поддерживает.
+     */
+    if (count($results) < $limit) {
+        sb_user_search_by_filter([
+            'ACTIVE' => 'Y',
+            'NAME_SEARCH' => $query,
+        ], $results, $tokens, $limit);
+    }
+
+    sb_json_ok([
+        'users' => array_values($results),
+        'handler' => 'user',
+        'action' => 'user.search',
+        'query' => $query,
+        'tokens' => $tokens,
+        'file' => __FILE__,
+    ]);
+}
+
+sb_json_error('NOT_MOVED_YET', 501, [
+    'handler' => 'user',
+    'action' => $action,
+    'file' => __FILE__,
+]);
 ```
 
----
+После замены проверь в консоли:
 
-После этих правок в `editor.php` блок прав станет нормальным:
+```js
+fetch('/local/sitebuilder/api.php', {
+  method: 'POST',
+  headers: {'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8'},
+  body: new URLSearchParams({
+    action: 'user.search',
+    siteId: '11',
+    query: 'Фамилия Имя',
+    sessid: BX.bitrix_sessid()
+  }),
+  credentials: 'same-origin'
+})
+.then(r => r.json())
+.then(console.log);
+```
+
+Пробуй искать так:
 
 ```text
-Пользователь: [иванов]
-↓ выпадающий список
-Иванов Иван — ivanov@example.ru
-[выбор]
-
-Роль: EDITOR
-[Выдать роль]
+Иванов
+Иванов Иван
+Иван
+логин
+email
 ```
 
-А обычный редактор больше не будет видеть административные панели.
+Если по одному слову из фамилии тоже не найдёт, значит в карточке пользователя в Битриксе ФИО может быть не в `NAME/LAST_NAME`, а, например, только в другом профильном поле. Тогда следующим шагом добавим поиск по пользовательским полям `UF_*`.
