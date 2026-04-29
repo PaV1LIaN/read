@@ -1,352 +1,287 @@
-Дальше меняем общий файл прав.
+Дальше делаем 3 правки: закрываем `editor.php` от роли `EDITOR`, убираем кнопку **Редактор** на главной у `EDITOR`, и меняем права диска.
 
-Замени файл:
+## 1. Закрыть `editor.php` от EDITOR
+
+Файл:
 
 ```text
-/local/sitebuilder/lib/access.php
+/local/sitebuilder/editor.php
 ```
 
-на этот:
+Найди вверху:
+
+```php
+$basePath = rtrim(str_replace($_SERVER['DOCUMENT_ROOT'], '', __DIR__), '/');
+$siteId = (int)($_GET['siteId'] ?? 0);
+```
+
+Сразу после этого добавь:
+
+```php
+require_once __DIR__ . '/lib/json.php';
+require_once __DIR__ . '/lib/response.php';
+require_once __DIR__ . '/lib/access.php';
+require_once __DIR__ . '/lib/helpers.php';
+```
+
+Дальше найди конец блока:
+
+```php
+if ($siteId <= 0) {
+    ?>
+    ...
+    <?php
+    exit;
+}
+?>
+```
+
+И **перед** закрывающим `?>` добавь:
+
+```php
+if (!$USER->IsAdmin()) {
+    sb_require_content_manager($siteId);
+}
+```
+
+Должно получиться примерно так:
+
+```php
+if ($siteId <= 0) {
+    ?>
+    <!doctype html>
+    <html lang="ru">
+    ...
+    </html>
+    <?php
+    exit;
+}
+
+if (!$USER->IsAdmin()) {
+    sb_require_content_manager($siteId);
+}
+?>
+```
+
+Теперь `EDITOR` при прямом открытии `editor.php?siteId=...` получит `ACCESS_DENIED`.
+
+---
+
+## 2. Убрать кнопку «Редактор» у EDITOR на главной
+
+Файл:
+
+```text
+/local/sitebuilder/index.php
+```
+
+Найди все проверки:
+
+```js
+>= 2
+```
+
+которые относятся к показу кнопки **Редактор**.
+
+В твоём файле это обычно два места:
+
+```js
+if (userRoleRank >= 2) {
+```
+
+и:
+
+```js
+(currentUserRoleRank >= 2
+    ? '<a class="sb-btn sb-btn-primary sb-btn-small" href="' + BASE_PATH + '/editor.php?siteId=' + siteId + '">Редактор</a>'
+    : '')
+```
+
+Замени их на:
+
+```js
+>= 3
+```
+
+То есть должно стать:
+
+```js
+if (userRoleRank >= 3) {
+```
+
+и:
+
+```js
+(currentUserRoleRank >= 3
+    ? '<a class="sb-btn sb-btn-primary sb-btn-small" href="' + BASE_PATH + '/editor.php?siteId=' + siteId + '">Редактор</a>'
+    : '')
+```
+
+Теперь кнопка **Редактор** будет только у `ADMIN / OWNER / администратора Битрикс24`.
+
+---
+
+## 3. Заменить права диска
+
+Файл:
+
+```text
+/local/sitebuilder/components/disk/lib/DiskPermissionService.php
+```
+
+Замени полностью на этот код:
 
 ```php
 <?php
 
-require_once __DIR__ . '/json.php';
-require_once __DIR__ . '/response.php';
-
-if (!function_exists('sb_user_access_code')) {
-    function sb_user_access_code(): string
+class DiskPermissionService
+{
+    public static function resolve(DiskContext $context, array $settings, ?int $rootFolderId = null): array
     {
-        global $USER;
+        $rolePermissions = self::resolveRolePermissions($context);
+        $blockRestrictions = self::resolveBlockRestrictions($settings);
 
-        return 'U' . (int)$USER->GetID();
+        return [
+            'canView' => $rolePermissions['canView'] && $blockRestrictions['canView'],
+            'canUpload' => $rolePermissions['canUpload'] && $blockRestrictions['canUpload'],
+            'canCreateFolder' => $rolePermissions['canCreateFolder'] && $blockRestrictions['canCreateFolder'],
+            'canRename' => $rolePermissions['canRename'] && $blockRestrictions['canRename'],
+            'canDelete' => $rolePermissions['canDelete'] && $blockRestrictions['canDelete'],
+            'canDownload' => $rolePermissions['canDownload'] && $blockRestrictions['canDownload'],
+
+            'canManageAccess' => $rolePermissions['canManageAccess'],
+            'canEditSettings' => $rolePermissions['canEditSettings'],
+
+            'role' => $rolePermissions['role'],
+        ];
     }
-}
 
-if (!function_exists('sb_get_role')) {
-    function sb_get_role(int $siteId, string $accessCode): ?string
+    protected static function resolveRolePermissions(DiskContext $context): array
     {
-        $siteId = (int)$siteId;
-        $accessCode = trim((string)$accessCode);
-
-        if ($siteId <= 0 || $accessCode === '') {
-            return null;
+        if (DiskCurrentUser::isAdmin()) {
+            return self::permissionsForRole('bitrix_admin');
         }
 
-        $directRole = sb_get_role_from_access_table($siteId, $accessCode);
+        $role = SiteAccessRepository::getUserRole($context->siteId, $context->currentUserId);
 
-        if ($directRole !== null && $directRole !== '') {
-            return $directRole;
-        }
-
-        return sb_get_role_from_bitrix_group($siteId, $accessCode);
+        return self::permissionsForRole((string)$role);
     }
-}
 
-if (!function_exists('sb_get_role_from_access_table')) {
-    function sb_get_role_from_access_table(int $siteId, string $accessCode): ?string
+    protected static function permissionsForRole(string $role): array
     {
-        $access = sb_read_access();
+        $role = trim($role);
 
-        foreach ($access as $row) {
-            if (
-                (int)($row['siteId'] ?? 0) === $siteId
-                && (string)($row['accessCode'] ?? '') === $accessCode
-            ) {
-                $role = trim((string)($row['role'] ?? ''));
-
-                return $role !== '' ? $role : null;
-            }
+        if ($role === 'site_admin' || $role === 'bitrix_admin') {
+            return [
+                'role' => $role,
+                'canView' => true,
+                'canUpload' => true,
+                'canCreateFolder' => true,
+                'canRename' => true,
+                'canDelete' => true,
+                'canDownload' => true,
+                'canManageAccess' => true,
+                'canEditSettings' => true,
+            ];
         }
-
-        return null;
-    }
-}
-
-if (!function_exists('sb_get_role_from_bitrix_group')) {
-    function sb_get_role_from_bitrix_group(int $siteId, string $accessCode): ?string
-    {
-        static $cache = [];
-
-        $siteId = (int)$siteId;
-        $accessCode = trim((string)$accessCode);
-
-        if ($siteId <= 0 || $accessCode === '') {
-            return null;
-        }
-
-        if (!preg_match('/^U(\d+)$/', $accessCode, $m)) {
-            return null;
-        }
-
-        $userId = (int)$m[1];
-
-        if ($userId <= 0) {
-            return null;
-        }
-
-        $cacheKey = $siteId . ':' . $userId;
-
-        if (array_key_exists($cacheKey, $cache)) {
-            return $cache[$cacheKey];
-        }
-
-        $bitrixGroupId = sb_get_site_bitrix_group_id_for_access($siteId);
-
-        if ($bitrixGroupId <= 0) {
-            $cache[$cacheKey] = null;
-            return null;
-        }
-
-        if (!class_exists('\Bitrix\Main\Loader')) {
-            $cache[$cacheKey] = null;
-            return null;
-        }
-
-        if (!\Bitrix\Main\Loader::includeModule('socialnetwork')) {
-            $cache[$cacheKey] = null;
-            return null;
-        }
-
-        if (!class_exists('CSocNetUserToGroup')) {
-            $cache[$cacheKey] = null;
-            return null;
-        }
-
-        $rs = \CSocNetUserToGroup::GetList(
-            ['ID' => 'ASC'],
-            [
-                'GROUP_ID' => $bitrixGroupId,
-                'USER_ID' => $userId,
-            ],
-            false,
-            false,
-            [
-                'ID',
-                'USER_ID',
-                'GROUP_ID',
-                'ROLE',
-            ]
-        );
-
-        $bestRole = null;
-
-        while ($row = $rs->Fetch()) {
-            $sonetRole = (string)($row['ROLE'] ?? '');
-            $sitebuilderRole = sb_map_sonet_role_to_sitebuilder_role($sonetRole);
-
-            if ($sitebuilderRole === null) {
-                continue;
-            }
-
-            if (
-                $bestRole === null
-                || sb_role_rank($sitebuilderRole) > sb_role_rank($bestRole)
-            ) {
-                $bestRole = $sitebuilderRole;
-            }
-        }
-
-        $cache[$cacheKey] = $bestRole;
-
-        return $bestRole;
-    }
-}
-
-if (!function_exists('sb_get_site_bitrix_group_id_for_access')) {
-    function sb_get_site_bitrix_group_id_for_access(int $siteId): int
-    {
-        static $cache = [];
-
-        $siteId = (int)$siteId;
-
-        if ($siteId <= 0) {
-            return 0;
-        }
-
-        if (array_key_exists($siteId, $cache)) {
-            return $cache[$siteId];
-        }
-
-        $groupId = 0;
-
-        if (function_exists('sb_find_site')) {
-            try {
-                $site = sb_find_site($siteId);
-
-                if (is_array($site)) {
-                    $groupId = (int)(
-                        $site['bitrixGroupId']
-                        ?? $site['bitrix_group_id']
-                        ?? 0
-                    );
-                }
-            } catch (Throwable $e) {
-                $groupId = 0;
-            }
-        }
-
-        if ($groupId <= 0 && function_exists('sb_db')) {
-            try {
-                $pdo = sb_db();
-
-                $st = $pdo->prepare("
-                    SELECT bitrix_group_id
-                    FROM sitebuilder.site
-                    WHERE id = :site_id
-                    LIMIT 1
-                ");
-
-                $st->execute([
-                    ':site_id' => $siteId,
-                ]);
-
-                $row = $st->fetch(PDO::FETCH_ASSOC);
-
-                if ($row) {
-                    $groupId = (int)($row['bitrix_group_id'] ?? 0);
-                }
-            } catch (Throwable $e) {
-                $groupId = 0;
-            }
-        }
-
-        $cache[$siteId] = $groupId;
-
-        return $groupId;
-    }
-}
-
-if (!function_exists('sb_map_sonet_role_to_sitebuilder_role')) {
-    function sb_map_sonet_role_to_sitebuilder_role(string $sonetRole): ?string
-    {
-        $sonetRole = trim((string)$sonetRole);
-
-        $ownerRole = defined('SONET_ROLES_OWNER') ? SONET_ROLES_OWNER : 'A';
-        $moderatorRole = defined('SONET_ROLES_MODERATOR') ? SONET_ROLES_MODERATOR : 'E';
-        $userRole = defined('SONET_ROLES_USER') ? SONET_ROLES_USER : 'K';
-
-        if ($sonetRole === $ownerRole || $sonetRole === 'A') {
-            return 'OWNER';
-        }
-
-        if ($sonetRole === $moderatorRole || $sonetRole === 'E') {
-            /*
-             * В новой матрице прав EDITOR — это не редактор конструктора,
-             * а пользователь, который может работать с файлами диска.
-             */
-            return 'EDITOR';
-        }
-
-        if ($sonetRole === $userRole || $sonetRole === 'K') {
-            return 'VIEWER';
-        }
-
-        return null;
-    }
-}
-
-if (!function_exists('sb_role_rank')) {
-    function sb_role_rank(?string $role): int
-    {
-        switch ((string)$role) {
-            case 'VIEWER':
-                return 1;
-
-            case 'EDITOR':
-                return 2;
-
-            case 'ADMIN':
-                return 3;
-
-            case 'OWNER':
-                return 4;
-
-            default:
-                return 0;
-        }
-    }
-}
-
-if (!function_exists('sb_require_site_role')) {
-    function sb_require_site_role(int $siteId, int $minRank): void
-    {
-        global $USER;
 
         /*
-         * Администратор Битрикс24 имеет полный доступ ко всем сайтам конструктора.
+         * EDITOR теперь НЕ редактирует сайт.
+         * Он работает только с файлами диска:
+         * загрузка, скачивание, удаление.
          */
-        if ($USER && $USER->IsAdmin()) {
-            return;
+        if ($role === 'site_editor') {
+            return [
+                'role' => $role,
+                'canView' => true,
+                'canUpload' => true,
+                'canCreateFolder' => false,
+                'canRename' => false,
+                'canDelete' => true,
+                'canDownload' => true,
+                'canManageAccess' => false,
+                'canEditSettings' => false,
+            ];
         }
 
-        $role = sb_get_role($siteId, sb_user_access_code());
-
-        if (sb_role_rank($role) < $minRank) {
-            sb_json_error('ACCESS_DENIED', 403, [
-                'siteId' => $siteId,
-                'requiredRank' => $minRank,
-                'actualRole' => $role,
-            ]);
+        if ($role === 'site_user') {
+            return [
+                'role' => $role,
+                'canView' => true,
+                'canUpload' => false,
+                'canCreateFolder' => false,
+                'canRename' => false,
+                'canDelete' => false,
+                'canDownload' => true,
+                'canManageAccess' => false,
+                'canEditSettings' => false,
+            ];
         }
-    }
-}
 
-if (!function_exists('sb_require_owner')) {
-    function sb_require_owner(int $siteId): void
-    {
-        sb_require_site_role($siteId, 4);
-    }
-}
+        if ($role === 'site_viewer') {
+            return [
+                'role' => $role,
+                'canView' => true,
+                'canUpload' => false,
+                'canCreateFolder' => false,
+                'canRename' => false,
+                'canDelete' => false,
+                'canDownload' => true,
+                'canManageAccess' => false,
+                'canEditSettings' => false,
+            ];
+        }
 
-if (!function_exists('sb_require_admin')) {
-    function sb_require_admin(int $siteId): void
-    {
-        sb_require_site_role($siteId, 3);
+        return [
+            'role' => '',
+            'canView' => false,
+            'canUpload' => false,
+            'canCreateFolder' => false,
+            'canRename' => false,
+            'canDelete' => false,
+            'canDownload' => false,
+            'canManageAccess' => false,
+            'canEditSettings' => false,
+        ];
     }
-}
 
-if (!function_exists('sb_require_content_manager')) {
-    function sb_require_content_manager(int $siteId): void
+    protected static function resolveBlockRestrictions(array $settings): array
     {
-        /*
-         * Контент сайта: страницы, блоки, меню, layout, шаблоны.
-         *
-         * Доступ только:
-         * - ADMIN сайта
-         * - OWNER сайта
-         * - администратор Битрикс24
-         *
-         * EDITOR сюда НЕ проходит.
-         * EDITOR теперь нужен только для работы с файлами диска.
-         */
-        sb_require_site_role($siteId, 3);
-    }
-}
-
-if (!function_exists('sb_require_editor')) {
-    function sb_require_editor(int $siteId): void
-    {
-        /*
-         * Оставляем старую функцию для совместимости.
-         * EDITOR = файловый редактор диска.
-         */
-        sb_require_site_role($siteId, 2);
-    }
-}
-
-if (!function_exists('sb_require_viewer')) {
-    function sb_require_viewer(int $siteId): void
-    {
-        sb_require_site_role($siteId, 1);
+        return [
+            'canView' => true,
+            'canUpload' => !empty($settings['allowUpload']),
+            'canCreateFolder' => !empty($settings['allowCreateFolder']),
+            'canRename' => !empty($settings['allowRename']),
+            'canDelete' => !empty($settings['allowDelete']),
+            'canDownload' => !empty($settings['allowDownload']),
+        ];
     }
 }
 ```
 
-После замены проверь синтаксис:
+После этого матрица станет такой:
 
-```bash
-php -l /srv/bx/docroot/local/sitebuilder/lib/access.php
+```text
+VIEWER:
+- публичная часть
+- просмотр диска
+- скачивание
+
+EDITOR:
+- публичная часть
+- просмотр диска
+- скачивание
+- загрузка файлов
+- удаление файлов/объектов диска
+- без доступа к editor.php
+
+ADMIN / OWNER:
+- editor.php
+- страницы
+- блоки
+- меню
+- layout
+- полный диск
 ```
 
-Если ошибок нет, следующим шагом закроем сам `editor.php` от роли `EDITOR` и уберём кнопку **«Редактор»** на главной для `EDITOR`.
+Важно: сейчас `canDelete` в диске разрешает удаление объекта диска. Если нужно строго разрешить `EDITOR` удалять только файлы, но не папки, следующим шагом отдельно поправим `components/disk/actions/delete.php`.
