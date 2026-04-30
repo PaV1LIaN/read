@@ -1,8 +1,8 @@
-Заменяй именно файл:
+Заменяй файл:
 
 /local/sitebuilder/views/layout/public_page.php
 
-на этот вариант. Он не конфликтует с lib/public_render.php и вызывает sb_public_render_blocks($blocks, $context) правильно.
+на этот вариант:
 
 <?php
 
@@ -56,7 +56,10 @@ if (!function_exists('sb_public_view_color')) {
     {
         $color = trim($color);
 
-        if (preg_match('/^#[0-9a-fA-F]{6}$/', $color) || preg_match('/^#[0-9a-fA-F]{3}$/', $color)) {
+        if (
+            preg_match('/^#[0-9a-fA-F]{6}$/', $color)
+            || preg_match('/^#[0-9a-fA-F]{3}$/', $color)
+        ) {
             return strtolower($color);
         }
 
@@ -315,7 +318,12 @@ if (!function_exists('sb_public_view_render_menu')) {
 if (!function_exists('sb_public_view_get_zone_blocks')) {
     function sb_public_view_get_zone_blocks(array $layout, string $zone): array
     {
-        if (isset($layout['zones']) && is_array($layout['zones']) && isset($layout['zones'][$zone]) && is_array($layout['zones'][$zone])) {
+        if (
+            isset($layout['zones'])
+            && is_array($layout['zones'])
+            && isset($layout['zones'][$zone])
+            && is_array($layout['zones'][$zone])
+        ) {
             return $layout['zones'][$zone];
         }
 
@@ -327,39 +335,165 @@ if (!function_exists('sb_public_view_get_zone_blocks')) {
     }
 }
 
+if (!function_exists('sb_public_view_block_array')) {
+    function sb_public_view_block_array(array $block, string $key): array
+    {
+        $value = $block[$key] ?? null;
+
+        if ($value === null && $key === 'content') {
+            $value = $block['content_json'] ?? $block['CONTENT_JSON'] ?? null;
+        }
+
+        if ($value === null && $key === 'props') {
+            $value = $block['props_json'] ?? $block['PROPS_JSON'] ?? null;
+        }
+
+        if (is_array($value)) {
+            return $value;
+        }
+
+        if (is_string($value) && trim($value) !== '') {
+            $decoded = json_decode($value, true);
+            return is_array($decoded) ? $decoded : [];
+        }
+
+        return [];
+    }
+}
+
+if (!function_exists('sb_public_view_render_single_block')) {
+    function sb_public_view_render_single_block(array $block, array $context): string
+    {
+        $type = (string)($block['type'] ?? $block['TYPE'] ?? 'text');
+        $blockId = (int)($block['id'] ?? $block['ID'] ?? 0);
+
+        $content = sb_public_view_block_array($block, 'content');
+        $props = sb_public_view_block_array($block, 'props');
+
+        $siteId = (int)($context['siteId'] ?? $context['site_id'] ?? 0);
+        $pageId = (int)($context['pageId'] ?? $context['page_id'] ?? 0);
+
+        if ($type === 'heading') {
+            $text = (string)($content['text'] ?? '');
+
+            if ($text === '') {
+                return '';
+            }
+
+            return '
+                <section class="sb-public-block sb-public-block--heading" data-block-id="' . $blockId . '">
+                    <h2 class="sb-public-heading">' . sb_public_view_h($text) . '</h2>
+                </section>
+            ';
+        }
+
+        if ($type === 'text') {
+            $text = (string)($content['text'] ?? '');
+
+            if ($text === '') {
+                return '';
+            }
+
+            return '
+                <section class="sb-public-block sb-public-block--text" data-block-id="' . $blockId . '">
+                    <div class="sb-public-text">' . nl2br(sb_public_view_h($text)) . '</div>
+                </section>
+            ';
+        }
+
+        if ($type === 'button') {
+            $label = (string)($content['label'] ?? 'Кнопка');
+            $href = (string)($content['href'] ?? '#');
+            $target = (string)($content['target'] ?? '_self');
+
+            if (!in_array($target, ['_self', '_blank'], true)) {
+                $target = '_self';
+            }
+
+            return '
+                <section class="sb-public-block sb-public-block--button" data-block-id="' . $blockId . '">
+                    <a class="sb-public-button" href="' . sb_public_view_h($href) . '" target="' . sb_public_view_h($target) . '">
+                        ' . sb_public_view_h($label) . '
+                    </a>
+                </section>
+            ';
+        }
+
+        if ($type === 'html') {
+            $html = (string)($content['html'] ?? '');
+
+            if ($html === '') {
+                return '';
+            }
+
+            return '
+                <section class="sb-public-block sb-public-block--html" data-block-id="' . $blockId . '">
+                    ' . $html . '
+                </section>
+            ';
+        }
+
+        if ($type === 'disk') {
+            $title = (string)($props['title'] ?? 'Файлы');
+
+            $sessid = '';
+            if (function_exists('bitrix_sessid')) {
+                $sessid = (string)bitrix_sessid();
+            }
+
+            return '
+                <section class="sb-public-block sb-public-block--disk" data-block-id="' . $blockId . '">
+                    <div class="sb-public-disk-head">
+                        <h2 class="sb-public-block-title">' . sb_public_view_h($title) . '</h2>
+                    </div>
+
+                    <div
+                        class="sb-disk"
+                        data-site-id="' . $siteId . '"
+                        data-page-id="' . $pageId . '"
+                        data-block-id="' . $blockId . '"
+                        data-sessid="' . sb_public_view_h($sessid) . '"
+                    >
+                        <div class="sb-public-disk-loading">Загрузка файлов...</div>
+                    </div>
+                </section>
+            ';
+        }
+
+        return '
+            <section class="sb-public-block sb-public-block--unknown" data-block-id="' . $blockId . '">
+                <pre>' . sb_public_view_h(json_encode($content, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE)) . '</pre>
+            </section>
+        ';
+    }
+}
+
 if (!function_exists('sb_public_view_render_blocks')) {
     function sb_public_view_render_blocks(array $blocks, array $context): string
     {
-        if (function_exists('sb_public_render_blocks')) {
-            return (string)sb_public_render_blocks($blocks, $context);
-        }
-
         if (empty($blocks)) {
             return '';
         }
 
+        usort($blocks, static function ($a, $b) {
+            $sortA = (int)($a['sort'] ?? $a['SORT'] ?? 500);
+            $sortB = (int)($b['sort'] ?? $b['SORT'] ?? 500);
+
+            if ($sortA !== $sortB) {
+                return $sortA <=> $sortB;
+            }
+
+            return (int)($a['id'] ?? $a['ID'] ?? 0) <=> (int)($b['id'] ?? $b['ID'] ?? 0);
+        });
+
         $html = '';
 
         foreach ($blocks as $block) {
-            $type = (string)($block['type'] ?? 'text');
-            $content = $block['content'] ?? [];
-
-            if (is_string($content)) {
-                $decoded = json_decode($content, true);
-                $content = is_array($decoded) ? $decoded : [];
+            if (!is_array($block)) {
+                continue;
             }
 
-            if (!is_array($content)) {
-                $content = [];
-            }
-
-            if ($type === 'heading') {
-                $html .= '<section class="sb-public-block"><h2>' . sb_public_view_h((string)($content['text'] ?? '')) . '</h2></section>';
-            } elseif ($type === 'text') {
-                $html .= '<section class="sb-public-block"><div>' . nl2br(sb_public_view_h((string)($content['text'] ?? ''))) . '</div></section>';
-            } elseif ($type === 'html') {
-                $html .= '<section class="sb-public-block">' . (string)($content['html'] ?? '') . '</section>';
-            }
+            $html .= sb_public_view_render_single_block($block, $context);
         }
 
         return $html;
@@ -473,7 +607,7 @@ $hasDiskJs = file_exists($diskJsPath);
         <?php $APPLICATION->ShowHead(); ?>
     <?php endif; ?>
 
-    <link rel="stylesheet" href="<?= sb_public_view_h($basePath) ?>/assets/public/public.css?v=5">
+    <link rel="stylesheet" href="<?= sb_public_view_h($basePath) ?>/assets/public/public.css?v=6">
 
     <?php if ($hasDiskCss): ?>
         <link rel="stylesheet" href="<?= sb_public_view_h($basePath) ?>/components/disk/assets/disk.css?v=1">
@@ -634,6 +768,59 @@ $hasDiskJs = file_exists($diskJsPath);
             margin: 0 0 22px;
             font-size: 34px;
             line-height: 1.15;
+            font-weight: 800;
+            color: #111827;
+        }
+
+        .sb-public-block {
+            margin: 0 0 18px;
+        }
+
+        .sb-public-block:last-child {
+            margin-bottom: 0;
+        }
+
+        .sb-public-heading {
+            margin: 0;
+            font-size: 28px;
+            line-height: 1.2;
+            font-weight: 800;
+            color: #111827;
+        }
+
+        .sb-public-text {
+            font-size: 16px;
+            line-height: 1.65;
+            color: #374151;
+        }
+
+        .sb-public-button {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            min-height: 42px;
+            padding: 0 18px;
+            border-radius: 12px;
+            background: var(--sb-accent, #2563eb);
+            color: #fff;
+            text-decoration: none;
+            font-weight: 700;
+        }
+
+        .sb-public-button:hover {
+            opacity: .92;
+            color: #fff;
+        }
+
+        .sb-public-block--html {
+            color: #374151;
+            line-height: 1.6;
+        }
+
+        .sb-public-block-title {
+            margin: 0 0 12px;
+            font-size: 22px;
+            line-height: 1.25;
             font-weight: 800;
             color: #111827;
         }
