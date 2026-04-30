@@ -1,787 +1,599 @@
-Заменяй полностью:
+Да, тогда фиксируем точку отката и идём маленькими шагами.
 
-/local/sitebuilder/assets/admin/editor.css
+Точка отката перед изменениями
 
-на этот файл:
+На сервере перед правками сделай копию проекта:
 
-/* =========================================================
-   EDITOR LAYOUT
-   ========================================================= */
+cd /srv/bx/docroot/local
 
-.sb-page {
-    max-width: 1680px !important;
-    width: calc(100% - 48px) !important;
-}
+mkdir -p /srv/bx/rollback/sitebuilder_before_appearance
 
-.sb-editor-shell {
-    display: grid;
-    grid-template-columns: 300px minmax(720px, 1fr) 380px;
-    gap: 24px;
-    align-items: start;
-}
+cp -a /srv/bx/docroot/local/sitebuilder /srv/bx/rollback/sitebuilder_before_appearance/sitebuilder
 
-.sb-editor-col {
-    min-width: 0;
-}
+Если не понравится, откат будет такой:
 
-.sb-editor-col--right {
-    width: 100%;
-}
+rm -rf /srv/bx/docroot/local/sitebuilder
+cp -a /srv/bx/rollback/sitebuilder_before_appearance/sitebuilder /srv/bx/docroot/local/sitebuilder
 
-.sb-editor-sticky {
-    position: sticky;
-    top: 16px;
-}
+Теперь делаем первый этап: backend для логотипа и фона через CFile, без Диска.
 
-.sb-editor-topline {
-    display: flex;
-    justify-content: space-between;
-    align-items: flex-start;
-    gap: 16px;
-    margin-bottom: 18px;
-}
 
-.sb-editor-topline-note {
-    margin: 0;
-    color: #6b7280;
-    font-size: 14px;
-    max-width: 860px;
-    line-height: 1.5;
-}
+---
 
-.sb-editor-topline-actions {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 8px;
-    justify-content: flex-end;
-}
+1. Создай файл
 
-/* =========================================================
-   LEFT COLUMN / PAGES
-   ========================================================= */
+/local/sitebuilder/lib/SiteAppearanceService.php
 
-.sb-editor-section-head {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    gap: 12px;
-    margin-bottom: 14px;
-}
+<?php
 
-.sb-editor-section-head .sb-panel-title {
-    margin: 0;
-}
+class SiteAppearanceService
+{
+    protected const UPLOAD_DIR = 'sitebuilder/appearance';
 
-.sb-editor-create {
-    padding-bottom: 14px;
-    margin-bottom: 14px;
-    border-bottom: 1px solid #eef2f7;
-}
+    protected const MAX_FILE_SIZE = 10485760; // 10 MB
 
-.sb-editor-pages {
-    display: flex;
-    flex-direction: column;
-    gap: 10px;
-}
+    protected const ALLOWED_EXTENSIONS = [
+        'jpg',
+        'jpeg',
+        'png',
+        'webp',
+        'gif',
+    ];
 
-.sb-editor-page-item {
-    border: 1px solid #e5e7eb;
-    border-radius: 14px;
-    background: #fafafa;
-    padding: 12px;
-    cursor: pointer;
-    transition: border-color .15s ease, background .15s ease, box-shadow .15s ease;
-}
+    protected const ALLOWED_MIME_TYPES = [
+        'image/jpeg',
+        'image/png',
+        'image/webp',
+        'image/gif',
+    ];
 
-.sb-editor-page-item:hover {
-    border-color: #c7d2fe;
-    background: #fcfcff;
-}
+    public static function get(int $siteId): array
+    {
+        $site = self::getSiteOrFail($siteId);
+        $settings = self::normalizeAppearanceSettings($site['settings'] ?? []);
 
-.sb-editor-page-item.is-active {
-    border-color: #2563eb;
-    background: #eff6ff;
-    box-shadow: 0 6px 18px rgba(37, 99, 235, 0.12);
-}
-
-.sb-editor-page-top {
-    display: flex;
-    justify-content: space-between;
-    align-items: flex-start;
-    gap: 12px;
-}
-
-.sb-editor-page-title {
-    margin: 0 0 6px;
-    font-size: 15px;
-    font-weight: 700;
-    color: #111827;
-    line-height: 1.2;
-}
-
-.sb-editor-page-meta {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 6px;
-    margin-top: 8px;
-}
-
-.sb-editor-chip {
-    display: inline-flex;
-    align-items: center;
-    min-height: 24px;
-    padding: 0 8px;
-    border-radius: 999px;
-    background: #f3f4f6;
-    color: #4b5563;
-    font-size: 12px;
-    font-weight: 600;
-}
-
-.sb-editor-chip--blue {
-    background: #eef2ff;
-    color: #3730a3;
-}
-
-.sb-editor-chip--green {
-    background: #dcfce7;
-    color: #166534;
-}
-
-.sb-editor-chip--yellow {
-    background: #fef3c7;
-    color: #92400e;
-}
-
-/* =========================================================
-   CENTER / CANVAS
-   ========================================================= */
-
-.sb-editor-canvas {
-    background: #ffffff;
-    border: 1px solid #e5e7eb;
-    border-radius: 18px;
-    box-shadow: 0 2px 8px rgba(15, 23, 42, 0.04);
-    overflow: hidden;
-}
-
-.sb-editor-canvas-head {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    gap: 12px;
-    padding: 14px 18px;
-    border-bottom: 1px solid #e5e7eb;
-    background: #f9fafb;
-}
-
-.sb-editor-canvas-title {
-    margin: 0;
-    font-size: 18px;
-    font-weight: 700;
-    color: #111827;
-}
-
-.sb-editor-canvas-sub {
-    margin: 4px 0 0;
-    font-size: 13px;
-    color: #6b7280;
-}
-
-.sb-editor-canvas-body {
-    background: #f8fafc;
-    padding: 24px;
-    min-height: 720px;
-}
-
-.sb-editor-page {
-    max-width: 1100px !important;
-    margin: 0 auto;
-    background: #fff;
-    border: 1px solid #e5e7eb;
-    border-radius: 20px;
-    min-height: 620px;
-    padding: 24px;
-    box-shadow: 0 12px 28px rgba(15, 23, 42, 0.06);
-}
-
-.sb-editor-page-heading {
-    margin: 0 0 18px;
-    font-size: 30px;
-    line-height: 1.15;
-    font-weight: 700;
-    color: #111827;
-}
-
-.sb-toolbar {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 8px;
-    justify-content: flex-end;
-}
-
-.sb-editor-addbar {
-    display: grid;
-    grid-template-columns: repeat(5, minmax(120px, 1fr));
-    gap: 10px;
-    margin-bottom: 18px;
-}
-
-.sb-editor-add-card {
-    border: 1px solid #dbe3f0;
-    border-radius: 14px;
-    background: #fff;
-    padding: 12px;
-    text-align: left;
-    cursor: pointer;
-    transition: border-color .15s ease, transform .15s ease, box-shadow .15s ease;
-}
-
-.sb-editor-add-card:hover {
-    border-color: #93c5fd;
-    transform: translateY(-1px);
-    box-shadow: 0 8px 18px rgba(37, 99, 235, 0.08);
-}
-
-.sb-editor-add-card__title {
-    display: block;
-    font-size: 14px;
-    font-weight: 700;
-    color: #111827;
-    margin-bottom: 4px;
-}
-
-.sb-editor-add-card__text {
-    display: block;
-    font-size: 12px;
-    color: #6b7280;
-    line-height: 1.4;
-}
-
-.sb-editor-blocks {
-    display: flex;
-    flex-direction: column;
-    gap: 14px;
-}
-
-.sb-editor-block {
-    border: 1px solid #e5e7eb;
-    border-radius: 16px;
-    background: #fff;
-    padding: 14px;
-    transition: border-color .15s ease, box-shadow .15s ease, background .15s ease;
-    cursor: pointer;
-}
-
-.sb-editor-block:hover {
-    border-color: #c7d2fe;
-    box-shadow: 0 8px 20px rgba(37, 99, 235, 0.08);
-}
-
-.sb-editor-block.is-active {
-    border-color: #2563eb;
-    background: #f8fbff;
-    box-shadow: 0 10px 24px rgba(37, 99, 235, 0.12);
-}
-
-.sb-editor-block-head {
-    display: flex;
-    justify-content: space-between;
-    align-items: flex-start;
-    gap: 12px;
-    margin-bottom: 10px;
-}
-
-.sb-editor-block-title {
-    margin: 0;
-    font-size: 14px;
-    font-weight: 700;
-    color: #111827;
-}
-
-.sb-editor-block-preview {
-    border: 1px solid #eef2f7;
-    background: #fff;
-    border-radius: 12px;
-    padding: 12px;
-    font-size: 14px;
-    line-height: 1.6;
-    color: #374151;
-    min-height: 52px;
-}
-
-.sb-editor-empty-big {
-    padding: 30px 20px;
-    text-align: center;
-    color: #6b7280;
-    border: 1px dashed #d1d5db;
-    border-radius: 16px;
-    background: #fff;
-}
-
-.sb-editor-empty-big strong {
-    display: block;
-    color: #111827;
-    margin-bottom: 6px;
-    font-size: 16px;
-}
-
-/* =========================================================
-   RIGHT COLUMN / INSPECTORS
-   ========================================================= */
-
-.sb-editor-note {
-    font-size: 13px;
-    color: #6b7280;
-    line-height: 1.5;
-    margin-top: -2px;
-    margin-bottom: 12px;
-}
-
-.sb-editor-page-actions,
-.sb-editor-block-actions,
-.sb-editor-inspector-actions {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 8px;
-    margin-top: 12px;
-}
-
-.sb-editor-page-actions .sb-btn,
-.sb-editor-block-actions .sb-btn,
-.sb-editor-inspector-actions .sb-btn {
-    height: 32px;
-    padding: 0 10px;
-    font-size: 12px;
-}
-
-.sb-editor-json-actions {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 8px;
-    margin-top: 12px;
-}
-
-.sb-editor-divider {
-    height: 1px;
-    background: #eef2f7;
-    margin: 14px 0;
-}
-
-.sb-block-type-form {
-    display: none;
-}
-
-.sb-block-type-form.is-active {
-    display: block;
-}
-
-.sb-editor-advanced-json {
-    display: none;
-}
-
-.sb-editor-advanced-json.is-open {
-    display: block;
-}
-
-.sb-block-form-note {
-    margin: 6px 0 0;
-    font-size: 12px;
-    color: #6b7280;
-    line-height: 1.4;
-}
-
-/* =========================================================
-   ACCESS / ПРАВА ПОЛЬЗОВАТЕЛЕЙ
-   ========================================================= */
-
-.sb-access-help {
-    margin: 0 0 12px;
-    font-size: 13px;
-    line-height: 1.5;
-    color: #6b7280;
-}
-
-.sb-access-form {
-    display: grid;
-    grid-template-columns: 1fr !important;
-    gap: 12px;
-}
-
-.sb-access-form .sb-field {
-    min-width: 0;
-}
-
-.sb-access-form .sb-input,
-.sb-access-form .sb-select {
-    width: 100%;
-    max-width: 100%;
-    box-sizing: border-box;
-}
-
-.sb-access-search-wrap {
-    position: relative;
-}
-
-/* Результаты поиска */
-#accessUserSearchResults {
-    display: block !important;
-    max-height: 260px !important;
-    overflow-y: auto !important;
-    overflow-x: hidden !important;
-    margin-top: 8px !important;
-    border: 1px solid #e5e7eb !important;
-    border-radius: 12px !important;
-    background: #fff !important;
-}
-
-#accessUserSearchResults.sb-hidden {
-    display: none !important;
-}
-
-#accessUserSearchResults .sb-access-result-item {
-    width: 100% !important;
-    min-height: 44px !important;
-    display: grid !important;
-    grid-template-columns: 32px minmax(0, 1fr) !important;
-    gap: 10px !important;
-    align-items: center !important;
-    padding: 7px 10px !important;
-    border: 0 !important;
-    border-bottom: 1px solid #f1f5f9 !important;
-    background: #fff !important;
-    text-align: left !important;
-    cursor: pointer !important;
-    box-sizing: border-box !important;
-    transition: background .15s ease !important;
-}
-
-#accessUserSearchResults .sb-access-result-item:last-child {
-    border-bottom: 0 !important;
-}
-
-#accessUserSearchResults .sb-access-result-item:hover {
-    background: #f8fafc !important;
-}
-
-#accessUserSearchResults .sb-access-result-avatar {
-    width: 32px !important;
-    height: 32px !important;
-    min-width: 32px !important;
-    max-width: 32px !important;
-    min-height: 32px !important;
-    max-height: 32px !important;
-    border-radius: 50% !important;
-    overflow: hidden !important;
-    display: flex !important;
-    align-items: center !important;
-    justify-content: center !important;
-    background: #eef2ff !important;
-    color: #3730a3 !important;
-    font-size: 11px !important;
-    font-weight: 700 !important;
-    line-height: 1 !important;
-}
-
-#accessUserSearchResults .sb-access-result-avatar img {
-    width: 32px !important;
-    height: 32px !important;
-    max-width: 32px !important;
-    max-height: 32px !important;
-    min-width: 32px !important;
-    min-height: 32px !important;
-    object-fit: cover !important;
-    display: block !important;
-}
-
-#accessUserSearchResults .sb-access-result-body {
-    min-width: 0 !important;
-    overflow: hidden !important;
-}
-
-#accessUserSearchResults .sb-access-result-title {
-    font-size: 13px !important;
-    font-weight: 700 !important;
-    line-height: 1.2 !important;
-    color: #111827 !important;
-    white-space: nowrap !important;
-    overflow: hidden !important;
-    text-overflow: ellipsis !important;
-}
-
-#accessUserSearchResults .sb-access-result-meta {
-    margin-top: 2px !important;
-    font-size: 11px !important;
-    line-height: 1.2 !important;
-    color: #6b7280 !important;
-    white-space: nowrap !important;
-    overflow: hidden !important;
-    text-overflow: ellipsis !important;
-}
-
-/* Выбранный пользователь */
-.sb-access-selected {
-    margin-top: 10px;
-    padding: 12px;
-    border: 1px solid #e5e7eb;
-    border-radius: 14px;
-    background: #f8fafc;
-}
-
-#accessSelectedUser .sb-access-selected-user {
-    display: grid !important;
-    grid-template-columns: 42px minmax(0, 1fr) !important;
-    gap: 10px !important;
-    align-items: center !important;
-}
-
-#accessSelectedUser .sb-access-selected-avatar {
-    width: 42px !important;
-    height: 42px !important;
-    min-width: 42px !important;
-    max-width: 42px !important;
-    min-height: 42px !important;
-    max-height: 42px !important;
-    border-radius: 50% !important;
-    overflow: hidden !important;
-    background: #eef2ff !important;
-    display: flex !important;
-    align-items: center !important;
-    justify-content: center !important;
-    color: #3730a3 !important;
-    font-size: 12px !important;
-    font-weight: 700 !important;
-}
-
-#accessSelectedUser .sb-access-selected-avatar img {
-    width: 42px !important;
-    height: 42px !important;
-    max-width: 42px !important;
-    max-height: 42px !important;
-    object-fit: cover !important;
-    display: block !important;
-}
-
-.sb-access-selected-body {
-    min-width: 0;
-}
-
-.sb-access-selected-title {
-    font-size: 14px;
-    font-weight: 700;
-    line-height: 1.35;
-    color: #111827;
-    word-break: break-word;
-}
-
-.sb-access-selected-meta {
-    margin-top: 3px;
-    font-size: 12px;
-    line-height: 1.35;
-    color: #6b7280;
-    word-break: break-word;
-}
-
-#accessSelectedUser .sb-access-selected-actions {
-    grid-column: 1 / -1 !important;
-    justify-content: flex-start !important;
-    display: flex !important;
-    align-items: center !important;
-    gap: 8px !important;
-}
-
-/* Список выданных прав */
-.sb-access-list {
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-    margin-top: 12px;
-}
-
-#accessList .sb-access-item {
-    display: grid !important;
-    grid-template-columns: minmax(0, 1fr) !important;
-    gap: 8px !important;
-    align-items: start !important;
-    padding: 10px 12px !important;
-    border: 1px solid #e5e7eb !important;
-    border-radius: 12px !important;
-    background: #fff !important;
-    box-sizing: border-box !important;
-}
-
-#accessList .sb-access-item__main {
-    min-width: 0 !important;
-    overflow: hidden !important;
-}
-
-#accessList .sb-access-item__name {
-    font-size: 14px !important;
-    font-weight: 700 !important;
-    line-height: 1.25 !important;
-    color: #111827 !important;
-    white-space: nowrap !important;
-    overflow: hidden !important;
-    text-overflow: ellipsis !important;
-}
-
-#accessList .sb-access-item__meta {
-    margin-top: 2px !important;
-    font-size: 12px !important;
-    line-height: 1.25 !important;
-    color: #6b7280 !important;
-    white-space: nowrap !important;
-    overflow: hidden !important;
-    text-overflow: ellipsis !important;
-}
-
-#accessList .sb-access-item__side {
-    display: flex !important;
-    align-items: center !important;
-    justify-content: space-between !important;
-    gap: 8px !important;
-    width: 100% !important;
-}
-
-#accessList .sb-role-badge {
-    flex: 0 0 auto !important;
-}
-
-#accessList .sb-access-item__side .sb-btn {
-    flex: 0 0 auto !important;
-    white-space: nowrap !important;
-}
-
-/* badges ролей */
-.sb-role-badge {
-    display: inline-flex;
-    align-items: center;
-    min-height: 26px;
-    padding: 0 9px;
-    border-radius: 999px;
-    font-size: 12px;
-    font-weight: 700;
-    line-height: 1;
-    white-space: nowrap;
-    background: #f3f4f6;
-    color: #374151;
-}
-
-.sb-role-badge--owner {
-    background: #fef3c7;
-    color: #92400e;
-}
-
-.sb-role-badge--admin {
-    background: #e0f2fe;
-    color: #075985;
-}
-
-.sb-role-badge--editor {
-    background: #ede9fe;
-    color: #5b21b6;
-}
-
-.sb-role-badge--viewer {
-    background: #f3f4f6;
-    color: #374151;
-}
-
-/* сообщения прав */
-#accessMessage {
-    line-height: 1.45;
-    white-space: pre-line;
-}
-
-#accessMessage.is-success {
-    border-color: #bbf7d0;
-    background: #f0fdf4;
-    color: #166534;
-}
-
-#accessMessage.is-error {
-    border-color: #fecaca;
-    background: #fef2f2;
-    color: #991b1b;
-}
-
-/* =========================================================
-   ADAPTIVE
-   ========================================================= */
-
-@media (max-width: 1500px) {
-    .sb-page {
-        max-width: 1480px !important;
-        width: calc(100% - 36px) !important;
+        return self::withUrls($settings);
     }
 
-    .sb-editor-shell {
-        grid-template-columns: 290px minmax(620px, 1fr) 360px !important;
-        gap: 18px !important;
+    public static function update(int $siteId, array $data, int $currentUserId): array
+    {
+        $site = self::getSiteOrFail($siteId);
+        $settings = self::normalizeAppearanceSettings($site['settings'] ?? []);
+
+        if (array_key_exists('backgroundColor', $data)) {
+            $settings['backgroundColor'] = self::normalizeColor((string)$data['backgroundColor'], '#f8fafc');
+        }
+
+        if (array_key_exists('backgroundMode', $data)) {
+            $settings['backgroundMode'] = self::normalizeBackgroundMode((string)$data['backgroundMode']);
+        }
+
+        if (array_key_exists('backgroundPosition', $data)) {
+            $settings['backgroundPosition'] = self::normalizeBackgroundPosition((string)$data['backgroundPosition']);
+        }
+
+        if (array_key_exists('backgroundRepeat', $data)) {
+            $settings['backgroundRepeat'] = self::normalizeBackgroundRepeat((string)$data['backgroundRepeat']);
+        }
+
+        if (array_key_exists('headerLogoMode', $data)) {
+            $settings['headerLogoMode'] = self::normalizeHeaderLogoMode((string)$data['headerLogoMode']);
+        }
+
+        self::saveSiteSettings($siteId, $settings, $currentUserId);
+
+        return self::withUrls($settings);
     }
 
-    .sb-editor-addbar {
-        grid-template-columns: repeat(5, minmax(100px, 1fr)) !important;
+    public static function upload(int $siteId, string $type, array $file, int $currentUserId): array
+    {
+        $type = self::normalizeAssetType($type);
+
+        if (!class_exists('CFile')) {
+            throw new RuntimeException('CFile_NOT_FOUND');
+        }
+
+        self::validateUploadFile($file);
+
+        $site = self::getSiteOrFail($siteId);
+        $settings = self::normalizeAppearanceSettings($site['settings'] ?? []);
+
+        $oldFileIdKey = $type === 'logo' ? 'logoFileId' : 'backgroundFileId';
+        $oldFileId = (int)($settings[$oldFileIdKey] ?? 0);
+
+        $file['MODULE_ID'] = 'main';
+
+        $newFileId = (int)CFile::SaveFile($file, self::UPLOAD_DIR);
+
+        if ($newFileId <= 0) {
+            throw new RuntimeException('FILE_SAVE_ERROR');
+        }
+
+        if ($oldFileId > 0) {
+            CFile::Delete($oldFileId);
+        }
+
+        $settings[$oldFileIdKey] = $newFileId;
+
+        self::saveSiteSettings($siteId, $settings, $currentUserId);
+
+        return self::withUrls($settings);
+    }
+
+    public static function remove(int $siteId, string $type, int $currentUserId): array
+    {
+        $type = self::normalizeAssetType($type);
+
+        if (!class_exists('CFile')) {
+            throw new RuntimeException('CFile_NOT_FOUND');
+        }
+
+        $site = self::getSiteOrFail($siteId);
+        $settings = self::normalizeAppearanceSettings($site['settings'] ?? []);
+
+        $fileIdKey = $type === 'logo' ? 'logoFileId' : 'backgroundFileId';
+        $fileId = (int)($settings[$fileIdKey] ?? 0);
+
+        if ($fileId > 0) {
+            CFile::Delete($fileId);
+        }
+
+        $settings[$fileIdKey] = 0;
+
+        self::saveSiteSettings($siteId, $settings, $currentUserId);
+
+        return self::withUrls($settings);
+    }
+
+    protected static function getSiteOrFail(int $siteId): array
+    {
+        if ($siteId <= 0) {
+            throw new RuntimeException('EMPTY_SITE_ID');
+        }
+
+        if (!function_exists('sb_read_sites')) {
+            throw new RuntimeException('STORAGE_NOT_LOADED');
+        }
+
+        $sites = sb_read_sites();
+
+        foreach ($sites as $site) {
+            if ((int)($site['id'] ?? 0) === $siteId) {
+                return $site;
+            }
+        }
+
+        throw new RuntimeException('SITE_NOT_FOUND');
+    }
+
+    protected static function saveSiteSettings(int $siteId, array $settings, int $currentUserId): void
+    {
+        if (!function_exists('sb_read_sites') || !function_exists('sb_write_sites')) {
+            throw new RuntimeException('STORAGE_NOT_LOADED');
+        }
+
+        $sites = sb_read_sites();
+        $found = false;
+
+        foreach ($sites as &$site) {
+            if ((int)($site['id'] ?? 0) !== $siteId) {
+                continue;
+            }
+
+            $currentSettings = is_array($site['settings'] ?? null) ? $site['settings'] : [];
+            $site['settings'] = array_merge($currentSettings, $settings);
+            $site['updatedBy'] = $currentUserId;
+            $site['updatedAt'] = date('c');
+
+            $found = true;
+            break;
+        }
+        unset($site);
+
+        if (!$found) {
+            throw new RuntimeException('SITE_NOT_FOUND');
+        }
+
+        sb_write_sites($sites);
+    }
+
+    protected static function normalizeAppearanceSettings(array $settings): array
+    {
+        return [
+            'accent' => (string)($settings['accent'] ?? '#2563eb'),
+
+            'logoFileId' => (int)($settings['logoFileId'] ?? 0),
+            'backgroundFileId' => (int)($settings['backgroundFileId'] ?? 0),
+
+            'backgroundColor' => self::normalizeColor(
+                (string)($settings['backgroundColor'] ?? '#f8fafc'),
+                '#f8fafc'
+            ),
+
+            'backgroundMode' => self::normalizeBackgroundMode(
+                (string)($settings['backgroundMode'] ?? 'cover')
+            ),
+
+            'backgroundPosition' => self::normalizeBackgroundPosition(
+                (string)($settings['backgroundPosition'] ?? 'center center')
+            ),
+
+            'backgroundRepeat' => self::normalizeBackgroundRepeat(
+                (string)($settings['backgroundRepeat'] ?? 'no-repeat')
+            ),
+
+            'headerLogoMode' => self::normalizeHeaderLogoMode(
+                (string)($settings['headerLogoMode'] ?? 'image')
+            ),
+        ];
+    }
+
+    protected static function withUrls(array $settings): array
+    {
+        $settings['logoUrl'] = '';
+        $settings['backgroundUrl'] = '';
+
+        if (class_exists('CFile')) {
+            if (!empty($settings['logoFileId'])) {
+                $settings['logoUrl'] = (string)CFile::GetPath((int)$settings['logoFileId']);
+            }
+
+            if (!empty($settings['backgroundFileId'])) {
+                $settings['backgroundUrl'] = (string)CFile::GetPath((int)$settings['backgroundFileId']);
+            }
+        }
+
+        return $settings;
+    }
+
+    protected static function validateUploadFile(array $file): void
+    {
+        $error = (int)($file['error'] ?? UPLOAD_ERR_NO_FILE);
+
+        if ($error !== UPLOAD_ERR_OK) {
+            throw new RuntimeException('UPLOAD_ERROR_' . $error);
+        }
+
+        $size = (int)($file['size'] ?? 0);
+
+        if ($size <= 0) {
+            throw new RuntimeException('EMPTY_FILE');
+        }
+
+        if ($size > self::MAX_FILE_SIZE) {
+            throw new RuntimeException('FILE_TOO_LARGE');
+        }
+
+        $name = (string)($file['name'] ?? '');
+        $ext = strtolower(pathinfo($name, PATHINFO_EXTENSION));
+
+        if (!in_array($ext, self::ALLOWED_EXTENSIONS, true)) {
+            throw new RuntimeException('BAD_FILE_EXTENSION');
+        }
+
+        $mime = '';
+
+        if (!empty($file['type'])) {
+            $mime = strtolower((string)$file['type']);
+        }
+
+        if ($mime !== '' && !in_array($mime, self::ALLOWED_MIME_TYPES, true)) {
+            throw new RuntimeException('BAD_FILE_MIME_TYPE');
+        }
+    }
+
+    protected static function normalizeAssetType(string $type): string
+    {
+        $type = trim($type);
+
+        if (!in_array($type, ['logo', 'background'], true)) {
+            throw new RuntimeException('BAD_ASSET_TYPE');
+        }
+
+        return $type;
+    }
+
+    protected static function normalizeColor(string $color, string $fallback): string
+    {
+        $color = trim($color);
+
+        if (preg_match('/^#[0-9a-fA-F]{6}$/', $color)) {
+            return strtolower($color);
+        }
+
+        if (preg_match('/^#[0-9a-fA-F]{3}$/', $color)) {
+            return strtolower($color);
+        }
+
+        return $fallback;
+    }
+
+    protected static function normalizeBackgroundMode(string $mode): string
+    {
+        $mode = trim($mode);
+
+        $allowed = [
+            'cover',
+            'contain',
+            'auto',
+            'stretch',
+        ];
+
+        return in_array($mode, $allowed, true) ? $mode : 'cover';
+    }
+
+    protected static function normalizeBackgroundPosition(string $position): string
+    {
+        $position = trim($position);
+
+        $allowed = [
+            'center center',
+            'top center',
+            'bottom center',
+            'left center',
+            'right center',
+        ];
+
+        return in_array($position, $allowed, true) ? $position : 'center center';
+    }
+
+    protected static function normalizeBackgroundRepeat(string $repeat): string
+    {
+        $repeat = trim($repeat);
+
+        $allowed = [
+            'no-repeat',
+            'repeat',
+            'repeat-x',
+            'repeat-y',
+        ];
+
+        return in_array($repeat, $allowed, true) ? $repeat : 'no-repeat';
+    }
+
+    protected static function normalizeHeaderLogoMode(string $mode): string
+    {
+        $mode = trim($mode);
+
+        $allowed = [
+            'image',
+            'text',
+            'both',
+        ];
+
+        return in_array($mode, $allowed, true) ? $mode : 'image';
     }
 }
 
-@media (max-width: 1280px) {
-    .sb-editor-shell {
-        grid-template-columns: 280px minmax(0, 1fr) !important;
+
+---
+
+2. В /local/sitebuilder/api/index.php
+
+В блок site-действий добавь 4 действия:
+
+$action === 'site.appearanceGet' ||
+$action === 'site.appearanceUpdate' ||
+$action === 'site.appearanceUpload' ||
+$action === 'site.appearanceRemove' ||
+
+Должно быть примерно так:
+
+if (
+    $action === 'site.list' ||
+    $action === 'site.get' ||
+    $action === 'site.create' ||
+    $action === 'site.update' ||
+    $action === 'site.delete' ||
+    $action === 'site.setHome' ||
+    $action === 'site.syncAccess' ||
+    $action === 'site.ensureGroup' ||
+    $action === 'site.accessList' ||
+    $action === 'site.accessSet' ||
+    $action === 'site.accessRemove' ||
+    $action === 'site.appearanceGet' ||
+    $action === 'site.appearanceUpdate' ||
+    $action === 'site.appearanceUpload' ||
+    $action === 'site.appearanceRemove'
+) {
+    require __DIR__ . '/handlers/site.php';
+    exit;
+}
+
+
+---
+
+3. В /local/sitebuilder/api/handlers/site.php
+
+В самый верх, после <?php, добавь:
+
+require_once $_SERVER['DOCUMENT_ROOT'] . '/local/sitebuilder/lib/SiteAppearanceService.php';
+
+Потом ближе к низу файла, до финального NOT_MOVED_YET, добавь:
+
+if ($action === 'site.appearanceGet') {
+    $siteId = (int)($_POST['siteId'] ?? 0);
+
+    if ($siteId <= 0) {
+        sb_json_error('SITE_ID_REQUIRED', 422);
     }
 
-    .sb-editor-col--right {
-        grid-column: 1 / -1;
-    }
+    sb_require_content_manager($siteId);
 
-    .sb-editor-sticky {
-        position: static;
-    }
+    try {
+        $appearance = SiteAppearanceService::get($siteId);
 
-    .sb-editor-addbar {
-        grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+        sb_json_ok([
+            'appearance' => $appearance,
+            'handler' => 'site',
+            'action' => $action,
+            'file' => __FILE__,
+        ]);
+    } catch (Throwable $e) {
+        sb_json_error($e->getMessage(), 500, [
+            'handler' => 'site',
+            'action' => $action,
+            'file' => __FILE__,
+        ]);
     }
 }
 
-@media (max-width: 900px) {
-    .sb-page {
-        width: calc(100% - 24px) !important;
+if ($action === 'site.appearanceUpdate') {
+    global $USER;
+
+    $siteId = (int)($_POST['siteId'] ?? 0);
+
+    if ($siteId <= 0) {
+        sb_json_error('SITE_ID_REQUIRED', 422);
     }
 
-    .sb-editor-topline {
-        flex-direction: column;
-        align-items: stretch;
-    }
+    sb_require_content_manager($siteId);
 
-    .sb-editor-topline-actions {
-        justify-content: flex-start;
-    }
+    try {
+        $data = $_POST;
 
-    .sb-editor-shell {
-        grid-template-columns: 1fr !important;
-    }
+        unset($data['action'], $data['sessid'], $data['siteId']);
 
-    .sb-editor-addbar {
-        grid-template-columns: 1fr !important;
-    }
+        $appearance = SiteAppearanceService::update(
+            $siteId,
+            $data,
+            (int)$USER->GetID()
+        );
 
-    .sb-editor-canvas-head {
-        align-items: flex-start;
-        flex-direction: column;
-    }
-
-    .sb-toolbar {
-        width: 100%;
-        justify-content: flex-start;
-    }
-
-    #accessSelectedUser .sb-access-selected-user {
-        grid-template-columns: 42px minmax(0, 1fr) !important;
+        sb_json_ok([
+            'appearance' => $appearance,
+            'handler' => 'site',
+            'action' => $action,
+            'file' => __FILE__,
+        ]);
+    } catch (Throwable $e) {
+        sb_json_error($e->getMessage(), 500, [
+            'handler' => 'site',
+            'action' => $action,
+            'file' => __FILE__,
+        ]);
     }
 }
 
-И в editor.php лучше сразу обнови версию CSS:
+if ($action === 'site.appearanceUpload') {
+    global $USER;
 
-<link rel="stylesheet" href="<?= htmlspecialchars($basePath, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?>/assets/admin/editor.css?v=4">
+    $siteId = (int)($_POST['siteId'] ?? 0);
+    $type = trim((string)($_POST['type'] ?? ''));
 
-После замены обнови страницу через Ctrl + F5.
+    if ($siteId <= 0) {
+        sb_json_error('SITE_ID_REQUIRED', 422);
+    }
+
+    if ($type === '') {
+        sb_json_error('TYPE_REQUIRED', 422);
+    }
+
+    sb_require_content_manager($siteId);
+
+    $file = $_FILES['file'] ?? null;
+
+    if (!is_array($file)) {
+        sb_json_error('FILE_REQUIRED', 422);
+    }
+
+    try {
+        $appearance = SiteAppearanceService::upload(
+            $siteId,
+            $type,
+            $file,
+            (int)$USER->GetID()
+        );
+
+        sb_json_ok([
+            'appearance' => $appearance,
+            'handler' => 'site',
+            'action' => $action,
+            'file' => __FILE__,
+        ]);
+    } catch (Throwable $e) {
+        sb_json_error($e->getMessage(), 500, [
+            'handler' => 'site',
+            'action' => $action,
+            'file' => __FILE__,
+        ]);
+    }
+}
+
+if ($action === 'site.appearanceRemove') {
+    global $USER;
+
+    $siteId = (int)($_POST['siteId'] ?? 0);
+    $type = trim((string)($_POST['type'] ?? ''));
+
+    if ($siteId <= 0) {
+        sb_json_error('SITE_ID_REQUIRED', 422);
+    }
+
+    if ($type === '') {
+        sb_json_error('TYPE_REQUIRED', 422);
+    }
+
+    sb_require_content_manager($siteId);
+
+    try {
+        $appearance = SiteAppearanceService::remove(
+            $siteId,
+            $type,
+            (int)$USER->GetID()
+        );
+
+        sb_json_ok([
+            'appearance' => $appearance,
+            'handler' => 'site',
+            'action' => $action,
+            'file' => __FILE__,
+        ]);
+    } catch (Throwable $e) {
+        sb_json_error($e->getMessage(), 500, [
+            'handler' => 'site',
+            'action' => $action,
+            'file' => __FILE__,
+        ]);
+    }
+}
+
+
+---
+
+4. Быстрая проверка из консоли браузера
+
+Открой editor.php?siteId=13 и выполни:
+
+fetch('/local/sitebuilder/api.php', {
+  method: 'POST',
+  body: new URLSearchParams({
+    action: 'site.appearanceGet',
+    siteId: '13',
+    sessid: BX.bitrix_sessid()
+  }),
+  credentials: 'same-origin'
+})
+.then(r => r.json())
+.then(console.log)
+.catch(console.error);
+
+Должен прийти примерно такой ответ:
+
+{
+  "ok": true,
+  "appearance": {
+    "accent": "#2563eb",
+    "logoFileId": 0,
+    "backgroundFileId": 0,
+    "backgroundColor": "#f8fafc",
+    "backgroundMode": "cover",
+    "backgroundPosition": "center center",
+    "backgroundRepeat": "no-repeat",
+    "headerLogoMode": "image",
+    "logoUrl": "",
+    "backgroundUrl": ""
+  }
+}
+
+Если это сработает, следующим шагом добавим интерфейс в settings.php: загрузка логотипа, загрузка фона, цвет фона и режим отображения.
