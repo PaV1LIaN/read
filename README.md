@@ -1,418 +1,406 @@
-SiteDiskInitializer.php
-<?php
-
-use Bitrix\Disk\Driver;
-use Bitrix\Disk\Folder;
-use Bitrix\Disk\Storage;
-use Bitrix\Main\Loader;
-
-class SiteDiskInitializer
-{
-    /**
-     * Fallback: ID папки в "Общий диск".
-     * Если у сайта нет группы Битрикс24 или диск группы не найден,
-     * папка сайта будет создана здесь.
-     */
-    protected const SHARED_ROOT_FOLDER_ID = 250;
-
-    /**
-     * Папка внутри диска группы Битрикс24.
-     *
-     * Структура будет:
-     * Группа Битрикс24
-     * └── Диск группы
-     *     └── SiteBuilder
-     *         └── site_11 - Название сайта
-     */
-    protected const GROUP_ROOT_FOLDER_NAME = 'SiteBuilder';
-
-    public static function ensureSiteRootFolder(int $siteId, int $currentUserId, string $siteName = ''): int
-    {
-        if ($siteId <= 0) {
-            throw new RuntimeException('EMPTY_SITE_ID');
-        }
-
-        if ($currentUserId <= 0) {
-            throw new RuntimeException('EMPTY_CURRENT_USER_ID');
-        }
-
-        $existing = SiteRepository::getRootDiskFolderId($siteId);
-
-        if ($existing !== null && $existing > 0) {
-            $existingFolder = Folder::loadById((int)$existing);
-
-            if ($existingFolder instanceof Folder) {
-                return (int)$existingFolder->getId();
-            }
-        }
-
-        $site = SiteRepository::getById($siteId);
-        if (!$site) {
-            throw new RuntimeException('SITE_NOT_FOUND');
-        }
-
-        $resolvedSiteName = trim($siteName);
-        if ($resolvedSiteName === '') {
-            $resolvedSiteName = trim((string)($site['name'] ?? ''));
-        }
-
-        $bitrixGroupId = self::extractBitrixGroupId($site);
-
-        $parentFolder = null;
-        $groupDiskError = '';
-
-        if ($bitrixGroupId > 0) {
-            try {
-                $parentFolder = self::getOrCreateGroupSiteBuilderFolder(
-                    $bitrixGroupId,
-                    $currentUserId
-                );
-            } catch (Throwable $e) {
-                $groupDiskError = $e->getMessage();
-                $parentFolder = null;
-            }
-        }
-
-        if (!$parentFolder instanceof Folder) {
-            $parentFolder = self::getSharedRootFolder();
-
-            if (!$parentFolder instanceof Folder) {
-                throw new RuntimeException(
-                    'SHARED_DISK_ROOT_FOLDER_NOT_FOUND'
-                    . ($groupDiskError !== '' ? '; GROUP_DISK_ERROR: ' . $groupDiskError : '')
-                );
-            }
-        }
-
-        $siteFolderName = self::buildSiteFolderName($siteId, $resolvedSiteName);
-
-        $siteFolder = self::getOrCreateChildFolder(
-            $parentFolder,
-            $siteFolderName,
-            $currentUserId
-        );
-
-        SiteRepository::updateRootDiskFolderId($siteId, (int)$siteFolder->getId());
-
-        return (int)$siteFolder->getId();
-    }
-
-    protected static function extractBitrixGroupId(array $site): int
-    {
-        return (int)(
-            $site['bitrixGroupId']
-            ?? $site['bitrix_group_id']
-            ?? $site['BITRIX_GROUP_ID']
-            ?? 0
-        );
-    }
+Да, оставляем диск/папки как было. Сейчас лучше сделать права пользователей аккуратнее:
 
-    protected static function buildSiteFolderName(int $siteId, string $siteName): string
-    {
-        $siteName = trim($siteName);
+1. правую колонку сделать шире;
 
-        if ($siteName === '') {
-            $siteName = 'site_' . $siteId;
-        }
 
-        $name = 'site_' . $siteId . ' - ' . $siteName;
+2. список пользователей сделать карточками;
 
-        return DiskNameSanitizer::sanitizeFolderName($name, 'site_' . $siteId);
-    }
 
-    protected static function getOrCreateGroupSiteBuilderFolder(int $groupId, int $currentUserId): Folder
-    {
-        if ($groupId <= 0) {
-            throw new RuntimeException('EMPTY_BITRIX_GROUP_ID');
-        }
+3. добавить аватар пользователя, если в Битрикс24 заполнено фото;
 
-        $storage = self::getGroupStorage($groupId);
 
-        if (!$storage instanceof Storage) {
-            throw new RuntimeException('GROUP_DISK_STORAGE_NOT_FOUND: ' . $groupId);
-        }
+4. если фото нет — показывать кружок с инициалами.
 
-        $rootFolder = $storage->getRootObject();
 
-        if (!$rootFolder instanceof Folder) {
-            throw new RuntimeException('GROUP_DISK_ROOT_FOLDER_NOT_FOUND: ' . $groupId);
-        }
 
-        $folderName = DiskNameSanitizer::sanitizeFolderName(
-            self::GROUP_ROOT_FOLDER_NAME,
-            'SiteBuilder'
-        );
 
-        return self::getOrCreateChildFolder($rootFolder, $folderName, $currentUserId);
-    }
+---
 
-    protected static function getGroupStorage(int $groupId): ?Storage
-    {
-        if ($groupId <= 0) {
-            return null;
-        }
+1. В editor.css добавь в конец
 
-        if (!Loader::includeModule('disk')) {
-            throw new RuntimeException('DISK_MODULE_NOT_INSTALLED');
-        }
+Файл:
 
-        Loader::includeModule('socialnetwork');
+/local/sitebuilder/assets/admin/editor.css
 
-        $driver = Driver::getInstance();
-
-        if (is_object($driver) && method_exists($driver, 'getStorageByGroupId')) {
-            $storage = $driver->getStorageByGroupId($groupId);
+Добавь:
 
-            if ($storage instanceof Storage) {
-                return $storage;
-            }
-        }
+/* Более широкая правая колонка редактора */
+.sb-editor-shell {
+    grid-template-columns: 320px minmax(0, 1fr) 440px;
+}
 
-        $storage = Storage::load([
-            '=MODULE_ID' => 'socialnetwork',
-            '=ENTITY_TYPE' => 'group',
-            '=ENTITY_ID' => $groupId,
-        ]);
-
-        if ($storage instanceof Storage) {
-            return $storage;
-        }
-
-        return null;
-    }
-
-    protected static function getSharedRootFolder(): Folder
-    {
-        $folderId = (int)self::SHARED_ROOT_FOLDER_ID;
-
-        if ($folderId <= 0) {
-            throw new RuntimeException('SHARED_ROOT_FOLDER_ID_NOT_CONFIGURED');
-        }
-
-        $folder = Folder::loadById($folderId);
-
-        if (!$folder instanceof Folder) {
-            throw new RuntimeException('SHARED_ROOT_FOLDER_NOT_FOUND: ' . $folderId);
-        }
-
-        return $folder;
-    }
-
-    protected static function getOrCreateChildFolder(Folder $parentFolder, string $folderName, int $currentUserId): Folder
-    {
-        $folderName = DiskNameSanitizer::sanitizeFolderName($folderName, 'Папка');
-
-        $existingFolder = self::findChildFolderByName($parentFolder, $folderName, $currentUserId);
-
-        if ($existingFolder instanceof Folder) {
-            return $existingFolder;
-        }
-
-        $createdFolder = $parentFolder->addSubFolder([
-            'NAME' => $folderName,
-            'CREATED_BY' => $currentUserId,
-        ], [], true);
-
-        if ($createdFolder instanceof Folder) {
-            return $createdFolder;
-        }
-
-        $errors = self::collectFolderErrors($parentFolder);
-
-        throw new RuntimeException(
-            'DISK_FOLDER_CREATE_ERROR'
-            . (!empty($errors) ? ': ' . implode(' | ', $errors) : '')
-        );
-    }
-
-    protected static function findChildFolderByName(Folder $parentFolder, string $folderName, int $currentUserId): ?Folder
-    {
-        $securityContext = Driver::getInstance()->getFakeSecurityContext($currentUserId);
-
-        $children = $parentFolder->getChildren($securityContext);
-
-        foreach ($children as $child) {
-            if (!$child instanceof Folder) {
-                continue;
-            }
-
-            if ((string)$child->getName() === $folderName) {
-                return $child;
-            }
-        }
-
-        return null;
-    }
-
-    protected static function collectFolderErrors(Folder $folder): array
-    {
-        $errors = [];
-
-        if (!method_exists($folder, 'getErrors')) {
-            return $errors;
-        }
-
-        foreach ((array)$folder->getErrors() as $error) {
-            if (is_object($error) && method_exists($error, 'getMessage')) {
-                $errors[] = $error->getMessage();
-            } else {
-                $errors[] = (string)$error;
-            }
-        }
-
-
-
-
-
-SiteBitrixGroupService.php
-
-<?php
-
-use Bitrix\Main\Loader;
-
-class SiteBitrixGroupService
-{
-    public static function createForSite(array $site, int $ownerUserId): int
-    {
-        if ($ownerUserId <= 0) {
-            throw new RuntimeException('EMPTY_OWNER_USER_ID');
-        }
-
-        if (!Loader::includeModule('socialnetwork')) {
-            throw new RuntimeException('SOCIALNETWORK_MODULE_NOT_INSTALLED');
-        }
-
-        if (!class_exists('CSocNetGroup')) {
-            throw new RuntimeException('CSocNetGroup_NOT_FOUND');
-        }
-
-        $siteId = (int)($site['id'] ?? 0);
-        $siteName = trim((string)($site['name'] ?? ''));
-
-        if ($siteId <= 0) {
-            throw new RuntimeException('EMPTY_SITE_ID');
-        }
-
-        if ($siteName === '') {
-            $siteName = 'Сайт #' . $siteId;
-        }
-
-        $groupName = self::buildGroupName($siteName, $siteId);
-        $subjectId = self::resolveSubjectId();
-
-        $fields = [
-            'SITE_ID' => self::getSiteId(),
-            'NAME' => $groupName,
-            'DESCRIPTION' => 'Рабочая группа сайта SiteBuilder: ' . $siteName,
-            'VISIBLE' => 'N',
-            'OPENED' => 'N',
-            'PROJECT' => 'N',
-            'SUBJECT_ID' => $subjectId,
-            'INITIATE_PERMS' => self::ownerRole(),
-            'SPAM_PERMS' => self::ownerRole(),
-        ];
-
-        $groupId = (int)\CSocNetGroup::CreateGroup(
-            $ownerUserId,
-            $fields,
-            false
-        );
-
-        if ($groupId <= 0) {
-            $message = self::getLastBitrixError();
-
-            throw new RuntimeException(
-                'BITRIX_GROUP_CREATE_ERROR' . ($message !== '' ? ': ' . $message : '')
-            );
-        }
-
-        return $groupId;
-    }
-
-    protected static function buildGroupName(string $siteName, int $siteId): string
-    {
-        $siteName = trim($siteName);
-
-        if ($siteName === '') {
-            $siteName = 'Сайт #' . $siteId;
-        }
-
-        return 'SiteBuilder: ' . $siteName;
-    }
-
-    protected static function resolveSubjectId(): int
-    {
-        if (!class_exists('CSocNetGroupSubject')) {
-            return 1;
-        }
-
-        $siteId = self::getSiteId();
-
-        $rs = \CSocNetGroupSubject::GetList(
-            ['SORT' => 'ASC', 'NAME' => 'ASC'],
-            ['SITE_ID' => $siteId],
-            false,
-            ['nTopCount' => 1],
-            ['ID', 'SITE_ID', 'NAME']
-        );
-
-        if ($row = $rs->Fetch()) {
-            $id = (int)($row['ID'] ?? 0);
-
-            if ($id > 0) {
-                return $id;
-            }
-        }
-
-        $rs = \CSocNetGroupSubject::GetList(
-            ['SORT' => 'ASC', 'NAME' => 'ASC'],
-            [],
-            false,
-            ['nTopCount' => 1],
-            ['ID', 'SITE_ID', 'NAME']
-        );
-
-        if ($row = $rs->Fetch()) {
-            $id = (int)($row['ID'] ?? 0);
-
-            if ($id > 0) {
-                return $id;
-            }
-        }
-
-        return 1;
-    }
-
-    protected static function getSiteId(): string
-    {
-        if (defined('SITE_ID') && SITE_ID) {
-            return (string)SITE_ID;
-        }
-
-        return 's1';
-    }
-
-    protected static function ownerRole(): string
-    {
-        if (defined('SONET_ROLES_OWNER')) {
-            return SONET_ROLES_OWNER;
-        }
-
-        return 'A';
-    }
-
-    protected static function getLastBitrixError(): string
-    {
-        global $APPLICATION;
-
-        if (is_object($APPLICATION) && method_exists($APPLICATION, 'GetException')) {
-            $exception = $APPLICATION->GetException();
-
-            if ($exception && method_exists($exception, 'GetString')) {
-                return trim((string)$exception->GetString());
-            }
-        }
-
-        return '';
+@media (max-width: 1440px) {
+    .sb-editor-shell {
+        grid-template-columns: 290px minmax(0, 1fr) 400px;
     }
 }
+
+/* Права пользователей: аккуратные карточки */
+.sb-access-form {
+    grid-template-columns: 1fr !important;
+}
+
+.sb-access-list {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.sb-access-item {
+    display: grid;
+    grid-template-columns: 42px minmax(0, 1fr) auto;
+    gap: 10px;
+    align-items: center;
+    padding: 10px;
+    border: 1px solid #eef2f7;
+    border-radius: 14px;
+    background: #fff;
+    overflow: hidden;
+}
+
+.sb-access-item__avatar,
+.sb-access-result-avatar,
+.sb-access-selected-avatar {
+    width: 38px;
+    height: 38px;
+    border-radius: 999px;
+    overflow: hidden;
+    flex: 0 0 auto;
+    background: #eef2ff;
+    color: #3730a3;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 13px;
+    font-weight: 800;
+    text-transform: uppercase;
+}
+
+.sb-access-item__avatar img,
+.sb-access-result-avatar img,
+.sb-access-selected-avatar img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+}
+
+.sb-access-item__main {
+    min-width: 0;
+}
+
+.sb-access-item__name {
+    font-size: 14px;
+    font-weight: 700;
+    color: #111827;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.sb-access-item__meta {
+    margin-top: 3px;
+    font-size: 12px;
+    color: #6b7280;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.sb-access-item__side {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.sb-access-item__side .sb-btn {
+    white-space: nowrap;
+}
+
+/* Выпадающий поиск пользователей */
+.sb-access-result-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.sb-access-result-body {
+    min-width: 0;
+}
+
+.sb-access-result-title {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.sb-access-result-meta {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* Выбранный пользователь */
+.sb-access-selected {
+    padding: 10px;
+}
+
+.sb-access-selected-user {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.sb-access-selected-body {
+    min-width: 0;
+}
+
+.sb-access-selected-title {
+    font-size: 13px;
+    font-weight: 800;
+    color: #166534;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.sb-access-selected-meta {
+    margin-top: 3px;
+    font-size: 12px;
+    color: #166534;
+    opacity: .85;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.sb-access-selected-actions {
+    margin-left: auto;
+    flex: 0 0 auto;
+}
+
+@media (max-width: 1500px) {
+    .sb-access-item {
+        grid-template-columns: 38px minmax(0, 1fr);
+    }
+
+    .sb-access-item__side {
+        grid-column: 1 / -1;
+        justify-content: flex-start;
+        padding-left: 48px;
+    }
+}
+
+
+---
+
+2. В editor.php добавь JS-функции для аватара
+
+Внутри <script> рядом с escapeHtml() добавь:
+
+function getInitials(value) {
+    value = String(value || '').trim();
+
+    if (!value) {
+        return '?';
+    }
+
+    var parts = value.split(/\s+/).filter(Boolean);
+
+    if (parts.length >= 2) {
+        return (parts[0].charAt(0) + parts[1].charAt(0)).toUpperCase();
+    }
+
+    return value.substring(0, 2).toUpperCase();
+}
+
+function userAvatarHtml(user, className) {
+    user = user || {};
+
+    var name = user.title || user.userName || user.name || '';
+    var avatarUrl = user.avatarUrl || user.userAvatarUrl || user.photoUrl || '';
+
+    className = className || 'sb-access-item__avatar';
+
+    if (avatarUrl) {
+        return ''
+            + '<div class="' + className + '">'
+            + '  <img src="' + escapeHtml(avatarUrl) + '" alt="">'
+            + '</div>';
+    }
+
+    return ''
+        + '<div class="' + className + '">'
+        + escapeHtml(getInitials(name))
+        + '</div>';
+}
+
+
+---
+
+3. В editor.php замени renderAccessUserSearchResults()
+
+Найди функцию:
+
+function renderAccessUserSearchResults(users) {
+
+и внутри неё замени формирование results.innerHTML = state.userSearchResults.map... на это:
+
+results.innerHTML = state.userSearchResults.map(function (user) {
+    var id = Number(user.id || 0);
+    var title = user.title || ('Пользователь #' + id);
+    var meta = [];
+
+    if (user.login) meta.push(user.login);
+    if (user.email) meta.push(user.email);
+
+    return ''
+        + '<button class="sb-access-result-item" type="button" data-select-access-user="' + id + '">'
+        +      userAvatarHtml(user, 'sb-access-result-avatar')
+        + '  <div class="sb-access-result-body">'
+        + '      <div class="sb-access-result-title">' + escapeHtml(title) + '</div>'
+        + '      <div class="sb-access-result-meta">ID: ' + id + (meta.length ? ' · ' + escapeHtml(meta.join(' · ')) : '') + '</div>'
+        + '  </div>'
+        + '</button>';
+}).join('');
+
+
+---
+
+4. В editor.php замени кусок в selectAccessUser()
+
+В функции selectAccessUser() найди:
+
+selectedNode.innerHTML = ''
+    + '<strong>' + escapeHtml(user.title || ('Пользователь #' + userId)) + '</strong>'
+    + '<br>ID: ' + userId
+    + (meta.length ? ' · ' + escapeHtml(meta.join(' · ')) : '')
+    + ' <button class="sb-btn sb-btn-light sb-btn-small" type="button" data-clear-access-user>Сбросить</button>';
+
+Замени на:
+
+selectedNode.innerHTML = ''
+    + '<div class="sb-access-selected-user">'
+    +      userAvatarHtml(user, 'sb-access-selected-avatar')
+    + '  <div class="sb-access-selected-body">'
+    + '      <div class="sb-access-selected-title">' + escapeHtml(user.title || ('Пользователь #' + userId)) + '</div>'
+    + '      <div class="sb-access-selected-meta">ID: ' + userId + (meta.length ? ' · ' + escapeHtml(meta.join(' · ')) : '') + '</div>'
+    + '  </div>'
+    + '  <div class="sb-access-selected-actions">'
+    + '      <button class="sb-btn sb-btn-light sb-btn-small" type="button" data-clear-access-user>Сбросить</button>'
+    + '  </div>'
+    + '</div>';
+
+
+---
+
+5. В editor.php замени renderAccessList()
+
+Найди функцию:
+
+function renderAccessList() {
+
+и внутри неё замени list.innerHTML = state.accessItems.map... на это:
+
+list.innerHTML = state.accessItems.map(function (item) {
+    var userId = Number(item.userId || 0);
+    var name = item.userName || item.title || ('Пользователь #' + userId);
+    var role = item.role || '';
+
+    var avatarUser = {
+        userName: name,
+        title: name,
+        avatarUrl: item.avatarUrl || item.userAvatarUrl || item.photoUrl || ''
+    };
+
+    return ''
+        + '<div class="sb-access-item">'
+        +      userAvatarHtml(avatarUser, 'sb-access-item__avatar')
+        + '  <div class="sb-access-item__main">'
+        + '      <div class="sb-access-item__name">' + escapeHtml(name) + '</div>'
+        + '      <div class="sb-access-item__meta">ID: ' + userId + ' · ' + escapeHtml(item.accessCode || '') + '</div>'
+        + '  </div>'
+        + '  <div class="sb-access-item__side">'
+        +        roleBadge(role)
+        + '      <button class="sb-btn sb-btn-danger sb-btn-small" type="button" data-access-remove-user="' + userId + '">Удалить</button>'
+        + '  </div>'
+        + '</div>';
+}).join('');
+
+После этого список уже будет выглядеть намного лучше даже без фото — будут инициалы.
+
+
+---
+
+6. Чтобы реальные фото приходили в поиске, поправь user.php
+
+Файл:
+
+/local/sitebuilder/api/handlers/user.php
+
+В функцию sb_user_search_normalize() добавь получение фото.
+
+Найди:
+
+$email = (string)($row['EMAIL'] ?? '');
+
+ниже добавь:
+
+$photoId = (int)($row['PERSONAL_PHOTO'] ?? 0);
+$avatarUrl = '';
+
+if ($photoId > 0 && class_exists('CFile')) {
+    $avatarUrl = (string)CFile::GetPath($photoId);
+}
+
+И в return [ добавь:
+
+'avatarUrl' => $avatarUrl,
+'photoUrl' => $avatarUrl,
+
+Должно быть примерно так:
+
+return [
+    'id' => $id,
+    'name' => $fio,
+    'login' => $login,
+    'email' => $email,
+    'title' => $title,
+    'avatarUrl' => $avatarUrl,
+    'photoUrl' => $avatarUrl,
+    'active' => (string)($row['ACTIVE'] ?? ''),
+];
+
+Теперь во всех местах, где в CUser::GetList есть FIELDS, добавь туда:
+
+'PERSONAL_PHOTO',
+
+Например было:
+
+'FIELDS' => [
+    'ID',
+    'LOGIN',
+    'EMAIL',
+    'NAME',
+    'LAST_NAME',
+    'SECOND_NAME',
+    'ACTIVE',
+],
+
+Сделай:
+
+'FIELDS' => [
+    'ID',
+    'LOGIN',
+    'EMAIL',
+    'NAME',
+    'LAST_NAME',
+    'SECOND_NAME',
+    'PERSONAL_PHOTO',
+    'ACTIVE',
+],
+
+
+---
+
+Фото в уже выданных правах тоже можно добавить, но для этого нужно поправить SiteAccessManagementService.php, который формирует site.accessList. Сейчас после правок хотя бы поиск будет с фото, а в списке будет аккуратный fallback с инициалами.
