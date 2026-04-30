@@ -1,12 +1,429 @@
-Да, значит CSS где-то перебивается или картинка приходит с собственными размерами. Сделаем жёстко: и через CSS с !important, и через inline-style в editor.php.
+Заменяй полностью:
 
-1. В editor.css добавь в самый конец
+/local/sitebuilder/assets/admin/editor.css
+
+на этот файл:
 
 /* =========================================================
-   ЖЁСТКОЕ ИСПРАВЛЕНИЕ ПРАВ ПОЛЬЗОВАТЕЛЕЙ
+   EDITOR LAYOUT
    ========================================================= */
 
-/* Поиск пользователей: компактные строки */
+.sb-page {
+    max-width: 1680px !important;
+    width: calc(100% - 48px) !important;
+}
+
+.sb-editor-shell {
+    display: grid;
+    grid-template-columns: 300px minmax(720px, 1fr) 380px;
+    gap: 24px;
+    align-items: start;
+}
+
+.sb-editor-col {
+    min-width: 0;
+}
+
+.sb-editor-col--right {
+    width: 100%;
+}
+
+.sb-editor-sticky {
+    position: sticky;
+    top: 16px;
+}
+
+.sb-editor-topline {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 16px;
+    margin-bottom: 18px;
+}
+
+.sb-editor-topline-note {
+    margin: 0;
+    color: #6b7280;
+    font-size: 14px;
+    max-width: 860px;
+    line-height: 1.5;
+}
+
+.sb-editor-topline-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    justify-content: flex-end;
+}
+
+/* =========================================================
+   LEFT COLUMN / PAGES
+   ========================================================= */
+
+.sb-editor-section-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 14px;
+}
+
+.sb-editor-section-head .sb-panel-title {
+    margin: 0;
+}
+
+.sb-editor-create {
+    padding-bottom: 14px;
+    margin-bottom: 14px;
+    border-bottom: 1px solid #eef2f7;
+}
+
+.sb-editor-pages {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.sb-editor-page-item {
+    border: 1px solid #e5e7eb;
+    border-radius: 14px;
+    background: #fafafa;
+    padding: 12px;
+    cursor: pointer;
+    transition: border-color .15s ease, background .15s ease, box-shadow .15s ease;
+}
+
+.sb-editor-page-item:hover {
+    border-color: #c7d2fe;
+    background: #fcfcff;
+}
+
+.sb-editor-page-item.is-active {
+    border-color: #2563eb;
+    background: #eff6ff;
+    box-shadow: 0 6px 18px rgba(37, 99, 235, 0.12);
+}
+
+.sb-editor-page-top {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 12px;
+}
+
+.sb-editor-page-title {
+    margin: 0 0 6px;
+    font-size: 15px;
+    font-weight: 700;
+    color: #111827;
+    line-height: 1.2;
+}
+
+.sb-editor-page-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-top: 8px;
+}
+
+.sb-editor-chip {
+    display: inline-flex;
+    align-items: center;
+    min-height: 24px;
+    padding: 0 8px;
+    border-radius: 999px;
+    background: #f3f4f6;
+    color: #4b5563;
+    font-size: 12px;
+    font-weight: 600;
+}
+
+.sb-editor-chip--blue {
+    background: #eef2ff;
+    color: #3730a3;
+}
+
+.sb-editor-chip--green {
+    background: #dcfce7;
+    color: #166534;
+}
+
+.sb-editor-chip--yellow {
+    background: #fef3c7;
+    color: #92400e;
+}
+
+/* =========================================================
+   CENTER / CANVAS
+   ========================================================= */
+
+.sb-editor-canvas {
+    background: #ffffff;
+    border: 1px solid #e5e7eb;
+    border-radius: 18px;
+    box-shadow: 0 2px 8px rgba(15, 23, 42, 0.04);
+    overflow: hidden;
+}
+
+.sb-editor-canvas-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 12px;
+    padding: 14px 18px;
+    border-bottom: 1px solid #e5e7eb;
+    background: #f9fafb;
+}
+
+.sb-editor-canvas-title {
+    margin: 0;
+    font-size: 18px;
+    font-weight: 700;
+    color: #111827;
+}
+
+.sb-editor-canvas-sub {
+    margin: 4px 0 0;
+    font-size: 13px;
+    color: #6b7280;
+}
+
+.sb-editor-canvas-body {
+    background: #f8fafc;
+    padding: 24px;
+    min-height: 720px;
+}
+
+.sb-editor-page {
+    max-width: 1100px !important;
+    margin: 0 auto;
+    background: #fff;
+    border: 1px solid #e5e7eb;
+    border-radius: 20px;
+    min-height: 620px;
+    padding: 24px;
+    box-shadow: 0 12px 28px rgba(15, 23, 42, 0.06);
+}
+
+.sb-editor-page-heading {
+    margin: 0 0 18px;
+    font-size: 30px;
+    line-height: 1.15;
+    font-weight: 700;
+    color: #111827;
+}
+
+.sb-toolbar {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    justify-content: flex-end;
+}
+
+.sb-editor-addbar {
+    display: grid;
+    grid-template-columns: repeat(5, minmax(120px, 1fr));
+    gap: 10px;
+    margin-bottom: 18px;
+}
+
+.sb-editor-add-card {
+    border: 1px solid #dbe3f0;
+    border-radius: 14px;
+    background: #fff;
+    padding: 12px;
+    text-align: left;
+    cursor: pointer;
+    transition: border-color .15s ease, transform .15s ease, box-shadow .15s ease;
+}
+
+.sb-editor-add-card:hover {
+    border-color: #93c5fd;
+    transform: translateY(-1px);
+    box-shadow: 0 8px 18px rgba(37, 99, 235, 0.08);
+}
+
+.sb-editor-add-card__title {
+    display: block;
+    font-size: 14px;
+    font-weight: 700;
+    color: #111827;
+    margin-bottom: 4px;
+}
+
+.sb-editor-add-card__text {
+    display: block;
+    font-size: 12px;
+    color: #6b7280;
+    line-height: 1.4;
+}
+
+.sb-editor-blocks {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+}
+
+.sb-editor-block {
+    border: 1px solid #e5e7eb;
+    border-radius: 16px;
+    background: #fff;
+    padding: 14px;
+    transition: border-color .15s ease, box-shadow .15s ease, background .15s ease;
+    cursor: pointer;
+}
+
+.sb-editor-block:hover {
+    border-color: #c7d2fe;
+    box-shadow: 0 8px 20px rgba(37, 99, 235, 0.08);
+}
+
+.sb-editor-block.is-active {
+    border-color: #2563eb;
+    background: #f8fbff;
+    box-shadow: 0 10px 24px rgba(37, 99, 235, 0.12);
+}
+
+.sb-editor-block-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 12px;
+    margin-bottom: 10px;
+}
+
+.sb-editor-block-title {
+    margin: 0;
+    font-size: 14px;
+    font-weight: 700;
+    color: #111827;
+}
+
+.sb-editor-block-preview {
+    border: 1px solid #eef2f7;
+    background: #fff;
+    border-radius: 12px;
+    padding: 12px;
+    font-size: 14px;
+    line-height: 1.6;
+    color: #374151;
+    min-height: 52px;
+}
+
+.sb-editor-empty-big {
+    padding: 30px 20px;
+    text-align: center;
+    color: #6b7280;
+    border: 1px dashed #d1d5db;
+    border-radius: 16px;
+    background: #fff;
+}
+
+.sb-editor-empty-big strong {
+    display: block;
+    color: #111827;
+    margin-bottom: 6px;
+    font-size: 16px;
+}
+
+/* =========================================================
+   RIGHT COLUMN / INSPECTORS
+   ========================================================= */
+
+.sb-editor-note {
+    font-size: 13px;
+    color: #6b7280;
+    line-height: 1.5;
+    margin-top: -2px;
+    margin-bottom: 12px;
+}
+
+.sb-editor-page-actions,
+.sb-editor-block-actions,
+.sb-editor-inspector-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 12px;
+}
+
+.sb-editor-page-actions .sb-btn,
+.sb-editor-block-actions .sb-btn,
+.sb-editor-inspector-actions .sb-btn {
+    height: 32px;
+    padding: 0 10px;
+    font-size: 12px;
+}
+
+.sb-editor-json-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 12px;
+}
+
+.sb-editor-divider {
+    height: 1px;
+    background: #eef2f7;
+    margin: 14px 0;
+}
+
+.sb-block-type-form {
+    display: none;
+}
+
+.sb-block-type-form.is-active {
+    display: block;
+}
+
+.sb-editor-advanced-json {
+    display: none;
+}
+
+.sb-editor-advanced-json.is-open {
+    display: block;
+}
+
+.sb-block-form-note {
+    margin: 6px 0 0;
+    font-size: 12px;
+    color: #6b7280;
+    line-height: 1.4;
+}
+
+/* =========================================================
+   ACCESS / ПРАВА ПОЛЬЗОВАТЕЛЕЙ
+   ========================================================= */
+
+.sb-access-help {
+    margin: 0 0 12px;
+    font-size: 13px;
+    line-height: 1.5;
+    color: #6b7280;
+}
+
+.sb-access-form {
+    display: grid;
+    grid-template-columns: 1fr !important;
+    gap: 12px;
+}
+
+.sb-access-form .sb-field {
+    min-width: 0;
+}
+
+.sb-access-form .sb-input,
+.sb-access-form .sb-select {
+    width: 100%;
+    max-width: 100%;
+    box-sizing: border-box;
+}
+
+.sb-access-search-wrap {
+    position: relative;
+}
+
+/* Результаты поиска */
 #accessUserSearchResults {
     display: block !important;
     max-height: 260px !important;
@@ -36,6 +453,15 @@
     text-align: left !important;
     cursor: pointer !important;
     box-sizing: border-box !important;
+    transition: background .15s ease !important;
+}
+
+#accessUserSearchResults .sb-access-result-item:last-child {
+    border-bottom: 0 !important;
+}
+
+#accessUserSearchResults .sb-access-result-item:hover {
+    background: #f8fafc !important;
 }
 
 #accessUserSearchResults .sb-access-result-avatar {
@@ -54,6 +480,7 @@
     color: #3730a3 !important;
     font-size: 11px !important;
     font-weight: 700 !important;
+    line-height: 1 !important;
 }
 
 #accessUserSearchResults .sb-access-result-avatar img {
@@ -93,6 +520,14 @@
 }
 
 /* Выбранный пользователь */
+.sb-access-selected {
+    margin-top: 10px;
+    padding: 12px;
+    border: 1px solid #e5e7eb;
+    border-radius: 14px;
+    background: #f8fafc;
+}
+
 #accessSelectedUser .sb-access-selected-user {
     display: grid !important;
     grid-template-columns: 42px minmax(0, 1fr) !important;
@@ -107,6 +542,15 @@
     max-width: 42px !important;
     min-height: 42px !important;
     max-height: 42px !important;
+    border-radius: 50% !important;
+    overflow: hidden !important;
+    background: #eef2ff !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    color: #3730a3 !important;
+    font-size: 12px !important;
+    font-weight: 700 !important;
 }
 
 #accessSelectedUser .sb-access-selected-avatar img {
@@ -115,14 +559,45 @@
     max-width: 42px !important;
     max-height: 42px !important;
     object-fit: cover !important;
+    display: block !important;
+}
+
+.sb-access-selected-body {
+    min-width: 0;
+}
+
+.sb-access-selected-title {
+    font-size: 14px;
+    font-weight: 700;
+    line-height: 1.35;
+    color: #111827;
+    word-break: break-word;
+}
+
+.sb-access-selected-meta {
+    margin-top: 3px;
+    font-size: 12px;
+    line-height: 1.35;
+    color: #6b7280;
+    word-break: break-word;
 }
 
 #accessSelectedUser .sb-access-selected-actions {
     grid-column: 1 / -1 !important;
     justify-content: flex-start !important;
+    display: flex !important;
+    align-items: center !important;
+    gap: 8px !important;
 }
 
-/* Список выданных прав: всегда в 2 строки, чтобы не налезало */
+/* Список выданных прав */
+.sb-access-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin-top: 12px;
+}
+
 #accessList .sb-access-item {
     display: grid !important;
     grid-template-columns: minmax(0, 1fr) !important;
@@ -177,150 +652,136 @@
     white-space: nowrap !important;
 }
 
-
----
-
-2. В editor.php замени функцию userAvatarHtml
-
-Найди:
-
-function userAvatarHtml(user, className) {
-
-и замени функцию полностью:
-
-function userAvatarHtml(user, className) {
-    user = user || {};
-    className = className || '';
-
-    var avatar = user.avatarUrl || user.avatar || user.photoUrl || user.userAvatarUrl || '';
-    var title = user.title || user.name || user.userName || '';
-    var initials = 'U';
-
-    if (title) {
-        var parts = String(title).trim().split(/\s+/).filter(Boolean);
-
-        if (parts.length === 1) {
-            initials = parts[0].substring(0, 1).toUpperCase();
-        } else if (parts.length >= 2) {
-            initials = (parts[0].substring(0, 1) + parts[1].substring(0, 1)).toUpperCase();
-        }
-    }
-
-    var size = '32px';
-
-    if (className.indexOf('selected') !== -1) {
-        size = '42px';
-    }
-
-    var wrapStyle = [
-        'width:' + size,
-        'height:' + size,
-        'min-width:' + size,
-        'max-width:' + size,
-        'min-height:' + size,
-        'max-height:' + size,
-        'border-radius:50%',
-        'overflow:hidden',
-        'display:flex',
-        'align-items:center',
-        'justify-content:center',
-        'background:#eef2ff',
-        'color:#3730a3',
-        'font-size:11px',
-        'font-weight:700',
-        'line-height:1'
-    ].join(';');
-
-    if (avatar) {
-        return ''
-            + '<div class="' + className + '" style="' + wrapStyle + '">'
-            + '  <img src="' + escapeHtml(avatar) + '" alt="" style="width:' + size + ';height:' + size + ';min-width:' + size + ';max-width:' + size + ';min-height:' + size + ';max-height:' + size + ';object-fit:cover;display:block;">'
-            + '</div>';
-    }
-
-    return ''
-        + '<div class="' + className + '" style="' + wrapStyle + '">'
-        + escapeHtml(initials)
-        + '</div>';
+/* badges ролей */
+.sb-role-badge {
+    display: inline-flex;
+    align-items: center;
+    min-height: 26px;
+    padding: 0 9px;
+    border-radius: 999px;
+    font-size: 12px;
+    font-weight: 700;
+    line-height: 1;
+    white-space: nowrap;
+    background: #f3f4f6;
+    color: #374151;
 }
 
-
----
-
-3. В editor.php замени функцию renderAccessUserSearchResults
-
-function renderAccessUserSearchResults(users) {
-    var results = document.getElementById('accessUserSearchResults');
-    if (!results) return;
-
-    state.userSearchResults = Array.isArray(users) ? users : [];
-
-    if (!state.userSearchResults.length) {
-        results.innerHTML = '';
-        results.classList.add('sb-hidden');
-        return;
-    }
-
-    results.innerHTML = state.userSearchResults.map(function (user) {
-        var id = Number(user.id || 0);
-        var title = user.title || user.name || ('Пользователь #' + id);
-        var meta = [];
-
-        if (user.login) meta.push(user.login);
-        if (user.email) meta.push(user.email);
-
-        return ''
-            + '<button class="sb-access-result-item" type="button" data-select-access-user="' + id + '" style="display:grid;grid-template-columns:32px minmax(0,1fr);gap:10px;align-items:center;width:100%;min-height:44px;padding:7px 10px;box-sizing:border-box;">'
-            +      userAvatarHtml(user, 'sb-access-result-avatar')
-            + '  <div class="sb-access-result-body" style="min-width:0;overflow:hidden;">'
-            + '      <div class="sb-access-result-title" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + escapeHtml(title) + '</div>'
-            + '      <div class="sb-access-result-meta" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">ID: ' + id + (meta.length ? ' · ' + escapeHtml(meta.join(' · ')) : '') + '</div>'
-            + '  </div>'
-            + '</button>';
-    }).join('');
-
-    results.classList.remove('sb-hidden');
+.sb-role-badge--owner {
+    background: #fef3c7;
+    color: #92400e;
 }
 
-
----
-
-4. В editor.php замени функцию renderAccessList
-
-function renderAccessList() {
-    var list = document.getElementById('accessList');
-    if (!list) return;
-
-    if (!Array.isArray(state.accessItems) || !state.accessItems.length) {
-        list.innerHTML = '<div class="sb-empty">Права ещё не выданы</div>';
-        return;
-    }
-
-    list.innerHTML = state.accessItems.map(function (item) {
-        var userId = Number(item.userId || 0);
-        var name = item.userName || item.title || ('Пользователь #' + userId);
-        var role = item.role || '';
-
-        return ''
-            + '<div class="sb-access-item">'
-            + '  <div class="sb-access-item__main">'
-            + '      <div class="sb-access-item__name">' + escapeHtml(name) + '</div>'
-            + '      <div class="sb-access-item__meta">ID: ' + userId + ' · ' + escapeHtml(item.accessCode || '') + '</div>'
-            + '  </div>'
-            + '  <div class="sb-access-item__side">'
-            +        roleBadge(role)
-            + '      <button class="sb-btn sb-btn-danger sb-btn-small" type="button" data-access-remove-user="' + userId + '">Удалить</button>'
-            + '  </div>'
-            + '</div>';
-    }).join('');
+.sb-role-badge--admin {
+    background: #e0f2fe;
+    color: #075985;
 }
 
-После этого обязательно обнови страницу с очисткой кэша:
+.sb-role-badge--editor {
+    background: #ede9fe;
+    color: #5b21b6;
+}
 
-Ctrl + F5
+.sb-role-badge--viewer {
+    background: #f3f4f6;
+    color: #374151;
+}
 
-Или добавь версию к подключению CSS в editor.php:
+/* сообщения прав */
+#accessMessage {
+    line-height: 1.45;
+    white-space: pre-line;
+}
 
-<link rel="stylesheet" href="<?= htmlspecialchars($basePath, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?>/assets/admin/editor.css?v=2">
+#accessMessage.is-success {
+    border-color: #bbf7d0;
+    background: #f0fdf4;
+    color: #166534;
+}
 
-Лучше сразу поставить ?v=2, потому что браузер явно может держать старый CSS.
+#accessMessage.is-error {
+    border-color: #fecaca;
+    background: #fef2f2;
+    color: #991b1b;
+}
+
+/* =========================================================
+   ADAPTIVE
+   ========================================================= */
+
+@media (max-width: 1500px) {
+    .sb-page {
+        max-width: 1480px !important;
+        width: calc(100% - 36px) !important;
+    }
+
+    .sb-editor-shell {
+        grid-template-columns: 290px minmax(620px, 1fr) 360px !important;
+        gap: 18px !important;
+    }
+
+    .sb-editor-addbar {
+        grid-template-columns: repeat(5, minmax(100px, 1fr)) !important;
+    }
+}
+
+@media (max-width: 1280px) {
+    .sb-editor-shell {
+        grid-template-columns: 280px minmax(0, 1fr) !important;
+    }
+
+    .sb-editor-col--right {
+        grid-column: 1 / -1;
+    }
+
+    .sb-editor-sticky {
+        position: static;
+    }
+
+    .sb-editor-addbar {
+        grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+    }
+}
+
+@media (max-width: 900px) {
+    .sb-page {
+        width: calc(100% - 24px) !important;
+    }
+
+    .sb-editor-topline {
+        flex-direction: column;
+        align-items: stretch;
+    }
+
+    .sb-editor-topline-actions {
+        justify-content: flex-start;
+    }
+
+    .sb-editor-shell {
+        grid-template-columns: 1fr !important;
+    }
+
+    .sb-editor-addbar {
+        grid-template-columns: 1fr !important;
+    }
+
+    .sb-editor-canvas-head {
+        align-items: flex-start;
+        flex-direction: column;
+    }
+
+    .sb-toolbar {
+        width: 100%;
+        justify-content: flex-start;
+    }
+
+    #accessSelectedUser .sb-access-selected-user {
+        grid-template-columns: 42px minmax(0, 1fr) !important;
+    }
+}
+
+И в editor.php лучше сразу обнови версию CSS:
+
+<link rel="stylesheet" href="<?= htmlspecialchars($basePath, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?>/assets/admin/editor.css?v=4">
+
+После замены обнови страницу через Ctrl + F5.
