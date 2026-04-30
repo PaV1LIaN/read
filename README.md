@@ -416,6 +416,3 @@ class SiteBitrixGroupService
         return '';
     }
 }
-        return $errors;
-    }
-}
