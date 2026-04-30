@@ -1,106 +1,11 @@
-Да, сейчас дублируется сразу в четырёх местах:
-
-1. Верхнее меню: Домашняя → Вложенная 1 → Вложенная 2
-2. Хлебные крошки: Домашняя / Вложенная 1 / Вложенная 2
-3. Левое меню: Домашняя → Вложенная 1 → Вложенная 2
-4. Заголовок страницы: Вложенная 2
-
-Лучше сделать так:
-
-Верхнее меню — только основные разделы.
-Левое меню — вложенная структура текущего раздела.
-Хлебные крошки — убрать.
-Заголовок страницы — оставить.
-Футер с повтором названия сайта — убрать, если нет своего footer-блока.
-
-1. Убираем вложенность из верхнего меню
-
-В public_page.php найди внутри функции:
-
-function sb_public_render_auto_menu_level(...)
-
-этот кусок:
-
-$childHtml = sb_public_render_auto_menu_level($pages, $pageId, $basePath, $siteId, $currentPageId, $level + 1);
-$hasChildren = $childHtml !== '';
-
-замени на:
-
-$childHtml = '';
-$hasChildren = false;
-
-Теперь верхнее меню будет показывать только первый уровень:
-
-Домашняя | Диск
-
-Без выпадающих дублей.
-
-
----
-
-2. Убираем хлебные крошки
-
-В public_page.php найди:
-
-<?php if (!empty($vm['breadcrumbsHtml'])): ?>
-    <?= $vm['breadcrumbsHtml'] ?>
-<?php endif; ?>
-
-замени на:
-
-<?php /* Хлебные крошки скрыты, чтобы не дублировать левое меню */ ?>
-
-
----
-
-3. Убираем повтор названия сайта в футере
-
-Найди:
-
-<?= $footerHtml !== '' ? $footerHtml : '<div class="sb-footer-note">© ' . date('Y') . ' ' . sb_public_h((string)($site['name'] ?? 'SiteBuilder')) . '</div>' ?>
-
-замени на:
-
-<?= $footerHtml !== '' ? $footerHtml : '' ?>
-
-И лучше сам футер показывать только если в нём реально есть контент.
-
-Найди:
-
-<?php if ($vm['showFooter']): ?>
-
-замени на:
-
-<?php if ($vm['showFooter'] && $footerHtml !== ''): ?>
-
-
----
-
-4. Если левое меню нужно показывать только для вложенных страниц
-
-Сейчас левое меню может быть видно всегда. Можно сделать аккуратнее: показывать его только когда есть вложенная навигация.
-
-Найди:
-
-<?php if ($vm['showLeft']): ?>
-
-замени на:
-
-<?php if ($vm['showLeft'] && trim($leftContentHtml) !== ''): ?>
-
-
----
-
-После этих правок публичная страница станет чище:
-
-Шапка:
-[Логотип] Тестовый сайт       Домашняя | Диск
-
-Слева:
-структура текущего раздела
-
-Центр:
-Вложенная 2
-контент страницы
-
-То есть останется только полезная навигация без повторов.
+<pre>[TypeError] 
+sb_page_is_descendant(): Argument #1 ($siteId) must be of type int, array given, called in /srv/bx/docroot/local/sitebuilder/api/handlers/page.php on line 176 (0)
+/srv/bx/docroot/local/sitebuilder/lib/helpers.php:160
+#0: sb_page_is_descendant
+	/srv/bx/docroot/local/sitebuilder/api/handlers/page.php:176
+#1: require(string)
+	/srv/bx/docroot/local/sitebuilder/api/index.php:43
+#2: require_once(string)
+	/srv/bx/docroot/local/sitebuilder/api.php:5
+----------
+</pre>
