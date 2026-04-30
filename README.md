@@ -1,17 +1,342 @@
-Да, это правильно. В редакторе обычный админ/owner не должен видеть JSON. JSON можно оставить только как технический fallback для неизвестных типов блоков.
+Да, выносим стили editor.php в отдельный файл.
 
-Сделаем так:
+Создай файл:
 
-Заголовок → обычное поле "Текст заголовка"
-Текст → textarea
-Кнопка → текст кнопки + ссылка + target
-HTML → textarea HTML
-Диск → текущая форма настроек диска
-JSON → скрыт
+/local/sitebuilder/assets/admin/editor.css
 
-1. В editor.php добавь стили
+И вставь туда:
 
-В <style> добавь:
+.sb-editor-shell {
+    display: grid;
+    grid-template-columns: 320px minmax(0, 1fr) 360px;
+    gap: 20px;
+    align-items: start;
+}
+
+.sb-editor-col {
+    min-width: 0;
+}
+
+.sb-editor-sticky {
+    position: sticky;
+    top: 16px;
+}
+
+.sb-editor-topline {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 16px;
+    margin-bottom: 18px;
+}
+
+.sb-editor-topline-note {
+    margin: 0;
+    color: #6b7280;
+    font-size: 14px;
+    max-width: 860px;
+    line-height: 1.5;
+}
+
+.sb-editor-topline-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    justify-content: flex-end;
+}
+
+.sb-editor-section-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 14px;
+}
+
+.sb-editor-section-head .sb-panel-title {
+    margin: 0;
+}
+
+.sb-editor-create {
+    padding-bottom: 14px;
+    margin-bottom: 14px;
+    border-bottom: 1px solid #eef2f7;
+}
+
+.sb-editor-pages {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.sb-editor-page-item {
+    border: 1px solid #e5e7eb;
+    border-radius: 14px;
+    background: #fafafa;
+    padding: 12px;
+    cursor: pointer;
+    transition: border-color .15s ease, background .15s ease, box-shadow .15s ease;
+}
+
+.sb-editor-page-item:hover {
+    border-color: #c7d2fe;
+    background: #fcfcff;
+}
+
+.sb-editor-page-item.is-active {
+    border-color: #2563eb;
+    background: #eff6ff;
+    box-shadow: 0 6px 18px rgba(37, 99, 235, 0.12);
+}
+
+.sb-editor-page-top {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 12px;
+}
+
+.sb-editor-page-title {
+    margin: 0 0 6px;
+    font-size: 15px;
+    font-weight: 700;
+    color: #111827;
+    line-height: 1.2;
+}
+
+.sb-editor-page-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-top: 8px;
+}
+
+.sb-editor-chip {
+    display: inline-flex;
+    align-items: center;
+    min-height: 24px;
+    padding: 0 8px;
+    border-radius: 999px;
+    background: #f3f4f6;
+    color: #4b5563;
+    font-size: 12px;
+    font-weight: 600;
+}
+
+.sb-editor-chip--blue {
+    background: #eef2ff;
+    color: #3730a3;
+}
+
+.sb-editor-chip--green {
+    background: #dcfce7;
+    color: #166534;
+}
+
+.sb-editor-chip--yellow {
+    background: #fef3c7;
+    color: #92400e;
+}
+
+.sb-editor-page-actions,
+.sb-editor-block-actions,
+.sb-editor-inspector-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 12px;
+}
+
+.sb-editor-page-actions .sb-btn,
+.sb-editor-block-actions .sb-btn,
+.sb-editor-inspector-actions .sb-btn {
+    height: 32px;
+    padding: 0 10px;
+    font-size: 12px;
+}
+
+.sb-editor-canvas {
+    background: #ffffff;
+    border: 1px solid #e5e7eb;
+    border-radius: 18px;
+    box-shadow: 0 2px 8px rgba(15, 23, 42, 0.04);
+    overflow: hidden;
+}
+
+.sb-editor-canvas-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 12px;
+    padding: 14px 18px;
+    border-bottom: 1px solid #e5e7eb;
+    background: #f9fafb;
+}
+
+.sb-editor-canvas-title {
+    margin: 0;
+    font-size: 18px;
+    font-weight: 700;
+    color: #111827;
+}
+
+.sb-editor-canvas-sub {
+    margin: 4px 0 0;
+    font-size: 13px;
+    color: #6b7280;
+}
+
+.sb-editor-canvas-body {
+    background: #f8fafc;
+    padding: 24px;
+    min-height: 720px;
+}
+
+.sb-editor-page {
+    max-width: 980px;
+    margin: 0 auto;
+    background: #fff;
+    border: 1px solid #e5e7eb;
+    border-radius: 20px;
+    min-height: 620px;
+    padding: 24px;
+    box-shadow: 0 12px 28px rgba(15, 23, 42, 0.06);
+}
+
+.sb-editor-page-heading {
+    margin: 0 0 18px;
+    font-size: 30px;
+    line-height: 1.15;
+    font-weight: 700;
+    color: #111827;
+}
+
+.sb-editor-addbar {
+    display: grid;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    gap: 10px;
+    margin-bottom: 18px;
+}
+
+.sb-editor-add-card {
+    border: 1px solid #dbe3f0;
+    border-radius: 14px;
+    background: #fff;
+    padding: 12px;
+    text-align: left;
+    cursor: pointer;
+    transition: border-color .15s ease, transform .15s ease, box-shadow .15s ease;
+}
+
+.sb-editor-add-card:hover {
+    border-color: #93c5fd;
+    transform: translateY(-1px);
+    box-shadow: 0 8px 18px rgba(37, 99, 235, 0.08);
+}
+
+.sb-editor-add-card__title {
+    display: block;
+    font-size: 14px;
+    font-weight: 700;
+    color: #111827;
+    margin-bottom: 4px;
+}
+
+.sb-editor-add-card__text {
+    display: block;
+    font-size: 12px;
+    color: #6b7280;
+    line-height: 1.4;
+}
+
+.sb-editor-blocks {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+}
+
+.sb-editor-block {
+    border: 1px solid #e5e7eb;
+    border-radius: 16px;
+    background: #fff;
+    padding: 14px;
+    transition: border-color .15s ease, box-shadow .15s ease, background .15s ease;
+    cursor: pointer;
+}
+
+.sb-editor-block:hover {
+    border-color: #c7d2fe;
+    box-shadow: 0 8px 20px rgba(37, 99, 235, 0.08);
+}
+
+.sb-editor-block.is-active {
+    border-color: #2563eb;
+    background: #f8fbff;
+    box-shadow: 0 10px 24px rgba(37, 99, 235, 0.12);
+}
+
+.sb-editor-block-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 12px;
+    margin-bottom: 10px;
+}
+
+.sb-editor-block-title {
+    margin: 0;
+    font-size: 14px;
+    font-weight: 700;
+    color: #111827;
+}
+
+.sb-editor-block-preview {
+    border: 1px solid #eef2f7;
+    background: #fff;
+    border-radius: 12px;
+    padding: 12px;
+    font-size: 14px;
+    line-height: 1.6;
+    color: #374151;
+    min-height: 52px;
+}
+
+.sb-editor-empty-big {
+    padding: 30px 20px;
+    text-align: center;
+    color: #6b7280;
+    border: 1px dashed #d1d5db;
+    border-radius: 16px;
+    background: #fff;
+}
+
+.sb-editor-empty-big strong {
+    display: block;
+    color: #111827;
+    margin-bottom: 6px;
+    font-size: 16px;
+}
+
+.sb-editor-note {
+    font-size: 13px;
+    color: #6b7280;
+    line-height: 1.5;
+    margin-top: -2px;
+    margin-bottom: 12px;
+}
+
+.sb-editor-json-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 12px;
+}
+
+.sb-editor-divider {
+    height: 1px;
+    background: #eef2f7;
+    margin: 14px 0;
+}
 
 .sb-block-type-form {
     display: none;
@@ -36,389 +361,192 @@ JSON → скрыт
     line-height: 1.4;
 }
 
-
----
-
-2. Замени часть инспектора блока
-
-В editor.php найди внутри блока:
-
-<div id="blockInspector" class="sb-hidden">
-
-Там сейчас после поля Тип идёт diskBlockForm, потом JSON blockContentInput и blockPropsInput.
-
-Оставь поле Тип, а после него вставь вот это:
-
-<div id="headingBlockForm" class="sb-block-type-form" style="margin-top:12px;">
-    <div class="sb-field">
-        <label for="headingTextInput">Текст заголовка</label>
-        <input class="sb-input" type="text" id="headingTextInput" placeholder="Введите заголовок">
-    </div>
-</div>
-
-<div id="textBlockForm" class="sb-block-type-form" style="margin-top:12px;">
-    <div class="sb-field">
-        <label for="textTextInput">Текст блока</label>
-        <textarea class="sb-textarea" id="textTextInput" placeholder="Введите текст"></textarea>
-    </div>
-</div>
-
-<div id="buttonBlockForm" class="sb-block-type-form" style="margin-top:12px;">
-    <div class="sb-field">
-        <label for="buttonLabelInput">Текст кнопки</label>
-        <input class="sb-input" type="text" id="buttonLabelInput" placeholder="Например: Подробнее">
-    </div>
-
-    <div class="sb-field" style="margin-top:12px;">
-        <label for="buttonHrefInput">Ссылка</label>
-        <input class="sb-input" type="text" id="buttonHrefInput" placeholder="https://... или /path/">
-    </div>
-
-    <div class="sb-field" style="margin-top:12px;">
-        <label for="buttonTargetInput">Открывать</label>
-        <select class="sb-select" id="buttonTargetInput">
-            <option value="_self">В этом окне</option>
-            <option value="_blank">В новой вкладке</option>
-        </select>
-    </div>
-</div>
-
-<div id="htmlBlockForm" class="sb-block-type-form" style="margin-top:12px;">
-    <div class="sb-field">
-        <label for="htmlInput">HTML</label>
-        <textarea class="sb-textarea" id="htmlInput" placeholder="<div>HTML-код</div>"></textarea>
-        <p class="sb-block-form-note">
-            Используй только проверенный HTML. Скрипты лучше не вставлять.
-        </p>
-    </div>
-</div>
-
-<div id="unknownBlockForm" class="sb-block-type-form" style="margin-top:12px;">
-    <div class="sb-empty">
-        Для этого типа блока пока нет визуальной формы. Используй технический JSON ниже.
-    </div>
-</div>
-
-
----
-
-3. JSON-поля спрячь в технический блок
-
-Найди это:
-
-<div class="sb-field" style="margin-top:12px;">
-    <label for="blockContentInput">Контент (JSON)</label>
-    <textarea class="sb-textarea" id="blockContentInput"></textarea>
-</div>
-
-<div class="sb-field" style="margin-top:12px;">
-    <label for="blockPropsInput">Свойства (JSON)</label>
-    <textarea class="sb-textarea" id="blockPropsInput"></textarea>
-</div>
-
-Замени на:
-
-<div id="blockJsonFields" class="sb-editor-advanced-json">
-    <div class="sb-field" style="margin-top:12px;">
-        <label for="blockContentInput">Контент (JSON)</label>
-        <textarea class="sb-textarea" id="blockContentInput"></textarea>
-    </div>
-
-    <div class="sb-field" style="margin-top:12px;">
-        <label for="blockPropsInput">Свойства (JSON)</label>
-        <textarea class="sb-textarea" id="blockPropsInput"></textarea>
-    </div>
-</div>
-
-Если хочешь совсем убрать JSON, кнопку раскрытия не добавляем. Он будет существовать в DOM, но не отображаться.
-
-
----
-
-4. В JS добавь функции визуальных форм
-
-Внутри <script> добавь рядом с fillBlockForm():
-
-function hideAllBlockTypeForms() {
-    [
-        'headingBlockForm',
-        'textBlockForm',
-        'buttonBlockForm',
-        'htmlBlockForm',
-        'diskBlockForm',
-        'unknownBlockForm'
-    ].forEach(function (id) {
-        var node = document.getElementById(id);
-        if (node) {
-            node.classList.remove('is-active');
-            node.classList.add('sb-hidden');
-        }
-    });
+/* Поиск пользователя в правах */
+.sb-access-search-wrap {
+    position: relative;
 }
 
-function showBlockTypeForm(id) {
-    var node = document.getElementById(id);
-    if (!node) return;
-
-    node.classList.add('is-active');
-    node.classList.remove('sb-hidden');
+.sb-access-results {
+    display: none;
+    position: absolute;
+    z-index: 1000;
+    left: 0;
+    right: 0;
+    top: calc(100% + 6px);
+    max-height: 260px;
+    overflow: auto;
+    border: 1px solid #e5e7eb;
+    border-radius: 12px;
+    background: #fff;
+    box-shadow: 0 16px 40px rgba(15, 23, 42, 0.16);
 }
 
-function fillVisualBlockForm(block) {
-    hideAllBlockTypeForms();
+.sb-access-results.is-open {
+    display: block;
+}
 
-    var type = String(block.type || '');
-    var content = block.content || {};
-    var props = block.props || {};
+.sb-access-result-item {
+    width: 100%;
+    display: block;
+    text-align: left;
+    padding: 10px 12px;
+    border: 0;
+    background: #fff;
+    cursor: pointer;
+    border-bottom: 1px solid #f3f4f6;
+}
 
-    if (type === 'heading') {
-        showBlockTypeForm('headingBlockForm');
+.sb-access-result-item:hover {
+    background: #f8fafc;
+}
 
-        var headingTextInput = document.getElementById('headingTextInput');
-        if (headingTextInput) {
-            headingTextInput.value = content.text || '';
-        }
+.sb-access-result-title {
+    font-size: 13px;
+    font-weight: 700;
+    color: #111827;
+}
 
-        return;
+.sb-access-result-meta {
+    margin-top: 3px;
+    font-size: 12px;
+    color: #6b7280;
+}
+
+.sb-access-selected {
+    margin-top: 8px;
+    padding: 9px 10px;
+    border-radius: 12px;
+    border: 1px solid #bbf7d0;
+    background: #f0fdf4;
+    color: #166534;
+    font-size: 13px;
+    line-height: 1.4;
+}
+
+.sb-access-selected button {
+    margin-left: 8px;
+}
+
+/* Форма прав в узкой колонке */
+.sb-access-form {
+    display: grid;
+    grid-template-columns: 1fr !important;
+    gap: 12px;
+}
+
+.sb-access-form .sb-field {
+    min-width: 0;
+}
+
+.sb-access-form .sb-input,
+.sb-access-form .sb-select {
+    width: 100%;
+    max-width: 100%;
+    box-sizing: border-box;
+}
+
+.sb-access-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.sb-access-item {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto auto;
+    gap: 8px;
+    align-items: center;
+    max-width: 100%;
+    overflow: hidden;
+}
+
+.sb-access-item__main {
+    min-width: 0;
+    overflow: hidden;
+}
+
+.sb-access-item__name,
+.sb-access-item__meta {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.sb-access-item .sb-role-badge {
+    white-space: nowrap;
+}
+
+.sb-access-item .sb-btn {
+    white-space: nowrap;
+}
+
+@media (max-width: 1500px) {
+    .sb-access-item {
+        grid-template-columns: minmax(0, 1fr) auto;
     }
 
-    if (type === 'text') {
-        showBlockTypeForm('textBlockForm');
-
-        var textTextInput = document.getElementById('textTextInput');
-        if (textTextInput) {
-            textTextInput.value = content.text || '';
-        }
-
-        return;
-    }
-
-    if (type === 'button') {
-        showBlockTypeForm('buttonBlockForm');
-
-        var buttonLabelInput = document.getElementById('buttonLabelInput');
-        var buttonHrefInput = document.getElementById('buttonHrefInput');
-        var buttonTargetInput = document.getElementById('buttonTargetInput');
-
-        if (buttonLabelInput) {
-            buttonLabelInput.value = content.label || '';
-        }
-
-        if (buttonHrefInput) {
-            buttonHrefInput.value = content.href || '';
-        }
-
-        if (buttonTargetInput) {
-            buttonTargetInput.value = content.target || '_self';
-        }
-
-        return;
-    }
-
-    if (type === 'html') {
-        showBlockTypeForm('htmlBlockForm');
-
-        var htmlInput = document.getElementById('htmlInput');
-        if (htmlInput) {
-            htmlInput.value = content.html || '';
-        }
-
-        return;
-    }
-
-    if (type === 'disk') {
-        showBlockTypeForm('diskBlockForm');
-        return;
-    }
-
-    showBlockTypeForm('unknownBlockForm');
-
-    var jsonFields = document.getElementById('blockJsonFields');
-    if (jsonFields) {
-        jsonFields.classList.add('is-open');
+    .sb-access-item .sb-btn-danger {
+        grid-column: 1 / -1;
+        justify-self: flex-start;
     }
 }
 
-function collectVisualBlockData(block) {
-    var type = String(block.type || '');
-    var content = {};
-    var props = block.props || {};
-
-    if (type === 'heading') {
-        content = {
-            text: (document.getElementById('headingTextInput')?.value || '').trim()
-        };
-
-        return {
-            content: content,
-            props: props
-        };
+@media (max-width: 1440px) {
+    .sb-editor-shell {
+        grid-template-columns: 300px minmax(0, 1fr) 330px;
     }
 
-    if (type === 'text') {
-        content = {
-            text: document.getElementById('textTextInput')?.value || ''
-        };
-
-        return {
-            content: content,
-            props: props
-        };
+    .sb-editor-addbar {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
     }
-
-    if (type === 'button') {
-        content = {
-            label: (document.getElementById('buttonLabelInput')?.value || '').trim() || 'Кнопка',
-            href: (document.getElementById('buttonHrefInput')?.value || '').trim() || '#',
-            target: document.getElementById('buttonTargetInput')?.value || '_self'
-        };
-
-        return {
-            content: content,
-            props: props
-        };
-    }
-
-    if (type === 'html') {
-        content = {
-            html: document.getElementById('htmlInput')?.value || ''
-        };
-
-        return {
-            content: content,
-            props: props
-        };
-    }
-
-    if (type === 'disk') {
-        return {
-            content: block.content || {},
-            props: collectDiskBlockProps(block)
-        };
-    }
-
-    try {
-        content = JSON.parse(document.getElementById('blockContentInput').value || '{}');
-    } catch (e) {
-        alert('Контент блока должен быть валидным JSON');
-        return null;
-    }
-
-    try {
-        props = JSON.parse(document.getElementById('blockPropsInput').value || '{}');
-    } catch (e) {
-        alert('Свойства блока должны быть валидным JSON');
-        return null;
-    }
-
-    return {
-        content: content,
-        props: props
-    };
 }
 
-function collectDiskBlockProps(block) {
-    var oldProps = block.props || {};
+@media (max-width: 1180px) {
+    .sb-editor-shell {
+        grid-template-columns: 320px minmax(0, 1fr);
+    }
 
-    return {
-        title: document.getElementById('diskTitleInput').value.trim() || 'Файлы',
-        rootMode: document.getElementById('diskRootModeInput').value,
-        rootFolderId: oldProps.rootFolderId || null,
-        viewMode: document.getElementById('diskViewModeInput').value,
-        permissionMode: document.getElementById('diskPermissionModeInput').value,
-        maxFileSize: Number(document.getElementById('diskMaxFileSizeInput').value || 0),
-        allowedExtensions: String(document.getElementById('diskAllowedExtensionsInput').value || '')
-            .trim()
-            .split(/\s+/)
-            .filter(Boolean),
+    .sb-editor-col--right {
+        grid-column: 1 / -1;
+    }
 
-        allowUpload: document.getElementById('diskAllowUploadInput').checked,
-        allowCreateFolder: document.getElementById('diskAllowCreateFolderInput').checked,
-        allowRename: document.getElementById('diskAllowRenameInput').checked,
-        allowDelete: document.getElementById('diskAllowDeleteInput').checked,
-        allowDownload: document.getElementById('diskAllowDownloadInput').checked,
-        showSearch: document.getElementById('diskShowSearchInput').checked,
-        showBreadcrumbs: document.getElementById('diskShowBreadcrumbsInput').checked,
-        useSiteRootFallback: document.getElementById('diskUseSiteRootFallbackInput').checked,
-        defaultSort: oldProps.defaultSort || 'updatedAt',
-        defaultSortDirection: oldProps.defaultSortDirection || 'desc'
-    };
+    .sb-editor-sticky {
+        position: static;
+    }
 }
 
+@media (max-width: 900px) {
+    .sb-editor-topline {
+        flex-direction: column;
+        align-items: stretch;
+    }
 
----
+    .sb-editor-topline-actions {
+        justify-content: flex-start;
+    }
 
-5. В fillBlockForm() добавь вызов визуальной формы
+    .sb-editor-shell {
+        grid-template-columns: 1fr;
+    }
 
-В функции fillBlockForm() после заполнения:
-
-document.getElementById('blockContentInput').value = JSON.stringify(content, null, 2);
-document.getElementById('blockPropsInput').value = JSON.stringify(props, null, 2);
-
-добавь:
-
-var jsonFields = document.getElementById('blockJsonFields');
-if (jsonFields) {
-    jsonFields.classList.remove('is-open');
+    .sb-editor-addbar {
+        grid-template-columns: 1fr;
+    }
 }
 
-fillVisualBlockForm(block);
+Теперь в editor.php в <head> добавь подключение:
 
-А старую логику:
+<link rel="stylesheet" href="<?= htmlspecialchars($basePath, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?>/assets/admin/editor.css">
 
-if (block.type === 'disk') {
+Должно быть примерно так:
+
+<link rel="stylesheet" href="<?= htmlspecialchars($basePath, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?>/assets/admin/admin.css">
+<link rel="stylesheet" href="<?= htmlspecialchars($basePath, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?>/assets/admin/editor.css">
+
+После этого из editor.php можно удалить весь большой блок:
+
+<style>
     ...
-} else {
-    if (diskForm) diskForm.classList.add('sb-hidden');
-}
+</style>
 
-оставь, но лучше удалить обёртку if/else, чтобы заполнение disk-полей было отдельно. Если хочешь проще — оставь старый if (block.type === 'disk'), но в конце внутри него добавь:
-
-showBlockTypeForm('diskBlockForm');
-
-
----
-
-6. Замени saveBlock()
-
-Полностью замени функцию saveBlock() на эту:
-
-async function saveBlock() {
-    var block = getCurrentBlock();
-    if (!block) return;
-
-    var collected = collectVisualBlockData(block);
-
-    if (!collected) {
-        return;
-    }
-
-    await api('block.update', {
-        id: block.id,
-        content: JSON.stringify(collected.content),
-        props: JSON.stringify(collected.props)
-    });
-
-    await loadBlocks();
-}
-
-
----
-
-После этого при выборе блока справа будет не JSON, а нормальная форма:
-
-Заголовок:
-[Текст заголовка]
-
-Текст:
-[Большое поле текста]
-
-Кнопка:
-[Текст кнопки]
-[Ссылка]
-[Открывать]
-
-Диск:
-[Настройки диска]
-
-JSON останется скрытым и будет использоваться только если попадётся неизвестный тип блока.
+То есть в editor.php оставляем только подключение CSS-файла.
