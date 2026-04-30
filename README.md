@@ -1,44 +1,79 @@
+Заменяй полностью файл:
+
+/local/sitebuilder/api/handlers/page.php
+
+на этот:
+
 <?php
 
-if (!function_exists('sb_page_find_by_id')) {
-    function sb_page_find_by_id(array $pages, int $id): ?array
+/*
+ * ВАЖНО:
+ * Не используем имя sb_page_is_descendant(),
+ * потому что такая функция уже есть в /lib/helpers.php
+ * и там другая сигнатура: первым параметром ожидается int $siteId.
+ *
+ * Здесь используем локальные функции обработчика page.php:
+ * sb_page_handler_find_by_id()
+ * sb_page_handler_find_index_by_id()
+ * sb_page_handler_is_descendant()
+ */
+
+if (!function_exists('sb_page_handler_find_by_id')) {
+    function sb_page_handler_find_by_id(array $pages, int $id): ?array
     {
         foreach ($pages as $p) {
             if ((int)($p['id'] ?? 0) === $id) {
                 return $p;
             }
         }
+
         return null;
     }
 }
 
-if (!function_exists('sb_page_find_index_by_id')) {
-    function sb_page_find_index_by_id(array $pages, int $id): int
+if (!function_exists('sb_page_handler_find_index_by_id')) {
+    function sb_page_handler_find_index_by_id(array $pages, int $id): int
     {
         foreach ($pages as $k => $p) {
             if ((int)($p['id'] ?? 0) === $id) {
                 return (int)$k;
             }
         }
+
         return -1;
     }
 }
 
-if (!function_exists('sb_page_is_descendant')) {
-    function sb_page_is_descendant(array $pages, int $pageId, int $possibleParentId): bool
+if (!function_exists('sb_page_handler_is_descendant')) {
+    function sb_page_handler_is_descendant(array $pages, int $pageId, int $possibleParentId): bool
     {
-        $current = sb_page_find_by_id($pages, $possibleParentId);
+        /*
+         * Проверяем, не пытаемся ли мы сделать дочернюю страницу родителем своей же родительской цепочки.
+         *
+         * Пример:
+         * Домашняя
+         *   └ Вложенная 1
+         *       └ Вложенная 2
+         *
+         * Нельзя для "Домашняя" поставить родителем "Вложенная 2",
+         * потому что получится цикл.
+         */
+
+        $current = sb_page_handler_find_by_id($pages, $possibleParentId);
         $safety = 0;
 
         while ($current && $safety < 1000) {
             $parentId = (int)($current['parentId'] ?? 0);
-            if ($parentId === 0) {
+
+            if ($parentId <= 0) {
                 return false;
             }
+
             if ($parentId === $pageId) {
                 return true;
             }
-            $current = sb_page_find_by_id($pages, $parentId);
+
+            $current = sb_page_handler_find_by_id($pages, $parentId);
             $safety++;
         }
 
@@ -48,6 +83,7 @@ if (!function_exists('sb_page_is_descendant')) {
 
 if ($action === 'page.list') {
     $siteId = (int)($_POST['siteId'] ?? 0);
+
     if ($siteId <= 0) {
         sb_json_error('SITE_ID_REQUIRED', 422);
     }
@@ -60,9 +96,11 @@ if ($action === 'page.list') {
 
     usort($pages, static function ($a, $b) {
         $sortCmp = (int)($a['sort'] ?? 500) <=> (int)($b['sort'] ?? 500);
+
         if ($sortCmp !== 0) {
             return $sortCmp;
         }
+
         return (int)($a['id'] ?? 0) <=> (int)($b['id'] ?? 0);
     });
 
@@ -90,7 +128,8 @@ if ($action === 'page.create') {
     $pages = sb_read_pages();
 
     if ($parentId > 0) {
-        $parent = sb_page_find_by_id($pages, $parentId);
+        $parent = sb_page_handler_find_by_id($pages, $parentId);
+
         if (!$parent || (int)($parent['siteId'] ?? 0) !== $siteId) {
             sb_json_error('PARENT_PAGE_NOT_FOUND', 404);
         }
@@ -103,10 +142,11 @@ if ($action === 'page.create') {
     $id = sb_next_id($pages, 'id');
 
     $maxSort = 0;
+
     foreach ($pages as $p) {
         if (
-            (int)($p['siteId'] ?? 0) === $siteId &&
-            (int)($p['parentId'] ?? 0) === $parentId
+            (int)($p['siteId'] ?? 0) === $siteId
+            && (int)($p['parentId'] ?? 0) === $parentId
         ) {
             $maxSort = max($maxSort, (int)($p['sort'] ?? 0));
         }
@@ -148,13 +188,19 @@ if ($action === 'page.updateMeta') {
     }
 
     $pages = sb_read_pages();
-    $index = sb_page_find_index_by_id($pages, $id);
+
+    $index = sb_page_handler_find_index_by_id($pages, $id);
+
     if ($index < 0) {
         sb_json_error('PAGE_NOT_FOUND', 404);
     }
 
     $page = $pages[$index];
     $siteId = (int)($page['siteId'] ?? 0);
+
+    if ($siteId <= 0) {
+        sb_json_error('SITE_ID_NOT_FOUND', 422);
+    }
 
     sb_require_content_manager($siteId);
 
@@ -168,12 +214,13 @@ if ($action === 'page.updateMeta') {
         }
 
         if ($parentId > 0) {
-            $parent = sb_page_find_by_id($pages, $parentId);
+            $parent = sb_page_handler_find_by_id($pages, $parentId);
+
             if (!$parent || (int)($parent['siteId'] ?? 0) !== $siteId) {
                 sb_json_error('PARENT_PAGE_NOT_FOUND', 404);
             }
 
-            if (sb_page_is_descendant($pages, $id, $parentId)) {
+            if (sb_page_handler_is_descendant($pages, $id, $parentId)) {
                 sb_json_error('CYCLIC_PARENT_RELATION', 422);
             }
         }
@@ -186,6 +233,7 @@ if ($action === 'page.updateMeta') {
     $page['updatedAt'] = date('c');
 
     $pages[$index] = sb_normalize_page_record($page);
+
     sb_write_pages($pages);
 
     sb_json_ok([
@@ -202,13 +250,19 @@ if ($action === 'page.setParent') {
     }
 
     $pages = sb_read_pages();
-    $index = sb_page_find_index_by_id($pages, $id);
+
+    $index = sb_page_handler_find_index_by_id($pages, $id);
+
     if ($index < 0) {
         sb_json_error('PAGE_NOT_FOUND', 404);
     }
 
     $page = $pages[$index];
     $siteId = (int)($page['siteId'] ?? 0);
+
+    if ($siteId <= 0) {
+        sb_json_error('SITE_ID_NOT_FOUND', 422);
+    }
 
     sb_require_content_manager($siteId);
 
@@ -217,12 +271,13 @@ if ($action === 'page.setParent') {
     }
 
     if ($parentId > 0) {
-        $parent = sb_page_find_by_id($pages, $parentId);
+        $parent = sb_page_handler_find_by_id($pages, $parentId);
+
         if (!$parent || (int)($parent['siteId'] ?? 0) !== $siteId) {
             sb_json_error('PARENT_PAGE_NOT_FOUND', 404);
         }
 
-        if (sb_page_is_descendant($pages, $id, $parentId)) {
+        if (sb_page_handler_is_descendant($pages, $id, $parentId)) {
             sb_json_error('CYCLIC_PARENT_RELATION', 422);
         }
     }
@@ -231,6 +286,7 @@ if ($action === 'page.setParent') {
     $page['updatedAt'] = date('c');
 
     $pages[$index] = sb_normalize_page_record($page);
+
     sb_write_pages($pages);
 
     sb_json_ok([
@@ -251,13 +307,19 @@ if ($action === 'page.setStatus') {
     }
 
     $pages = sb_read_pages();
-    $index = sb_page_find_index_by_id($pages, $id);
+
+    $index = sb_page_handler_find_index_by_id($pages, $id);
+
     if ($index < 0) {
         sb_json_error('PAGE_NOT_FOUND', 404);
     }
 
     $page = $pages[$index];
     $siteId = (int)($page['siteId'] ?? 0);
+
+    if ($siteId <= 0) {
+        sb_json_error('SITE_ID_NOT_FOUND', 422);
+    }
 
     sb_require_content_manager($siteId);
 
@@ -266,6 +328,7 @@ if ($action === 'page.setStatus') {
     $page['updatedAt'] = date('c');
 
     $pages[$index] = sb_normalize_page_record($page);
+
     sb_write_pages($pages);
 
     sb_json_ok([
@@ -286,7 +349,9 @@ if ($action === 'page.move') {
     }
 
     $pages = sb_read_pages();
-    $page = sb_page_find_by_id($pages, $id);
+
+    $page = sb_page_handler_find_by_id($pages, $id);
+
     if (!$page) {
         sb_json_error('PAGE_NOT_FOUND', 404);
     }
@@ -294,13 +359,18 @@ if ($action === 'page.move') {
     $siteId = (int)($page['siteId'] ?? 0);
     $parentId = (int)($page['parentId'] ?? 0);
 
+    if ($siteId <= 0) {
+        sb_json_error('SITE_ID_NOT_FOUND', 422);
+    }
+
     sb_require_content_manager($siteId);
 
     $siblings = [];
+
     foreach ($pages as $k => $p) {
         if (
-            (int)($p['siteId'] ?? 0) === $siteId &&
-            (int)($p['parentId'] ?? 0) === $parentId
+            (int)($p['siteId'] ?? 0) === $siteId
+            && (int)($p['parentId'] ?? 0) === $parentId
         ) {
             $siblings[] = [
                 'index' => $k,
@@ -311,13 +381,16 @@ if ($action === 'page.move') {
 
     usort($siblings, static function ($a, $b) {
         $sortCmp = (int)($a['row']['sort'] ?? 500) <=> (int)($b['row']['sort'] ?? 500);
+
         if ($sortCmp !== 0) {
             return $sortCmp;
         }
+
         return (int)($a['row']['id'] ?? 0) <=> (int)($b['row']['id'] ?? 0);
     });
 
     $pos = null;
+
     for ($i = 0; $i < count($siblings); $i++) {
         if ((int)($siblings[$i]['row']['id'] ?? 0) === $id) {
             $pos = $i;
@@ -330,8 +403,11 @@ if ($action === 'page.move') {
     }
 
     $swapPos = $dir === 'up' ? $pos - 1 : $pos + 1;
+
     if (!isset($siblings[$swapPos])) {
-        sb_json_ok(['moved' => false]);
+        sb_json_ok([
+            'moved' => false,
+        ]);
     }
 
     $aIndex = $siblings[$pos]['index'];
@@ -351,7 +427,9 @@ if ($action === 'page.move') {
 
     sb_write_pages($pages);
 
-    sb_json_ok(['moved' => true]);
+    sb_json_ok([
+        'moved' => true,
+    ]);
 }
 
 if ($action === 'page.delete') {
@@ -362,40 +440,56 @@ if ($action === 'page.delete') {
     }
 
     $pages = sb_read_pages();
-    $page = sb_page_find_by_id($pages, $id);
+
+    $page = sb_page_handler_find_by_id($pages, $id);
+
     if (!$page) {
         sb_json_error('PAGE_NOT_FOUND', 404);
     }
 
     $siteId = (int)($page['siteId'] ?? 0);
+
+    if ($siteId <= 0) {
+        sb_json_error('SITE_ID_NOT_FOUND', 422);
+    }
+
     sb_require_content_manager($siteId);
 
-    $idsToDelete = [$id => true];
+    $idsToDelete = [
+        $id => true,
+    ];
+
     $changed = true;
     $safety = 0;
 
     while ($changed && $safety < 1000) {
         $changed = false;
+
         foreach ($pages as $p) {
             $pid = (int)($p['id'] ?? 0);
             $parentId = (int)($p['parentId'] ?? 0);
+
             if ($pid > 0 && !isset($idsToDelete[$pid]) && isset($idsToDelete[$parentId])) {
                 $idsToDelete[$pid] = true;
                 $changed = true;
             }
         }
+
         $safety++;
     }
 
     $pages = array_values(array_filter($pages, static function ($p) use ($idsToDelete) {
         return !isset($idsToDelete[(int)($p['id'] ?? 0)]);
     }));
+
     sb_write_pages($pages);
 
     $blocks = sb_read_blocks();
+
     $blocks = array_values(array_filter($blocks, static function ($b) use ($idsToDelete) {
         return !isset($idsToDelete[(int)($b['pageId'] ?? 0)]);
     }));
+
     sb_write_blocks($blocks);
 
     sb_json_ok([
@@ -412,21 +506,29 @@ if ($action === 'page.duplicate') {
     }
 
     $pages = sb_read_pages();
-    $source = sb_page_find_by_id($pages, $id);
+
+    $source = sb_page_handler_find_by_id($pages, $id);
+
     if (!$source) {
         sb_json_error('PAGE_NOT_FOUND', 404);
     }
 
     $siteId = (int)($source['siteId'] ?? 0);
+
+    if ($siteId <= 0) {
+        sb_json_error('SITE_ID_NOT_FOUND', 422);
+    }
+
     sb_require_content_manager($siteId);
 
     $newId = sb_next_id($pages, 'id');
 
     $maxSort = 0;
+
     foreach ($pages as $p) {
         if (
-            (int)($p['siteId'] ?? 0) === $siteId &&
-            (int)($p['parentId'] ?? 0) === (int)($source['parentId'] ?? 0)
+            (int)($p['siteId'] ?? 0) === $siteId
+            && (int)($p['parentId'] ?? 0) === (int)($source['parentId'] ?? 0)
         ) {
             $maxSort = max($maxSort, (int)($p['sort'] ?? 0));
         }
@@ -446,15 +548,18 @@ if ($action === 'page.duplicate') {
     ]);
 
     $pages[] = $copy;
+
     sb_write_pages($pages);
 
     $blocks = sb_read_blocks();
+
     $sourceBlocks = array_values(array_filter($blocks, static function ($b) use ($id) {
         return (int)($b['pageId'] ?? 0) === $id;
     }));
 
     foreach ($sourceBlocks as $b) {
         $newBlockId = sb_next_id($blocks, 'id');
+
         $newBlock = sb_normalize_block_record([
             'id' => $newBlockId,
             'pageId' => $newId,
@@ -465,6 +570,7 @@ if ($action === 'page.duplicate') {
             'createdAt' => date('c'),
             'updatedAt' => date('c'),
         ]);
+
         $blocks[] = $newBlock;
     }
 
@@ -479,3 +585,5 @@ sb_json_error('NOT_MOVED_YET', 501, [
     'handler' => 'page',
     'action' => $action,
 ]);
+
+Главное изменение здесь — больше нет локальной функции с именем sb_page_is_descendant(), поэтому конфликт с helpers.php уйдёт.
