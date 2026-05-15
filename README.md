@@ -1,69 +1,53 @@
 <?php
 
 /**
- * Диагностический index.php
- * Нужен только чтобы увидеть настоящую ошибку 500.
+ * index.php
+ *
+ * Это входная точка нашего MVC.
+ *
+ * Пока здесь всё очень просто:
+ * 1. Подключаем bootstrap.php.
+ * 2. Создаём HomeController.
+ * 3. Вызываем нужный метод.
  */
 
-ini_set('display_errors', '1');
-ini_set('display_startup_errors', '1');
-error_reporting(E_ALL);
+require_once __DIR__ . '/bootstrap.php';
 
-register_shutdown_function(function () {
-    $error = error_get_last();
+use Local\Mvc\Controllers\HomeController;
 
-    if ($error !== null) {
-        echo '<pre style="background:#300;color:#fff;padding:20px;border-radius:8px;">';
-        echo "FATAL ERROR:\n\n";
-        print_r($error);
-        echo '</pre>';
-    }
-});
+/**
+ * Получаем action из адреса.
+ *
+ * Например:
+ * /local/mvc/?action=ping
+ *
+ * Тогда:
+ * $action = 'ping';
+ *
+ * Если action не передали,
+ * будет:
+ * $action = 'index';
+ */
+$action = $_GET['action'] ?? 'index';
 
-try {
-    require_once __DIR__ . '/bootstrap.php';
+/**
+ * Создаём контроллер.
+ */
+$controller = new HomeController();
 
-    echo '<pre style="background:#eef;padding:15px;border-radius:8px;">';
-    echo "bootstrap.php подключился успешно\n";
-    echo '</pre>';
-
-    useController();
-
-} catch (Throwable $e) {
-    echo '<pre style="background:#300;color:#fff;padding:20px;border-radius:8px;">';
-    echo "EXCEPTION / ERROR:\n\n";
-    echo $e->getMessage() . "\n\n";
-    echo "File: " . $e->getFile() . "\n";
-    echo "Line: " . $e->getLine() . "\n\n";
-    echo $e->getTraceAsString();
-    echo '</pre>';
+/**
+ * Если пользователь запросил ping:
+ *
+ * /local/mvc/?action=ping
+ *
+ * вернём JSON.
+ */
+if ($action === 'ping') {
+    $controller->ping();
+    exit;
 }
 
-function useController(): void
-{
-    $class = '\\Local\\Mvc\\Controllers\\HomeController';
-
-    echo '<pre style="background:#efe;padding:15px;border-radius:8px;">';
-    echo "Пробуем загрузить класс: {$class}\n";
-    echo '</pre>';
-
-    if (!class_exists($class)) {
-        echo '<pre style="background:#800;color:#fff;padding:20px;border-radius:8px;">';
-        echo "Класс НЕ найден: {$class}\n\n";
-        echo "Проверь файл:\n";
-        echo $_SERVER['DOCUMENT_ROOT'] . "/local/mvc/Controllers/HomeController.php\n";
-        echo '</pre>';
-        return;
-    }
-
-    $controller = new $class();
-
-    $action = $_GET['action'] ?? 'index';
-
-    if ($action === 'ping') {
-        $controller->ping();
-        return;
-    }
-
-    $controller->index();
-}
+/**
+ * По умолчанию показываем главную страницу.
+ */
+$controller->index();
