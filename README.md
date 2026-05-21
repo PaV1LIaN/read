@@ -1,84 +1,53 @@
-Понял. Значит проблема не в Router, а в том, что запрос /about вообще не попадает в наш /local/mvc/index.php.
+Да, значит всё точно:
 
-Битрикс перехватывает адрес и думает:
+/local/mvc/?route=/about  — работает
+/local/mvc/about          — не работает
 
-/about — это обычная страница Битрикса
-страницы нет
-значит показать 404 / карту сайта
+Вывод простой: наш MVC исправен, но красивый адрес /local/mvc/about перехватывает Битрикс и отправляет на карту сайта.
 
-Нам нужно, чтобы адрес был не просто:
-
-/about
-
-а именно:
-
-/local/mvc/about
-
-И чтобы веб-сервер или Битрикс отправлял его в:
-
-/local/mvc/index.php
+Нужно добавить правило в Битриксовый роутер.
 
 
 ---
 
-Сначала проверь правильно адрес
-
-Открывать надо так:
-
-https://bitrix24-stage.gaz.ru/local/mvc/about
-
-А не так:
-
-https://bitrix24-stage.gaz.ru/about
-
-Если открываешь именно /about, Битрикс правильно кидает на свою 404/карту сайта, потому что это адрес в корне сайта.
-
-
----
-
-Быстрое рабочее решение через ?route=
-
-Пока красивые URL не настроены, используй:
-
-https://bitrix24-stage.gaz.ru/local/mvc/?route=/about
-
-Если так работает — значит MVC полностью живой.
-Не работает только прокидывание красивого адреса.
-
-
----
-
-Правильное решение для Битрикса: добавить правило в /urlrewrite.php
-
-На Bitrix часто запросы идут через /urlrewrite.php.
-
-Открой файл:
+Шаг 1. Открой файл
 
 /srv/bx/docroot/urlrewrite.php
 
-Там будет массив $arUrlRewrite.
+Там будет примерно такое:
 
-В самое начало массива добавь правило:
+<?php
+
+$arUrlRewrite = [
+    // правила Битрикса
+];
+
+
+---
+
+Шаг 2. В самое начало массива добавь правило
+
+Добавь первым элементом:
 
 [
     'CONDITION' => '#^/local/mvc(?:/(.*))?/?$#',
-    'RULE' => 'MVC_ROUTE=$1',
+    'RULE' => 'route=/$1',
     'ID' => '',
     'PATH' => '/local/mvc/index.php',
-    'SORT' => 10,
+    'SORT' => 1,
 ],
 
-Примерно должно получиться так:
+Должно получиться примерно так:
 
 <?php
 
 $arUrlRewrite = [
     [
         'CONDITION' => '#^/local/mvc(?:/(.*))?/?$#',
-        'RULE' => 'MVC_ROUTE=$1',
+        'RULE' => 'route=/$1',
         'ID' => '',
         'PATH' => '/local/mvc/index.php',
-        'SORT' => 10,
+        'SORT' => 1,
     ],
 
     // остальные правила Битрикса ниже
@@ -87,95 +56,90 @@ $arUrlRewrite = [
 
 ---
 
-Потом поправим Request.php
+Что это правило говорит Битриксу
 
-Нужно, чтобы он понимал переменную MVC_ROUTE.
+Простыми словами:
 
-В файле:
+Если адрес начинается с /local/mvc,
+не отправляй пользователя на карту сайта.
+Отдай этот запрос в /local/mvc/index.php.
 
-/local/mvc/Core/Request.php
+Например:
 
-найди метод:
+/local/mvc/about
 
-public function path(): string
+Битрикс превратит в:
 
-И в самое начало метода добавь проверку:
+/local/mvc/index.php?route=/about
 
-$routeFromBitrixRewrite = trim((string)$this->get('MVC_ROUTE', ''));
-
-if ($routeFromBitrixRewrite !== '') {
-    return $this->normalizePath($routeFromBitrixRewrite);
-}
-
-То есть начало метода должно стать таким:
-
-public function path(): string
-{
-    /**
-     * Вариант через Bitrix urlrewrite.php:
-     *
-     * /local/mvc/about
-     * превращается в:
-     * /local/mvc/index.php?MVC_ROUTE=about
-     */
-    $routeFromBitrixRewrite = trim((string)$this->get('MVC_ROUTE', ''));
-
-    if ($routeFromBitrixRewrite !== '') {
-        return $this->normalizePath($routeFromBitrixRewrite);
-    }
-
-    /**
-     * Старый запасной вариант:
-     * /local/mvc/?route=/about
-     */
-    $routeFromGet = trim((string)$this->get('route', ''));
-
-    if ($routeFromGet !== '') {
-        return $this->normalizePath($routeFromGet);
-    }
-
-    // дальше оставь старый код метода
-}
+А это у нас уже работает.
 
 
 ---
 
-Проверка
+Шаг 3. Проверь
 
-После этого проверь:
-
-https://bitrix24-stage.gaz.ru/local/mvc/?route=/about
-
-Должно работать.
-
-Потом:
+После сохранения открой:
 
 https://bitrix24-stage.gaz.ru/local/mvc/about
 
-Тоже должно работать.
+Должна открыться страница:
+
+О нашем MVC
+Это страница /about. Красивые маршруты работают.
+
+Потом проверь:
+
+https://bitrix24-stage.gaz.ru/local/mvc/ping
+
+Должен вернуться JSON.
 
 
 ---
 
-Почему так произошло простыми словами
+Если всё равно кидает на карту сайта
 
-Сейчас браузер говорит серверу:
+Тогда значит urlrewrite.php не срабатывает или правило стоит ниже другого правила.
 
-Дай мне /local/mvc/about
+Проверь 3 вещи:
 
-А сервер отвечает:
+1. Правило должно быть самым первым
 
-Такого файла нет.
-Отдам это Битриксу как 404.
+Не внизу файла, а прямо в начале массива $arUrlRewrite.
 
-А нам нужно правило:
+2. В RULE должно быть именно так
 
-Если адрес начинается с /local/mvc/,
-всегда отправляй его в /local/mvc/index.php.
+'RULE' => 'route=/$1',
 
-И уже наш MVC внутри сам решит:
+Не так:
 
-/about → HomeController::about()
-/ping  → HomeController::ping()
+'RULE' => 'MVC_ROUTE=$1',
 
-Для Битрикса самый мягкий вариант — через /urlrewrite.php, без правки глобального конфига angie/nginx.
+Мы сейчас используем уже готовый параметр route, чтобы не менять Request.php.
+
+3. Проверь, не сломался ли синтаксис PHP
+
+После изменения можешь выполнить:
+
+php -l /srv/bx/docroot/urlrewrite.php
+
+Должно быть:
+
+No syntax errors detected
+
+
+---
+
+Если через urlrewrite.php не заработает
+
+Тогда придётся делать на уровне angie/nginx.
+
+Для Angie/Nginx правило такое:
+
+location ^~ /local/mvc/ {
+    try_files $uri $uri/ /local/mvc/index.php?$query_string;
+}
+
+Но сначала лучше попробовать через urlrewrite.php, потому что это мягче и не требует перезагрузки веб-сервера.
+
+Сейчас сделай правило в /urlrewrite.php и проверь /local/mvc/about.
