@@ -1,310 +1,172 @@
-Да, сделаем так:
+Да, это из-за последнего CSS:
 
-1. в настройках появится поле “Размер логотипа”;
-
-
-2. размер будет сохраняться в settings_json;
-
-
-3. на публичной части логотип будет менять размер;
-
-
-4. длинное название сайта будет обрезаться ..., а не переноситься под логотип.
-
-
-
-
----
-
-1. SiteAppearanceService.php
-
-Файл:
-
-/local/sitebuilder/lib/SiteAppearanceService.php
-
-1.1. В методе update() добавь обработку logoSize
-
-Найди внутри update():
-
-if (array_key_exists('headerLogoMode', $data)) {
-    $settings['headerLogoMode'] = self::normalizeHeaderLogoMode((string)$data['headerLogoMode']);
+.sb-public-header .sb-container {
+    display: flex;
+    justify-content: space-between;
 }
 
-Сразу после него добавь:
+Он разнёс бренд и меню по разным сторонам. Нам нужно сделать шапку так:
 
-if (array_key_exists('logoSize', $data)) {
-    $settings['logoSize'] = self::normalizeLogoSize((int)$data['logoSize']);
-}
+[логотип + название сайта]
+[Домашняя] [Диск]
 
-
----
-
-1.2. В normalizeAppearanceSettings() добавь logoSize
-
-Найди:
-
-'headerLogoMode' => self::normalizeHeaderLogoMode(
-    (string)($settings['headerLogoMode'] ?? 'image')
-),
-
-Замени на:
-
-'headerLogoMode' => self::normalizeHeaderLogoMode(
-    (string)($settings['headerLogoMode'] ?? 'image')
-),
-
-'logoSize' => self::normalizeLogoSize(
-    (int)($settings['logoSize'] ?? 42)
-),
-
-
----
-
-1.3. В конец класса перед последней } добавь метод
-
-protected static function normalizeLogoSize(int $size): int
-{
-    if ($size < 24) {
-        return 24;
-    }
-
-    if ($size > 160) {
-        return 160;
-    }
-
-    return $size;
-}
-
-
----
-
-2. settings.php
-
-Файл:
-
-/local/sitebuilder/settings.php
-
-2.1. Добавь поле размера логотипа
-
-Найди блок:
-
-<div class="sb-field">
-    <label for="headerLogoModeInput">Отображение в шапке</label>
-    <select class="sb-select" id="headerLogoModeInput">
-        <option value="image">Только логотип</option>
-        <option value="text">Только название сайта</option>
-        <option value="both">Логотип и название</option>
-    </select>
-</div>
-
-Сразу после него добавь:
-
-<div class="sb-field" style="margin-top:12px;">
-    <label for="logoSizeInput">Размер логотипа, px</label>
-    <input class="sb-input" type="number" id="logoSizeInput" min="24" max="160" step="2" value="42">
-</div>
-
-
----
-
-2.2. В renderAppearance() добавь установку значения
-
-Найди:
-
-setValue('headerLogoModeInput', appearance.headerLogoMode || 'image');
-
-Сразу после добавь:
-
-setValue('logoSizeInput', appearance.logoSize || 42);
-
-
----
-
-2.3. В saveAppearance() добавь отправку logoSize
-
-Найди:
-
-headerLogoMode: getValue('headerLogoModeInput') || 'image'
-
-Замени на:
-
-headerLogoMode: getValue('headerLogoModeInput') || 'image',
-logoSize: getValue('logoSizeInput') || '42'
-
-
----
-
-2.4. В renderMainPreview() добавь размер логотипа
-
-Найди внутри renderMainPreview():
-
-preview.style.setProperty('--preview-accent', accent);
-
-Сразу после добавь:
-
-preview.style.setProperty('--preview-logo-size', (getValue('logoSizeInput') || appearance.logoSize || 42) + 'px');
-
-
----
-
-2.5. Добавь logoSizeInput в live-preview
-
-Найди массив:
-
-[
-    'siteNameInput',
-    'accentInput',
-    'backgroundColorInput',
-    'backgroundModeInput',
-    'backgroundPositionInput',
-    'backgroundRepeatInput'
-]
-
-Замени на:
-
-[
-    'siteNameInput',
-    'accentInput',
-    'backgroundColorInput',
-    'backgroundModeInput',
-    'backgroundPositionInput',
-    'backgroundRepeatInput',
-    'logoSizeInput',
-    'headerLogoModeInput'
-]
-
-
----
-
-3. settings.css
-
-Файл:
-
-/local/sitebuilder/assets/admin/settings.css
-
-В конец добавь:
-
-/* Размер логотипа в предпросмотре */
-.sb-appearance-preview__logo {
-    width: var(--preview-logo-size, 38px);
-    height: var(--preview-logo-size, 38px);
-    flex: 0 0 var(--preview-logo-size, 38px);
-}
-
-.sb-appearance-preview__header {
-    min-width: 0;
-}
-
-.sb-appearance-preview__title {
-    min-width: 0;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-}
-
-
----
-
-4. public_page.php
+1. В public_page.php замени блок шапки
 
 Файл:
 
 /local/sitebuilder/views/layout/public_page.php
 
-4.1. В sb_public_appearance_get() добавь logoSize
+Найди:
 
-Найди в return [:
+<?php if ($vm['showHeader']): ?>
+    <header class="sb-public-header">
+        <div class="sb-container">
+            <?php if ($headerHtml !== ''): ?>
+                <?= $headerHtml ?>
+            <?php else: ?>
+                <div class="sb-brand">
+                    <?= sb_public_appearance_brand($site, $appearance) ?>
+                </div>
+            <?php endif; ?>
 
-'headerLogoMode' => $headerLogoMode,
+            <?php if ($menuHtml !== ''): ?>
+                <?= $menuHtml ?>
+            <?php endif; ?>
+        </div>
+    </header>
+<?php endif; ?>
 
 Замени на:
 
-'headerLogoMode' => $headerLogoMode,
+<?php if ($vm['showHeader']): ?>
+    <header class="sb-public-header">
+        <div class="sb-container sb-header-container">
+            <div class="sb-header-brand-row">
+                <div class="sb-brand">
+                    <?= sb_public_appearance_brand($site, $appearance) ?>
+                </div>
 
-'logoSize' => max(24, min(160, (int)($settings['logoSize'] ?? 42))),
+                <?php if ($headerHtml !== ''): ?>
+                    <div class="sb-header-custom">
+                        <?= $headerHtml ?>
+                    </div>
+                <?php endif; ?>
+            </div>
+
+            <?php if ($menuHtml !== ''): ?>
+                <div class="sb-header-menu-row">
+                    <?= $menuHtml ?>
+                </div>
+            <?php endif; ?>
+        </div>
+    </header>
+<?php endif; ?>
 
 
 ---
 
-4.2. В sb_public_appearance_style() добавь CSS-переменную
-
-Найди:
-
-$styles[] = '--sb-accent: ' . sb_public_h((string)($appearance['accent'] ?? '#2563eb'));
-
-Сразу после добавь:
-
-$styles[] = '--sb-logo-size: ' . max(24, min(160, (int)($appearance['logoSize'] ?? 42))) . 'px';
-
-
----
-
-5. public.css
+2. В конец public.css добавь
 
 Файл:
 
 /local/sitebuilder/assets/public/public.css
 
-В конец добавь:
-
 /* =========================================================
-   BRAND / LOGO SIZE / LONG SITE NAME FIX
+   HEADER FIX: бренд сверху, меню под ним
    ========================================================= */
 
-.sb-public-header .sb-container {
+.sb-public-header .sb-container.sb-header-container {
+    display: flex !important;
+    flex-direction: column !important;
+    align-items: flex-start !important;
+    justify-content: flex-start !important;
+    gap: 10px !important;
+    min-width: 0 !important;
+}
+
+.sb-header-brand-row {
+    width: 100%;
+    min-width: 0;
     display: flex;
     align-items: center;
-    justify-content: space-between;
-    gap: 18px;
+    justify-content: flex-start;
+    gap: 16px;
+}
+
+.sb-header-custom {
     min-width: 0;
+    flex: 1 1 auto;
+}
+
+.sb-header-menu-row {
+    width: 100%;
+    min-width: 0;
+    display: flex;
+    justify-content: flex-start;
+}
+
+.sb-header-menu-row .sb-public-menu {
+    justify-content: flex-start !important;
+    align-items: center;
+    width: auto;
+    max-width: 100%;
 }
 
 .sb-brand {
-    display: inline-flex;
-    align-items: center;
-    gap: 10px;
-    min-width: 0;
-    max-width: 55%;
-    flex: 1 1 auto;
-    flex-wrap: nowrap;
+    display: inline-flex !important;
+    align-items: center !important;
+    justify-content: flex-start !important;
+    gap: 10px !important;
+    min-width: 0 !important;
+    max-width: 100% !important;
+    flex: 0 1 auto !important;
+    flex-wrap: nowrap !important;
 }
 
 .sb-brand__logo {
-    width: var(--sb-logo-size, 42px);
-    height: var(--sb-logo-size, 42px);
-    min-width: var(--sb-logo-size, 42px);
-    max-width: var(--sb-logo-size, 42px);
-    min-height: var(--sb-logo-size, 42px);
-    max-height: var(--sb-logo-size, 42px);
-    flex: 0 0 var(--sb-logo-size, 42px);
+    width: var(--sb-logo-size, 42px) !important;
+    height: var(--sb-logo-size, 42px) !important;
+    min-width: var(--sb-logo-size, 42px) !important;
+    max-width: var(--sb-logo-size, 42px) !important;
+    min-height: var(--sb-logo-size, 42px) !important;
+    max-height: var(--sb-logo-size, 42px) !important;
+    flex: 0 0 var(--sb-logo-size, 42px) !important;
 }
 
 .sb-brand__text {
-    display: block;
-    min-width: 0;
-    max-width: 100%;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
+    display: block !important;
+    min-width: 0 !important;
+    max-width: min(760px, calc(100vw - 160px)) !important;
+    white-space: nowrap !important;
+    overflow: hidden !important;
+    text-overflow: ellipsis !important;
 }
 
-.sb-public-menu {
-    flex: 0 1 auto;
-    min-width: 0;
+/* Перебиваем старое правило, которое уводило меню вправо */
+.sb-public-header .sb-public-menu {
+    margin-left: 0 !important;
 }
 
 @media (max-width: 760px) {
-    .sb-public-header .sb-container {
+    .sb-header-brand-row {
         align-items: flex-start;
         flex-direction: column;
+        gap: 10px;
     }
 
     .sb-brand {
-        max-width: 100%;
+        width: 100% !important;
+    }
+
+    .sb-brand__text {
+        max-width: calc(100vw - 96px) !important;
+    }
+
+    .sb-header-menu-row {
         width: 100%;
     }
 
-    .sb-public-menu {
+    .sb-header-menu-row .sb-public-menu {
         width: 100%;
     }
 }
@@ -312,31 +174,16 @@ $styles[] = '--sb-logo-size: ' . max(24, min(160, (int)($appearance['logoSize'] 
 
 ---
 
-6. Обнови версию CSS
+3. Обнови версию CSS
 
 В public_page.php найди:
 
-<link rel="stylesheet" href="<?= sb_public_h($basePath) ?>/assets/public/public.css?v=2">
-
-Замени на:
-
 <link rel="stylesheet" href="<?= sb_public_h($basePath) ?>/assets/public/public.css?v=3">
 
-И в settings.php можно тоже обновить:
+или похожую строку и поставь новую версию:
 
-/assets/admin/settings.css?v=2
+<link rel="stylesheet" href="<?= sb_public_h($basePath) ?>/assets/public/public.css?v=4">
 
-После этого:
+После этого обнови публичную страницу через Ctrl + F5.
 
-1. открой settings.php;
-
-
-2. выстави размер логотипа, например 56;
-
-
-3. нажми “Сохранить настройки фона”;
-
-
-4. обнови публичную страницу через Ctrl + F5.
-
-
+Должно стать так: логотип и название слева в одной строке, длинное название обрезается многоточием, а страницы Домашняя / Диск идут ниже под логотипом и названием, а не справа.
