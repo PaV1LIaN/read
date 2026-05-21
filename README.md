@@ -1,47 +1,55 @@
-Продолжаем.
+Отлично, идём дальше.
 
-Сейчас у нас в index.php есть такое:
+Сейчас у нас уже есть:
 
-$method = $_SERVER['REQUEST_METHOD'] ?? 'GET';
-$path = $_GET['route'] ?? '/';
+Request  — что пришло от пользователя
+Router   — куда отправить пользователя
+Controller — кто обрабатывает запрос
+View     — что показать
 
-Это работает, но плохо для будущего.
+Теперь добавим:
 
-Почему плохо?
+Response — что вернуть пользователю
 
-Потому что потом в разных файлах начнётся:
+Зачем нужен Response
 
-$_GET['id']
-$_POST['name']
-$_SERVER['REQUEST_METHOD']
-$_FILES
+Сейчас контроллер сам сразу делает:
 
-И проект опять превратится в кашу.
+echo json_encode(...);
+exit;
 
-Поэтому делаем специальный класс:
+или подключает HTML.
 
-Request
+Пока это нормально. Но дальше будет неудобно.
 
-Он будет отвечать за вопрос:
+Мы хотим, чтобы контроллер говорил:
 
-Что пришло от пользователя?
+return $this->success([...]);
 
-Например:
+или:
 
-$request->get('id');
-$request->post('name');
-$request->method();
-$request->path();
-$request->isPost();
+return $this->render('home/index', [...]);
+
+или:
+
+return $this->redirect('/local/mvc/');
+
+То есть контроллер не должен сам напрямую “кричать в браузер”.
+Он должен подготовить ответ, а Router уже отправит его пользователю.
+
+Представь так:
+
+Контроллер приготовил письмо.
+Router отнёс письмо пользователю.
 
 
 ---
 
-Шаг 1. Создай файл Request.php
+Шаг 1. Создаём Response.php
 
 Создай файл:
 
-/local/mvc/Core/Request.php
+/local/mvc/Core/Response.php
 
 Полный код:
 
@@ -50,173 +58,90 @@ $request->isPost();
 namespace Local\Mvc\Core;
 
 /**
- * Request
+ * Response
  *
- * Это класс для работы с запросом пользователя.
+ * Это ответ сервера пользователю.
  *
- * Он аккуратно хранит:
- * - $_GET
- * - $_POST
- * - $_SERVER
- * - $_FILES
- *
- * Чтобы мы не обращались к ним напрямую по всему проекту.
+ * Он может быть:
+ * - HTML-страницей
+ * - JSON-ответом
+ * - редиректом
+ * - ошибкой
  */
-class Request
+class Response
 {
-    private array $get;
-    private array $post;
-    private array $server;
-    private array $files;
+    private string $content;
+    private int $status;
+    private array $headers;
 
-    public function __construct(array $get, array $post, array $server, array $files = [])
+    public function __construct(string $content = '', int $status = 200, array $headers = [])
     {
-        $this->get = $get;
-        $this->post = $post;
-        $this->server = $server;
-        $this->files = $files;
+        $this->content = $content;
+        $this->status = $status;
+        $this->headers = $headers;
     }
 
     /**
-     * Создаём Request из глобальных PHP-массивов.
-     *
-     * То есть из:
-     * $_GET
-     * $_POST
-     * $_SERVER
-     * $_FILES
+     * HTML-ответ.
      */
-    public static function createFromGlobals(): self
+    public static function html(string $content, int $status = 200): self
     {
-        return new self($_GET, $_POST, $_SERVER, $_FILES);
+        return new self($content, $status, [
+            'Content-Type' => 'text/html; charset=utf-8',
+        ]);
     }
 
     /**
-     * Получить значение из GET.
+     * JSON-ответ.
+     */
+    public static function json(array $data, int $status = 200): self
+    {
+        return new self(
+            json_encode($data, JSON_UNESCAPED_UNICODE),
+            $status,
+            [
+                'Content-Type' => 'application/json; charset=utf-8',
+            ]
+        );
+    }
+
+    /**
+     * Редирект.
      *
      * Например:
-     * /local/mvc/?route=/ping&id=5
-     *
-     * $request->get('id') вернёт 5
+     * return $this->redirect('/local/mvc/');
      */
-    public function get(string $key, mixed $default = null): mixed
+    public static function redirect(string $url, int $status = 302): self
     {
-        return $this->get[$key] ?? $default;
+        return new self('', $status, [
+            'Location' => $url,
+        ]);
     }
 
     /**
-     * Получить значение из POST.
-     *
-     * Например из формы:
-     * name = "Тестовый сайт"
-     *
-     * $request->post('name') вернёт "Тестовый сайт"
+     * Добавить заголовок.
      */
-    public function post(string $key, mixed $default = null): mixed
+    public function header(string $name, string $value): self
     {
-        return $this->post[$key] ?? $default;
+        $this->headers[$name] = $value;
+
+        return $this;
     }
 
     /**
-     * Получить значение сначала из POST, потом из GET.
-     *
-     * Удобно, когда не важно, откуда пришёл параметр.
+     * Отправить ответ пользователю.
      */
-    public function input(string $key, mixed $default = null): mixed
+    public function send(): void
     {
-        if (array_key_exists($key, $this->post)) {
-            return $this->post[$key];
+        if (!headers_sent()) {
+            http_response_code($this->status);
+
+            foreach ($this->headers as $name => $value) {
+                header($name . ': ' . $value, true);
+            }
         }
 
-        if (array_key_exists($key, $this->get)) {
-            return $this->get[$key];
-        }
-
-        return $default;
-    }
-
-    /**
-     * Получить все GET-параметры.
-     */
-    public function allGet(): array
-    {
-        return $this->get;
-    }
-
-    /**
-     * Получить все POST-параметры.
-     */
-    public function allPost(): array
-    {
-        return $this->post;
-    }
-
-    /**
-     * Метод запроса.
-     *
-     * Обычно:
-     * GET
-     * POST
-     */
-    public function method(): string
-    {
-        return strtoupper((string)($this->server['REQUEST_METHOD'] ?? 'GET'));
-    }
-
-    /**
-     * Проверка: это GET-запрос?
-     */
-    public function isGet(): bool
-    {
-        return $this->method() === 'GET';
-    }
-
-    /**
-     * Проверка: это POST-запрос?
-     */
-    public function isPost(): bool
-    {
-        return $this->method() === 'POST';
-    }
-
-    /**
-     * Получить маршрут.
-     *
-     * Пока мы используем такой формат:
-     *
-     * /local/mvc/?route=/ping
-     *
-     * Значит route лежит в GET.
-     */
-    public function path(): string
-    {
-        $route = (string)$this->get('route', '/');
-
-        $route = trim($route);
-
-        if ($route === '') {
-            return '/';
-        }
-
-        return $route;
-    }
-
-    /**
-     * Получить файл из $_FILES.
-     *
-     * Потом пригодится для загрузки файлов.
-     */
-    public function file(string $key): ?array
-    {
-        return $this->files[$key] ?? null;
-    }
-
-    /**
-     * Получить значение из $_SERVER.
-     */
-    public function server(string $key, mixed $default = null): mixed
-    {
-        return $this->server[$key] ?? $default;
+        echo $this->content;
     }
 }
 
@@ -225,13 +150,13 @@ class Request
 
 Шаг 2. Обновляем Controller.php
 
-Теперь контроллеры смогут получать доступ к запросу.
+Теперь методы render(), success(), error() будут не сразу выводить ответ, а возвращать объект Response.
 
 Замени файл:
 
 /local/mvc/Core/Controller.php
 
-полностью на этот:
+полностью:
 
 <?php
 
@@ -247,11 +172,7 @@ namespace Local\Mvc\Core;
 class Controller
 {
     /**
-     * Здесь будет лежать текущий запрос.
-     *
-     * Например:
-     * $this->request->get('id')
-     * $this->request->post('name')
+     * Текущий запрос.
      */
     protected Request $request;
 
@@ -262,36 +183,68 @@ class Controller
 
     /**
      * Показать HTML-страницу.
+     *
+     * Теперь этот метод возвращает Response.
      */
-    protected function render(string $view, array $params = []): void
+    protected function render(string $view, array $params = []): Response
     {
+        $viewFile = dirname(__DIR__) . '/Views/' . $view . '.php';
+
+        if (!is_file($viewFile)) {
+            return Response::html(
+                '<h1>500</h1><p>View не найден.</p><pre>' . htmlspecialchars($viewFile) . '</pre>',
+                500
+            );
+        }
+
+        /**
+         * extract превращает массив в переменные.
+         *
+         * Например:
+         * ['title' => 'Главная']
+         *
+         * станет:
+         * $title = 'Главная';
+         */
         extract($params);
+
+        /**
+         * Включаем буфер.
+         *
+         * Простыми словами:
+         * PHP будет не сразу отправлять HTML в браузер,
+         * а сначала сложит его во временную коробку.
+         */
+        ob_start();
 
         require $_SERVER['DOCUMENT_ROOT'] . '/bitrix/header.php';
 
-        require dirname(__DIR__) . '/Views/' . $view . '.php';
+        require $viewFile;
 
         require $_SERVER['DOCUMENT_ROOT'] . '/bitrix/footer.php';
+
+        /**
+         * Забираем всё, что попало в буфер.
+         */
+        $content = ob_get_clean();
+
+        return Response::html($content);
     }
 
     /**
-     * Вернуть JSON.
+     * Вернуть произвольный JSON.
      */
-    protected function json(array $data): void
+    protected function json(array $data, int $status = 200): Response
     {
-        header('Content-Type: application/json; charset=utf-8');
-
-        echo json_encode($data, JSON_UNESCAPED_UNICODE);
-
-        exit;
+        return Response::json($data, $status);
     }
 
     /**
      * Успешный JSON-ответ.
      */
-    protected function success(array $data = []): void
+    protected function success(array $data = []): Response
     {
-        $this->json([
+        return $this->json([
             'ok' => true,
             'data' => $data,
         ]);
@@ -300,42 +253,43 @@ class Controller
     /**
      * JSON-ошибка.
      */
-    protected function error(string $message, array $details = []): void
+    protected function error(string $message, array $details = [], int $status = 400): Response
     {
-        $this->json([
+        return $this->json([
             'ok' => false,
             'error' => $message,
             'details' => $details,
-        ]);
+        ], $status);
+    }
+
+    /**
+     * Редирект.
+     */
+    protected function redirect(string $url): Response
+    {
+        return Response::redirect($url);
     }
 }
 
-Что изменилось?
+Что изменилось
 
-Было:
+Раньше было:
 
-class Controller
-{
-}
+$this->success([...]);
+exit;
 
-Стало:
+Теперь будет:
 
-class Controller
-{
-    protected Request $request;
-}
+return $this->success([...]);
 
-Теперь любой контроллер сможет делать так:
-
-$id = $this->request->get('id');
-$name = $this->request->post('name');
+То есть контроллер возвращает ответ, а не завершает работу сам.
 
 
 ---
 
 Шаг 3. Обновляем Router.php
 
-Теперь Router будет принимать не отдельно $method и $path, а весь объект Request.
+Router теперь должен получить результат от контроллера и отправить его.
 
 Замени файл:
 
@@ -407,8 +361,7 @@ class Router
         }
 
         /**
-         * Важно:
-         * передаём Request внутрь контроллера.
+         * Создаём контроллер и передаём ему Request.
          */
         $controller = new $controllerClass($request);
 
@@ -424,7 +377,25 @@ class Router
             return;
         }
 
-        $controller->{$controllerMethod}();
+        /**
+         * Вызываем метод контроллера.
+         *
+         * Теперь контроллер может вернуть Response.
+         */
+        $result = $controller->{$controllerMethod}();
+
+        /**
+         * Если контроллер вернул Response — отправляем его.
+         */
+        if ($result instanceof Response) {
+            $result->send();
+            return;
+        }
+
+        /**
+         * Если контроллер ничего не вернул,
+         * значит либо он сам всё вывел, либо метод написан неправильно.
+         */
     }
 
     /**
@@ -452,14 +423,15 @@ class Router
      */
     private function notFound(string $method, string $path): void
     {
-        http_response_code(404);
-
-        echo '<h1>404</h1>';
-        echo '<p>Маршрут не найден.</p>';
-        echo '<pre>';
-        echo 'Method: ' . htmlspecialchars($method) . "\n";
-        echo 'Path: ' . htmlspecialchars($path) . "\n";
-        echo '</pre>';
+        Response::html(
+            '<h1>404</h1>'
+            . '<p>Маршрут не найден.</p>'
+            . '<pre>'
+            . 'Method: ' . htmlspecialchars($method) . "\n"
+            . 'Path: ' . htmlspecialchars($path) . "\n"
+            . '</pre>',
+            404
+        )->send();
 
         exit;
     }
@@ -469,95 +441,23 @@ class Router
      */
     private function serverError(string $message): void
     {
-        http_response_code(500);
-
-        echo '<h1>500</h1>';
-        echo '<p>Ошибка MVC.</p>';
-        echo '<pre>' . htmlspecialchars($message) . '</pre>';
+        Response::html(
+            '<h1>500</h1>'
+            . '<p>Ошибка MVC.</p>'
+            . '<pre>' . htmlspecialchars($message) . '</pre>',
+            500
+        )->send();
 
         exit;
     }
 }
 
-Главное изменение вот здесь:
-
-public function dispatch(Request $request): void
-
-И здесь:
-
-$controller = new $controllerClass($request);
-
-То есть Router теперь говорит контроллеру:
-
-Вот тебе запрос пользователя, работай с ним.
-
 
 ---
 
-Шаг 4. Обновляем index.php
+Шаг 4. Обновляем HomeController.php
 
-Теперь входной файл станет ещё чище.
-
-Замени файл:
-
-/local/mvc/index.php
-
-полностью:
-
-<?php
-
-/**
- * index.php
- *
- * Главная входная точка нашего MVC.
- */
-
-require_once __DIR__ . '/bootstrap.php';
-
-use Local\Mvc\Core\Request;
-use Local\Mvc\Core\Router;
-
-/**
- * Создаём объект запроса.
- *
- * Он внутри себя забирает:
- * $_GET
- * $_POST
- * $_SERVER
- * $_FILES
- */
-$request = Request::createFromGlobals();
-
-/**
- * Создаём Router.
- */
-$router = new Router();
-
-/**
- * Подключаем маршруты.
- */
-require_once __DIR__ . '/routes.php';
-
-/**
- * Передаём запрос в Router.
- */
-$router->dispatch($request);
-
-Теперь index.php почти идеальный.
-
-Он делает только 4 вещи:
-
-1. Подключил bootstrap.php
-2. Создал Request
-3. Создал Router
-4. Запустил Router
-
-
----
-
-Шаг 5. Обновляем HomeController.php
-
-Добавим тест, чтобы увидеть, что Request реально работает.
+Теперь методы должны возвращать Response.
 
 Замени файл:
 
@@ -570,6 +470,7 @@ $router->dispatch($request);
 namespace Local\Mvc\Controllers;
 
 use Local\Mvc\Core\Controller;
+use Local\Mvc\Core\Response;
 
 /**
  * HomeController
@@ -578,53 +479,93 @@ use Local\Mvc\Core\Controller;
  */
 class HomeController extends Controller
 {
-    public function index(): void
+    /**
+     * Главная страница.
+     */
+    public function index(): Response
     {
         $name = (string)$this->request->get('name', 'Гость');
 
-        $this->render('home/index', [
+        return $this->render('home/index', [
             'title' => 'MVC работает',
-            'message' => 'Привет, ' . $name . '! Request успешно передан в контроллер.',
+            'message' => 'Привет, ' . $name . '! Response успешно работает.',
         ]);
     }
 
-    public function ping(): void
+    /**
+     * Тестовый JSON-ответ.
+     */
+    public function ping(): Response
     {
-        $this->success([
+        return $this->success([
             'message' => 'pong',
             'mvc' => true,
             'method' => $this->request->method(),
             'path' => $this->request->path(),
         ]);
     }
+
+    /**
+     * Тест редиректа.
+     */
+    public function goHome(): Response
+    {
+        return $this->redirect('/local/mvc/');
+    }
 }
+
+
+---
+
+Шаг 5. Обновляем routes.php
+
+Добавим маршрут для проверки редиректа.
+
+Замени файл:
+
+/local/mvc/routes.php
+
+полностью:
+
+<?php
+
+use Local\Mvc\Core\Router;
+use Local\Mvc\Controllers\HomeController;
+
+/** @var Router $router */
+
+$router->get('/', [HomeController::class, 'index']);
+
+$router->get('/ping', [HomeController::class, 'ping']);
+
+$router->get('/go-home', [HomeController::class, 'goHome']);
 
 
 ---
 
 Шаг 6. Проверяем
 
-Открой обычную страницу:
+Открой:
 
 https://bitrix24-stage.gaz.ru/local/mvc/
 
 Должно быть:
 
-Привет, Гость! Request успешно передан в контроллер.
+Привет, Гость! Response успешно работает.
 
-Теперь проверь GET-параметр:
+Проверь с именем:
 
 https://bitrix24-stage.gaz.ru/local/mvc/?name=Алексей
 
 Должно быть:
 
-Привет, Алексей! Request успешно передан в контроллер.
+Привет, Алексей! Response успешно работает.
 
-Теперь проверь маршрут:
+Проверь JSON:
 
 https://bitrix24-stage.gaz.ru/local/mvc/?route=/ping
 
-Должен быть JSON примерно такой:
+Должно быть примерно:
 
 {
     "ok": true,
@@ -636,22 +577,29 @@ https://bitrix24-stage.gaz.ru/local/mvc/?route=/ping
     }
 }
 
+Проверь редирект:
+
+https://bitrix24-stage.gaz.ru/local/mvc/?route=/go-home
+
+Он должен перекинуть обратно на:
+
+/local/mvc/
+
 
 ---
 
-Что мы сейчас сделали
+Что мы сделали простыми словами
 
 Раньше было так:
 
-index.php сам лез в $_GET и $_SERVER
+Контроллер сам сразу выводил результат в браузер.
 
 Теперь так:
 
-Request забирает данные запроса
-Router смотрит Request
-Controller получает Request
+Контроллер готовит Response.
+Router отправляет Response пользователю.
 
-Путь стал такой:
+То есть:
 
 Браузер
   ↓
@@ -663,35 +611,63 @@ Router
   ↓
 Controller
   ↓
-View / JSON
+Response
+  ↓
+Браузер
+
+Почему это хорошо
+
+Теперь у нас единый способ возвращать ответы:
+
+return $this->render('home/index', []);
+
+return $this->success(['id' => 5]);
+
+return $this->error('Нет доступа');
+
+return $this->redirect('/some/page/');
+
+Это очень удобно, когда дальше пойдут:
+
+формы
+API
+админка
+ошибки
+проверка прав
+создание сайтов
+сохранение страниц
 
 
 ---
 
-Самая главная мысль
+Текущая структура
 
-Request — это пакет с информацией от пользователя.
+Теперь должно быть так:
 
-В нём лежит:
+/local/mvc/
+  index.php
+  bootstrap.php
+  routes.php
 
-какой адрес открыл пользователь
-какой метод запроса
-какие GET-параметры
-какие POST-параметры
-какие файлы загрузил
+  Core/
+    Controller.php
+    Request.php
+    Response.php
+    Router.php
 
-Теперь в будущем мы не будем писать в контроллерах так:
+  Controllers/
+    HomeController.php
 
-$_GET['id']
-$_POST['name']
-$_SERVER['REQUEST_METHOD']
+  Views/
+    home/
+      index.php
 
-Будем писать аккуратно:
+Следующим шагом сделаем красивые URL без ?route=, чтобы можно было открывать так:
 
-$this->request->get('id')
-$this->request->post('name')
-$this->request->method()
+/local/mvc/ping
+/local/mvc/go-home
+/local/mvc/admin/dashboard
 
-Так код проще читать, проще проверять и проще поддерживать.
+А не так:
 
-Следующим шагом сделаем Response-класс, чтобы ответы тоже были аккуратные: HTML, JSON, редирект и ошибки.
+/local/mvc/?route=/ping
