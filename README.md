@@ -1,1064 +1,697 @@
-Заменяй полностью файл:
+Продолжаем.
 
-/local/sitebuilder/components/disk/styles.css
+Сейчас у нас в index.php есть такое:
 
-на этот:
+$method = $_SERVER['REQUEST_METHOD'] ?? 'GET';
+$path = $_GET['route'] ?? '/';
 
-/* =========================================================
-   SITEBUILDER DISK
-   Modern File Manager UI
-   ========================================================= */
+Это работает, но плохо для будущего.
 
-.sb-disk {
-    --disk-accent: var(--sb-accent, #2563eb);
-    --disk-accent-hover: #3f5de9;
-    --disk-accent-soft: rgba(37, 99, 235, .08);
-    --disk-bg: #ffffff;
-    --disk-soft: #f8fafc;
-    --disk-soft-2: #f1f5f9;
-    --disk-border: #e5e7eb;
-    --disk-border-2: #dbe3ef;
-    --disk-text: #111827;
-    --disk-muted: #6b7280;
-    --disk-danger: #dc2626;
-    --disk-radius: 18px;
-    --disk-shadow: 0 14px 34px rgba(15, 23, 42, .06);
+Почему плохо?
 
-    width: 100%;
-    min-width: 0;
-    box-sizing: border-box;
-    color: var(--disk-text);
-}
+Потому что потом в разных файлах начнётся:
 
-.sb-disk *,
-.sb-disk *::before,
-.sb-disk *::after {
-    box-sizing: border-box;
-}
+$_GET['id']
+$_POST['name']
+$_SERVER['REQUEST_METHOD']
+$_FILES
 
-.sb-disk--modern {
-    width: 100%;
-    min-width: 0;
-}
+И проект опять превратится в кашу.
 
-/* =========================================================
-   COMMON
-   ========================================================= */
+Поэтому делаем специальный класс:
 
-.sb-disk a {
-    color: var(--disk-accent);
-    text-decoration: none;
-}
+Request
 
-.sb-disk a:hover {
-    text-decoration: underline;
-}
+Он будет отвечать за вопрос:
 
-.sb-disk button,
-.sb-disk input,
-.sb-disk select,
-.sb-disk textarea {
-    font-family: inherit;
-}
+Что пришло от пользователя?
 
-.sb-disk [hidden] {
-    display: none !important;
-}
+Например:
 
-/* =========================================================
-   HIDE DUPLICATES / COMPACT TOP
-   ========================================================= */
+$request->get('id');
+$request->post('name');
+$request->method();
+$request->path();
+$request->isPost();
 
-/* Убираем дублирующий заголовок "Файлы" и счётчик */
-.sb-disk--modern .sb-disk__title,
-.sb-disk--modern .sb-disk-title,
-.sb-disk--modern [data-role="subtitle"],
-.sb-disk--modern .sb-disk__subtitle,
-.sb-disk--modern .sb-disk-subtitle {
-    display: none !important;
-}
 
-/* Старые контейнеры не должны создавать лишние отступы */
-.sb-disk--modern .sb-disk__top,
-.sb-disk--modern .sb-disk__header,
-.sb-disk--modern .sb-disk__head,
-.sb-disk--modern .sb-disk-head {
-    min-height: 0 !important;
-    margin: 0 !important;
-    padding: 0 !important;
-}
+---
 
-/* Пустые старые панели скрываем */
-.sb-disk--modern .sb-disk__toolbar:empty,
-.sb-disk--modern .sb-disk__controls:empty,
-.sb-disk--modern .sb-disk__actions-panel:empty,
-.sb-disk--modern .sb-disk__filter:empty,
-.sb-disk--modern .sb-disk__filters:empty {
-    display: none !important;
-}
+Шаг 1. Создай файл Request.php
 
-/* =========================================================
-   BLOCK HEAD
-   ========================================================= */
+Создай файл:
 
-.sb-public-block--disk {
-    margin-top: 12px;
-}
+/local/mvc/Core/Request.php
 
-.sb-public-disk-head {
-    display: flex;
-    align-items: flex-start;
-    justify-content: space-between;
-    gap: 16px;
-    margin-bottom: 10px;
-}
+Полный код:
 
-.sb-public-block-title,
-.sb-disk h2,
-.sb-disk h3 {
-    margin: 0;
-    font-size: 22px;
-    line-height: 1.25;
-    font-weight: 800;
-    color: var(--disk-text);
-}
+<?php
 
-/* =========================================================
-   SMART HEADER: breadcrumbs + refresh/settings
-   ========================================================= */
+namespace Local\Mvc\Core;
 
-.sb-disk__smart-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 16px;
-    margin: 0 0 10px;
-    padding: 0;
-    width: 100%;
-    min-width: 0;
-}
+/**
+ * Request
+ *
+ * Это класс для работы с запросом пользователя.
+ *
+ * Он аккуратно хранит:
+ * - $_GET
+ * - $_POST
+ * - $_SERVER
+ * - $_FILES
+ *
+ * Чтобы мы не обращались к ним напрямую по всему проекту.
+ */
+class Request
+{
+    private array $get;
+    private array $post;
+    private array $server;
+    private array $files;
 
-.sb-disk__smart-header-left {
-    flex: 1 1 auto;
-    min-width: 0;
-    display: flex;
-    align-items: center;
-}
-
-.sb-disk__smart-header-right {
-    flex: 0 0 auto;
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    flex-wrap: wrap;
-    justify-content: flex-end;
-}
-
-/* Breadcrumbs */
-
-.sb-disk [data-role="breadcrumbs"],
-.sb-disk__breadcrumbs {
-    display: flex !important;
-    align-items: center;
-    gap: 8px;
-    flex-wrap: wrap;
-    margin: 0 !important;
-    padding: 0 !important;
-    min-width: 0;
-    color: var(--disk-muted);
-    font-size: 13px;
-}
-
-.sb-disk__crumb {
-    display: inline-flex !important;
-    align-items: center;
-    justify-content: center;
-    min-height: 30px !important;
-    padding: 0 10px !important;
-    border: 1px solid #e3e8f2 !important;
-    border-radius: 999px !important;
-    background: #f8fafc !important;
-    color: #4b5563 !important;
-    font-size: 12px !important;
-    font-weight: 700 !important;
-    line-height: 1 !important;
-    cursor: pointer;
-    white-space: nowrap;
-    transition: background .15s ease, border-color .15s ease, color .15s ease;
-}
-
-.sb-disk__crumb:hover {
-    background: #eef4ff !important;
-    color: var(--disk-accent) !important;
-    border-color: #cfe0ff !important;
-}
-
-.sb-disk__crumb-separator,
-.sb-disk [data-role="breadcrumbs"] > span {
-    color: #9ca3af;
-}
-
-/* =========================================================
-   SMART TOOLBAR: search/sort + actions/view
-   ========================================================= */
-
-.sb-disk__smart-toolbar {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 14px 18px;
-    flex-wrap: wrap;
-    margin: 0 0 14px;
-    padding: 12px 14px;
-    border: 1px solid #e6ebf3;
-    border-radius: 16px;
-    background: #fbfcfe;
-    width: 100%;
-    min-width: 0;
-}
-
-.sb-disk__smart-toolbar-left,
-.sb-disk__smart-toolbar-right {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    flex-wrap: wrap;
-    min-width: 0;
-}
-
-.sb-disk__smart-toolbar-left {
-    flex: 1 1 360px;
-}
-
-.sb-disk__smart-toolbar-right {
-    flex: 0 1 auto;
-    justify-content: flex-end;
-}
-
-/* Старые панели, если остались */
-.sb-disk__toolbar,
-.sb-disk__controls,
-.sb-disk__actions-panel,
-.sb-disk__filter,
-.sb-disk__filters {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    flex-wrap: wrap;
-    width: 100%;
-    min-width: 0;
-}
-
-/* =========================================================
-   INPUTS / SELECTS
-   ========================================================= */
-
-.sb-disk input[type="text"],
-.sb-disk input[type="search"],
-.sb-disk select {
-    height: 36px !important;
-    padding: 0 12px !important;
-    border: 1px solid var(--disk-border-2) !important;
-    border-radius: 10px !important;
-    background: #fff !important;
-    color: var(--disk-text) !important;
-    font-size: 13px !important;
-    outline: none !important;
-    transition: border-color .15s ease, box-shadow .15s ease;
-}
-
-.sb-disk input[type="text"]:focus,
-.sb-disk input[type="search"]:focus,
-.sb-disk select:focus {
-    border-color: var(--disk-accent) !important;
-    box-shadow: 0 0 0 3px rgba(37, 99, 235, .12) !important;
-}
-
-.sb-disk [data-role="search-input"] {
-    min-width: 260px !important;
-    width: 260px !important;
-}
-
-.sb-disk [data-role="sort-select"] {
-    min-width: 150px !important;
-}
-
-/* =========================================================
-   BUTTONS
-   ========================================================= */
-
-.sb-disk button,
-.sb-disk .sb-disk__row-btn,
-.sb-disk .sb-disk__view-btn,
-.sb-disk .sb-disk-modern-control {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    min-height: 36px;
-    padding: 0 12px;
-    border: 1px solid var(--disk-border-2);
-    border-radius: 10px;
-    background: #ffffff;
-    color: #374151;
-    font-size: 13px;
-    font-weight: 700;
-    line-height: 1;
-    cursor: pointer;
-    white-space: nowrap;
-    text-decoration: none !important;
-    transition:
-        background .15s ease,
-        border-color .15s ease,
-        color .15s ease,
-        box-shadow .15s ease,
-        transform .15s ease;
-}
-
-.sb-disk button:hover,
-.sb-disk .sb-disk__row-btn:hover,
-.sb-disk .sb-disk__view-btn:hover {
-    border-color: #c7d7f3;
-    background: #f8fbff;
-    color: var(--disk-accent);
-}
-
-.sb-disk button:active,
-.sb-disk .sb-disk__row-btn:active,
-.sb-disk .sb-disk__view-btn:active {
-    transform: translateY(1px);
-}
-
-/* Главные кнопки */
-.sb-disk [data-action="upload"],
-.sb-disk .sb-disk-modern-primary,
-.sb-disk .sb-disk__view-btn.is-active,
-.sb-disk .sb-disk__row-btn.is-primary,
-.sb-disk .sb-disk__row-btn--primary {
-    border-color: var(--disk-accent) !important;
-    background: var(--disk-accent) !important;
-    color: #fff !important;
-}
-
-.sb-disk [data-action="upload"]:hover,
-.sb-disk .sb-disk-modern-primary:hover,
-.sb-disk .sb-disk__view-btn.is-active:hover,
-.sb-disk .sb-disk__row-btn.is-primary:hover,
-.sb-disk .sb-disk__row-btn--primary:hover {
-    border-color: var(--disk-accent-hover) !important;
-    background: var(--disk-accent-hover) !important;
-    color: #fff !important;
-    box-shadow: 0 8px 20px rgba(37, 99, 235, .22);
-}
-
-/* Удаление */
-.sb-disk .sb-disk__row-btn.is-danger,
-.sb-disk [data-row-action="delete"] {
-    border-color: #fecaca;
-    background: #fff;
-    color: var(--disk-danger);
-}
-
-.sb-disk .sb-disk__row-btn.is-danger:hover,
-.sb-disk [data-row-action="delete"]:hover {
-    background: #fee2e2;
-    color: #991b1b;
-}
-
-/* =========================================================
-   STATES
-   ========================================================= */
-
-.sb-disk [data-state] {
-    margin-top: 12px;
-}
-
-.sb-disk [data-state="loading"],
-.sb-disk [data-state="error"],
-.sb-disk [data-state="no-root"],
-.sb-disk [data-state="no-access"],
-.sb-disk [data-state="empty"],
-.sb-public-disk-loading {
-    min-height: 150px;
-    padding: 28px;
-    border: 1px dashed #cbd5e1;
-    border-radius: 18px;
-    background:
-        radial-gradient(circle at top left, rgba(37, 99, 235, .08), transparent 35%),
-        #fff;
-    color: var(--disk-muted);
-    text-align: center;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    flex-direction: column;
-    gap: 8px;
-}
-
-.sb-disk [data-state="error"] {
-    border-color: #fecaca;
-    background:
-        radial-gradient(circle at top left, rgba(220, 38, 38, .08), transparent 35%),
-        #fff;
-    color: #991b1b;
-}
-
-.sb-disk-empty-enhanced {
-    min-height: 150px;
-    padding: 28px;
-    border: 1px dashed #cbd5e1;
-    border-radius: 18px;
-    background:
-        radial-gradient(circle at top left, rgba(37, 99, 235, .08), transparent 35%),
-        #fff;
-    color: var(--disk-muted);
-    text-align: center;
-    display: flex !important;
-    align-items: center;
-    justify-content: center;
-    flex-direction: column;
-    gap: 8px;
-}
-
-.sb-disk-empty-icon {
-    width: 58px;
-    height: 58px;
-    border-radius: 20px;
-    background: #eef2ff;
-    color: var(--disk-accent);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-size: 30px;
-}
-
-.sb-disk-empty-enhanced strong,
-.sb-disk [data-state] strong {
-    color: var(--disk-text);
-    font-size: 16px;
-}
-
-.sb-disk-empty-enhanced span,
-.sb-disk [data-state] span {
-    color: var(--disk-muted);
-    font-size: 13px;
-}
-
-/* =========================================================
-   TABLE VIEW
-   ========================================================= */
-
-.sb-disk__table-wrap,
-.sb-disk__table-container,
-.sb-disk [data-view-container="table"] {
-    width: 100%;
-    min-width: 0;
-    overflow-x: auto;
-    border: 1px solid var(--disk-border);
-    border-radius: 16px;
-    background: #fff;
-}
-
-.sb-disk table {
-    width: 100%;
-    min-width: 760px;
-    border-collapse: separate;
-    border-spacing: 0;
-    background: #fff;
-}
-
-.sb-disk thead th {
-    height: 38px;
-    padding: 8px 14px;
-    border-bottom: 1px solid var(--disk-border);
-    background: #f8fafc;
-    color: #64748b;
-    font-size: 12px;
-    font-weight: 800;
-    text-align: left;
-    text-transform: uppercase;
-    letter-spacing: .03em;
-    vertical-align: middle;
-}
-
-.sb-disk tbody td {
-    height: 50px;
-    padding: 8px 14px;
-    border-bottom: 1px solid #f1f5f9;
-    vertical-align: middle;
-    color: #374151;
-    font-size: 13px;
-}
-
-.sb-disk tbody tr:last-child td {
-    border-bottom: 0;
-}
-
-.sb-disk tbody tr {
-    transition: background .15s ease;
-}
-
-.sb-disk tbody tr:hover {
-    background: #f8fbff;
-}
-
-.sb-disk tbody tr.is-selected {
-    background: #eff6ff;
-}
-
-.sb-disk__check-cell {
-    width: 44px;
-}
-
-.sb-disk__name-cell {
-    min-width: 260px;
-}
-
-/* =========================================================
-   FILE NAME / ICONS
-   ========================================================= */
-
-.sb-disk__modern-name {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    min-width: 0;
-    max-width: 100%;
-}
-
-.sb-disk__modern-name-main {
-    min-width: 0;
-}
-
-.sb-disk__modern-name-title {
-    color: var(--disk-text);
-    font-size: 14px;
-    font-weight: 800;
-    line-height: 1.25;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-}
-
-.sb-disk__modern-name-sub {
-    margin-top: 3px;
-    color: var(--disk-muted);
-    font-size: 12px;
-}
-
-.sb-disk__modern-icon {
-    width: 38px;
-    height: 38px;
-    min-width: 38px;
-    max-width: 38px;
-    min-height: 38px;
-    max-height: 38px;
-    border-radius: 13px;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    background: #f1f5f9;
-    color: #475569;
-    font-size: 10px;
-    font-weight: 900;
-    line-height: 1;
-    flex: 0 0 38px;
-}
-
-.sb-disk__modern-icon--folder {
-    background: #fef3c7;
-    color: #92400e;
-    font-size: 20px;
-}
-
-.sb-disk__modern-icon--pdf {
-    background: #fee2e2;
-    color: #991b1b;
-}
-
-.sb-disk__modern-icon--doc {
-    background: #dbeafe;
-    color: #1d4ed8;
-}
-
-.sb-disk__modern-icon--xls {
-    background: #dcfce7;
-    color: #166534;
-}
-
-.sb-disk__modern-icon--ppt {
-    background: #ffedd5;
-    color: #c2410c;
-}
-
-.sb-disk__modern-icon--img {
-    background: #fce7f3;
-    color: #be185d;
-}
-
-.sb-disk__modern-icon--zip {
-    background: #ede9fe;
-    color: #6d28d9;
-}
-
-.sb-disk__modern-icon--file {
-    background: #f1f5f9;
-    color: #475569;
-}
-
-/* Старые имена, если где-то остались */
-
-.sb-disk__item-name {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    min-width: 0;
-}
-
-.sb-disk__item-name-label {
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    font-weight: 700;
-    color: #1f2937;
-}
-
-/* Type pill */
-
-.sb-disk__badge,
-.sb-disk__type-pill {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    min-height: 24px;
-    padding: 0 9px;
-    border-radius: 999px;
-    background: #f3f4f6;
-    color: #4b5563;
-    font-size: 12px;
-    font-weight: 800;
-    white-space: nowrap;
-}
-
-/* =========================================================
-   ROW ACTIONS
-   ========================================================= */
-
-.sb-disk__actions {
-    display: flex;
-    align-items: center;
-    justify-content: flex-end;
-    gap: 6px;
-    flex-wrap: wrap;
-}
-
-.sb-disk__actions .sb-disk__row-btn,
-.sb-disk__viewer-btn {
-    min-height: 30px;
-    padding: 0 10px;
-    border-radius: 9px;
-    font-size: 12px;
-}
-
-/* Viewer span должен выглядеть как кнопка */
-.sb-disk__viewer-btn {
-    display: inline-flex !important;
-    align-items: center;
-    justify-content: center;
-    border: 1px solid var(--disk-accent) !important;
-    background: var(--disk-accent) !important;
-    color: #fff !important;
-    cursor: pointer;
-    text-decoration: none !important;
-}
-
-.sb-disk__viewer-btn:hover {
-    background: var(--disk-accent-hover) !important;
-    border-color: var(--disk-accent-hover) !important;
-    color: #fff !important;
-}
-
-/* =========================================================
-   GRID VIEW
-   ========================================================= */
-
-.sb-disk__grid,
-.sb-disk [data-view-container="grid"] {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
-    gap: 12px;
-    width: 100%;
-    min-width: 0;
-}
-
-.sb-disk__card {
-    min-height: 220px;
-    padding: 14px;
-    border: 1px solid var(--disk-border);
-    border-radius: 18px;
-    background: #fff;
-    transition:
-        border-color .15s ease,
-        box-shadow .15s ease,
-        transform .15s ease,
-        background .15s ease;
-}
-
-.sb-disk__card:hover {
-    border-color: #c7d2fe;
-    background: #f8fbff;
-    box-shadow: 0 12px 26px rgba(37, 99, 235, .10);
-    transform: translateY(-1px);
-}
-
-.sb-disk__card.is-selected {
-    border-color: var(--disk-accent);
-    background: #eff6ff;
-}
-
-.sb-disk__card-top {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 8px;
-}
-
-.sb-disk__card-check {
-    display: inline-flex;
-    align-items: center;
-}
-
-.sb-disk__card-preview {
-    height: 86px;
-    margin: 12px 0;
-    border-radius: 15px;
-    background: #f8fafc;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-}
-
-.sb-disk__card-preview .sb-disk__modern-icon {
-    width: 48px;
-    height: 48px;
-    min-width: 48px;
-    min-height: 48px;
-    border-radius: 16px;
-}
-
-.sb-disk__card-preview .sb-disk__modern-icon--folder {
-    font-size: 24px;
-}
-
-.sb-disk__card-name {
-    font-size: 14px;
-    font-weight: 800;
-    color: var(--disk-text);
-    line-height: 1.3;
-    word-break: break-word;
-}
-
-.sb-disk__card-meta {
-    margin-top: 5px;
-    color: var(--disk-muted);
-    font-size: 12px;
-}
-
-.sb-disk__card-sub {
-    color: var(--disk-muted);
-}
-
-.sb-disk__card-actions {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 6px;
-    margin-top: 12px;
-}
-
-.sb-disk__card-actions .sb-disk__row-btn {
-    min-height: 32px;
-    padding: 0 10px;
-    border-radius: 10px;
-    font-size: 12px;
-}
-
-/* =========================================================
-   BULK BAR
-   ========================================================= */
-
-.sb-disk [data-role="bulkbar"] {
-    margin: 12px 0;
-    padding: 12px 14px;
-    border: 1px solid #c7d2fe;
-    border-radius: 14px;
-    background: #eef2ff;
-    color: #1e3a8a;
-}
-
-.sb-disk [data-role="bulkbar-text"] {
-    font-weight: 800;
-}
-
-/* =========================================================
-   SETTINGS MODAL
-   ========================================================= */
-
-.sb-disk [data-role="settings-modal"] {
-    position: fixed !important;
-    inset: 0 !important;
-    z-index: 10000 !important;
-    display: flex !important;
-    align-items: center !important;
-    justify-content: center !important;
-    padding: 24px !important;
-    background: rgba(15, 23, 42, .45) !important;
-    backdrop-filter: blur(6px);
-    overflow: auto !important;
-}
-
-.sb-disk [data-role="settings-modal"][hidden] {
-    display: none !important;
-}
-
-.sb-disk [data-role="settings-modal"] > * {
-    width: min(760px, 100%) !important;
-    max-height: calc(100vh - 48px) !important;
-    overflow: auto !important;
-    margin: 0 !important;
-    padding: 22px !important;
-    border: 1px solid rgba(229, 231, 235, .9) !important;
-    border-radius: 22px !important;
-    background: #ffffff !important;
-    box-shadow: 0 30px 90px rgba(15, 23, 42, .28) !important;
-}
-
-.sb-disk [data-role="settings-modal"] h1,
-.sb-disk [data-role="settings-modal"] h2,
-.sb-disk [data-role="settings-modal"] h3 {
-    margin: 0 0 18px !important;
-    color: #111827 !important;
-    font-size: 22px !important;
-    line-height: 1.25 !important;
-    font-weight: 900 !important;
-}
-
-/* Кнопка закрытия */
-.sb-disk [data-role="settings-modal"] [data-action="close-settings"] {
-    min-width: 34px !important;
-    width: 34px !important;
-    height: 34px !important;
-    min-height: 34px !important;
-    padding: 0 !important;
-    border-radius: 12px !important;
-    border: 1px solid #e5e7eb !important;
-    background: #f8fafc !important;
-    color: #374151 !important;
-}
-
-/* Форма настроек */
-.sb-disk [data-role="settings-form"] {
-    display: grid !important;
-    grid-template-columns: 190px minmax(0, 1fr) !important;
-    gap: 12px 14px !important;
-    align-items: center !important;
-}
-
-.sb-disk [data-role="settings-form"] label {
-    margin: 0 !important;
-    color: #374151 !important;
-    font-size: 13px !important;
-    font-weight: 700 !important;
-}
-
-.sb-disk [data-role="settings-form"] input[type="text"],
-.sb-disk [data-role="settings-form"] input[type="number"],
-.sb-disk [data-role="settings-form"] select,
-.sb-disk [data-role="settings-form"] textarea {
-    width: 100% !important;
-    min-width: 0 !important;
-    max-width: 100% !important;
-    height: 38px !important;
-    padding: 0 12px !important;
-    border: 1px solid #dbe3ef !important;
-    border-radius: 12px !important;
-    background: #fff !important;
-    color: #111827 !important;
-    font-size: 13px !important;
-    outline: none !important;
-}
-
-.sb-disk [data-role="settings-form"] textarea {
-    height: auto !important;
-    min-height: 76px !important;
-    padding-top: 10px !important;
-    padding-bottom: 10px !important;
-}
-
-.sb-disk [data-role="settings-form"] input:focus,
-.sb-disk [data-role="settings-form"] select:focus,
-.sb-disk [data-role="settings-form"] textarea:focus {
-    border-color: var(--disk-accent) !important;
-    box-shadow: 0 0 0 3px rgba(37, 99, 235, .12) !important;
-}
-
-/* Подсказки */
-.sb-disk [data-role="settings-form"] small,
-.sb-disk [data-role="settings-form"] .hint,
-.sb-disk [data-role="settings-form"] .help {
-    grid-column: 2 / 3 !important;
-    margin-top: -6px !important;
-    color: #6b7280 !important;
-    font-size: 12px !important;
-}
-
-/* Чекбоксы */
-.sb-disk [data-role="settings-form"] input[type="checkbox"] {
-    width: 16px !important;
-    height: 16px !important;
-    margin: 0 6px 0 0 !important;
-    accent-color: var(--disk-accent);
-}
-
-.sb-disk [data-role="settings-form"] label:has(input[type="checkbox"]) {
-    grid-column: span 1 !important;
-    display: inline-flex !important;
-    align-items: center !important;
-    min-height: 30px !important;
-    padding: 6px 8px !important;
-    border: 1px solid #e5e7eb !important;
-    border-radius: 12px !important;
-    background: #f8fafc !important;
-    color: #374151 !important;
-    font-size: 12px !important;
-}
-
-/* Save button */
-.sb-disk [data-role="settings-modal"] [data-action="save-settings"] {
-    border-color: var(--disk-accent) !important;
-    background: var(--disk-accent) !important;
-    color: #fff !important;
-}
-
-.sb-disk [data-role="settings-modal"] [data-action="save-settings"]:hover {
-    background: var(--disk-accent-hover) !important;
-    border-color: var(--disk-accent-hover) !important;
-    color: #fff !important;
-    box-shadow: 0 8px 20px rgba(37, 99, 235, .22) !important;
-}
-
-.sb-disk [data-role="settings-message"] {
-    margin-top: 12px !important;
-    color: #6b7280 !important;
-    font-size: 13px !important;
-}
-
-/* =========================================================
-   RESPONSIVE
-   ========================================================= */
-
-@media (max-width: 1100px) {
-    .sb-disk__smart-header,
-    .sb-disk__smart-toolbar {
-        align-items: flex-start;
-        flex-direction: column;
+    public function __construct(array $get, array $post, array $server, array $files = [])
+    {
+        $this->get = $get;
+        $this->post = $post;
+        $this->server = $server;
+        $this->files = $files;
     }
 
-    .sb-disk__smart-header-right,
-    .sb-disk__smart-toolbar-right {
-        justify-content: flex-start;
+    /**
+     * Создаём Request из глобальных PHP-массивов.
+     *
+     * То есть из:
+     * $_GET
+     * $_POST
+     * $_SERVER
+     * $_FILES
+     */
+    public static function createFromGlobals(): self
+    {
+        return new self($_GET, $_POST, $_SERVER, $_FILES);
     }
 
-    .sb-disk__smart-toolbar-left,
-    .sb-disk__smart-toolbar-right {
-        width: 100%;
+    /**
+     * Получить значение из GET.
+     *
+     * Например:
+     * /local/mvc/?route=/ping&id=5
+     *
+     * $request->get('id') вернёт 5
+     */
+    public function get(string $key, mixed $default = null): mixed
+    {
+        return $this->get[$key] ?? $default;
     }
 
-    .sb-disk [data-role="search-input"] {
-        width: 100% !important;
-        min-width: 0 !important;
+    /**
+     * Получить значение из POST.
+     *
+     * Например из формы:
+     * name = "Тестовый сайт"
+     *
+     * $request->post('name') вернёт "Тестовый сайт"
+     */
+    public function post(string $key, mixed $default = null): mixed
+    {
+        return $this->post[$key] ?? $default;
     }
 
-    .sb-disk [data-role="sort-select"] {
-        width: 100% !important;
+    /**
+     * Получить значение сначала из POST, потом из GET.
+     *
+     * Удобно, когда не важно, откуда пришёл параметр.
+     */
+    public function input(string $key, mixed $default = null): mixed
+    {
+        if (array_key_exists($key, $this->post)) {
+            return $this->post[$key];
+        }
+
+        if (array_key_exists($key, $this->get)) {
+            return $this->get[$key];
+        }
+
+        return $default;
     }
 
-    .sb-disk__actions {
-        justify-content: flex-start;
+    /**
+     * Получить все GET-параметры.
+     */
+    public function allGet(): array
+    {
+        return $this->get;
+    }
+
+    /**
+     * Получить все POST-параметры.
+     */
+    public function allPost(): array
+    {
+        return $this->post;
+    }
+
+    /**
+     * Метод запроса.
+     *
+     * Обычно:
+     * GET
+     * POST
+     */
+    public function method(): string
+    {
+        return strtoupper((string)($this->server['REQUEST_METHOD'] ?? 'GET'));
+    }
+
+    /**
+     * Проверка: это GET-запрос?
+     */
+    public function isGet(): bool
+    {
+        return $this->method() === 'GET';
+    }
+
+    /**
+     * Проверка: это POST-запрос?
+     */
+    public function isPost(): bool
+    {
+        return $this->method() === 'POST';
+    }
+
+    /**
+     * Получить маршрут.
+     *
+     * Пока мы используем такой формат:
+     *
+     * /local/mvc/?route=/ping
+     *
+     * Значит route лежит в GET.
+     */
+    public function path(): string
+    {
+        $route = (string)$this->get('route', '/');
+
+        $route = trim($route);
+
+        if ($route === '') {
+            return '/';
+        }
+
+        return $route;
+    }
+
+    /**
+     * Получить файл из $_FILES.
+     *
+     * Потом пригодится для загрузки файлов.
+     */
+    public function file(string $key): ?array
+    {
+        return $this->files[$key] ?? null;
+    }
+
+    /**
+     * Получить значение из $_SERVER.
+     */
+    public function server(string $key, mixed $default = null): mixed
+    {
+        return $this->server[$key] ?? $default;
     }
 }
 
-@media (max-width: 900px) {
-    .sb-public-disk-head {
-        flex-direction: column;
-        align-items: stretch;
+
+---
+
+Шаг 2. Обновляем Controller.php
+
+Теперь контроллеры смогут получать доступ к запросу.
+
+Замени файл:
+
+/local/mvc/Core/Controller.php
+
+полностью на этот:
+
+<?php
+
+namespace Local\Mvc\Core;
+
+/**
+ * Controller
+ *
+ * Базовый контроллер.
+ *
+ * Все остальные контроллеры наследуются от него.
+ */
+class Controller
+{
+    /**
+     * Здесь будет лежать текущий запрос.
+     *
+     * Например:
+     * $this->request->get('id')
+     * $this->request->post('name')
+     */
+    protected Request $request;
+
+    public function __construct(?Request $request = null)
+    {
+        $this->request = $request ?? Request::createFromGlobals();
     }
 
-    .sb-disk__grid,
-    .sb-disk [data-view-container="grid"] {
-        grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+    /**
+     * Показать HTML-страницу.
+     */
+    protected function render(string $view, array $params = []): void
+    {
+        extract($params);
+
+        require $_SERVER['DOCUMENT_ROOT'] . '/bitrix/header.php';
+
+        require dirname(__DIR__) . '/Views/' . $view . '.php';
+
+        require $_SERVER['DOCUMENT_ROOT'] . '/bitrix/footer.php';
     }
 
-    .sb-disk table {
-        min-width: 700px;
+    /**
+     * Вернуть JSON.
+     */
+    protected function json(array $data): void
+    {
+        header('Content-Type: application/json; charset=utf-8');
+
+        echo json_encode($data, JSON_UNESCAPED_UNICODE);
+
+        exit;
+    }
+
+    /**
+     * Успешный JSON-ответ.
+     */
+    protected function success(array $data = []): void
+    {
+        $this->json([
+            'ok' => true,
+            'data' => $data,
+        ]);
+    }
+
+    /**
+     * JSON-ошибка.
+     */
+    protected function error(string $message, array $details = []): void
+    {
+        $this->json([
+            'ok' => false,
+            'error' => $message,
+            'details' => $details,
+        ]);
     }
 }
 
-@media (max-width: 760px) {
-    .sb-disk [data-role="settings-modal"] {
-        align-items: flex-start !important;
-        padding: 12px !important;
+Что изменилось?
+
+Было:
+
+class Controller
+{
+}
+
+Стало:
+
+class Controller
+{
+    protected Request $request;
+}
+
+Теперь любой контроллер сможет делать так:
+
+$id = $this->request->get('id');
+$name = $this->request->post('name');
+
+
+---
+
+Шаг 3. Обновляем Router.php
+
+Теперь Router будет принимать не отдельно $method и $path, а весь объект Request.
+
+Замени файл:
+
+/local/mvc/Core/Router.php
+
+полностью:
+
+<?php
+
+namespace Local\Mvc\Core;
+
+/**
+ * Router
+ *
+ * Диспетчер маршрутов.
+ */
+class Router
+{
+    private array $routes = [];
+
+    /**
+     * Зарегистрировать GET-маршрут.
+     */
+    public function get(string $path, array $handler): void
+    {
+        $this->add('GET', $path, $handler);
     }
 
-    .sb-disk [data-role="settings-modal"] > * {
-        padding: 16px !important;
-        border-radius: 18px !important;
-        max-height: none !important;
+    /**
+     * Зарегистрировать POST-маршрут.
+     */
+    public function post(string $path, array $handler): void
+    {
+        $this->add('POST', $path, $handler);
     }
 
-    .sb-disk [data-role="settings-form"] {
-        grid-template-columns: 1fr !important;
-        gap: 8px !important;
+    /**
+     * Добавить маршрут.
+     */
+    private function add(string $method, string $path, array $handler): void
+    {
+        $method = strtoupper($method);
+        $path = $this->normalizePath($path);
+
+        $this->routes[$method][$path] = $handler;
     }
 
-    .sb-disk [data-role="settings-form"] small,
-    .sb-disk [data-role="settings-form"] .hint,
-    .sb-disk [data-role="settings-form"] .help {
-        grid-column: auto !important;
+    /**
+     * Запустить нужный контроллер по текущему запросу.
+     */
+    public function dispatch(Request $request): void
+    {
+        $method = $request->method();
+        $path = $this->normalizePath($request->path());
+
+        if (!isset($this->routes[$method][$path])) {
+            $this->notFound($method, $path);
+            return;
+        }
+
+        $handler = $this->routes[$method][$path];
+
+        $controllerClass = $handler[0] ?? null;
+        $controllerMethod = $handler[1] ?? null;
+
+        if (!$controllerClass || !class_exists($controllerClass)) {
+            $this->serverError('Контроллер не найден: ' . (string)$controllerClass);
+            return;
+        }
+
+        /**
+         * Важно:
+         * передаём Request внутрь контроллера.
+         */
+        $controller = new $controllerClass($request);
+
+        if (!$controllerMethod || !method_exists($controller, $controllerMethod)) {
+            $methods = get_class_methods($controller);
+
+            $this->serverError(
+                'Метод контроллера не найден: ' . $controllerClass . '::' . (string)$controllerMethod
+                . "\n\nPHP видит такие методы:\n"
+                . implode("\n", $methods)
+            );
+
+            return;
+        }
+
+        $controller->{$controllerMethod}();
     }
 
-    .sb-disk [data-role="settings-form"] label:has(input[type="checkbox"]) {
-        grid-column: auto !important;
+    /**
+     * Привести путь к нормальному виду.
+     */
+    private function normalizePath(string $path): string
+    {
+        $path = trim($path);
+
+        if ($path === '') {
+            return '/';
+        }
+
+        $path = '/' . trim($path, '/');
+
+        if ($path !== '/') {
+            $path = rtrim($path, '/');
+        }
+
+        return $path;
+    }
+
+    /**
+     * 404 — маршрут не найден.
+     */
+    private function notFound(string $method, string $path): void
+    {
+        http_response_code(404);
+
+        echo '<h1>404</h1>';
+        echo '<p>Маршрут не найден.</p>';
+        echo '<pre>';
+        echo 'Method: ' . htmlspecialchars($method) . "\n";
+        echo 'Path: ' . htmlspecialchars($path) . "\n";
+        echo '</pre>';
+
+        exit;
+    }
+
+    /**
+     * 500 — ошибка внутри MVC.
+     */
+    private function serverError(string $message): void
+    {
+        http_response_code(500);
+
+        echo '<h1>500</h1>';
+        echo '<p>Ошибка MVC.</p>';
+        echo '<pre>' . htmlspecialchars($message) . '</pre>';
+
+        exit;
     }
 }
 
-@media (max-width: 700px) {
-    .sb-disk__smart-toolbar {
-        padding: 12px;
+Главное изменение вот здесь:
+
+public function dispatch(Request $request): void
+
+И здесь:
+
+$controller = new $controllerClass($request);
+
+То есть Router теперь говорит контроллеру:
+
+Вот тебе запрос пользователя, работай с ним.
+
+
+---
+
+Шаг 4. Обновляем index.php
+
+Теперь входной файл станет ещё чище.
+
+Замени файл:
+
+/local/mvc/index.php
+
+полностью:
+
+<?php
+
+/**
+ * index.php
+ *
+ * Главная входная точка нашего MVC.
+ */
+
+require_once __DIR__ . '/bootstrap.php';
+
+use Local\Mvc\Core\Request;
+use Local\Mvc\Core\Router;
+
+/**
+ * Создаём объект запроса.
+ *
+ * Он внутри себя забирает:
+ * $_GET
+ * $_POST
+ * $_SERVER
+ * $_FILES
+ */
+$request = Request::createFromGlobals();
+
+/**
+ * Создаём Router.
+ */
+$router = new Router();
+
+/**
+ * Подключаем маршруты.
+ */
+require_once __DIR__ . '/routes.php';
+
+/**
+ * Передаём запрос в Router.
+ */
+$router->dispatch($request);
+
+Теперь index.php почти идеальный.
+
+Он делает только 4 вещи:
+
+1. Подключил bootstrap.php
+2. Создал Request
+3. Создал Router
+4. Запустил Router
+
+
+---
+
+Шаг 5. Обновляем HomeController.php
+
+Добавим тест, чтобы увидеть, что Request реально работает.
+
+Замени файл:
+
+/local/mvc/Controllers/HomeController.php
+
+полностью:
+
+<?php
+
+namespace Local\Mvc\Controllers;
+
+use Local\Mvc\Core\Controller;
+
+/**
+ * HomeController
+ *
+ * Тестовый контроллер.
+ */
+class HomeController extends Controller
+{
+    public function index(): void
+    {
+        $name = (string)$this->request->get('name', 'Гость');
+
+        $this->render('home/index', [
+            'title' => 'MVC работает',
+            'message' => 'Привет, ' . $name . '! Request успешно передан в контроллер.',
+        ]);
     }
 
-    .sb-disk button,
-    .sb-disk .sb-disk__view-btn,
-    .sb-disk [data-action="upload"],
-    .sb-disk [data-action="create-folder"],
-    .sb-disk [data-action="refresh"],
-    .sb-disk [data-action="settings"] {
-        width: 100%;
-    }
-
-    .sb-disk__actions,
-    .sb-disk__card-actions {
-        align-items: stretch;
-        flex-direction: column;
-    }
-
-    .sb-disk__actions .sb-disk__row-btn,
-    .sb-disk__card-actions .sb-disk__row-btn {
-        width: 100%;
+    public function ping(): void
+    {
+        $this->success([
+            'message' => 'pong',
+            'mvc' => true,
+            'method' => $this->request->method(),
+            'path' => $this->request->path(),
+        ]);
     }
 }
 
-В public_page.php обнови версию CSS:
 
-<link rel="stylesheet" href="<?= sb_public_h($basePath) ?>/components/disk/styles.css?v=9">
+---
 
-И после замены сделай Ctrl + F5.
+Шаг 6. Проверяем
+
+Открой обычную страницу:
+
+https://bitrix24-stage.gaz.ru/local/mvc/
+
+Должно быть:
+
+Привет, Гость! Request успешно передан в контроллер.
+
+Теперь проверь GET-параметр:
+
+https://bitrix24-stage.gaz.ru/local/mvc/?name=Алексей
+
+Должно быть:
+
+Привет, Алексей! Request успешно передан в контроллер.
+
+Теперь проверь маршрут:
+
+https://bitrix24-stage.gaz.ru/local/mvc/?route=/ping
+
+Должен быть JSON примерно такой:
+
+{
+    "ok": true,
+    "data": {
+        "message": "pong",
+        "mvc": true,
+        "method": "GET",
+        "path": "/ping"
+    }
+}
+
+
+---
+
+Что мы сейчас сделали
+
+Раньше было так:
+
+index.php сам лез в $_GET и $_SERVER
+
+Теперь так:
+
+Request забирает данные запроса
+Router смотрит Request
+Controller получает Request
+
+Путь стал такой:
+
+Браузер
+  ↓
+index.php
+  ↓
+Request
+  ↓
+Router
+  ↓
+Controller
+  ↓
+View / JSON
+
+
+---
+
+Самая главная мысль
+
+Request — это пакет с информацией от пользователя.
+
+В нём лежит:
+
+какой адрес открыл пользователь
+какой метод запроса
+какие GET-параметры
+какие POST-параметры
+какие файлы загрузил
+
+Теперь в будущем мы не будем писать в контроллерах так:
+
+$_GET['id']
+$_POST['name']
+$_SERVER['REQUEST_METHOD']
+
+Будем писать аккуратно:
+
+$this->request->get('id')
+$this->request->post('name')
+$this->request->method()
+
+Так код проще читать, проще проверять и проще поддерживать.
+
+Следующим шагом сделаем Response-класс, чтобы ответы тоже были аккуратные: HTML, JSON, редирект и ошибки.
