@@ -1,286 +1,531 @@
-Да, тут лучше не трогать рабочий script.js. Сделаем через CSS:
+Да, тут лучше сделать 2 точечных правки:
 
-1. скрываем дублирующий заголовок Файлы;
+1. в script.js — аккуратно собрать верхнюю часть диска:
 
+хлебные крошки слева,
 
-2. скрываем строку 4 файлов · 0 папок;
+Обновить и Настройки справа в той же строке;
 
-
-3. уменьшаем лишние отступы;
-
-
-4. приводим окно настроек диска к нормальному виду.
+ниже — красивая панель с поиском / сортировкой / кнопками.
 
 
 
-В конец файла:
+2. в styles.css — нормально оформить эти новые ряды и привести кнопки Открыть к одному стилю.
 
-/local/sitebuilder/components/disk/styles.css
 
-добавь этот блок:
+
+И да — причина, почему у png кнопка синяя, а у doc белая, в том, что для doc/docx у тебя рендерится другой HTML-элемент (span с bitrix viewer-классами), а не обычная кнопка.
+Поэтому я дам правку, чтобы у всех Открыть был единый вид.
+
+
+---
+
+1. script.js
+
+1.1. В методе renderAll()
+
+Найди:
+
+DiskComponent.prototype.renderAll = function () {
+  this.renderSubtitle();
+  this.renderBreadcrumbs();
+  this.renderItemsTable();
+  this.renderItemsGrid();
+  this.syncSelectedState();
+};
+
+И замени на:
+
+DiskComponent.prototype.renderAll = function () {
+  this.renderSubtitle();
+  this.renderBreadcrumbs();
+  this.renderItemsTable();
+  this.renderItemsGrid();
+  this.syncSelectedState();
+  this.arrangeModernLayout();
+};
+
+
+---
+
+1.2. Добавь новый метод arrangeModernLayout()
+
+Вставь его ниже renderAll():
+
+DiskComponent.prototype.arrangeModernLayout = function () {
+  var root = this.root;
+
+  var breadcrumbs = root.querySelector('[data-role="breadcrumbs"]');
+  var refreshBtn = root.querySelector('[data-action="refresh"]');
+  var settingsBtn = root.querySelector('[data-action="settings"]');
+
+  var searchInput = root.querySelector('[data-role="search-input"]');
+  var sortSelect = root.querySelector('[data-role="sort-select"]');
+  var uploadBtn = root.querySelector('[data-action="upload"]');
+  var createFolderBtn = root.querySelector('[data-action="create-folder"]');
+
+  var viewButtons = Array.prototype.slice.call(root.querySelectorAll('.sb-disk__view-btn'));
+
+  var tableContainer = root.querySelector('[data-view-container="table"]');
+  var gridContainer = root.querySelector('[data-view-container="grid"]');
+
+  var anchor =
+    tableContainer ||
+    gridContainer ||
+    root.querySelector('[data-role="bulkbar"]') ||
+    root.firstElementChild;
+
+  if (!anchor) {
+    return;
+  }
+
+  var header = root.querySelector('.sb-disk__smart-header');
+  if (!header) {
+    header = document.createElement('div');
+    header.className = 'sb-disk__smart-header';
+
+    var headerLeft = document.createElement('div');
+    headerLeft.className = 'sb-disk__smart-header-left';
+
+    var headerRight = document.createElement('div');
+    headerRight.className = 'sb-disk__smart-header-right';
+
+    header.appendChild(headerLeft);
+    header.appendChild(headerRight);
+
+    root.insertBefore(header, anchor);
+  }
+
+  var headerLeft = header.querySelector('.sb-disk__smart-header-left');
+  var headerRight = header.querySelector('.sb-disk__smart-header-right');
+
+  if (breadcrumbs) {
+    headerLeft.appendChild(breadcrumbs);
+  }
+
+  if (refreshBtn) {
+    headerRight.appendChild(refreshBtn);
+  }
+
+  if (settingsBtn) {
+    headerRight.appendChild(settingsBtn);
+  }
+
+  var toolbar = root.querySelector('.sb-disk__smart-toolbar');
+  if (!toolbar) {
+    toolbar = document.createElement('div');
+    toolbar.className = 'sb-disk__smart-toolbar';
+
+    var toolbarLeft = document.createElement('div');
+    toolbarLeft.className = 'sb-disk__smart-toolbar-left';
+
+    var toolbarRight = document.createElement('div');
+    toolbarRight.className = 'sb-disk__smart-toolbar-right';
+
+    toolbar.appendChild(toolbarLeft);
+    toolbar.appendChild(toolbarRight);
+
+    if (header.nextSibling) {
+      root.insertBefore(toolbar, header.nextSibling);
+    } else {
+      root.appendChild(toolbar);
+    }
+  }
+
+  var toolbarLeft = toolbar.querySelector('.sb-disk__smart-toolbar-left');
+  var toolbarRight = toolbar.querySelector('.sb-disk__smart-toolbar-right');
+
+  if (searchInput) {
+    toolbarLeft.appendChild(searchInput);
+  }
+
+  if (sortSelect) {
+    toolbarLeft.appendChild(sortSelect);
+  }
+
+  if (uploadBtn) {
+    toolbarRight.appendChild(uploadBtn);
+  }
+
+  if (createFolderBtn) {
+    toolbarRight.appendChild(createFolderBtn);
+  }
+
+  viewButtons.forEach(function (btn) {
+    toolbarRight.appendChild(btn);
+  });
+};
+
+
+---
+
+1.3. Сделай одинаковую кнопку Открыть
+
+В renderItemsTable() найди куски, где формируется openControl.
+
+Было:
+
+if (item.entityType === 'folder') {
+  openControl = '<button type="button" class="sb-disk__row-btn" data-row-action="open">Открыть</button>';
+} else if (item.previewMode === 'office') {
+  openControl =
+    '<span ' +
+      'class="sb-disk__row-btn sb-disk__viewer-btn disk-detail-sidebar-editor-item disk-detail-sidebar-editor-item-show" ' +
+      'data-viewer="" ' +
+      'data-viewer-type="cloud-document" ' +
+      'data-src="' + escapeHtml(item.previewUrl || '') + '" ' +
+      'data-viewer-type-class="BX.Disk.Viewer.DocumentItem" ' +
+      'data-viewer-extension="disk.viewer.document-item" ' +
+      'data-object-id="' + escapeHtml(item.id) + '" ' +
+      'data-title="' + escapeHtml(item.name) + '" ' +
+      'data-actions="' + escapeHtml(JSON.stringify([{ type: 'download' }])) + '"' +
+    '>Открыть</span>';
+} else {
+  openControl = '<button type="button" class="sb-disk__row-btn" data-row-action="open">Открыть</button>';
+}
+
+Замени на:
+
+if (item.entityType === 'folder') {
+  openControl = '<button type="button" class="sb-disk__row-btn sb-disk__row-btn--primary" data-row-action="open">Открыть</button>';
+} else if (item.previewMode === 'office') {
+  openControl =
+    '<span ' +
+      'class="sb-disk__row-btn sb-disk__row-btn--primary sb-disk__viewer-btn disk-detail-sidebar-editor-item disk-detail-sidebar-editor-item-show" ' +
+      'data-viewer="" ' +
+      'data-viewer-type="cloud-document" ' +
+      'data-src="' + escapeHtml(item.previewUrl || '') + '" ' +
+      'data-viewer-type-class="BX.Disk.Viewer.DocumentItem" ' +
+      'data-viewer-extension="disk.viewer.document-item" ' +
+      'data-object-id="' + escapeHtml(item.id) + '" ' +
+      'data-title="' + escapeHtml(item.name) + '" ' +
+      'data-actions="' + escapeHtml(JSON.stringify([{ type: 'download' }])) + '"' +
+    '>Открыть</span>';
+} else {
+  openControl = '<button type="button" class="sb-disk__row-btn sb-disk__row-btn--primary" data-row-action="open">Открыть</button>';
+}
+
+
+---
+
+1.4. То же самое в renderItemsGrid()
+
+Там тоже найди аналогичный блок openControl и замени на такой же:
+
+if (item.entityType === 'folder') {
+  openControl = '<button type="button" class="sb-disk__row-btn sb-disk__row-btn--primary" data-row-action="open">Открыть</button>';
+} else if (item.previewMode === 'office') {
+  openControl =
+    '<span ' +
+      'class="sb-disk__row-btn sb-disk__row-btn--primary sb-disk__viewer-btn disk-detail-sidebar-editor-item disk-detail-sidebar-editor-item-show" ' +
+      'data-viewer="" ' +
+      'data-viewer-type="cloud-document" ' +
+      'data-src="' + escapeHtml(item.previewUrl || '') + '" ' +
+      'data-viewer-type-class="BX.Disk.Viewer.DocumentItem" ' +
+      'data-viewer-extension="disk.viewer.document-item" ' +
+      'data-object-id="' + escapeHtml(item.id) + '" ' +
+      'data-title="' + escapeHtml(item.name) + '" ' +
+      'data-actions="' + escapeHtml(JSON.stringify([{ type: 'download' }])) + '"' +
+    '>Открыть</span>';
+} else {
+  openControl = '<button type="button" class="sb-disk__row-btn sb-disk__row-btn--primary" data-row-action="open">Открыть</button>';
+}
+
+
+---
+
+2. styles.css
+
+В конец файла добавь вот этот блок:
 
 /* =========================================================
-   DISK COMPACT FIX + NICE SETTINGS MODAL
+   DISK HEADER / TOOLBAR COMPACT
    ========================================================= */
 
-/* Убираем дублирующий заголовок "Файлы" и количество */
-.sb-disk--modern .sb-disk__title,
-.sb-disk--modern .sb-disk-title,
-.sb-disk--modern [data-role="subtitle"],
-.sb-disk--modern .sb-disk__subtitle,
-.sb-disk--modern .sb-disk-subtitle {
-    display: none !important;
+.sb-disk__smart-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    margin: 0 0 10px;
+    padding: 0;
 }
 
-/* Уменьшаем лишнее пространство сверху внутри диска */
-.sb-disk--modern .sb-disk__top,
-.sb-disk--modern .sb-disk__header {
-    margin-bottom: 8px !important;
+.sb-disk__smart-header-left {
+    flex: 1 1 auto;
+    min-width: 0;
+    display: flex;
+    align-items: center;
 }
 
-.sb-disk--modern .sb-disk__toolbar,
-.sb-disk--modern .sb-disk__controls,
-.sb-disk--modern .sb-disk__actions-panel,
-.sb-disk--modern .sb-disk__filter,
-.sb-disk--modern .sb-disk__filters {
-    margin: 6px 0 10px !important;
-    padding: 10px !important;
-    border-radius: 14px !important;
+.sb-disk__smart-header-right {
+    flex: 0 0 auto;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+    justify-content: flex-end;
 }
 
-/* Если есть блок заголовка диска, делаем его компактным */
-.sb-disk--modern .sb-disk__head,
-.sb-disk--modern .sb-disk-head {
-    min-height: 0 !important;
-    margin: 0 0 6px !important;
-    padding: 0 !important;
-}
-
-/* Панель поиска и кнопок компактнее */
-.sb-disk--modern input[type="text"],
-.sb-disk--modern input[type="search"],
-.sb-disk--modern select {
-    height: 36px !important;
-    border-radius: 10px !important;
-}
-
-.sb-disk--modern input[type="text"],
-.sb-disk--modern input[type="search"] {
-    min-width: 240px !important;
-    max-width: 360px !important;
-}
-
-.sb-disk--modern button,
-.sb-disk--modern .sb-disk__row-btn,
-.sb-disk--modern .sb-disk__view-btn,
-.sb-disk--modern .sb-disk-modern-control {
-    min-height: 34px !important;
-    padding: 0 11px !important;
-    border-radius: 10px !important;
-}
-
-/* Таблица ближе к панели */
-.sb-disk--modern [data-view-container="table"],
-.sb-disk--modern .sb-disk__table-wrap,
-.sb-disk--modern .sb-disk__table-container {
-    margin-top: 8px !important;
-}
-
-.sb-disk--modern thead th {
-    height: 38px !important;
-}
-
-.sb-disk--modern tbody td {
-    height: 50px !important;
-    padding-top: 8px !important;
-    padding-bottom: 8px !important;
-}
-
-/* =========================================================
-   SETTINGS MODAL — красивое окно настроек
-   ========================================================= */
-
-.sb-disk [data-role="settings-modal"] {
-    position: fixed !important;
-    inset: 0 !important;
-    z-index: 10000 !important;
+.sb-disk [data-role="breadcrumbs"] {
     display: flex !important;
-    align-items: center !important;
-    justify-content: center !important;
-    padding: 24px !important;
-    background: rgba(15, 23, 42, .45) !important;
-    backdrop-filter: blur(6px);
-    overflow: auto !important;
-}
-
-.sb-disk [data-role="settings-modal"][hidden] {
-    display: none !important;
-}
-
-.sb-disk [data-role="settings-modal"] > * {
-    width: min(760px, 100%) !important;
-    max-height: calc(100vh - 48px) !important;
-    overflow: auto !important;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
     margin: 0 !important;
-    padding: 22px !important;
-    border: 1px solid rgba(229, 231, 235, .9) !important;
-    border-radius: 22px !important;
-    background: #ffffff !important;
-    box-shadow: 0 30px 90px rgba(15, 23, 42, .28) !important;
-}
-
-/* Заголовок настроек */
-.sb-disk [data-role="settings-modal"] h1,
-.sb-disk [data-role="settings-modal"] h2,
-.sb-disk [data-role="settings-modal"] h3 {
-    margin: 0 0 18px !important;
-    color: #111827 !important;
-    font-size: 22px !important;
-    line-height: 1.25 !important;
-    font-weight: 900 !important;
-}
-
-/* Кнопка закрытия, если она маленькая */
-.sb-disk [data-role="settings-modal"] [data-action="close-settings"] {
-    min-width: 34px !important;
-    width: 34px !important;
-    height: 34px !important;
-    min-height: 34px !important;
     padding: 0 !important;
-    border-radius: 12px !important;
-    border: 1px solid #e5e7eb !important;
-    background: #f8fafc !important;
-    color: #374151 !important;
 }
 
-/* Форма настроек */
-.sb-disk [data-role="settings-form"] {
-    display: grid !important;
-    grid-template-columns: 190px minmax(0, 1fr) !important;
-    gap: 12px 14px !important;
-    align-items: center !important;
+.sb-disk__crumb {
+    display: inline-flex;
+    align-items: center;
+    min-height: 30px;
+    padding: 0 10px;
+    border: 1px solid #e3e8f2;
+    border-radius: 999px;
+    background: #f8fafc;
+    color: #4b5563;
+    font-size: 12px;
+    font-weight: 700;
+    cursor: pointer;
 }
 
-/* Если label и input идут отдельными элементами */
-.sb-disk [data-role="settings-form"] label {
-    margin: 0 !important;
-    color: #374151 !important;
-    font-size: 13px !important;
-    font-weight: 700 !important;
+.sb-disk__crumb:hover {
+    background: #eef4ff;
+    color: #2563eb;
+    border-color: #cfe0ff;
 }
 
-/* Поля */
-.sb-disk [data-role="settings-form"] input[type="text"],
-.sb-disk [data-role="settings-form"] input[type="number"],
-.sb-disk [data-role="settings-form"] select,
-.sb-disk [data-role="settings-form"] textarea {
-    width: 100% !important;
-    min-width: 0 !important;
-    max-width: 100% !important;
-    height: 38px !important;
+/* Панель поиска и кнопок */
+.sb-disk__smart-toolbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 14px 18px;
+    flex-wrap: wrap;
+    margin: 0 0 14px;
+    padding: 12px 14px;
+    border: 1px solid #e6ebf3;
+    border-radius: 16px;
+    background: #fbfcfe;
+}
+
+.sb-disk__smart-toolbar-left,
+.sb-disk__smart-toolbar-right {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+.sb-disk__smart-toolbar-left {
+    flex: 1 1 360px;
+    min-width: 260px;
+}
+
+.sb-disk__smart-toolbar-right {
+    flex: 0 1 auto;
+    justify-content: flex-end;
+}
+
+/* Красивые размеры контролов */
+.sb-disk input[type="text"],
+.sb-disk input[type="search"],
+.sb-disk select {
+    height: 36px !important;
     padding: 0 12px !important;
     border: 1px solid #dbe3ef !important;
-    border-radius: 12px !important;
+    border-radius: 10px !important;
     background: #fff !important;
     color: #111827 !important;
     font-size: 13px !important;
-    outline: none !important;
 }
 
-.sb-disk [data-role="settings-form"] textarea {
-    height: auto !important;
-    min-height: 76px !important;
-    padding-top: 10px !important;
-    padding-bottom: 10px !important;
+.sb-disk [data-role="search-input"] {
+    min-width: 260px;
+    width: 260px;
 }
 
-.sb-disk [data-role="settings-form"] input:focus,
-.sb-disk [data-role="settings-form"] select:focus,
-.sb-disk [data-role="settings-form"] textarea:focus {
-    border-color: var(--disk-accent, #2563eb) !important;
-    box-shadow: 0 0 0 3px rgba(37, 99, 235, .12) !important;
+.sb-disk [data-role="sort-select"] {
+    min-width: 150px;
 }
 
-/* Подсказка про расширения */
-.sb-disk [data-role="settings-form"] small,
-.sb-disk [data-role="settings-form"] .hint,
-.sb-disk [data-role="settings-form"] .help {
-    grid-column: 2 / 3 !important;
-    margin-top: -6px !important;
-    color: #6b7280 !important;
-    font-size: 12px !important;
+/* Кнопки сверху */
+.sb-disk [data-action="refresh"],
+.sb-disk [data-action="settings"],
+.sb-disk [data-action="upload"],
+.sb-disk [data-action="create-folder"],
+.sb-disk .sb-disk__view-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 36px;
+    padding: 0 12px;
+    border: 1px solid #dbe3ef;
+    border-radius: 10px;
+    background: #ffffff;
+    color: #374151;
+    font-size: 13px;
+    font-weight: 700;
+    cursor: pointer;
+    transition: .18s ease;
 }
 
-/* Чекбоксы в аккуратную сетку */
-.sb-disk [data-role="settings-form"] input[type="checkbox"] {
-    width: 16px !important;
-    height: 16px !important;
-    margin: 0 6px 0 0 !important;
-    accent-color: var(--disk-accent, #2563eb);
+.sb-disk [data-action="refresh"]:hover,
+.sb-disk [data-action="settings"]:hover,
+.sb-disk [data-action="upload"]:hover,
+.sb-disk [data-action="create-folder"]:hover,
+.sb-disk .sb-disk__view-btn:hover {
+    border-color: #c7d7f3;
+    background: #f8fbff;
+    color: #1f4fd6;
 }
 
-.sb-disk [data-role="settings-form"] label:has(input[type="checkbox"]) {
-    grid-column: span 1 !important;
+.sb-disk .sb-disk__view-btn.is-active,
+.sb-disk [data-action="upload"] {
+    background: #4f6df5;
+    border-color: #4f6df5;
+    color: #fff;
+}
+
+.sb-disk .sb-disk__view-btn.is-active:hover,
+.sb-disk [data-action="upload"]:hover {
+    background: #3f5de9;
+    border-color: #3f5de9;
+    color: #fff;
+}
+
+/* =========================================================
+   TABLE ACTION BUTTONS
+   ========================================================= */
+
+.sb-disk__actions {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 6px;
+    flex-wrap: wrap;
+}
+
+.sb-disk__row-btn,
+.sb-disk__viewer-btn {
     display: inline-flex !important;
-    align-items: center !important;
-    min-height: 30px !important;
-    padding: 6px 8px !important;
-    border: 1px solid #e5e7eb !important;
-    border-radius: 12px !important;
-    background: #f8fafc !important;
-    color: #374151 !important;
-    font-size: 12px !important;
+    align-items: center;
+    justify-content: center;
+    min-height: 30px;
+    padding: 0 10px;
+    border: 1px solid #dbe3ef;
+    border-radius: 9px;
+    background: #fff;
+    color: #4b5563;
+    font-size: 12px;
+    font-weight: 700;
+    line-height: 1;
+    text-decoration: none !important;
+    cursor: pointer;
+    transition: .18s ease;
 }
 
-/* Кнопки внизу модалки */
-.sb-disk [data-role="settings-modal"] [data-action="save-settings"] {
-    border-color: var(--disk-accent, #2563eb) !important;
-    background: var(--disk-accent, #2563eb) !important;
+.sb-disk__row-btn:hover,
+.sb-disk__viewer-btn:hover {
+    border-color: #c7d7f3;
+    background: #f8fbff;
+    color: #1f4fd6;
+}
+
+.sb-disk__row-btn--primary,
+.sb-disk__viewer-btn.sb-disk__row-btn--primary {
+    background: #4f6df5 !important;
+    border-color: #4f6df5 !important;
     color: #fff !important;
 }
 
-.sb-disk [data-role="settings-modal"] [data-action="save-settings"]:hover {
+.sb-disk__row-btn--primary:hover,
+.sb-disk__viewer-btn.sb-disk__row-btn--primary:hover {
+    background: #3f5de9 !important;
+    border-color: #3f5de9 !important;
     color: #fff !important;
-    box-shadow: 0 8px 20px rgba(37, 99, 235, .22) !important;
 }
 
-.sb-disk [data-role="settings-message"] {
-    margin-top: 12px !important;
-    color: #6b7280 !important;
-    font-size: 13px !important;
+/* Таблица компактнее */
+.sb-disk thead th {
+    padding-top: 10px;
+    padding-bottom: 10px;
+    vertical-align: middle;
 }
 
-/* Адаптив модалки */
-@media (max-width: 760px) {
-    .sb-disk [data-role="settings-modal"] {
-        align-items: flex-start !important;
-        padding: 12px !important;
+.sb-disk tbody td {
+    padding-top: 10px;
+    padding-bottom: 10px;
+    vertical-align: middle;
+}
+
+.sb-disk__item-name {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.sb-disk__item-name-label {
+    font-weight: 700;
+    color: #1f2937;
+}
+
+/* =========================================================
+   RESPONSIVE
+   ========================================================= */
+
+@media (max-width: 900px) {
+    .sb-disk__smart-header,
+    .sb-disk__smart-toolbar {
+        align-items: flex-start;
+        flex-direction: column;
     }
 
-    .sb-disk [data-role="settings-modal"] > * {
-        padding: 16px !important;
-        border-radius: 18px !important;
-        max-height: none !important;
+    .sb-disk__smart-header-right,
+    .sb-disk__smart-toolbar-right {
+        justify-content: flex-start;
     }
 
-    .sb-disk [data-role="settings-form"] {
-        grid-template-columns: 1fr !important;
-        gap: 8px !important;
-    }
-
-    .sb-disk [data-role="settings-form"] small,
-    .sb-disk [data-role="settings-form"] .hint,
-    .sb-disk [data-role="settings-form"] .help {
-        grid-column: auto !important;
-    }
-
-    .sb-disk [data-role="settings-form"] label:has(input[type="checkbox"]) {
-        grid-column: auto !important;
+    .sb-disk [data-role="search-input"] {
+        width: 100%;
+        min-width: 0;
     }
 }
 
-Потом в public_page.php обнови версию:
 
-<link rel="stylesheet" href="<?= sb_public_h($basePath) ?>/components/disk/styles.css?v=8">
+---
 
-После Ctrl + F5 должно стать компактнее: заголовок Файлы и счётчик исчезнут, таблица подтянется выше, а окно настроек станет нормальной модалкой с аккуратными полями.
+Что это даст
+
+После этих правок будет так:
+
+1. Верхняя строка
+
+слева: хлебные крошки
+
+справа: Обновить / Настройки
+
+лишняя пустота сверху уйдёт
+
+
+2. Вторая строка
+
+слева: поиск + сортировка
+
+справа: Загрузить / Новая папка / Таблица / Плитка
+
+всё будет смотреться ровнее и компактнее
+
+
+3. Кнопка Открыть
+
+и у png,
+
+и у doc/docx будет одинаково синяя, потому что мы дали единый класс sb-disk__row-btn--primary
+
+
+
+---
+
+Если хочешь, следующим сообщением я могу уже прислать тебе готовый полный script.js целиком, чтобы ты просто вставил файл без ручного поиска кусков.
