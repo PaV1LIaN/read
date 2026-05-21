@@ -1,215 +1,342 @@
-Сейчас не будем гадать. Нам надо увидеть: какой именно файл PHP считает HomeController и какие методы он внутри него видит.
+Да, сделаем так:
 
-Шаг 1. Создай временный файл диагностики
+1. в настройках появится поле “Размер логотипа”;
 
-Создай файл:
 
-/local/mvc/debug_home.php
+2. размер будет сохраняться в settings_json;
 
-Полный код:
 
-<?php
+3. на публичной части логотип будет менять размер;
 
-ini_set('display_errors', '1');
-ini_set('display_startup_errors', '1');
-error_reporting(E_ALL);
 
-if (function_exists('opcache_reset')) {
-    opcache_reset();
-}
+4. длинное название сайта будет обрезаться ..., а не переноситься под логотип.
 
-require_once __DIR__ . '/bootstrap.php';
 
-$class = '\Local\Mvc\Controllers\HomeController';
-
-echo '<pre style="background:#111;color:#0f0;padding:20px;border-radius:8px;">';
-
-echo "Проверяем класс:\n";
-echo $class . "\n\n";
-
-if (!class_exists($class)) {
-    echo "КЛАСС НЕ НАЙДЕН\n";
-    echo '</pre>';
-    exit;
-}
-
-echo "Класс найден\n\n";
-
-$ref = new ReflectionClass($class);
-
-echo "Файл, откуда PHP загрузил класс:\n";
-echo $ref->getFileName() . "\n\n";
-
-echo "Методы, которые PHP видит в этом классе:\n";
-
-foreach ($ref->getMethods() as $method) {
-    echo "- " . $method->getName() . "\n";
-}
-
-echo "\nПроверка method_exists(index): ";
-var_dump(method_exists($class, 'index'));
-
-echo "\nПроверка method_exists(ping): ";
-var_dump(method_exists($class, 'ping'));
-
-echo '</pre>';
-
-Открой:
-
-https://bitrix24-stage.gaz.ru/local/mvc/debug_home.php
-
-Что должно быть в норме
-
-Ты должен увидеть примерно так:
-
-Файл, откуда PHP загрузил класс:
-/srv/bx/docroot/local/mvc/Controllers/HomeController.php
-
-Методы, которые PHP видит в этом классе:
-- index
-- ping
-
-Проверка method_exists(index): bool(true)
-Проверка method_exists(ping): bool(true)
-
-Если index там отсутствует — значит проблема точно в HomeController.php.
 
 
 ---
 
-Шаг 2. Ещё раз жёстко замени HomeController.php
+1. SiteAppearanceService.php
 
 Файл:
 
-/local/mvc/Controllers/HomeController.php
+/local/sitebuilder/lib/SiteAppearanceService.php
 
-поставь вот такой, максимально простой:
+1.1. В методе update() добавь обработку logoSize
 
-<?php
+Найди внутри update():
 
-namespace Local\Mvc\Controllers;
+if (array_key_exists('headerLogoMode', $data)) {
+    $settings['headerLogoMode'] = self::normalizeHeaderLogoMode((string)$data['headerLogoMode']);
+}
 
-use Local\Mvc\Core\Controller;
+Сразу после него добавь:
 
-class HomeController extends Controller
+if (array_key_exists('logoSize', $data)) {
+    $settings['logoSize'] = self::normalizeLogoSize((int)$data['logoSize']);
+}
+
+
+---
+
+1.2. В normalizeAppearanceSettings() добавь logoSize
+
+Найди:
+
+'headerLogoMode' => self::normalizeHeaderLogoMode(
+    (string)($settings['headerLogoMode'] ?? 'image')
+),
+
+Замени на:
+
+'headerLogoMode' => self::normalizeHeaderLogoMode(
+    (string)($settings['headerLogoMode'] ?? 'image')
+),
+
+'logoSize' => self::normalizeLogoSize(
+    (int)($settings['logoSize'] ?? 42)
+),
+
+
+---
+
+1.3. В конец класса перед последней } добавь метод
+
+protected static function normalizeLogoSize(int $size): int
 {
-    public function index(): void
-    {
-        $this->render('home/index', [
-            'title' => 'MVC работает',
-            'message' => 'Router успешно вызвал HomeController::index().',
-        ]);
+    if ($size < 24) {
+        return 24;
     }
 
-    public function ping(): void
-    {
-        $this->success([
-            'message' => 'pong',
-            'mvc' => true,
-        ]);
+    if ($size > 160) {
+        return 160;
     }
+
+    return $size;
 }
-
-Очень важно:
-
-Папка должна называться Controllers
-Файл должен называться HomeController.php
-Класс должен называться HomeController
-Метод должен называться index
-
-На Linux это всё чувствительно к регистру.
 
 
 ---
 
-Шаг 3. Проверь routes.php
+2. settings.php
 
 Файл:
 
-/local/mvc/routes.php
+/local/sitebuilder/settings.php
 
-должен быть такой:
+2.1. Добавь поле размера логотипа
 
-<?php
+Найди блок:
 
-use Local\Mvc\Core\Router;
-use Local\Mvc\Controllers\HomeController;
+<div class="sb-field">
+    <label for="headerLogoModeInput">Отображение в шапке</label>
+    <select class="sb-select" id="headerLogoModeInput">
+        <option value="image">Только логотип</option>
+        <option value="text">Только название сайта</option>
+        <option value="both">Логотип и название</option>
+    </select>
+</div>
 
-/** @var Router $router */
+Сразу после него добавь:
 
-$router->get('/', [HomeController::class, 'index']);
-
-$router->get('/ping', [HomeController::class, 'ping']);
-
-Особенно проверь вот это:
-
-$router->get('/', [HomeController::class, 'index']);
-
-Не должно быть:
-
-'Index'
-'indeх'
-'index '
-
-Визуально иногда можно случайно вставить русскую букву х вместо английской x, или пробел в конце.
+<div class="sb-field" style="margin-top:12px;">
+    <label for="logoSizeInput">Размер логотипа, px</label>
+    <input class="sb-input" type="number" id="logoSizeInput" min="24" max="160" step="2" value="42">
+</div>
 
 
 ---
 
-Шаг 4. Проверь Router.php
+2.2. В renderAppearance() добавь установку значения
 
-В файле:
+Найди:
 
-/local/mvc/Core/Router.php
+setValue('headerLogoModeInput', appearance.headerLogoMode || 'image');
 
-должен быть вот такой кусок:
+Сразу после добавь:
 
-if (!$controllerMethod || !method_exists($controller, $controllerMethod)) {
-    $this->serverError('Метод контроллера не найден: ' . $controllerClass . '::' . (string)$controllerMethod);
-    return;
-}
-
-Можно временно заменить его на более подробный вариант:
-
-if (!$controllerMethod || !method_exists($controller, $controllerMethod)) {
-    $methods = get_class_methods($controller);
-
-    $this->serverError(
-        'Метод контроллера не найден: ' . $controllerClass . '::' . (string)$controllerMethod
-        . "\n\nPHP видит такие методы:\n"
-        . implode("\n", $methods)
-    );
-
-    return;
-}
-
-Тогда ошибка сразу покажет, какие методы реально есть у контроллера.
+setValue('logoSizeInput', appearance.logoSize || 42);
 
 
 ---
 
-Что, скорее всего, произошло
+2.3. В saveAppearance() добавь отправку logoSize
 
-Раз Router пишет:
+Найди:
 
-Метод контроллера не найден: Local\Mvc\Controllers\HomeController::index
+headerLogoMode: getValue('headerLogoModeInput') || 'image'
 
-значит:
+Замени на:
 
-Router работает.
-routes.php работает.
-Класс HomeController найден.
+headerLogoMode: getValue('headerLogoModeInput') || 'image',
+logoSize: getValue('logoSizeInput') || '42'
 
-Проблема именно здесь:
 
-HomeController.php загружен, но PHP не видит public function index()
+---
 
-Самые частые причины:
+2.4. В renderMainPreview() добавь размер логотипа
 
-1. Метод index() случайно написан вне класса.
-2. Файл сохранён не туда.
-3. Папка/файл отличаются регистром.
-4. PHP грузит старый файл из OPcache.
-5. В routes.php указана строка 'index', но в классе метод называется иначе.
+Найди внутри renderMainPreview():
 
-После проверки debug_home.php сразу станет понятно, что именно.
+preview.style.setProperty('--preview-accent', accent);
+
+Сразу после добавь:
+
+preview.style.setProperty('--preview-logo-size', (getValue('logoSizeInput') || appearance.logoSize || 42) + 'px');
+
+
+---
+
+2.5. Добавь logoSizeInput в live-preview
+
+Найди массив:
+
+[
+    'siteNameInput',
+    'accentInput',
+    'backgroundColorInput',
+    'backgroundModeInput',
+    'backgroundPositionInput',
+    'backgroundRepeatInput'
+]
+
+Замени на:
+
+[
+    'siteNameInput',
+    'accentInput',
+    'backgroundColorInput',
+    'backgroundModeInput',
+    'backgroundPositionInput',
+    'backgroundRepeatInput',
+    'logoSizeInput',
+    'headerLogoModeInput'
+]
+
+
+---
+
+3. settings.css
+
+Файл:
+
+/local/sitebuilder/assets/admin/settings.css
+
+В конец добавь:
+
+/* Размер логотипа в предпросмотре */
+.sb-appearance-preview__logo {
+    width: var(--preview-logo-size, 38px);
+    height: var(--preview-logo-size, 38px);
+    flex: 0 0 var(--preview-logo-size, 38px);
+}
+
+.sb-appearance-preview__header {
+    min-width: 0;
+}
+
+.sb-appearance-preview__title {
+    min-width: 0;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+
+---
+
+4. public_page.php
+
+Файл:
+
+/local/sitebuilder/views/layout/public_page.php
+
+4.1. В sb_public_appearance_get() добавь logoSize
+
+Найди в return [:
+
+'headerLogoMode' => $headerLogoMode,
+
+Замени на:
+
+'headerLogoMode' => $headerLogoMode,
+
+'logoSize' => max(24, min(160, (int)($settings['logoSize'] ?? 42))),
+
+
+---
+
+4.2. В sb_public_appearance_style() добавь CSS-переменную
+
+Найди:
+
+$styles[] = '--sb-accent: ' . sb_public_h((string)($appearance['accent'] ?? '#2563eb'));
+
+Сразу после добавь:
+
+$styles[] = '--sb-logo-size: ' . max(24, min(160, (int)($appearance['logoSize'] ?? 42))) . 'px';
+
+
+---
+
+5. public.css
+
+Файл:
+
+/local/sitebuilder/assets/public/public.css
+
+В конец добавь:
+
+/* =========================================================
+   BRAND / LOGO SIZE / LONG SITE NAME FIX
+   ========================================================= */
+
+.sb-public-header .sb-container {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 18px;
+    min-width: 0;
+}
+
+.sb-brand {
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    min-width: 0;
+    max-width: 55%;
+    flex: 1 1 auto;
+    flex-wrap: nowrap;
+}
+
+.sb-brand__logo {
+    width: var(--sb-logo-size, 42px);
+    height: var(--sb-logo-size, 42px);
+    min-width: var(--sb-logo-size, 42px);
+    max-width: var(--sb-logo-size, 42px);
+    min-height: var(--sb-logo-size, 42px);
+    max-height: var(--sb-logo-size, 42px);
+    flex: 0 0 var(--sb-logo-size, 42px);
+}
+
+.sb-brand__text {
+    display: block;
+    min-width: 0;
+    max-width: 100%;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.sb-public-menu {
+    flex: 0 1 auto;
+    min-width: 0;
+}
+
+@media (max-width: 760px) {
+    .sb-public-header .sb-container {
+        align-items: flex-start;
+        flex-direction: column;
+    }
+
+    .sb-brand {
+        max-width: 100%;
+        width: 100%;
+    }
+
+    .sb-public-menu {
+        width: 100%;
+    }
+}
+
+
+---
+
+6. Обнови версию CSS
+
+В public_page.php найди:
+
+<link rel="stylesheet" href="<?= sb_public_h($basePath) ?>/assets/public/public.css?v=2">
+
+Замени на:
+
+<link rel="stylesheet" href="<?= sb_public_h($basePath) ?>/assets/public/public.css?v=3">
+
+И в settings.php можно тоже обновить:
+
+/assets/admin/settings.css?v=2
+
+После этого:
+
+1. открой settings.php;
+
+
+2. выстави размер логотипа, например 56;
+
+
+3. нажми “Сохранить настройки фона”;
+
+
+4. обнови публичную страницу через Ctrl + F5.
+
+
