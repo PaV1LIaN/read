@@ -1,3 +1,11 @@
+Да, сделаем правильно: API и загрузку не трогаем, оставляем рабочие действия bootstrap, list, upload, createFolder, rename, delete, search, а улучшаем только разметку, иконки, таблицу и плитку.
+
+Заменяй полностью:
+
+/local/sitebuilder/components/disk/script.js
+
+на этот файл:
+
 (function () {
   function DiskComponent(root) {
     this.root = root;
@@ -33,6 +41,7 @@
   };
 
   DiskComponent.prototype.init = async function () {
+    this.prepareModernUi();
     this.bindStaticEvents();
 
     try {
@@ -55,6 +64,7 @@
       this.state.currentFolderId = data.currentFolderId || null;
       this.state.viewMode = (this.state.settings && this.state.settings.viewMode) || 'table';
 
+      this.prepareModernUi();
       this.applyInitialViewMode();
 
       if (!this.state.permissions.canView) {
@@ -72,6 +82,36 @@
       console.error(e);
       this.state.error = e.message || 'BOOTSTRAP_ERROR';
       this.renderState('error');
+    }
+  };
+
+  DiskComponent.prototype.prepareModernUi = function () {
+    this.root.classList.add('sb-disk--modern');
+
+    var toolbarCandidates = [
+      '[data-role="search-input"]',
+      '[data-role="sort-select"]',
+      '[data-action="upload"]',
+      '[data-action="create-folder"]',
+      '[data-action="refresh"]',
+      '[data-action="settings"]',
+      '.sb-disk__view-btn'
+    ];
+
+    toolbarCandidates.forEach(function (selector) {
+      this.root.querySelectorAll(selector).forEach(function (node) {
+        node.classList.add('sb-disk-modern-control');
+      });
+    }, this);
+
+    var uploadBtn = this.root.querySelector('[data-action="upload"]');
+    if (uploadBtn) {
+      uploadBtn.classList.add('sb-disk-modern-primary');
+    }
+
+    var searchInput = this.root.querySelector('[data-role="search-input"]');
+    if (searchInput && !searchInput.getAttribute('placeholder')) {
+      searchInput.setAttribute('placeholder', 'Поиск файлов и папок');
     }
   };
 
@@ -655,6 +695,7 @@
   };
 
   DiskComponent.prototype.renderAll = function () {
+    this.prepareModernUi();
     this.renderSubtitle();
     this.renderBreadcrumbs();
     this.renderItemsTable();
@@ -668,7 +709,18 @@
       return;
     }
 
-    node.textContent = this.state.items.length + ' эл.';
+    var folders = 0;
+    var files = 0;
+
+    this.state.items.forEach(function (item) {
+      if (item.entityType === 'folder') {
+        folders++;
+      } else {
+        files++;
+      }
+    });
+
+    node.textContent = files + ' файлов · ' + folders + ' папок';
   };
 
   DiskComponent.prototype.renderBreadcrumbs = function () {
@@ -700,7 +752,7 @@
       return '<button type="button" class="sb-disk__crumb" data-folder-id="' + escapeHtml(item.id) + '">' +
         escapeHtml(item.name) +
       '</button>';
-    }).join('<span>/</span>');
+    }).join('<span class="sb-disk__crumb-separator">/</span>');
   };
 
   DiskComponent.prototype.renderItemsTable = function () {
@@ -710,32 +762,10 @@
     }
 
     tbody.innerHTML = this.state.items.map(function (item) {
-      var typeText = item.entityType === 'folder' ? 'Папка' : (item.extension || 'Файл');
-      var sizeText = item.size ? formatBytes(item.size) : '';
-      var badge = item.entityType === 'folder'
-        ? '<span class="sb-disk__badge">Папка</span>'
-        : '<span class="sb-disk__badge">' + escapeHtml(item.extension || 'Файл') + '</span>';
-
-      var openControl = '';
-
-      if (item.entityType === 'folder') {
-        openControl = '<button type="button" class="sb-disk__row-btn" data-row-action="open">Открыть</button>';
-      } else if (item.previewMode === 'office') {
-        openControl =
-          '<span ' +
-            'class="sb-disk__row-btn sb-disk__viewer-btn disk-detail-sidebar-editor-item disk-detail-sidebar-editor-item-show" ' +
-            'data-viewer="" ' +
-            'data-viewer-type="cloud-document" ' +
-            'data-src="' + escapeHtml(item.previewUrl || '') + '" ' +
-            'data-viewer-type-class="BX.Disk.Viewer.DocumentItem" ' +
-            'data-viewer-extension="disk.viewer.document-item" ' +
-            'data-object-id="' + escapeHtml(item.id) + '" ' +
-            'data-title="' + escapeHtml(item.name) + '" ' +
-            'data-actions="' + escapeHtml(JSON.stringify([{ type: 'download' }])) + '"' +
-          '>Открыть</span>';
-      } else {
-        openControl = '<button type="button" class="sb-disk__row-btn" data-row-action="open">Открыть</button>';
-      }
+      var typeText = getItemTypeText(item);
+      var sizeText = item.entityType === 'folder' ? '—' : (item.size ? formatBytes(item.size) : '—');
+      var iconHtml = renderItemIcon(item);
+      var openControl = renderOpenControl(item);
 
       return '' +
         '<tr class="sb-disk__row ' + (item.entityType === 'folder' ? 'is-clickable' : '') + '" ' +
@@ -745,18 +775,21 @@
           'data-download-url="' + escapeHtml(item.downloadUrl || '') + '" ' +
           'data-preview-url="' + escapeHtml(item.previewUrl || '') + '" ' +
           'data-preview-mode="' + escapeHtml(item.previewMode || '') + '">' +
-            '<td>' +
+            '<td class="sb-disk__check-cell">' +
               '<input type="checkbox" class="sb-disk__item-check" data-id="' + escapeHtml(item.id) + '">' +
             '</td>' +
-            '<td>' +
-              '<div class="sb-disk__item-name">' +
-                badge +
-                '<span class="sb-disk__item-name-label">' + escapeHtml(item.name) + '</span>' +
+            '<td class="sb-disk__name-cell">' +
+              '<div class="sb-disk__modern-name">' +
+                iconHtml +
+                '<div class="sb-disk__modern-name-main">' +
+                  '<div class="sb-disk__modern-name-title">' + escapeHtml(item.name) + '</div>' +
+                  '<div class="sb-disk__modern-name-sub">' + escapeHtml(typeText) + '</div>' +
+                '</div>' +
               '</div>' +
             '</td>' +
-            '<td>' + escapeHtml(typeText) + '</td>' +
+            '<td><span class="sb-disk__type-pill">' + escapeHtml(typeText) + '</span></td>' +
             '<td>' + escapeHtml(sizeText) + '</td>' +
-            '<td>' + escapeHtml(item.updatedAt || '') + '</td>' +
+            '<td>' + escapeHtml(item.updatedAt || '—') + '</td>' +
             '<td>' +
               '<div class="sb-disk__actions">' +
                 openControl +
@@ -764,7 +797,7 @@
                   ? '<button type="button" class="sb-disk__row-btn" data-row-action="download">Скачать</button>'
                   : '') +
                 '<button type="button" class="sb-disk__row-btn" data-row-action="rename">Переим.</button>' +
-                '<button type="button" class="sb-disk__row-btn" data-row-action="delete">Удалить</button>' +
+                '<button type="button" class="sb-disk__row-btn is-danger" data-row-action="delete">Удалить</button>' +
               '</div>' +
             '</td>' +
         '</tr>';
@@ -780,29 +813,9 @@
     container.classList.add('sb-disk__grid');
 
     container.innerHTML = this.state.items.map(function (item) {
-      var typeText = item.entityType === 'folder' ? 'Папка' : (item.extension || 'Файл');
-      var sizeText = item.size ? formatBytes(item.size) : '—';
-
-      var openControl = '';
-
-      if (item.entityType === 'folder') {
-        openControl = '<button type="button" class="sb-disk__row-btn" data-row-action="open">Открыть</button>';
-      } else if (item.previewMode === 'office') {
-        openControl =
-          '<span ' +
-            'class="sb-disk__row-btn sb-disk__viewer-btn disk-detail-sidebar-editor-item disk-detail-sidebar-editor-item-show" ' +
-            'data-viewer="" ' +
-            'data-viewer-type="cloud-document" ' +
-            'data-src="' + escapeHtml(item.previewUrl || '') + '" ' +
-            'data-viewer-type-class="BX.Disk.Viewer.DocumentItem" ' +
-            'data-viewer-extension="disk.viewer.document-item" ' +
-            'data-object-id="' + escapeHtml(item.id) + '" ' +
-            'data-title="' + escapeHtml(item.name) + '" ' +
-            'data-actions="' + escapeHtml(JSON.stringify([{ type: 'download' }])) + '"' +
-          '>Открыть</span>';
-      } else {
-        openControl = '<button type="button" class="sb-disk__row-btn" data-row-action="open">Открыть</button>';
-      }
+      var typeText = getItemTypeText(item);
+      var sizeText = item.entityType === 'folder' ? 'Папка' : (item.size ? formatBytes(item.size) : '—');
+      var openControl = renderOpenControl(item);
 
       return '' +
         '<div class="sb-disk__card ' + (item.entityType === 'folder' ? 'is-clickable' : '') + '" ' +
@@ -813,14 +826,17 @@
              'data-preview-url="' + escapeHtml(item.previewUrl || '') + '" ' +
              'data-preview-mode="' + escapeHtml(item.previewMode || '') + '">' +
             '<div class="sb-disk__card-top">' +
-              '<label>' +
+              '<label class="sb-disk__card-check">' +
                 '<input type="checkbox" class="sb-disk__item-check" data-id="' + escapeHtml(item.id) + '">' +
               '</label>' +
-              '<span class="sb-disk__badge">' + escapeHtml(typeText) + '</span>' +
+              '<span class="sb-disk__type-pill">' + escapeHtml(typeText) + '</span>' +
+            '</div>' +
+            '<div class="sb-disk__card-preview">' +
+              renderItemIcon(item) +
             '</div>' +
             '<div class="sb-disk__card-name">' + escapeHtml(item.name) + '</div>' +
             '<div class="sb-disk__card-meta">' +
-              '<span class="sb-disk__card-sub">Размер: ' + escapeHtml(sizeText) + '</span>' +
+              '<span class="sb-disk__card-sub">' + escapeHtml(sizeText) + '</span>' +
             '</div>' +
             '<div class="sb-disk__card-meta">' +
               '<span class="sb-disk__card-sub">' + escapeHtml(item.updatedAt || '') + '</span>' +
@@ -831,7 +847,7 @@
                 ? '<button type="button" class="sb-disk__row-btn" data-row-action="download">Скачать</button>'
                 : '') +
               '<button type="button" class="sb-disk__row-btn" data-row-action="rename">Переим.</button>' +
-              '<button type="button" class="sb-disk__row-btn" data-row-action="delete">Удалить</button>' +
+              '<button type="button" class="sb-disk__row-btn is-danger" data-row-action="delete">Удалить</button>' +
             '</div>' +
         '</div>';
     }).join('');
@@ -851,6 +867,18 @@
 
     nodes.forEach(function (node) {
       node.hidden = true;
+
+      if (node.getAttribute('data-state') === 'empty') {
+        node.classList.add('sb-disk-empty-enhanced');
+
+        if (!node.getAttribute('data-modern-empty-ready')) {
+          node.setAttribute('data-modern-empty-ready', '1');
+          node.innerHTML = '' +
+            '<div class="sb-disk-empty-icon">📁</div>' +
+            '<strong>Пока здесь пусто</strong>' +
+            '<span>Загрузите первый файл или создайте новую папку.</span>';
+        }
+      }
     });
 
     if (!stateName) {
@@ -1084,6 +1112,95 @@
     }
   };
 
+  function getItemExtension(item) {
+    var ext = String(item.extension || '').trim().toLowerCase();
+
+    if (ext) {
+      return ext.replace(/^\./, '');
+    }
+
+    var name = String(item.name || '');
+    var parts = name.split('.');
+
+    if (parts.length < 2) {
+      return '';
+    }
+
+    return String(parts.pop() || '').toLowerCase();
+  }
+
+  function getItemTypeText(item) {
+    if (item.entityType === 'folder') {
+      return 'Папка';
+    }
+
+    var ext = getItemExtension(item);
+
+    return ext ? ext.toUpperCase() : 'Файл';
+  }
+
+  function getItemIconText(item) {
+    if (item.entityType === 'folder') {
+      return '📁';
+    }
+
+    var ext = getItemExtension(item);
+
+    if (ext === 'pdf') return 'PDF';
+    if (['doc', 'docx', 'rtf'].indexOf(ext) !== -1) return 'DOC';
+    if (['xls', 'xlsx', 'csv'].indexOf(ext) !== -1) return 'XLS';
+    if (['ppt', 'pptx'].indexOf(ext) !== -1) return 'PPT';
+    if (['jpg', 'jpeg', 'png', 'gif', 'webp', 'svg'].indexOf(ext) !== -1) return 'IMG';
+    if (['zip', 'rar', '7z'].indexOf(ext) !== -1) return 'ZIP';
+    if (['txt', 'log'].indexOf(ext) !== -1) return 'TXT';
+
+    return 'FILE';
+  }
+
+  function getItemIconClass(item) {
+    if (item.entityType === 'folder') {
+      return 'sb-disk__modern-icon sb-disk__modern-icon--folder';
+    }
+
+    var ext = getItemExtension(item);
+
+    if (ext === 'pdf') return 'sb-disk__modern-icon sb-disk__modern-icon--pdf';
+    if (['doc', 'docx', 'rtf'].indexOf(ext) !== -1) return 'sb-disk__modern-icon sb-disk__modern-icon--doc';
+    if (['xls', 'xlsx', 'csv'].indexOf(ext) !== -1) return 'sb-disk__modern-icon sb-disk__modern-icon--xls';
+    if (['ppt', 'pptx'].indexOf(ext) !== -1) return 'sb-disk__modern-icon sb-disk__modern-icon--ppt';
+    if (['jpg', 'jpeg', 'png', 'gif', 'webp', 'svg'].indexOf(ext) !== -1) return 'sb-disk__modern-icon sb-disk__modern-icon--img';
+    if (['zip', 'rar', '7z'].indexOf(ext) !== -1) return 'sb-disk__modern-icon sb-disk__modern-icon--zip';
+
+    return 'sb-disk__modern-icon sb-disk__modern-icon--file';
+  }
+
+  function renderItemIcon(item) {
+    return '<span class="' + escapeHtml(getItemIconClass(item)) + '">' + escapeHtml(getItemIconText(item)) + '</span>';
+  }
+
+  function renderOpenControl(item) {
+    if (item.entityType === 'folder') {
+      return '<button type="button" class="sb-disk__row-btn is-primary" data-row-action="open">Открыть</button>';
+    }
+
+    if (item.previewMode === 'office') {
+      return '' +
+        '<span ' +
+          'class="sb-disk__row-btn sb-disk__viewer-btn disk-detail-sidebar-editor-item disk-detail-sidebar-editor-item-show" ' +
+          'data-viewer="" ' +
+          'data-viewer-type="cloud-document" ' +
+          'data-src="' + escapeHtml(item.previewUrl || '') + '" ' +
+          'data-viewer-type-class="BX.Disk.Viewer.DocumentItem" ' +
+          'data-viewer-extension="disk.viewer.document-item" ' +
+          'data-object-id="' + escapeHtml(item.id) + '" ' +
+          'data-title="' + escapeHtml(item.name) + '" ' +
+          'data-actions="' + escapeHtml(JSON.stringify([{ type: 'download' }])) + '"' +
+        '>Открыть</span>';
+    }
+
+    return '<button type="button" class="sb-disk__row-btn is-primary" data-row-action="open">Открыть</button>';
+  }
+
   function formatBytes(bytes) {
     bytes = Number(bytes || 0);
     if (bytes <= 0) {
@@ -1151,3 +1268,358 @@
     });
   });
 })();
+
+Теперь к нему нужны стили, иначе новая разметка будет не до конца красивой. В конец:
+
+/local/sitebuilder/components/disk/styles.css
+
+добавь:
+
+/* =========================================================
+   MODERN DISK UI — поверх рабочего script.js
+   ========================================================= */
+
+.sb-disk--modern {
+    --disk-accent: var(--sb-accent, #2563eb);
+    --disk-border: #e5e7eb;
+    --disk-muted: #6b7280;
+    --disk-text: #111827;
+}
+
+.sb-disk--modern .sb-disk__toolbar,
+.sb-disk--modern .sb-disk__controls,
+.sb-disk--modern .sb-disk__top,
+.sb-disk--modern .sb-disk__actions-panel {
+    gap: 10px;
+}
+
+.sb-disk--modern input[type="text"],
+.sb-disk--modern input[type="search"],
+.sb-disk--modern select {
+    height: 40px;
+    border: 1px solid #dbe3ef;
+    border-radius: 12px;
+    background: #fff;
+    color: #111827;
+    font-size: 13px;
+    outline: none;
+}
+
+.sb-disk--modern input[type="text"],
+.sb-disk--modern input[type="search"] {
+    min-width: 280px;
+    padding: 0 14px;
+}
+
+.sb-disk--modern select {
+    min-width: 170px;
+    padding: 0 12px;
+}
+
+.sb-disk--modern input:focus,
+.sb-disk--modern select:focus {
+    border-color: var(--disk-accent);
+    box-shadow: 0 0 0 3px rgba(37, 99, 235, .12);
+}
+
+.sb-disk--modern button,
+.sb-disk--modern .sb-disk__row-btn,
+.sb-disk--modern .sb-disk__view-btn {
+    min-height: 36px;
+    border-radius: 11px;
+    border: 1px solid #dbe3ef;
+    background: #fff;
+    color: #374151;
+    font-size: 13px;
+    font-weight: 700;
+    cursor: pointer;
+}
+
+.sb-disk--modern button:hover,
+.sb-disk--modern .sb-disk__row-btn:hover,
+.sb-disk--modern .sb-disk__view-btn:hover {
+    border-color: #c7d2fe;
+    background: #eef2ff;
+    color: var(--disk-accent);
+}
+
+.sb-disk--modern [data-action="upload"],
+.sb-disk--modern .sb-disk-modern-primary,
+.sb-disk--modern .sb-disk__row-btn.is-primary {
+    border-color: var(--disk-accent);
+    background: var(--disk-accent);
+    color: #fff;
+}
+
+.sb-disk--modern [data-action="upload"]:hover,
+.sb-disk--modern .sb-disk-modern-primary:hover,
+.sb-disk--modern .sb-disk__row-btn.is-primary:hover {
+    background: var(--disk-accent);
+    color: #fff;
+    box-shadow: 0 8px 20px rgba(37, 99, 235, .20);
+}
+
+.sb-disk--modern .sb-disk__view-btn.is-active {
+    background: #eef2ff;
+    color: var(--disk-accent);
+    border-color: #c7d2fe;
+}
+
+.sb-disk--modern table {
+    width: 100%;
+    border-collapse: separate;
+    border-spacing: 0;
+}
+
+.sb-disk--modern thead th {
+    height: 44px;
+    padding: 0 14px;
+    border-bottom: 1px solid var(--disk-border);
+    background: #f8fafc;
+    color: #64748b;
+    font-size: 12px;
+    font-weight: 800;
+    text-transform: uppercase;
+    letter-spacing: .03em;
+}
+
+.sb-disk--modern tbody td {
+    min-height: 56px;
+    padding: 10px 14px;
+    border-bottom: 1px solid #f1f5f9;
+    vertical-align: middle;
+}
+
+.sb-disk--modern tbody tr:hover {
+    background: #f8fbff;
+}
+
+.sb-disk__modern-name {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    min-width: 0;
+}
+
+.sb-disk__modern-name-main {
+    min-width: 0;
+}
+
+.sb-disk__modern-name-title {
+    color: var(--disk-text);
+    font-size: 14px;
+    font-weight: 800;
+    line-height: 1.25;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.sb-disk__modern-name-sub {
+    margin-top: 3px;
+    color: var(--disk-muted);
+    font-size: 12px;
+}
+
+.sb-disk__modern-icon {
+    width: 38px;
+    height: 38px;
+    min-width: 38px;
+    border-radius: 13px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    background: #f1f5f9;
+    color: #475569;
+    font-size: 10px;
+    font-weight: 900;
+    line-height: 1;
+}
+
+.sb-disk__modern-icon--folder {
+    background: #fef3c7;
+    color: #92400e;
+    font-size: 20px;
+}
+
+.sb-disk__modern-icon--pdf {
+    background: #fee2e2;
+    color: #991b1b;
+}
+
+.sb-disk__modern-icon--doc {
+    background: #dbeafe;
+    color: #1d4ed8;
+}
+
+.sb-disk__modern-icon--xls {
+    background: #dcfce7;
+    color: #166534;
+}
+
+.sb-disk__modern-icon--ppt {
+    background: #ffedd5;
+    color: #c2410c;
+}
+
+.sb-disk__modern-icon--img {
+    background: #fce7f3;
+    color: #be185d;
+}
+
+.sb-disk__modern-icon--zip {
+    background: #ede9fe;
+    color: #6d28d9;
+}
+
+.sb-disk__type-pill {
+    display: inline-flex;
+    align-items: center;
+    min-height: 24px;
+    padding: 0 9px;
+    border-radius: 999px;
+    background: #f3f4f6;
+    color: #4b5563;
+    font-size: 12px;
+    font-weight: 800;
+}
+
+.sb-disk--modern .sb-disk__actions {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 6px;
+    flex-wrap: wrap;
+}
+
+.sb-disk--modern .sb-disk__row-btn.is-danger {
+    border-color: #fecaca;
+    background: #fff;
+    color: #dc2626;
+}
+
+.sb-disk--modern .sb-disk__row-btn.is-danger:hover {
+    background: #fee2e2;
+    color: #991b1b;
+}
+
+.sb-disk--modern .sb-disk__grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+    gap: 12px;
+}
+
+.sb-disk--modern .sb-disk__card {
+    min-height: 210px;
+    padding: 14px;
+    border: 1px solid var(--disk-border);
+    border-radius: 18px;
+    background: #fff;
+    transition: border-color .15s ease, box-shadow .15s ease, transform .15s ease;
+}
+
+.sb-disk--modern .sb-disk__card:hover {
+    border-color: #c7d2fe;
+    box-shadow: 0 12px 26px rgba(37, 99, 235, .10);
+    transform: translateY(-1px);
+}
+
+.sb-disk--modern .sb-disk__card-top {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+}
+
+.sb-disk--modern .sb-disk__card-preview {
+    height: 82px;
+    margin: 12px 0;
+    border-radius: 15px;
+    background: #f8fafc;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.sb-disk--modern .sb-disk__card-name {
+    font-size: 14px;
+    font-weight: 800;
+    color: var(--disk-text);
+    line-height: 1.3;
+    word-break: break-word;
+}
+
+.sb-disk--modern .sb-disk__card-meta {
+    margin-top: 5px;
+    color: var(--disk-muted);
+    font-size: 12px;
+}
+
+.sb-disk--modern .sb-disk__card-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-top: 12px;
+}
+
+.sb-disk-empty-enhanced {
+    min-height: 160px;
+    padding: 30px;
+    border: 1px dashed #cbd5e1;
+    border-radius: 18px;
+    background: radial-gradient(circle at top left, rgba(37, 99, 235, .08), transparent 35%), #fff;
+    color: #6b7280;
+    text-align: center;
+    display: flex !important;
+    align-items: center;
+    justify-content: center;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.sb-disk-empty-icon {
+    width: 58px;
+    height: 58px;
+    border-radius: 20px;
+    background: #eef2ff;
+    color: var(--disk-accent);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 30px;
+}
+
+.sb-disk-empty-enhanced strong {
+    color: #111827;
+    font-size: 16px;
+}
+
+.sb-disk-empty-enhanced span {
+    color: #6b7280;
+    font-size: 13px;
+}
+
+@media (max-width: 900px) {
+    .sb-disk--modern input[type="text"],
+    .sb-disk--modern input[type="search"],
+    .sb-disk--modern select {
+        width: 100%;
+        min-width: 0;
+    }
+
+    .sb-disk--modern .sb-disk__actions {
+        justify-content: flex-start;
+    }
+
+    .sb-disk--modern .sb-disk__grid {
+        grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+    }
+}
+
+И в public_page.php обнови версию:
+
+<script src="<?= sb_public_h($basePath) ?>/components/disk/script.js?v=6"></script>
+
+<link rel="stylesheet" href="<?= sb_public_h($basePath) ?>/components/disk/styles.css?v=6">
+
+Так загрузка останется рабочей, потому что api('upload', formData, true) и files[] сохранены как в твоём старом скрипте.
