@@ -1,332 +1,162 @@
-Да, следующий шаг — добавляем иконки файлов/папок и красивую пустую заглушку через JS, не ломая текущую логику диска.
+Да, сейчас они выглядят неудобно, потому что элементы идут почти столбиком:
 
-Сейчас просто добавь код в самый конец файла:
+Обновить / Настройки
+Файлы
+Поиск
+Сортировка
+Загрузить / Новая папка
+Таблица / Плитка
 
-/local/sitebuilder/components/disk/script.js
+Сделаем нормальную панель:
+
+[Поиск файлов и папок........] [Сначала новые]
+                                      [Загрузить] [Новая папка] [Обновить] [Настройки] [Таблица] [Плитка]
+
+1. В конец /local/sitebuilder/components/disk/script.js
+
+Добавь:
 
 /* =========================================================
-   SITEBUILDER DISK UI ENHANCER
-   Красивые иконки, пустое состояние, кнопки
-   Не ломает основную логику диска
+   SITEBUILDER DISK TOOLBAR NORMALIZER
+   Делает кнопки и поля удобной панелью
    ========================================================= */
 
 (function () {
     'use strict';
 
-    function text(node) {
-        return String(node && node.textContent ? node.textContent : '').trim();
+    function cleanText(node) {
+        return String(node && node.textContent ? node.textContent : '').trim().toLowerCase();
     }
 
-    function lower(value) {
-        return String(value || '').toLowerCase();
+    function isInsideModernPanel(node) {
+        return !!(node && node.closest && node.closest('.sb-disk-modern-panel'));
     }
 
-    function getFileExtension(name) {
-        name = String(name || '').trim();
+    function isVisible(node) {
+        if (!node) return false;
 
-        var cleanName = name.split('?')[0].split('#')[0];
-        var parts = cleanName.split('.');
-
-        if (parts.length < 2) {
-            return '';
-        }
-
-        return lower(parts.pop());
+        var rect = node.getBoundingClientRect();
+        return rect.width > 0 || rect.height > 0;
     }
 
-    function iconByExt(ext, isFolder) {
-        if (isFolder) {
-            return '📁';
+    function getOrCreatePanel(disk) {
+        var panel = disk.querySelector(':scope > .sb-disk-modern-panel');
+
+        if (panel) {
+            return panel;
         }
 
-        if (ext === 'pdf') {
-            return 'PDF';
-        }
-
-        if (['doc', 'docx', 'rtf'].indexOf(ext) !== -1) {
-            return 'DOC';
-        }
-
-        if (['xls', 'xlsx', 'csv'].indexOf(ext) !== -1) {
-            return 'XLS';
-        }
-
-        if (['ppt', 'pptx'].indexOf(ext) !== -1) {
-            return 'PPT';
-        }
-
-        if (['jpg', 'jpeg', 'png', 'gif', 'webp', 'svg'].indexOf(ext) !== -1) {
-            return 'IMG';
-        }
-
-        if (['zip', 'rar', '7z'].indexOf(ext) !== -1) {
-            return 'ZIP';
-        }
-
-        if (['txt', 'log'].indexOf(ext) !== -1) {
-            return 'TXT';
-        }
-
-        return 'FILE';
-    }
-
-    function iconClassByExt(ext, isFolder) {
-        if (isFolder) {
-            return 'sb-disk-icon sb-disk-icon-folder';
-        }
-
-        if (ext === 'pdf') {
-            return 'sb-disk-icon sb-disk-icon-pdf';
-        }
-
-        if (['doc', 'docx', 'rtf'].indexOf(ext) !== -1) {
-            return 'sb-disk-icon sb-disk-icon-doc';
-        }
-
-        if (['xls', 'xlsx', 'csv'].indexOf(ext) !== -1) {
-            return 'sb-disk-icon sb-disk-icon-xls';
-        }
-
-        if (['ppt', 'pptx'].indexOf(ext) !== -1) {
-            return 'sb-disk-icon sb-disk-icon-ppt';
-        }
-
-        if (['jpg', 'jpeg', 'png', 'gif', 'webp', 'svg'].indexOf(ext) !== -1) {
-            return 'sb-disk-icon sb-disk-icon-img';
-        }
-
-        if (['zip', 'rar', '7z'].indexOf(ext) !== -1) {
-            return 'sb-disk-icon sb-disk-icon-zip';
-        }
-
-        return 'sb-disk-icon sb-disk-icon-file';
-    }
-
-    function isFolderRow(row) {
-        var rowText = lower(text(row));
-
-        if (row.getAttribute('data-type') === 'folder') {
-            return true;
-        }
-
-        if (row.classList.contains('is-folder') || row.classList.contains('sb-disk-row-folder')) {
-            return true;
-        }
-
-        return rowText.indexOf('папка') !== -1 || rowText.indexOf('folder') !== -1;
-    }
-
-    function findNameCell(row) {
-        var cells = Array.prototype.slice.call(row.querySelectorAll('td'));
-
-        if (!cells.length) {
-            return null;
-        }
-
-        for (var i = 0; i < cells.length; i++) {
-            var cell = cells[i];
-
-            if (cell.querySelector('input[type="checkbox"]') && text(cell).length < 3) {
-                continue;
-            }
-
-            if (text(cell) !== '') {
-                return cell;
-            }
-        }
-
-        return cells[0];
-    }
-
-    function enhanceTableRows(disk) {
-        var rows = disk.querySelectorAll('tbody tr');
-
-        rows.forEach(function (row) {
-            if (row.classList.contains('sb-disk-row-enhanced')) {
-                return;
-            }
-
-            var nameCell = findNameCell(row);
-
-            if (!nameCell) {
-                return;
-            }
-
-            var name = text(nameCell);
-
-            if (!name) {
-                return;
-            }
-
-            var isFolder = isFolderRow(row);
-            var ext = getFileExtension(name);
-
-            row.classList.add('sb-disk-row-enhanced');
-
-            if (isFolder) {
-                row.classList.add('sb-disk-row-folder');
-                row.setAttribute('data-type', 'folder');
-            }
-
-            if (ext) {
-                row.setAttribute('data-ext', ext);
-            }
-
-            var wrapper = document.createElement('span');
-            wrapper.className = 'sb-disk-name-wrap';
-
-            var icon = document.createElement('span');
-            icon.className = iconClassByExt(ext, isFolder);
-            icon.textContent = iconByExt(ext, isFolder);
-
-            var label = document.createElement('span');
-            label.className = 'sb-disk-name-label';
-
-            while (nameCell.firstChild) {
-                label.appendChild(nameCell.firstChild);
-            }
-
-            wrapper.appendChild(icon);
-            wrapper.appendChild(label);
-            nameCell.appendChild(wrapper);
-        });
-    }
-
-    function enhanceButtons(disk) {
-        var buttons = disk.querySelectorAll('button, .sb-btn');
-
-        buttons.forEach(function (button) {
-            var value = lower(text(button));
-
-            if (value.indexOf('загруз') !== -1) {
-                button.classList.add('sb-disk-upload-btn', 'is-primary');
-                button.setAttribute('data-disk-ui', 'upload');
-            }
-
-            if (value.indexOf('новая пап') !== -1 || value.indexOf('создать пап') !== -1) {
-                button.classList.add('sb-disk-folder-btn');
-                button.setAttribute('data-disk-ui', 'folder');
-            }
-
-            if (value.indexOf('таблица') !== -1 || value.indexOf('плитка') !== -1) {
-                button.classList.add('sb-disk-view-btn');
-            }
-        });
-    }
-
-    function enhanceInputs(disk) {
-        var searchInputs = disk.querySelectorAll('input[type="text"], input[type="search"]');
-
-        searchInputs.forEach(function (input) {
-            var placeholder = input.getAttribute('placeholder') || '';
-
-            if (!placeholder) {
-                input.setAttribute('placeholder', 'Поиск файлов и папок');
-            }
-
-            input.classList.add('sb-disk-search-input');
-        });
-
-        var selects = disk.querySelectorAll('select');
-
-        selects.forEach(function (select) {
-            select.classList.add('sb-disk-select');
-        });
-    }
-
-    function enhanceEmptyState(disk) {
-        var loading = disk.querySelector('.sb-public-disk-loading');
-
-        if (!loading) {
-            return;
-        }
-
-        var value = lower(text(loading));
-
-        if (value.indexOf('загрузка') !== -1) {
-            return;
-        }
-
-        if (
-            value.indexOf('нет файлов') === -1 &&
-            value.indexOf('пуст') === -1 &&
-            value.indexOf('здесь пока нет') === -1
-        ) {
-            return;
-        }
-
-        if (loading.classList.contains('sb-disk-empty-enhanced')) {
-            return;
-        }
-
-        loading.classList.add('sb-disk-empty-enhanced');
-        loading.innerHTML = ''
-            + '<div class="sb-disk-empty-icon">📁</div>'
-            + '<strong>Пока здесь пусто</strong>'
-            + '<span>Загрузите первый файл или создайте новую папку.</span>'
-            + '<div class="sb-disk-empty-actions">'
-            + '    <button type="button" class="sb-disk-empty-upload">Загрузить файл</button>'
+        panel = document.createElement('div');
+        panel.className = 'sb-disk-modern-panel';
+        panel.innerHTML = ''
+            + '<div class="sb-disk-modern-row">'
+            + '  <div class="sb-disk-modern-filters"></div>'
+            + '  <div class="sb-disk-modern-actions"></div>'
             + '</div>';
-    }
 
-    function bindEmptyUpload(disk) {
-        if (disk.getAttribute('data-empty-upload-bound') === '1') {
-            return;
+        var firstTable = disk.querySelector('table, .sb-disk-table-wrap, .sb-disk-table-container');
+        var firstEmpty = disk.querySelector('.sb-public-disk-loading, .sb-disk-empty, .sb-disk-empty-state');
+
+        var beforeNode = firstTable || firstEmpty || disk.firstChild;
+
+        if (beforeNode) {
+            disk.insertBefore(panel, beforeNode);
+        } else {
+            disk.appendChild(panel);
         }
 
-        disk.setAttribute('data-empty-upload-bound', '1');
+        return panel;
+    }
 
-        disk.addEventListener('click', function (e) {
-            var btn = e.target.closest('.sb-disk-empty-upload');
+    function moveNode(target, node) {
+        if (!node || !target) return;
+        if (isInsideModernPanel(node)) return;
 
-            if (!btn) {
-                return;
-            }
+        target.appendChild(node);
+    }
 
-            var fileInput = disk.querySelector('input[type="file"]');
+    function normalizeDiskToolbar(disk) {
+        if (!disk) return;
 
-            if (fileInput) {
-                fileInput.click();
-                return;
-            }
+        var panel = getOrCreatePanel(disk);
+        var filters = panel.querySelector('.sb-disk-modern-filters');
+        var actions = panel.querySelector('.sb-disk-modern-actions');
 
-            var uploadBtn = disk.querySelector(
-                '.sb-disk-upload-btn, button[data-disk-ui="upload"], button[data-action="upload"], button[data-disk-action="upload"]'
-            );
+        if (!filters || !actions) return;
 
-            if (uploadBtn) {
-                uploadBtn.click();
+        var inputs = Array.prototype.slice.call(disk.querySelectorAll('input[type="text"], input[type="search"]'));
+        inputs.forEach(function (input) {
+            if (isInsideModernPanel(input)) return;
+
+            var placeholder = String(input.getAttribute('placeholder') || '').toLowerCase();
+
+            if (placeholder.indexOf('поиск') !== -1 || placeholder === '') {
+                input.classList.add('sb-disk-modern-search');
+
+                if (!input.getAttribute('placeholder')) {
+                    input.setAttribute('placeholder', 'Поиск файлов и папок');
+                }
+
+                moveNode(filters, input);
             }
         });
+
+        var selects = Array.prototype.slice.call(disk.querySelectorAll('select'));
+        selects.forEach(function (select) {
+            if (isInsideModernPanel(select)) return;
+
+            select.classList.add('sb-disk-modern-select');
+            moveNode(filters, select);
+        });
+
+        var buttons = Array.prototype.slice.call(disk.querySelectorAll('button'));
+        buttons.forEach(function (button) {
+            if (isInsideModernPanel(button)) return;
+
+            var label = cleanText(button);
+
+            if (!label) return;
+
+            if (label.indexOf('загруз') !== -1) {
+                button.classList.add('sb-disk-modern-btn', 'sb-disk-modern-btn-primary');
+                moveNode(actions, button);
+                return;
+            }
+
+            if (label.indexOf('новая пап') !== -1 || label.indexOf('создать пап') !== -1) {
+                button.classList.add('sb-disk-modern-btn');
+                moveNode(actions, button);
+                return;
+            }
+
+            if (label.indexOf('обнов') !== -1 || label.indexOf('настрой') !== -1) {
+                button.classList.add('sb-disk-modern-btn');
+                moveNode(actions, button);
+                return;
+            }
+
+            if (label.indexOf('таблица') !== -1 || label.indexOf('плитка') !== -1) {
+                button.classList.add('sb-disk-modern-btn', 'sb-disk-modern-btn-view');
+                moveNode(actions, button);
+            }
+        });
+
+        disk.classList.add('sb-disk-toolbar-normalized');
     }
 
-    function enhanceDisk(disk) {
-        if (!disk) {
-            return;
-        }
-
-        disk.classList.add('sb-disk-enhanced');
-
-        enhanceButtons(disk);
-        enhanceInputs(disk);
-        enhanceTableRows(disk);
-        enhanceEmptyState(disk);
-        bindEmptyUpload(disk);
+    function normalizeAll() {
+        document.querySelectorAll('.sb-disk').forEach(normalizeDiskToolbar);
     }
 
-    function enhanceAllDisks() {
-        document.querySelectorAll('.sb-disk').forEach(enhanceDisk);
-    }
-
-    function observeDisks() {
+    function startObserver() {
         var timer = null;
 
         var observer = new MutationObserver(function () {
             clearTimeout(timer);
 
             timer = setTimeout(function () {
-                enhanceAllDisks();
-            }, 80);
+                normalizeAll();
+            }, 120);
         });
 
         observer.observe(document.body, {
@@ -336,166 +166,216 @@
     }
 
     document.addEventListener('DOMContentLoaded', function () {
-        enhanceAllDisks();
-        observeDisks();
+        normalizeAll();
+        startObserver();
     });
 
     if (document.readyState === 'interactive' || document.readyState === 'complete') {
-        enhanceAllDisks();
-        observeDisks();
+        normalizeAll();
+        startObserver();
     }
 })();
 
-Теперь в конец файла:
 
-/local/sitebuilder/components/disk/styles.css
+---
 
-добавь ещё этот блок:
+2. В конец /local/sitebuilder/components/disk/styles.css
+
+Добавь:
 
 /* =========================================================
-   DISK UI ENHANCER ADDITIONS
+   DISK MODERN TOOLBAR FIX
+   Поля и кнопки в удобной панели
    ========================================================= */
 
-.sb-disk-name-wrap {
-    display: inline-flex;
+.sb-disk-modern-panel {
+    width: 100%;
+    margin: 16px 0 18px;
+    padding: 14px;
+    border: 1px solid #e5e7eb;
+    border-radius: 18px;
+    background: #f8fafc;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, .8);
+}
+
+.sb-disk-modern-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 14px;
+    width: 100%;
+}
+
+.sb-disk-modern-filters {
+    display: flex;
     align-items: center;
     gap: 10px;
+    flex: 1 1 auto;
     min-width: 0;
-    max-width: 100%;
 }
 
-.sb-disk-name-label {
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-}
-
-.sb-disk-icon {
-    width: 34px;
-    height: 34px;
-    min-width: 34px;
-    max-width: 34px;
-    min-height: 34px;
-    max-height: 34px;
-    border-radius: 12px;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    background: #eef2ff;
-    color: var(--disk-accent, #2563eb);
-    font-size: 10px;
-    font-weight: 900;
-    line-height: 1;
-    flex: 0 0 34px;
-}
-
-.sb-disk-icon-folder {
-    background: #fef3c7;
-    color: #92400e;
-    font-size: 18px;
-}
-
-.sb-disk-icon-pdf {
-    background: #fee2e2;
-    color: #991b1b;
-}
-
-.sb-disk-icon-doc {
-    background: #dbeafe;
-    color: #1d4ed8;
-}
-
-.sb-disk-icon-xls {
-    background: #dcfce7;
-    color: #166534;
-}
-
-.sb-disk-icon-ppt {
-    background: #ffedd5;
-    color: #c2410c;
-}
-
-.sb-disk-icon-img {
-    background: #fce7f3;
-    color: #be185d;
-}
-
-.sb-disk-icon-zip {
-    background: #ede9fe;
-    color: #6d28d9;
-}
-
-.sb-disk-icon-file {
-    background: #f1f5f9;
-    color: #475569;
-}
-
-.sb-disk-row-enhanced td {
-    vertical-align: middle;
-}
-
-.sb-disk-empty-enhanced {
-    min-height: 190px !important;
-    padding: 34px !important;
-}
-
-.sb-disk-empty-enhanced::before {
-    display: none !important;
-}
-
-.sb-disk-empty-icon {
-    width: 64px;
-    height: 64px;
-    border-radius: 22px;
-    background: #eef2ff;
-    color: var(--disk-accent, #2563eb);
+.sb-disk-modern-actions {
     display: flex;
     align-items: center;
-    justify-content: center;
-    font-size: 32px;
-    margin-bottom: 6px;
+    justify-content: flex-end;
+    gap: 8px;
+    flex: 0 0 auto;
+    flex-wrap: wrap;
 }
 
-.sb-disk-empty-enhanced strong {
-    font-size: 17px;
-    line-height: 1.25;
-    color: #111827;
+.sb-disk-modern-panel .sb-disk-modern-search,
+.sb-disk-modern-panel input[type="text"],
+.sb-disk-modern-panel input[type="search"] {
+    width: min(420px, 100%) !important;
+    min-width: 260px !important;
+    height: 40px !important;
+    padding: 0 14px !important;
+    border: 1px solid #dbe3ef !important;
+    border-radius: 12px !important;
+    background: #fff !important;
+    color: #111827 !important;
+    font-size: 13px !important;
+    outline: none !important;
 }
 
-.sb-disk-empty-enhanced span {
-    max-width: 360px;
-    color: #6b7280;
-    font-size: 13px;
-    line-height: 1.45;
+.sb-disk-modern-panel .sb-disk-modern-select,
+.sb-disk-modern-panel select {
+    width: 180px !important;
+    min-width: 180px !important;
+    height: 40px !important;
+    padding: 0 12px !important;
+    border: 1px solid #dbe3ef !important;
+    border-radius: 12px !important;
+    background: #fff !important;
+    color: #111827 !important;
+    font-size: 13px !important;
+    outline: none !important;
 }
 
-.sb-disk-empty-actions {
-    margin-top: 8px;
-    display: flex;
-    justify-content: center;
+.sb-disk-modern-panel input:focus,
+.sb-disk-modern-panel select:focus {
+    border-color: var(--disk-accent, #2563eb) !important;
+    box-shadow: 0 0 0 3px rgba(37, 99, 235, .12) !important;
 }
 
-.sb-disk-empty-upload {
+.sb-disk-modern-panel .sb-disk-modern-btn,
+.sb-disk-modern-panel button {
+    width: auto !important;
+    min-width: auto !important;
+    height: 40px !important;
+    min-height: 40px !important;
+    padding: 0 14px !important;
+    border: 1px solid #dbe3ef !important;
+    border-radius: 12px !important;
+    background: #fff !important;
+    color: #374151 !important;
+    font-size: 13px !important;
+    font-weight: 700 !important;
+    white-space: nowrap !important;
+    box-shadow: none !important;
+}
+
+.sb-disk-modern-panel .sb-disk-modern-btn:hover,
+.sb-disk-modern-panel button:hover {
+    border-color: #c7d2fe !important;
+    background: #eef2ff !important;
+    color: var(--disk-accent, #2563eb) !important;
+}
+
+.sb-disk-modern-panel .sb-disk-modern-btn-primary,
+.sb-disk-modern-panel .sb-disk-upload-btn,
+.sb-disk-modern-panel .is-primary {
     border-color: var(--disk-accent, #2563eb) !important;
     background: var(--disk-accent, #2563eb) !important;
     color: #fff !important;
 }
 
-И в public_page.php обнови версию подключения:
+.sb-disk-modern-panel .sb-disk-modern-btn-primary:hover,
+.sb-disk-modern-panel .sb-disk-upload-btn:hover,
+.sb-disk-modern-panel .is-primary:hover {
+    background: var(--disk-accent, #2563eb) !important;
+    color: #fff !important;
+    box-shadow: 0 10px 22px rgba(37, 99, 235, .22) !important;
+}
 
-<link rel="stylesheet" href="<?= sb_public_h($basePath) ?>/components/disk/styles.css?v=3">
+.sb-disk-modern-panel .sb-disk-modern-btn-view {
+    padding: 0 12px !important;
+}
 
-А подключение JS лучше так:
+/* Убираем старые пустые отступы, если кнопки были перенесены */
+.sb-disk-toolbar-normalized .sb-disk-toolbar:empty,
+.sb-disk-toolbar-normalized .sb-disk-actions:empty,
+.sb-disk-toolbar-normalized .sb-disk-controls:empty,
+.sb-disk-toolbar-normalized .sb-disk-filter:empty,
+.sb-disk-toolbar-normalized .sb-disk-filters:empty,
+.sb-disk-toolbar-normalized .sb-disk-search-row:empty {
+    display: none !important;
+}
 
-<script src="<?= sb_public_h($basePath) ?>/components/disk/script.js?v=2"></script>
+/* Старые кнопки не должны растягиваться на всю ширину */
+.sb-disk-toolbar-normalized button {
+    width: auto;
+}
+
+/* Адаптив */
+@media (max-width: 1100px) {
+    .sb-disk-modern-row {
+        align-items: stretch;
+        flex-direction: column;
+    }
+
+    .sb-disk-modern-filters {
+        width: 100%;
+    }
+
+    .sb-disk-modern-actions {
+        width: 100%;
+        justify-content: flex-start;
+    }
+
+    .sb-disk-modern-panel .sb-disk-modern-search,
+    .sb-disk-modern-panel input[type="text"],
+    .sb-disk-modern-panel input[type="search"] {
+        flex: 1 1 auto;
+        min-width: 220px !important;
+    }
+}
+
+@media (max-width: 700px) {
+    .sb-disk-modern-panel {
+        padding: 12px;
+    }
+
+    .sb-disk-modern-filters,
+    .sb-disk-modern-actions {
+        flex-direction: column;
+        align-items: stretch;
+    }
+
+    .sb-disk-modern-panel .sb-disk-modern-search,
+    .sb-disk-modern-panel input[type="text"],
+    .sb-disk-modern-panel input[type="search"],
+    .sb-disk-modern-panel .sb-disk-modern-select,
+    .sb-disk-modern-panel select,
+    .sb-disk-modern-panel button {
+        width: 100% !important;
+        min-width: 0 !important;
+    }
+}
+
+
+---
+
+3. Обнови версии подключения
+
+В public_page.php:
+
+<link rel="stylesheet" href="<?= sb_public_h($basePath) ?>/components/disk/styles.css?v=4">
+
+и:
+
+<script src="<?= sb_public_h($basePath) ?>/components/disk/script.js?v=3"></script>
 
 После этого сделай Ctrl + F5.
 
-Что должно измениться:
-
-1. У файлов появятся иконки PDF/DOC/XLS/IMG/ZIP/FILE.
-2. У папок будет отдельная иконка папки.
-3. Пустой диск будет выглядеть как нормальная карточка с кнопкой “Загрузить файл”.
-4. Кнопка “Загрузить” станет основной синей.
-5. Поиск и селекты станут аккуратнее.
+Должно стать удобнее: поиск и сортировка в одной строке, кнопки рядом справа, без этого “лесенкой вниз”.
