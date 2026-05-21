@@ -1,597 +1,501 @@
-Да, делаем вариант 2. Начнём безопасно: сначала улучшим внешний вид диска через CSS, не трогая логику загрузки, удаления, папок и прав.
+Да, следующий шаг — добавляем иконки файлов/папок и красивую пустую заглушку через JS, не ломая текущую логику диска.
 
-Заменяй файл:
+Сейчас просто добавь код в самый конец файла:
+
+/local/sitebuilder/components/disk/script.js
+
+/* =========================================================
+   SITEBUILDER DISK UI ENHANCER
+   Красивые иконки, пустое состояние, кнопки
+   Не ломает основную логику диска
+   ========================================================= */
+
+(function () {
+    'use strict';
+
+    function text(node) {
+        return String(node && node.textContent ? node.textContent : '').trim();
+    }
+
+    function lower(value) {
+        return String(value || '').toLowerCase();
+    }
+
+    function getFileExtension(name) {
+        name = String(name || '').trim();
+
+        var cleanName = name.split('?')[0].split('#')[0];
+        var parts = cleanName.split('.');
+
+        if (parts.length < 2) {
+            return '';
+        }
+
+        return lower(parts.pop());
+    }
+
+    function iconByExt(ext, isFolder) {
+        if (isFolder) {
+            return '📁';
+        }
+
+        if (ext === 'pdf') {
+            return 'PDF';
+        }
+
+        if (['doc', 'docx', 'rtf'].indexOf(ext) !== -1) {
+            return 'DOC';
+        }
+
+        if (['xls', 'xlsx', 'csv'].indexOf(ext) !== -1) {
+            return 'XLS';
+        }
+
+        if (['ppt', 'pptx'].indexOf(ext) !== -1) {
+            return 'PPT';
+        }
+
+        if (['jpg', 'jpeg', 'png', 'gif', 'webp', 'svg'].indexOf(ext) !== -1) {
+            return 'IMG';
+        }
+
+        if (['zip', 'rar', '7z'].indexOf(ext) !== -1) {
+            return 'ZIP';
+        }
+
+        if (['txt', 'log'].indexOf(ext) !== -1) {
+            return 'TXT';
+        }
+
+        return 'FILE';
+    }
+
+    function iconClassByExt(ext, isFolder) {
+        if (isFolder) {
+            return 'sb-disk-icon sb-disk-icon-folder';
+        }
+
+        if (ext === 'pdf') {
+            return 'sb-disk-icon sb-disk-icon-pdf';
+        }
+
+        if (['doc', 'docx', 'rtf'].indexOf(ext) !== -1) {
+            return 'sb-disk-icon sb-disk-icon-doc';
+        }
+
+        if (['xls', 'xlsx', 'csv'].indexOf(ext) !== -1) {
+            return 'sb-disk-icon sb-disk-icon-xls';
+        }
+
+        if (['ppt', 'pptx'].indexOf(ext) !== -1) {
+            return 'sb-disk-icon sb-disk-icon-ppt';
+        }
+
+        if (['jpg', 'jpeg', 'png', 'gif', 'webp', 'svg'].indexOf(ext) !== -1) {
+            return 'sb-disk-icon sb-disk-icon-img';
+        }
+
+        if (['zip', 'rar', '7z'].indexOf(ext) !== -1) {
+            return 'sb-disk-icon sb-disk-icon-zip';
+        }
+
+        return 'sb-disk-icon sb-disk-icon-file';
+    }
+
+    function isFolderRow(row) {
+        var rowText = lower(text(row));
+
+        if (row.getAttribute('data-type') === 'folder') {
+            return true;
+        }
+
+        if (row.classList.contains('is-folder') || row.classList.contains('sb-disk-row-folder')) {
+            return true;
+        }
+
+        return rowText.indexOf('папка') !== -1 || rowText.indexOf('folder') !== -1;
+    }
+
+    function findNameCell(row) {
+        var cells = Array.prototype.slice.call(row.querySelectorAll('td'));
+
+        if (!cells.length) {
+            return null;
+        }
+
+        for (var i = 0; i < cells.length; i++) {
+            var cell = cells[i];
+
+            if (cell.querySelector('input[type="checkbox"]') && text(cell).length < 3) {
+                continue;
+            }
+
+            if (text(cell) !== '') {
+                return cell;
+            }
+        }
+
+        return cells[0];
+    }
+
+    function enhanceTableRows(disk) {
+        var rows = disk.querySelectorAll('tbody tr');
+
+        rows.forEach(function (row) {
+            if (row.classList.contains('sb-disk-row-enhanced')) {
+                return;
+            }
+
+            var nameCell = findNameCell(row);
+
+            if (!nameCell) {
+                return;
+            }
+
+            var name = text(nameCell);
+
+            if (!name) {
+                return;
+            }
+
+            var isFolder = isFolderRow(row);
+            var ext = getFileExtension(name);
+
+            row.classList.add('sb-disk-row-enhanced');
+
+            if (isFolder) {
+                row.classList.add('sb-disk-row-folder');
+                row.setAttribute('data-type', 'folder');
+            }
+
+            if (ext) {
+                row.setAttribute('data-ext', ext);
+            }
+
+            var wrapper = document.createElement('span');
+            wrapper.className = 'sb-disk-name-wrap';
+
+            var icon = document.createElement('span');
+            icon.className = iconClassByExt(ext, isFolder);
+            icon.textContent = iconByExt(ext, isFolder);
+
+            var label = document.createElement('span');
+            label.className = 'sb-disk-name-label';
+
+            while (nameCell.firstChild) {
+                label.appendChild(nameCell.firstChild);
+            }
+
+            wrapper.appendChild(icon);
+            wrapper.appendChild(label);
+            nameCell.appendChild(wrapper);
+        });
+    }
+
+    function enhanceButtons(disk) {
+        var buttons = disk.querySelectorAll('button, .sb-btn');
+
+        buttons.forEach(function (button) {
+            var value = lower(text(button));
+
+            if (value.indexOf('загруз') !== -1) {
+                button.classList.add('sb-disk-upload-btn', 'is-primary');
+                button.setAttribute('data-disk-ui', 'upload');
+            }
+
+            if (value.indexOf('новая пап') !== -1 || value.indexOf('создать пап') !== -1) {
+                button.classList.add('sb-disk-folder-btn');
+                button.setAttribute('data-disk-ui', 'folder');
+            }
+
+            if (value.indexOf('таблица') !== -1 || value.indexOf('плитка') !== -1) {
+                button.classList.add('sb-disk-view-btn');
+            }
+        });
+    }
+
+    function enhanceInputs(disk) {
+        var searchInputs = disk.querySelectorAll('input[type="text"], input[type="search"]');
+
+        searchInputs.forEach(function (input) {
+            var placeholder = input.getAttribute('placeholder') || '';
+
+            if (!placeholder) {
+                input.setAttribute('placeholder', 'Поиск файлов и папок');
+            }
+
+            input.classList.add('sb-disk-search-input');
+        });
+
+        var selects = disk.querySelectorAll('select');
+
+        selects.forEach(function (select) {
+            select.classList.add('sb-disk-select');
+        });
+    }
+
+    function enhanceEmptyState(disk) {
+        var loading = disk.querySelector('.sb-public-disk-loading');
+
+        if (!loading) {
+            return;
+        }
+
+        var value = lower(text(loading));
+
+        if (value.indexOf('загрузка') !== -1) {
+            return;
+        }
+
+        if (
+            value.indexOf('нет файлов') === -1 &&
+            value.indexOf('пуст') === -1 &&
+            value.indexOf('здесь пока нет') === -1
+        ) {
+            return;
+        }
+
+        if (loading.classList.contains('sb-disk-empty-enhanced')) {
+            return;
+        }
+
+        loading.classList.add('sb-disk-empty-enhanced');
+        loading.innerHTML = ''
+            + '<div class="sb-disk-empty-icon">📁</div>'
+            + '<strong>Пока здесь пусто</strong>'
+            + '<span>Загрузите первый файл или создайте новую папку.</span>'
+            + '<div class="sb-disk-empty-actions">'
+            + '    <button type="button" class="sb-disk-empty-upload">Загрузить файл</button>'
+            + '</div>';
+    }
+
+    function bindEmptyUpload(disk) {
+        if (disk.getAttribute('data-empty-upload-bound') === '1') {
+            return;
+        }
+
+        disk.setAttribute('data-empty-upload-bound', '1');
+
+        disk.addEventListener('click', function (e) {
+            var btn = e.target.closest('.sb-disk-empty-upload');
+
+            if (!btn) {
+                return;
+            }
+
+            var fileInput = disk.querySelector('input[type="file"]');
+
+            if (fileInput) {
+                fileInput.click();
+                return;
+            }
+
+            var uploadBtn = disk.querySelector(
+                '.sb-disk-upload-btn, button[data-disk-ui="upload"], button[data-action="upload"], button[data-disk-action="upload"]'
+            );
+
+            if (uploadBtn) {
+                uploadBtn.click();
+            }
+        });
+    }
+
+    function enhanceDisk(disk) {
+        if (!disk) {
+            return;
+        }
+
+        disk.classList.add('sb-disk-enhanced');
+
+        enhanceButtons(disk);
+        enhanceInputs(disk);
+        enhanceTableRows(disk);
+        enhanceEmptyState(disk);
+        bindEmptyUpload(disk);
+    }
+
+    function enhanceAllDisks() {
+        document.querySelectorAll('.sb-disk').forEach(enhanceDisk);
+    }
+
+    function observeDisks() {
+        var timer = null;
+
+        var observer = new MutationObserver(function () {
+            clearTimeout(timer);
+
+            timer = setTimeout(function () {
+                enhanceAllDisks();
+            }, 80);
+        });
+
+        observer.observe(document.body, {
+            childList: true,
+            subtree: true
+        });
+    }
+
+    document.addEventListener('DOMContentLoaded', function () {
+        enhanceAllDisks();
+        observeDisks();
+    });
+
+    if (document.readyState === 'interactive' || document.readyState === 'complete') {
+        enhanceAllDisks();
+        observeDisks();
+    }
+})();
+
+Теперь в конец файла:
 
 /local/sitebuilder/components/disk/styles.css
 
-на этот:
+добавь ещё этот блок:
 
 /* =========================================================
-   SITEBUILDER DISK — MODERN FILE MANAGER
-   Вариант 2: красивый корпоративный диск
+   DISK UI ENHANCER ADDITIONS
    ========================================================= */
 
-.sb-disk {
-    --disk-accent: var(--sb-accent, #2563eb);
-    --disk-bg: #ffffff;
-    --disk-soft: #f8fafc;
-    --disk-border: #e5e7eb;
-    --disk-text: #111827;
-    --disk-muted: #6b7280;
-    --disk-radius: 18px;
-    --disk-shadow: 0 16px 40px rgba(15, 23, 42, .06);
-
-    width: 100%;
-    min-width: 0;
-    color: var(--disk-text);
-}
-
-/* Главная карточка диска */
-.sb-disk,
-.sb-disk-panel,
-.sb-disk-root,
-.sb-disk-wrap {
-    box-sizing: border-box;
-}
-
-/* Если JS рисует внутреннюю оболочку */
-.sb-disk > div:first-child:not(.sb-public-disk-loading) {
-    width: 100%;
-}
-
-/* =========================================================
-   HEADER / Верхняя часть
-   ========================================================= */
-
-.sb-public-block--disk {
-    margin-top: 18px;
-}
-
-.sb-public-disk-head {
-    display: flex;
-    align-items: flex-start;
-    justify-content: space-between;
-    gap: 16px;
-    margin-bottom: 14px;
-}
-
-.sb-public-block-title,
-.sb-disk-title,
-.sb-disk h2,
-.sb-disk h3 {
-    margin: 0;
-    font-size: 22px;
-    line-height: 1.25;
-    font-weight: 800;
-    color: var(--disk-text);
-}
-
-/* Старые мелкие подписи */
-.sb-disk-count,
-.sb-disk-meta,
-.sb-disk-subtitle,
-.sb-disk-info {
-    margin-top: 4px;
-    color: var(--disk-muted);
-    font-size: 13px;
-    line-height: 1.4;
-}
-
-/* =========================================================
-   TOOLBAR / Панель действий
-   ========================================================= */
-
-.sb-disk-toolbar,
-.sb-disk-actions,
-.sb-disk-topbar,
-.sb-disk-controls,
-.sb-disk-panel-actions {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 12px;
-    flex-wrap: wrap;
-    margin: 14px 0;
-}
-
-.sb-disk-actions-left,
-.sb-disk-actions-right,
-.sb-disk-toolbar-left,
-.sb-disk-toolbar-right {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    flex-wrap: wrap;
-}
-
-/* Кнопки внутри диска */
-.sb-disk button,
-.sb-disk .sb-btn,
-.sb-public-block--disk button {
-    min-height: 38px;
-    padding: 0 14px;
-    border: 1px solid var(--disk-border);
-    border-radius: 12px;
-    background: #fff;
-    color: #374151;
-    font-size: 13px;
-    font-weight: 700;
-    cursor: pointer;
-    transition:
-        background .15s ease,
-        border-color .15s ease,
-        color .15s ease,
-        box-shadow .15s ease,
-        transform .15s ease;
-}
-
-.sb-disk button:hover,
-.sb-disk .sb-btn:hover,
-.sb-public-block--disk button:hover {
-    border-color: #c7d2fe;
-    background: #f8fbff;
-    color: var(--disk-accent);
-    box-shadow: 0 8px 18px rgba(37, 99, 235, .08);
-}
-
-.sb-disk button:active,
-.sb-public-block--disk button:active {
-    transform: translateY(1px);
-}
-
-/* Основная кнопка загрузки */
-.sb-disk button[data-action="upload"],
-.sb-disk button[data-disk-action="upload"],
-.sb-disk .sb-disk-upload-btn,
-.sb-disk .sb-btn-primary,
-.sb-disk .is-primary {
-    border-color: var(--disk-accent);
-    background: var(--disk-accent);
-    color: #fff;
-}
-
-.sb-disk button[data-action="upload"]:hover,
-.sb-disk button[data-disk-action="upload"]:hover,
-.sb-disk .sb-disk-upload-btn:hover,
-.sb-disk .sb-btn-primary:hover,
-.sb-disk .is-primary:hover {
-    background: var(--disk-accent);
-    color: #fff;
-    box-shadow: 0 10px 22px rgba(37, 99, 235, .22);
-}
-
-/* Кнопки Таблица / Плитка */
-.sb-disk-view-toggle,
-.sb-disk-view-buttons {
+.sb-disk-name-wrap {
     display: inline-flex;
-    align-items: center;
-    padding: 3px;
-    border: 1px solid var(--disk-border);
-    border-radius: 14px;
-    background: #f8fafc;
-    gap: 3px;
-}
-
-.sb-disk-view-toggle button,
-.sb-disk-view-buttons button {
-    min-height: 32px;
-    border: 0;
-    border-radius: 10px;
-    background: transparent;
-    box-shadow: none;
-}
-
-.sb-disk-view-toggle button.is-active,
-.sb-disk-view-buttons button.is-active,
-.sb-disk button.is-active {
-    background: #fff;
-    color: var(--disk-accent);
-    box-shadow: 0 4px 12px rgba(15, 23, 42, .08);
-}
-
-/* =========================================================
-   SEARCH / FILTERS
-   ========================================================= */
-
-.sb-disk-filter,
-.sb-disk-filters,
-.sb-disk-search-row {
-    display: flex;
     align-items: center;
     gap: 10px;
-    flex-wrap: wrap;
-    margin: 14px 0;
+    min-width: 0;
+    max-width: 100%;
 }
 
-.sb-disk input[type="text"],
-.sb-disk input[type="search"],
-.sb-disk select {
-    height: 40px;
-    border: 1px solid var(--disk-border);
-    border-radius: 12px;
-    background: #fff;
-    color: #111827;
-    font-size: 13px;
-    outline: none;
-    transition: border-color .15s ease, box-shadow .15s ease;
+.sb-disk-name-label {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
-.sb-disk input[type="text"],
-.sb-disk input[type="search"] {
-    min-width: 260px;
-    padding: 0 14px;
-}
-
-.sb-disk select {
-    min-width: 170px;
-    padding: 0 34px 0 12px;
-}
-
-.sb-disk input[type="text"]:focus,
-.sb-disk input[type="search"]:focus,
-.sb-disk select:focus {
-    border-color: var(--disk-accent);
-    box-shadow: 0 0 0 3px rgba(37, 99, 235, .12);
-}
-
-/* =========================================================
-   BREADCRUMBS / Путь
-   ========================================================= */
-
-.sb-disk-breadcrumbs,
-.sb-disk-path {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    flex-wrap: wrap;
-    margin: 10px 0 14px;
-    color: var(--disk-muted);
-    font-size: 13px;
-}
-
-.sb-disk-breadcrumbs a,
-.sb-disk-path a {
-    display: inline-flex;
-    align-items: center;
-    min-height: 28px;
-    padding: 0 9px;
-    border-radius: 999px;
-    background: #f3f4f6;
-    color: #374151;
-    text-decoration: none;
-    font-weight: 700;
-}
-
-.sb-disk-breadcrumbs a:hover,
-.sb-disk-path a:hover {
-    background: #eef2ff;
-    color: var(--disk-accent);
-}
-
-/* =========================================================
-   TABLE VIEW
-   ========================================================= */
-
-.sb-disk-table-wrap,
-.sb-disk-table-container {
-    width: 100%;
-    overflow-x: auto;
-    border: 1px solid var(--disk-border);
-    border-radius: 16px;
-    background: #fff;
-}
-
-.sb-disk table {
-    width: 100%;
-    border-collapse: separate;
-    border-spacing: 0;
-    background: #fff;
-    min-width: 720px;
-}
-
-.sb-disk thead th {
-    height: 44px;
-    padding: 0 14px;
-    border-bottom: 1px solid var(--disk-border);
-    background: #f8fafc;
-    color: #64748b;
-    font-size: 12px;
-    font-weight: 800;
-    text-align: left;
-    text-transform: uppercase;
-    letter-spacing: .03em;
-}
-
-.sb-disk tbody td {
-    height: 54px;
-    padding: 10px 14px;
-    border-bottom: 1px solid #f1f5f9;
-    color: #374151;
-    font-size: 13px;
-    vertical-align: middle;
-}
-
-.sb-disk tbody tr:last-child td {
-    border-bottom: 0;
-}
-
-.sb-disk tbody tr {
-    transition: background .15s ease;
-}
-
-.sb-disk tbody tr:hover {
-    background: #f8fbff;
-}
-
-/* Название файла */
-.sb-disk-file-name,
-.sb-disk-name,
-.sb-disk-item-name,
-.sb-disk td:first-child {
-    font-weight: 700;
-    color: #111827;
-}
-
-/* =========================================================
-   FILE/FOLDER ICONS
-   ========================================================= */
-
-.sb-disk-icon,
-.sb-disk-file-icon,
-.sb-disk-folder-icon {
+.sb-disk-icon {
     width: 34px;
     height: 34px;
+    min-width: 34px;
+    max-width: 34px;
+    min-height: 34px;
+    max-height: 34px;
     border-radius: 12px;
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    margin-right: 10px;
     background: #eef2ff;
-    color: var(--disk-accent);
+    color: var(--disk-accent, #2563eb);
+    font-size: 10px;
     font-weight: 900;
-    flex: 0 0 auto;
+    line-height: 1;
+    flex: 0 0 34px;
 }
 
-.sb-disk-folder-icon,
-.sb-disk-icon-folder,
-[data-type="folder"] .sb-disk-icon,
-.sb-disk-row-folder .sb-disk-icon {
+.sb-disk-icon-folder {
     background: #fef3c7;
     color: #92400e;
+    font-size: 18px;
 }
 
-.sb-disk-icon-pdf,
-[data-ext="pdf"] .sb-disk-icon {
+.sb-disk-icon-pdf {
     background: #fee2e2;
     color: #991b1b;
 }
 
-.sb-disk-icon-doc,
-.sb-disk-icon-docx,
-[data-ext="doc"] .sb-disk-icon,
-[data-ext="docx"] .sb-disk-icon {
+.sb-disk-icon-doc {
     background: #dbeafe;
     color: #1d4ed8;
 }
 
-.sb-disk-icon-xls,
-.sb-disk-icon-xlsx,
-[data-ext="xls"] .sb-disk-icon,
-[data-ext="xlsx"] .sb-disk-icon {
+.sb-disk-icon-xls {
     background: #dcfce7;
     color: #166534;
 }
 
-.sb-disk-icon-img,
-[data-ext="jpg"] .sb-disk-icon,
-[data-ext="jpeg"] .sb-disk-icon,
-[data-ext="png"] .sb-disk-icon,
-[data-ext="webp"] .sb-disk-icon {
+.sb-disk-icon-ppt {
+    background: #ffedd5;
+    color: #c2410c;
+}
+
+.sb-disk-icon-img {
     background: #fce7f3;
     color: #be185d;
 }
 
-/* =========================================================
-   GRID / TILE VIEW
-   ========================================================= */
-
-.sb-disk-grid,
-.sb-disk-tiles,
-.sb-disk-tile-list {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
-    gap: 12px;
-    margin-top: 14px;
+.sb-disk-icon-zip {
+    background: #ede9fe;
+    color: #6d28d9;
 }
 
-.sb-disk-card,
-.sb-disk-tile,
-.sb-disk-grid-item {
-    min-height: 150px;
-    padding: 14px;
-    border: 1px solid var(--disk-border);
-    border-radius: 16px;
-    background: #fff;
-    cursor: pointer;
-    transition:
-        border-color .15s ease,
-        box-shadow .15s ease,
-        transform .15s ease,
-        background .15s ease;
-}
-
-.sb-disk-card:hover,
-.sb-disk-tile:hover,
-.sb-disk-grid-item:hover {
-    border-color: #c7d2fe;
-    background: #f8fbff;
-    box-shadow: 0 12px 28px rgba(37, 99, 235, .10);
-    transform: translateY(-1px);
-}
-
-.sb-disk-card-preview,
-.sb-disk-tile-preview {
-    height: 82px;
-    border-radius: 14px;
+.sb-disk-icon-file {
     background: #f1f5f9;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    margin-bottom: 12px;
+    color: #475569;
 }
 
-.sb-disk-card-title,
-.sb-disk-tile-title {
-    font-size: 13px;
-    line-height: 1.3;
-    font-weight: 800;
-    color: #111827;
-    word-break: break-word;
+.sb-disk-row-enhanced td {
+    vertical-align: middle;
 }
 
-.sb-disk-card-meta,
-.sb-disk-tile-meta {
-    margin-top: 4px;
-    font-size: 12px;
-    color: var(--disk-muted);
+.sb-disk-empty-enhanced {
+    min-height: 190px !important;
+    padding: 34px !important;
 }
 
-/* =========================================================
-   EMPTY STATE
-   ========================================================= */
-
-.sb-public-disk-loading,
-.sb-disk-empty,
-.sb-disk-empty-state,
-.sb-disk .empty,
-.sb-disk [data-role="empty"] {
-    min-height: 150px;
-    padding: 28px;
-    border: 1px dashed #cbd5e1;
-    border-radius: 16px;
-    background:
-        radial-gradient(circle at top left, rgba(37, 99, 235, .08), transparent 35%),
-        #ffffff;
-    color: var(--disk-muted);
-    text-align: center;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    flex-direction: column;
-    gap: 8px;
+.sb-disk-empty-enhanced::before {
+    display: none !important;
 }
 
-.sb-public-disk-loading::before,
-.sb-disk-empty::before,
-.sb-disk-empty-state::before,
-.sb-disk .empty::before,
-.sb-disk [data-role="empty"]::before {
-    content: "📁";
-    width: 54px;
-    height: 54px;
-    border-radius: 18px;
+.sb-disk-empty-icon {
+    width: 64px;
+    height: 64px;
+    border-radius: 22px;
     background: #eef2ff;
-    color: var(--disk-accent);
+    color: var(--disk-accent, #2563eb);
     display: flex;
     align-items: center;
     justify-content: center;
-    font-size: 26px;
-    margin-bottom: 4px;
+    font-size: 32px;
+    margin-bottom: 6px;
 }
 
-.sb-disk-empty strong,
-.sb-disk-empty-state strong {
-    color: var(--disk-text);
-    font-size: 16px;
+.sb-disk-empty-enhanced strong {
+    font-size: 17px;
+    line-height: 1.25;
+    color: #111827;
 }
 
-/* =========================================================
-   MODALS / FORMS INSIDE DISK
-   ========================================================= */
-
-.sb-disk-modal,
-.sb-disk-dialog {
-    border-radius: 18px;
-}
-
-.sb-disk input[type="file"] {
+.sb-disk-empty-enhanced span {
+    max-width: 360px;
+    color: #6b7280;
     font-size: 13px;
+    line-height: 1.45;
 }
 
-/* =========================================================
-   SMALL FIXES
-   ========================================================= */
-
-.sb-disk a {
-    color: var(--disk-accent);
-    text-decoration: none;
+.sb-disk-empty-actions {
+    margin-top: 8px;
+    display: flex;
+    justify-content: center;
 }
 
-.sb-disk a:hover {
-    text-decoration: underline;
+.sb-disk-empty-upload {
+    border-color: var(--disk-accent, #2563eb) !important;
+    background: var(--disk-accent, #2563eb) !important;
+    color: #fff !important;
 }
 
-.sb-disk * {
-    box-sizing: border-box;
-}
+И в public_page.php обнови версию подключения:
 
-/* Убираем слишком тонкий/технический вид старых линий */
-.sb-disk hr {
-    border: 0;
-    border-top: 1px solid var(--disk-border);
-    margin: 14px 0;
-}
+<link rel="stylesheet" href="<?= sb_public_h($basePath) ?>/components/disk/styles.css?v=3">
 
-/* =========================================================
-   ADAPTIVE
-   ========================================================= */
+А подключение JS лучше так:
 
-@media (max-width: 900px) {
-    .sb-public-disk-head {
-        flex-direction: column;
-        align-items: stretch;
-    }
+<script src="<?= sb_public_h($basePath) ?>/components/disk/script.js?v=2"></script>
 
-    .sb-disk-toolbar,
-    .sb-disk-actions,
-    .sb-disk-topbar,
-    .sb-disk-controls,
-    .sb-disk-filter,
-    .sb-disk-filters,
-    .sb-disk-search-row {
-        align-items: stretch;
-        flex-direction: column;
-    }
+После этого сделай Ctrl + F5.
 
-    .sb-disk input[type="text"],
-    .sb-disk input[type="search"],
-    .sb-disk select {
-        width: 100%;
-        min-width: 0;
-    }
+Что должно измениться:
 
-    .sb-disk button,
-    .sb-public-block--disk button {
-        width: 100%;
-    }
-
-    .sb-disk-grid,
-    .sb-disk-tiles,
-    .sb-disk-tile-list {
-        grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
-    }
-}
-
-После этого в public_page.php обнови версию CSS для диска.
-
-Найди:
-
-<link rel="stylesheet" href="<?= sb_public_h($basePath) ?>/components/disk/styles.css">
-
-Замени на:
-
-<link rel="stylesheet" href="<?= sb_public_h($basePath) ?>/components/disk/styles.css?v=2">
-
-И обнови публичную страницу через Ctrl + F5.
-
-Это первый шаг варианта 2: визуально диск станет чище. После проверки дальше сделаем второй шаг — иконки файлов/папок и красивую пустую заглушку уже через script.js, чтобы они точно отображались, а не только через CSS.
+1. У файлов появятся иконки PDF/DOC/XLS/IMG/ZIP/FILE.
+2. У папок будет отдельная иконка папки.
+3. Пустой диск будет выглядеть как нормальная карточка с кнопкой “Загрузить файл”.
+4. Кнопка “Загрузить” станет основной синей.
+5. Поиск и селекты станут аккуратнее.
