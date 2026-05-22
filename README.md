@@ -1,348 +1,220 @@
-Идём дальше. Делаем группы маршрутов.
+Идём дальше. Сейчас делаем админский раздел через prefix-группу.
 
-Сейчас у нас так:
+То есть хотим такие адреса:
 
-$router->get('/me', [HomeController::class, 'me'], ['auth']);
-$router->get('/admin-only', [HomeController::class, 'adminOnly'], ['auth', 'admin']);
+/local/mvc_demo/admin/dashboard
+/local/mvc_demo/admin/users
 
-Это работает. Но если будет 20 защищённых страниц, каждый раз писать ['auth'] неудобно.
-
-Мы хотим так:
-
-$router->group(['middleware' => ['auth']], function (Router $router) {
-    $router->get('/me', [HomeController::class, 'me']);
-    $router->get('/profile', [ProfileController::class, 'index']);
-});
-
-Простыми словами:
-
-Всё, что внутри этой группы, доступно только авторизованным.
+И чтобы весь раздел /admin/... был доступен только администратору.
 
 
 ---
 
-1. Заменяем /local/mvc/Core/Router.php
+Что мы сейчас сделаем
 
-Полностью замени файл:
+Добавим:
 
-/local/mvc/Core/Router.php
+/local/mvc_demo/Controllers/AdminController.php
+/local/mvc_demo/Views/admin/dashboard.php
+/local/mvc_demo/Views/admin/users.php
 
-на этот:
+И обновим:
+
+/local/mvc_demo/routes.php
+/local/mvc_demo/Views/layouts/app.php
+
+
+---
+
+1. Создай /local/mvc_demo/Controllers/AdminController.php
 
 <?php
 
-namespace Local\Mvc\Core;
+namespace Local\MvcDemo\Controllers;
 
-/**
- * Router
- *
- * Диспетчер маршрутов.
- *
- * Он знает:
- * - какой URL открыл пользователь
- * - какой контроллер вызвать
- * - какие middleware применить
- */
-class Router
+use Local\Mvc\Core\Auth;
+use Local\Mvc\Core\Controller;
+use Local\Mvc\Core\Response;
+
+class AdminController extends Controller
 {
-    private array $routes = [];
-
-    /**
-     * Текущий префикс группы.
-     *
-     * Например:
-     * /admin
-     */
-    private string $groupPrefix = '';
-
-    /**
-     * Текущие middleware группы.
-     *
-     * Например:
-     * ['auth']
-     */
-    private array $groupMiddleware = [];
-
-    /**
-     * GET-маршрут.
-     */
-    public function get(string $path, array $handler, array $middleware = []): void
+    public function dashboard(): Response
     {
-        $this->add('GET', $path, $handler, $middleware);
+        return $this->render('admin/dashboard', [
+            'title' => 'Админ-панель',
+            'message' => 'Это защищённая админская страница. Сюда может зайти только администратор.',
+            'user' => [
+                'id' => Auth::id(),
+                'login' => Auth::login(),
+                'name' => Auth::name(),
+                'email' => Auth::email(),
+            ],
+        ]);
     }
 
-    /**
-     * POST-маршрут.
-     */
-    public function post(string $path, array $handler, array $middleware = []): void
+    public function users(): Response
     {
-        $this->add('POST', $path, $handler, $middleware);
-    }
-
-    /**
-     * Группа маршрутов.
-     *
-     * Пример:
-     *
-     * $router->group(['middleware' => ['auth']], function (Router $router) {
-     *     $router->get('/me', [HomeController::class, 'me']);
-     * });
-     *
-     * Или с префиксом:
-     *
-     * $router->group(['prefix' => '/admin', 'middleware' => ['auth', 'admin']], function (Router $router) {
-     *     $router->get('/dashboard', [AdminController::class, 'dashboard']);
-     * });
-     */
-    public function group(array $options, callable $callback): void
-    {
-        /**
-         * Запоминаем старые настройки.
-         * Это нужно, чтобы после группы всё вернулось обратно.
-         */
-        $oldPrefix = $this->groupPrefix;
-        $oldMiddleware = $this->groupMiddleware;
-
-        $prefix = (string)($options['prefix'] ?? '');
-        $middleware = $options['middleware'] ?? [];
-
-        if (!is_array($middleware)) {
-            $middleware = [$middleware];
-        }
-
-        /**
-         * Добавляем префикс группы к старому префиксу.
-         */
-        if ($prefix !== '') {
-            $this->groupPrefix = $this->joinPaths($this->groupPrefix, $prefix);
-        }
-
-        /**
-         * Добавляем middleware группы к старым middleware.
-         */
-        $this->groupMiddleware = array_values(array_filter(array_merge(
-            $this->groupMiddleware,
-            $middleware
-        )));
-
-        /**
-         * Выполняем маршруты внутри группы.
-         */
-        $callback($this);
-
-        /**
-         * Возвращаем старые настройки.
-         *
-         * Иначе middleware группы случайно применятся
-         * к следующим маршрутам.
-         */
-        $this->groupPrefix = $oldPrefix;
-        $this->groupMiddleware = $oldMiddleware;
-    }
-
-    /**
-     * Добавить маршрут.
-     */
-    private function add(string $method, string $path, array $handler, array $middleware = []): void
-    {
-        $method = strtoupper($method);
-
-        /**
-         * Если маршрут внутри группы с prefix,
-         * склеиваем prefix + path.
-         *
-         * Например:
-         * prefix = /admin
-         * path = /dashboard
-         *
-         * получится:
-         * /admin/dashboard
-         */
-        $path = $this->joinPaths($this->groupPrefix, $path);
-
-        /**
-         * Склеиваем middleware группы и middleware конкретного маршрута.
-         */
-        $middleware = array_values(array_filter(array_merge(
-            $this->groupMiddleware,
-            $middleware
-        )));
-
-        $path = $this->normalizePath($path);
-
-        $this->routes[$method][$path] = [
-            'handler' => $handler,
-            'middleware' => $middleware,
-        ];
-    }
-
-    /**
-     * Запустить нужный контроллер по текущему запросу.
-     */
-    public function dispatch(Request $request): void
-    {
-        $method = $request->method();
-        $path = $this->normalizePath($request->path());
-
-        if (!isset($this->routes[$method][$path])) {
-            $this->notFound($method, $path);
-            return;
-        }
-
-        $route = $this->routes[$method][$path];
-
-        $handler = $route['handler'] ?? [];
-        $middlewares = $route['middleware'] ?? [];
-
-        /**
-         * Middleware выполняются ДО контроллера.
-         */
-        $middlewareResponse = Middleware::handle($middlewares, $request);
-
-        if ($middlewareResponse instanceof Response) {
-            $middlewareResponse->send();
-            return;
-        }
-
-        $controllerClass = $handler[0] ?? null;
-        $controllerMethod = $handler[1] ?? null;
-
-        if (!$controllerClass || !class_exists($controllerClass)) {
-            $this->serverError('Контроллер не найден: ' . (string)$controllerClass);
-            return;
-        }
-
-        $controller = new $controllerClass($request);
-
-        if (!$controllerMethod || !method_exists($controller, $controllerMethod)) {
-            $methods = get_class_methods($controller);
-
-            $this->serverError(
-                'Метод контроллера не найден: ' . $controllerClass . '::' . (string)$controllerMethod
-                . "\n\nPHP видит такие методы:\n"
-                . implode("\n", $methods)
-            );
-
-            return;
-        }
-
-        $result = $controller->{$controllerMethod}();
-
-        if ($result instanceof Response) {
-            $result->send();
-            return;
-        }
-    }
-
-    /**
-     * Склеить два пути.
-     *
-     * Например:
-     * /admin + /dashboard = /admin/dashboard
-     */
-    private function joinPaths(string $left, string $right): string
-    {
-        $left = trim($left);
-        $right = trim($right);
-
-        if ($left === '' && $right === '') {
-            return '/';
-        }
-
-        if ($left === '') {
-            return $this->normalizePath($right);
-        }
-
-        if ($right === '') {
-            return $this->normalizePath($left);
-        }
-
-        return $this->normalizePath(trim($left, '/') . '/' . trim($right, '/'));
-    }
-
-    /**
-     * Привести путь к нормальному виду.
-     *
-     * ''        => '/'
-     * 'me'      => '/me'
-     * '/me/'    => '/me'
-     * '/admin/' => '/admin'
-     */
-    private function normalizePath(string $path): string
-    {
-        $path = trim($path);
-
-        if ($path === '') {
-            return '/';
-        }
-
-        $path = '/' . trim($path, '/');
-
-        if ($path !== '/') {
-            $path = rtrim($path, '/');
-        }
-
-        return $path;
-    }
-
-    /**
-     * 404 — маршрут не найден.
-     */
-    private function notFound(string $method, string $path): void
-    {
-        Response::html(
-            '<h1>404</h1>'
-            . '<p>Маршрут не найден.</p>'
-            . '<pre>'
-            . 'Method: ' . htmlspecialchars($method) . "\n"
-            . 'Path: ' . htmlspecialchars($path) . "\n"
-            . '</pre>',
-            404
-        )->send();
-
-        exit;
-    }
-
-    /**
-     * 500 — ошибка внутри MVC.
-     */
-    private function serverError(string $message): void
-    {
-        Response::html(
-            '<h1>500</h1>'
-            . '<p>Ошибка MVC.</p>'
-            . '<pre>' . htmlspecialchars($message) . '</pre>',
-            500
-        )->send();
-
-        exit;
+        return $this->render('admin/users', [
+            'title' => 'Пользователи',
+            'users' => [
+                [
+                    'id' => Auth::id(),
+                    'login' => Auth::login(),
+                    'name' => Auth::name(),
+                    'email' => Auth::email(),
+                    'is_admin' => Auth::isAdmin() ? 'Да' : 'Нет',
+                ],
+            ],
+        ]);
     }
 }
+
+Пока список пользователей тестовый — выводим текущего пользователя. Позже подключим нормальную модель и будем брать пользователей из базы Битрикса.
 
 
 ---
 
-2. Обновляем /local/mvc_demo/routes.php
+2. Создай папку Views для админки
 
-Теперь сделаем красиво.
+/local/mvc_demo/Views/admin/
 
-Файл:
 
-/local/mvc_demo/routes.php
+---
 
-замени на:
+3. Создай /local/mvc_demo/Views/admin/dashboard.php
+
+<?php
+
+if (!defined('B_PROLOG_INCLUDED') || B_PROLOG_INCLUDED !== true) {
+    die();
+}
+
+?>
+
+<div class="mvc-card">
+    <h1 class="mvc-page-title">
+        <?= htmlspecialcharsbx($title ?? 'Админ-панель') ?>
+    </h1>
+
+    <p class="mvc-page-text">
+        <?= htmlspecialcharsbx($message ?? '') ?>
+    </p>
+
+    <div class="mvc-info">
+        <b>Текущий администратор:</b>
+
+        <ol>
+            <li>
+                ID:
+                <span class="mvc-code">
+                    <?= htmlspecialcharsbx($user['id'] ?? '') ?>
+                </span>
+            </li>
+
+            <li>
+                Логин:
+                <span class="mvc-code">
+                    <?= htmlspecialcharsbx($user['login'] ?? '') ?>
+                </span>
+            </li>
+
+            <li>
+                Имя:
+                <span class="mvc-code">
+                    <?= htmlspecialcharsbx($user['name'] ?? '') ?>
+                </span>
+            </li>
+
+            <li>
+                Email:
+                <span class="mvc-code">
+                    <?= htmlspecialcharsbx($user['email'] ?? '') ?>
+                </span>
+            </li>
+        </ol>
+    </div>
+</div>
+
+
+---
+
+4. Создай /local/mvc_demo/Views/admin/users.php
+
+<?php
+
+if (!defined('B_PROLOG_INCLUDED') || B_PROLOG_INCLUDED !== true) {
+    die();
+}
+
+?>
+
+<div class="mvc-card">
+    <h1 class="mvc-page-title">
+        <?= htmlspecialcharsbx($title ?? 'Пользователи') ?>
+    </h1>
+
+    <p class="mvc-page-text">
+        Пока это тестовый список. Позже здесь будет нормальная таблица пользователей.
+    </p>
+
+    <div class="mvc-info">
+        <table style="width: 100%; border-collapse: collapse;">
+            <thead>
+                <tr>
+                    <th style="text-align: left; padding: 8px; border-bottom: 1px solid #e5e7eb;">ID</th>
+                    <th style="text-align: left; padding: 8px; border-bottom: 1px solid #e5e7eb;">Логин</th>
+                    <th style="text-align: left; padding: 8px; border-bottom: 1px solid #e5e7eb;">Имя</th>
+                    <th style="text-align: left; padding: 8px; border-bottom: 1px solid #e5e7eb;">Email</th>
+                    <th style="text-align: left; padding: 8px; border-bottom: 1px solid #e5e7eb;">Админ</th>
+                </tr>
+            </thead>
+
+            <tbody>
+                <?php foreach (($users ?? []) as $user): ?>
+                    <tr>
+                        <td style="padding: 8px; border-bottom: 1px solid #e5e7eb;">
+                            <?= htmlspecialcharsbx($user['id'] ?? '') ?>
+                        </td>
+
+                        <td style="padding: 8px; border-bottom: 1px solid #e5e7eb;">
+                            <?= htmlspecialcharsbx($user['login'] ?? '') ?>
+                        </td>
+
+                        <td style="padding: 8px; border-bottom: 1px solid #e5e7eb;">
+                            <?= htmlspecialcharsbx($user['name'] ?? '') ?>
+                        </td>
+
+                        <td style="padding: 8px; border-bottom: 1px solid #e5e7eb;">
+                            <?= htmlspecialcharsbx($user['email'] ?? '') ?>
+                        </td>
+
+                        <td style="padding: 8px; border-bottom: 1px solid #e5e7eb;">
+                            <?= htmlspecialcharsbx($user['is_admin'] ?? '') ?>
+                        </td>
+                    </tr>
+                <?php endforeach; ?>
+            </tbody>
+        </table>
+    </div>
+</div>
+
+
+---
+
+5. Обнови /local/mvc_demo/routes.php
+
+Полностью замени файл:
 
 <?php
 
 use Local\Mvc\Core\Router;
 use Local\MvcDemo\Controllers\HomeController;
+use Local\MvcDemo\Controllers\AdminController;
 
 /** @var Router $router */
 
 /**
  * Публичные маршруты.
- *
- * Сюда можно без авторизации.
  */
 $router->get('/', [HomeController::class, 'index']);
 
@@ -351,128 +223,166 @@ $router->get('/about', [HomeController::class, 'about']);
 $router->get('/ping', [HomeController::class, 'ping']);
 
 /**
- * Группа только для авторизованных пользователей.
- *
- * Всё внутри автоматически получит middleware auth.
+ * Только авторизованные пользователи.
  */
 $router->group(['middleware' => ['auth']], function (Router $router) {
     $router->get('/me', [HomeController::class, 'me']);
 
     /**
-     * Вложенная группа только для администраторов.
+     * Админский раздел.
      *
-     * Здесь уже будет:
-     * auth + admin
+     * Всё внутри получит:
+     * prefix: /admin
+     * middleware: auth + admin
+     *
+     * То есть:
+     * /admin/dashboard
+     * /admin/users
      */
-    $router->group(['middleware' => ['admin']], function (Router $router) {
-        $router->get('/admin-only', [HomeController::class, 'adminOnly']);
+    $router->group([
+        'prefix' => '/admin',
+        'middleware' => ['admin'],
+    ], function (Router $router) {
+        $router->get('/dashboard', [AdminController::class, 'dashboard']);
+        $router->get('/users', [AdminController::class, 'users']);
     });
 });
 
-Что здесь происходит
+Что здесь важно
 
-Вот это:
+Вот эта группа:
 
-$router->group(['middleware' => ['auth']], function (Router $router) {
+$router->group([
+    'prefix' => '/admin',
+    'middleware' => ['admin'],
+], function (Router $router) {
 
 означает:
 
-Все маршруты внутри требуют авторизацию.
+Все маршруты внутри начинаются с /admin
+и доступны только администратору.
 
-А вот это:
+То есть:
 
-$router->group(['middleware' => ['admin']], function (Router $router) {
+$router->get('/dashboard', ...)
 
-внутри auth-группы означает:
+превращается в:
 
-Все маршруты внутри требуют авторизацию + права администратора.
+/admin/dashboard
+
+А:
+
+$router->get('/users', ...)
+
+превращается в:
+
+/admin/users
 
 
 ---
 
-3. Проверяем
+6. Обнови меню /local/mvc_demo/Views/layouts/app.php
+
+Замени файл:
+
+<?php
+
+if (!defined('B_PROLOG_INCLUDED') || B_PROLOG_INCLUDED !== true) {
+    die();
+}
+
+?>
+
+<div class="mvc-app">
+    <div class="mvc-topbar">
+        <div class="mvc-brand">
+            <div class="mvc-brand__title">MVC Demo</div>
+            <div class="mvc-brand__subtitle">Отдельный проект на общем MVC-фреймворке</div>
+        </div>
+
+        <nav class="mvc-nav">
+            <a href="/local/mvc_demo/">Главная</a>
+            <a href="/local/mvc_demo/about">О проекте</a>
+            <a href="/local/mvc_demo/me">Я</a>
+            <a href="/local/mvc_demo/admin/dashboard">Админка</a>
+            <a href="/local/mvc_demo/admin/users">Пользователи</a>
+            <a href="/local/mvc_demo/ping" target="_blank">Ping JSON</a>
+        </nav>
+    </div>
+
+    <?= $content ?? '' ?>
+</div>
+
+
+---
+
+7. Проверяем
 
 Сбрось OPcache:
 
 opcache_reset();
 echo 'OPcache reset OK';
 
-Публичный маршрут:
+Проверь публичную страницу:
 
-https://bitrix24-stage.gaz.ru/local/mvc_demo/ping
+https://bitrix24-stage.gaz.ru/local/mvc_demo/
 
-Должен работать без ограничений.
-
-Авторизованный маршрут:
+Проверь страницу текущего пользователя:
 
 https://bitrix24-stage.gaz.ru/local/mvc_demo/me
 
-Должен вернуть данные текущего пользователя.
+Проверь админскую страницу:
 
-Админский маршрут:
+https://bitrix24-stage.gaz.ru/local/mvc_demo/admin/dashboard
 
-https://bitrix24-stage.gaz.ru/local/mvc_demo/admin-only
+Проверь админский список пользователей:
 
-Если ты админ, вернёт успех.
+https://bitrix24-stage.gaz.ru/local/mvc_demo/admin/users
 
 
 ---
 
 Что мы сделали
 
-Раньше было так:
+Теперь у нас есть полноценная структура:
 
-$router->get('/me', [HomeController::class, 'me'], ['auth']);
-$router->get('/admin-only', [HomeController::class, 'adminOnly'], ['auth', 'admin']);
+/local/mvc
+  общий фреймворк
 
-Теперь так:
+/local/mvc_demo
+  отдельный проект
 
-$router->group(['middleware' => ['auth']], function (Router $router) {
-    $router->get('/me', [HomeController::class, 'me']);
+/local/mvc_demo/Controllers/HomeController.php
+  публичные и пользовательские страницы
 
-    $router->group(['middleware' => ['admin']], function (Router $router) {
-        $router->get('/admin-only', [HomeController::class, 'adminOnly']);
-    });
+/local/mvc_demo/Controllers/AdminController.php
+  админские страницы
+
+И маршруты стали понятные:
+
+/                 публичная главная
+/about            публичная страница
+/ping             публичный JSON
+/me               только авторизованный
+/admin/dashboard  только админ
+/admin/users      только админ
+
+Главная мысль:
+
+prefix добавляет начало адреса
+middleware защищает маршрут
+
+То есть группа:
+
+$router->group([
+    'prefix' => '/admin',
+    'middleware' => ['admin'],
+], function (Router $router) {
+    ...
 });
 
-Простыми словами:
+это как сказать:
 
-Открыли комнату "только для авторизованных".
-Внутри неё сделали ещё одну комнату "только для админов".
+Всё внутри — админский раздел.
 
-
----
-
-Зачем это нужно в реальных проектах
-
-Например, в sitebuilder можно будет сделать так:
-
-$router->group(['middleware' => ['auth']], function (Router $router) {
-    $router->get('/', [DashboardController::class, 'index']);
-    $router->get('/sites', [SiteController::class, 'index']);
-    $router->get('/pages', [PageController::class, 'index']);
-
-    $router->group(['middleware' => ['admin']], function (Router $router) {
-        $router->get('/settings', [SettingsController::class, 'index']);
-    });
-});
-
-И сразу понятно:
-
-Весь sitebuilder требует входа.
-А настройки доступны только админам.
-
-
----
-
-Следующий хороший шаг — сделать префиксы групп, чтобы можно было удобно писать:
-
-$router->group(['prefix' => '/admin', 'middleware' => ['auth', 'admin']], function (Router $router) {
-    $router->get('/dashboard', [AdminController::class, 'dashboard']);
-    $router->get('/users', [AdminController::class, 'users']);
-});
-
-И получить адреса:
-
-/local/mvc_demo/admin/dashboard
-/local/mvc_demo/admin/users
+Следующий шаг — сделать нормальный View-helper, чтобы в шаблонах не писать руками htmlspecialcharsbx() и чтобы были функции e(), url(), asset().
