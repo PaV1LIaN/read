@@ -1,162 +1,320 @@
-Дальше делаем App — запускатель проекта.
+Отлично, идём дальше.
 
-Зачем он нужен простыми словами:
+Сейчас сделаем:
 
-Сейчас у каждого проекта будет похожий index.php:
+/local/mvc/Core/Auth.php
 
-$request = Request::createFromGlobals();
-$router = new Router();
-require_once __DIR__ . '/routes.php';
-$router->dispatch($request);
+Auth — это помощник для авторизации.
 
-Если проектов будет много:
+Простыми словами, он будет отвечать на вопросы:
 
-/local/sitebuilder
-/local/glab
-/local/qr_opros
-/local/mvc_demo
-
-то этот код будет повторяться везде.
-
-Поэтому делаем один общий запускатель:
-
-App::run();
+Пользователь авторизован?
+Какой у него ID?
+Какой у него логин?
+Как получить ФИО?
+Как запретить доступ гостю?
 
 
 ---
 
-1. Создай файл /local/mvc/Core/App.php
+1. Создай /local/mvc/Core/Auth.php
 
 <?php
 
 namespace Local\Mvc\Core;
 
+use CUser;
+
 /**
- * App
+ * Auth
  *
- * Это запускатель MVC-приложения.
- *
- * Простыми словами:
- * проект говорит "запусти меня",
- * а App сам создаёт Request, Router, подключает routes.php
- * и запускает нужный контроллер.
+ * Помощник для работы с текущим пользователем Битрикса.
  */
-class App
+class Auth
 {
-    public static function run(?string $routesFile = null): void
+    /**
+     * Получить объект пользователя Битрикса.
+     */
+    public static function user(): ?CUser
     {
-        $projectRoot = self::projectRoot();
+        global $USER;
 
-        if ($routesFile === null) {
-            $routesFile = $projectRoot . '/routes.php';
-        }
-
-        if (!is_file($routesFile)) {
-            Response::html(
-                '<h1>500</h1><p>Файл маршрутов не найден.</p><pre>'
-                . htmlspecialchars($routesFile)
-                . '</pre>',
-                500
-            )->send();
-
-            return;
-        }
-
-        /**
-         * 1. Создаём объект запроса.
-         */
-        $request = Request::createFromGlobals();
-
-        /**
-         * 2. Создаём роутер.
-         */
-        $router = new Router();
-
-        /**
-         * 3. Подключаем маршруты конкретного проекта.
-         *
-         * Внутри routes.php будет доступна переменная $router.
-         */
-        require $routesFile;
-
-        /**
-         * 4. Запускаем обработку запроса.
-         */
-        $router->dispatch($request);
+        return $USER instanceof CUser ? $USER : null;
     }
 
-    public static function projectRoot(): string
+    /**
+     * Проверить, авторизован ли пользователь.
+     */
+    public static function check(): bool
     {
-        if (!defined('LOCAL_MVC_PROJECT_ROOT')) {
-            return $_SERVER['DOCUMENT_ROOT'] . '/local/mvc';
-        }
+        $user = self::user();
 
-        return rtrim((string)LOCAL_MVC_PROJECT_ROOT, '/');
+        return $user !== null && $user->IsAuthorized();
     }
 
-    public static function projectUrl(): string
+    /**
+     * Получить ID текущего пользователя.
+     */
+    public static function id(): int
     {
-        if (!defined('LOCAL_MVC_PROJECT_URL')) {
-            return '/local/mvc';
+        $user = self::user();
+
+        if ($user === null || !$user->IsAuthorized()) {
+            return 0;
         }
 
-        return rtrim((string)LOCAL_MVC_PROJECT_URL, '/');
+        return (int)$user->GetID();
     }
 
-    public static function projectNamespace(): string
+    /**
+     * Получить логин пользователя.
+     */
+    public static function login(): string
     {
-        if (!defined('LOCAL_MVC_PROJECT_NAMESPACE')) {
-            return 'Local\\Mvc\\';
+        $user = self::user();
+
+        if ($user === null || !$user->IsAuthorized()) {
+            return '';
         }
 
-        return rtrim((string)LOCAL_MVC_PROJECT_NAMESPACE, '\\') . '\\';
+        return (string)$user->GetLogin();
+    }
+
+    /**
+     * Получить email пользователя.
+     */
+    public static function email(): string
+    {
+        $userId = self::id();
+
+        if ($userId <= 0) {
+            return '';
+        }
+
+        $rs = \CUser::GetByID($userId);
+
+        if ($row = $rs->Fetch()) {
+            return (string)($row['EMAIL'] ?? '');
+        }
+
+        return '';
+    }
+
+    /**
+     * Получить ФИО пользователя.
+     */
+    public static function name(): string
+    {
+        $userId = self::id();
+
+        if ($userId <= 0) {
+            return '';
+        }
+
+        $rs = \CUser::GetByID($userId);
+
+        if ($row = $rs->Fetch()) {
+            $lastName = trim((string)($row['LAST_NAME'] ?? ''));
+            $name = trim((string)($row['NAME'] ?? ''));
+            $secondName = trim((string)($row['SECOND_NAME'] ?? ''));
+
+            $fullName = trim($lastName . ' ' . $name . ' ' . $secondName);
+
+            if ($fullName !== '') {
+                return $fullName;
+            }
+
+            return (string)($row['LOGIN'] ?? '');
+        }
+
+        return '';
+    }
+
+    /**
+     * Проверить, является ли пользователь администратором.
+     */
+    public static function isAdmin(): bool
+    {
+        $user = self::user();
+
+        return $user !== null && $user->IsAdmin();
+    }
+
+    /**
+     * Получить группы пользователя.
+     */
+    public static function groups(): array
+    {
+        $user = self::user();
+
+        if ($user === null || !$user->IsAuthorized()) {
+            return [];
+        }
+
+        $groups = $user->GetUserGroupArray();
+
+        return is_array($groups) ? array_map('intval', $groups) : [];
+    }
+
+    /**
+     * Проверить, входит ли пользователь в группу.
+     */
+    public static function inGroup(int $groupId): bool
+    {
+        return in_array($groupId, self::groups(), true);
     }
 }
 
 
 ---
 
-2. Теперь упрощаем /local/mvc_demo/index.php
+2. Добавим защиту в базовый Controller
 
-Если ты уже создал /local/mvc_demo, то файл:
+Теперь удобно сделать методы:
 
-/local/mvc_demo/index.php
+$this->requireAuth();
+$this->requireAdmin();
 
-можно сделать таким:
+Открой:
 
-<?php
+/local/mvc/Core/Controller.php
+
+И перед последней закрывающей скобкой класса добавь методы:
 
 /**
- * index.php проекта mvc_demo.
- *
- * Это входная точка конкретного проекта.
- */
+     * Запретить доступ гостям.
+     */
+    protected function requireAuth(): ?Response
+    {
+        if (Auth::check()) {
+            return null;
+        }
 
-define('LOCAL_MVC_PROJECT_ROOT', __DIR__);
-define('LOCAL_MVC_PROJECT_URL', '/local/mvc_demo');
-define('LOCAL_MVC_PROJECT_NAMESPACE', 'Local\\MvcDemo\\');
+        return $this->error('AUTH_REQUIRED', [
+            'message' => 'Нужно авторизоваться',
+        ], 401);
+    }
 
-require_once $_SERVER['DOCUMENT_ROOT'] . '/local/mvc/bootstrap.php';
+    /**
+     * Запретить доступ всем, кроме администраторов.
+     */
+    protected function requireAdmin(): ?Response
+    {
+        if (Auth::isAdmin()) {
+            return null;
+        }
 
-use Local\Mvc\Core\App;
+        return $this->error('ADMIN_REQUIRED', [
+            'message' => 'Нужны права администратора',
+        ], 403);
+    }
 
-App::run();
+То есть в контроллере можно будет писать:
 
-Вот теперь красиво.
+if ($response = $this->requireAuth()) {
+    return $response;
+}
 
-Проект просто говорит:
-
-Я лежу здесь.
-Мой URL такой.
-Мой namespace такой.
-Запусти меня.
-
-А всё остальное делает фреймворк.
+И если пользователь не авторизован — метод сразу вернёт ошибку.
 
 
 ---
 
-3. Что должно остаться в /local/mvc_demo/routes.php
+3. Добавим тестовый метод в mvc_demo
+
+Открой:
+
+/local/mvc_demo/Controllers/HomeController.php
+
+Добавь сверху use:
+
+use Local\Mvc\Core\Auth;
+
+И внутрь класса добавь метод:
+
+public function me(): Response
+    {
+        if ($response = $this->requireAuth()) {
+            return $response;
+        }
+
+        return $this->success([
+            'id' => Auth::id(),
+            'login' => Auth::login(),
+            'name' => Auth::name(),
+            'email' => Auth::email(),
+            'is_admin' => Auth::isAdmin(),
+            'groups' => Auth::groups(),
+        ]);
+    }
+
+Полный контроллер может выглядеть так:
+
+<?php
+
+namespace Local\MvcDemo\Controllers;
+
+use Local\Mvc\Core\Auth;
+use Local\Mvc\Core\Controller;
+use Local\Mvc\Core\Response;
+
+class HomeController extends Controller
+{
+    public function index(): Response
+    {
+        $name = (string)$this->request->get('name', 'Гость');
+
+        return $this->render('home/index', [
+            'title' => 'MVC Demo',
+            'message' => 'Привет, ' . $name . '! Это отдельный проект, который использует общий фреймворк.',
+        ]);
+    }
+
+    public function about(): Response
+    {
+        return $this->render('home/index', [
+            'title' => 'О проекте MVC Demo',
+            'message' => 'Этот проект лежит в /local/mvc_demo, а фреймворк лежит отдельно в /local/mvc.',
+        ]);
+    }
+
+    public function ping(): Response
+    {
+        return $this->success([
+            'message' => 'pong',
+            'project' => 'mvc_demo',
+            'framework' => 'local_mvc',
+            'path' => $this->request->path(),
+        ]);
+    }
+
+    public function me(): Response
+    {
+        if ($response = $this->requireAuth()) {
+            return $response;
+        }
+
+        return $this->success([
+            'id' => Auth::id(),
+            'login' => Auth::login(),
+            'name' => Auth::name(),
+            'email' => Auth::email(),
+            'is_admin' => Auth::isAdmin(),
+            'groups' => Auth::groups(),
+        ]);
+    }
+}
+
+
+---
+
+4. Обнови /local/mvc_demo/routes.php
+
+Добавь маршрут:
+
+$router->get('/me', [HomeController::class, 'me']);
+
+Полный файл:
 
 <?php
 
@@ -171,51 +329,83 @@ $router->get('/about', [HomeController::class, 'about']);
 
 $router->get('/ping', [HomeController::class, 'ping']);
 
-
----
-
-Что мы сделали
-
-Было:
-
-/local/mvc_demo/index.php сам создаёт Request
-/local/mvc_demo/index.php сам создаёт Router
-/local/mvc_demo/index.php сам подключает routes.php
-/local/mvc_demo/index.php сам запускает dispatch
-
-Стало:
-
-/local/mvc_demo/index.php только описывает проект
-App::run() запускает всё остальное
-
-То есть теперь каждый новый проект будет подключаться одинаково:
-
-define('LOCAL_MVC_PROJECT_ROOT', __DIR__);
-define('LOCAL_MVC_PROJECT_URL', '/local/sitebuilder');
-define('LOCAL_MVC_PROJECT_NAMESPACE', 'Local\\Sitebuilder\\');
-
-require_once $_SERVER['DOCUMENT_ROOT'] . '/local/mvc/bootstrap.php';
-
-use Local\Mvc\Core\App;
-
-App::run();
+$router->get('/me', [HomeController::class, 'me']);
 
 
 ---
 
-Проверка
+5. Проверяем
 
 Сбрось OPcache:
 
 opcache_reset();
 echo 'OPcache reset OK';
 
-Проверь:
+Открой:
 
-https://bitrix24-stage.gaz.ru/local/mvc_demo/
+https://bitrix24-stage.gaz.ru/local/mvc_demo/me
 
-https://bitrix24-stage.gaz.ru/local/mvc_demo/about
+Если ты авторизован в Битриксе, должен быть JSON примерно такой:
 
-https://bitrix24-stage.gaz.ru/local/mvc_demo/ping
+{
+  "ok": true,
+  "data": {
+    "id": 1,
+    "login": "admin",
+    "name": "Иван Иванов",
+    "email": "admin@example.ru",
+    "is_admin": true,
+    "groups": [1, 2, 3]
+  }
+}
 
-Если всё работает — следующий шаг будет очень важный: сделаем Auth-класс, чтобы фреймворк умел проверять авторизацию пользователя Битрикса.
+Если не авторизован:
+
+{
+  "ok": false,
+  "error": "AUTH_REQUIRED",
+  "details": {
+    "message": "Нужно авторизоваться"
+  }
+}
+
+
+---
+
+Что мы сделали
+
+Теперь фреймворк умеет работать с пользователем Битрикса.
+
+Появился общий инструмент:
+
+Auth::check()
+Auth::id()
+Auth::login()
+Auth::name()
+Auth::email()
+Auth::isAdmin()
+Auth::groups()
+Auth::inGroup(1)
+
+И в любом проекте можно писать:
+
+if ($response = $this->requireAuth()) {
+    return $response;
+}
+
+или:
+
+if ($response = $this->requireAdmin()) {
+    return $response;
+}
+
+Это уже очень полезно для будущих проектов:
+
+sitebuilder
+glab
+qr_opros
+админки
+API
+диск-компонента
+
+Следующий шаг — сделать Middleware, чтобы не писать проверку авторизации вручную в каждом методе. Например, чтобы маршрут сразу говорил: “сюда пускать только авторизованных”.
