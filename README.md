@@ -1,126 +1,74 @@
-Отлично, теперь диагноз окончательный:
+<?php
 
-server does not support SSL, but SSL was required
-
-Значит моя проба с sslmode=require не подходит. PostgreSQL-серверы не поддерживают SSL.
-
-Итог:
-
-SSL включить из MVC нельзя.
-pg_hba.conf обойти из PHP нельзя.
-
-Это как дверь в кабинет: наш код подошёл к двери, но охрана PostgreSQL сказала:
-
-Сервер 192.168.7.109 не разрешён для bx_user к базе ProjectsDB.
-
-Что делаем сейчас
-
-Сначала откатываем SSL в нашем MVC.
-
-В файле:
-
-/local/mvc/Core/Db.php
-
-найди функцию:
-
-private static function makePdoByMvc(string $dsn): PDO
-
-и замени её обратно на такую:
-
-private static function makePdoByMvc(string $dsn): PDO
+function sb_db(): PDO
 {
-    if (!defined('DB_USER')) {
-        throw new RuntimeException('Константа DB_USER не найдена');
+    static $pdo = null;
+
+    if ($pdo instanceof PDO) {
+        return $pdo;
     }
 
-    if (!defined('DB_PASS')) {
-        throw new RuntimeException('Константа DB_PASS не найдена');
+    require_once $_SERVER['DOCUMENT_ROOT'] . '/local/php_interface/lib/pg_master.php';
+
+    if (!function_exists('getPDO')) {
+        throw new RuntimeException('FUNCTION_getPDO_NOT_FOUND');
     }
 
-    if (stripos($dsn, 'pgsql:') !== 0) {
-        $dsn = 'pgsql:' . $dsn;
+    $pdo = getPDO();
+
+    if (!$pdo instanceof PDO) {
+        throw new RuntimeException('getPDO_DID_NOT_RETURN_PDO');
     }
 
-    /**
-     * ВАЖНО:
-     * sslmode=require убрали, потому что PostgreSQL ответил:
-     * server does not support SSL
-     */
-    return new PDO(
-        $dsn,
-        constant('DB_USER'),
-        constant('DB_PASS'),
-        [
-            PDO::ATTR_ERRMODE            => PDO::ERRMODE_EXCEPTION,
-            PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
-            PDO::ATTR_EMULATE_PREPARES   => false,
-        ]
-    );
+    $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
+    $pdo->setAttribute(PDO::ATTR_DEFAULT_FETCH_MODE, PDO::FETCH_ASSOC);
+
+    try {
+        $pdo->exec("SET search_path TO sitebuilder, public");
+    } catch (Throwable $e) {
+        // Если схема уже задана на уровне подключения — не критично.
+    }
+
+    return $pdo;
 }
 
-Потом сбрось OPcache:
+function sb_db_fetch_all(string $sql, array $params = []): array
+{
+    $stmt = sb_db()->prepare($sql);
+    $stmt->execute($params);
+    return $stmt->fetchAll();
+}
 
-opcache_reset();
-echo 'OPcache reset OK';
+function sb_db_fetch_one(string $sql, array $params = []): ?array
+{
+    $stmt = sb_db()->prepare($sql);
+    $stmt->execute($params);
+    $row = $stmt->fetch();
 
-Почему MVC не может это исправить кодом
+    return $row !== false ? $row : null;
+}
 
-Ошибка была такая:
+function sb_db_execute(string $sql, array $params = []): bool
+{
+    $stmt = sb_db()->prepare($sql);
+    return $stmt->execute($params);
+}
 
-в pg_hba.conf нет записи для компьютера "192.168.7.109", пользователя "bx_user", базы "ProjectsDB", без шифрования
+function sb_db_last_insert_id(?string $sequence = null): int
+{
+    return (int)sb_db()->lastInsertId($sequence);
+}
 
-Это значит, что на PostgreSQL-серверах нет разрешения для подключения:
+function sb_json_decode_assoc($value): array
+{
+    if (is_array($value)) {
+        return $value;
+    }
 
-кто подключается: 192.168.7.109
-пользователь: bx_user
-база: ProjectsDB
-тип подключения: без SSL
+    if ($value === null || $value === '') {
+        return [];
+    }
 
-Чтобы база пустила наш MVC, на PostgreSQL-серверах нужно добавить разрешение в pg_hba.conf.
-
-На каждом узле PostgreSQL:
-
-192.168.7.100
-192.168.7.101
-192.168.7.102
-
-нужна строка примерно такая:
-
-host    ProjectsDB    bx_user    192.168.7.109/32    md5
-
-или, если используется scram-sha-256:
-
-host    ProjectsDB    bx_user    192.168.7.109/32    scram-sha-256
-
-После этого на PostgreSQL:
-
-sudo systemctl reload postgresql
-
-или через SQL:
-
-SELECT pg_reload_conf();
-
-Что по нашему MVC
-
-Наш MVC сейчас работает правильно. Он дошёл до базы и показал реальную проблему.
-
-Цепочка такая:
-
-/local/mvc/db/ping
-  ↓
-DbController
-  ↓
-Db
-  ↓
-getPdo()
-  ↓
-DB_UNAVAILABLE
-  ↓
-MVC сам проверил DB_NODES
-  ↓
-PostgreSQL ответил: нет доступа для 192.168.7.109
-
-То есть код MVC чинить дальше не нужно.
-Нужно либо дать доступ 192.168.7.109 в PostgreSQL, либо для обучения временно продолжить без PostgreSQL и сделать следующий шаг на тестовой модели без базы.
-
-Я бы сейчас сделал так: не останавливаемся на PostgreSQL, а продолжаем строить MVC. Следующим шагом можно сделать Auth и Access через пользователя Битрикса, а подключение к PostgreSQL вернём, когда для 192.168.7.109 добавят доступ в pg_hba.conf.
+    $decoded = json_decode((string)$value, true);
+    return is_array($decoded) ? $decoded : [];
+}
