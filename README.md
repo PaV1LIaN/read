@@ -1,87 +1,134 @@
-Идём дальше. Сейчас делаем админский раздел через prefix-группу.
+Да, тогда не делаем View-helper.
+Идём дальше проще: учимся обрабатывать формы и POST-запросы.
 
-То есть хотим такие адреса:
+Сейчас сделаем страницу:
 
-/local/mvc_demo/admin/dashboard
-/local/mvc_demo/admin/users
+/local/mvc_demo/form
 
-И чтобы весь раздел /admin/... был доступен только администратору.
+На ней будет форма:
 
+Имя
+Сообщение
+Кнопка отправить
 
----
+Форма будет отправляться сюда:
 
-Что мы сейчас сделаем
+POST /local/mvc_demo/form/send
 
-Добавим:
+И контроллер проверит:
 
-/local/mvc_demo/Controllers/AdminController.php
-/local/mvc_demo/Views/admin/dashboard.php
-/local/mvc_demo/Views/admin/users.php
-
-И обновим:
-
-/local/mvc_demo/routes.php
-/local/mvc_demo/Views/layouts/app.php
+имя заполнено?
+сообщение заполнено?
+sessid Битрикса правильный?
 
 
 ---
 
-1. Создай /local/mvc_demo/Controllers/AdminController.php
+1. Создай контроллер формы
+
+Файл:
+
+/local/mvc_demo/Controllers/FormController.php
+
+Код:
 
 <?php
 
 namespace Local\MvcDemo\Controllers;
 
-use Local\Mvc\Core\Auth;
 use Local\Mvc\Core\Controller;
 use Local\Mvc\Core\Response;
 
-class AdminController extends Controller
+class FormController extends Controller
 {
-    public function dashboard(): Response
+    /**
+     * Показать форму.
+     */
+    public function index(): Response
     {
-        return $this->render('admin/dashboard', [
-            'title' => 'Админ-панель',
-            'message' => 'Это защищённая админская страница. Сюда может зайти только администратор.',
-            'user' => [
-                'id' => Auth::id(),
-                'login' => Auth::login(),
-                'name' => Auth::name(),
-                'email' => Auth::email(),
+        return $this->render('form/index', [
+            'title' => 'Тестовая форма',
+            'errors' => [],
+            'success' => '',
+            'old' => [
+                'name' => '',
+                'message' => '',
             ],
         ]);
     }
 
-    public function users(): Response
+    /**
+     * Обработать отправку формы.
+     */
+    public function send(): Response
     {
-        return $this->render('admin/users', [
-            'title' => 'Пользователи',
-            'users' => [
-                [
-                    'id' => Auth::id(),
-                    'login' => Auth::login(),
-                    'name' => Auth::name(),
-                    'email' => Auth::email(),
-                    'is_admin' => Auth::isAdmin() ? 'Да' : 'Нет',
+        $name = trim((string)$this->request->post('name', ''));
+        $message = trim((string)$this->request->post('message', ''));
+
+        $errors = [];
+
+        /**
+         * Проверяем sessid Битрикса.
+         *
+         * Это защита от чужой отправки формы.
+         */
+        if (function_exists('check_bitrix_sessid') && !check_bitrix_sessid()) {
+            $errors[] = 'Ошибка безопасности: неверный sessid.';
+        }
+
+        if ($name === '') {
+            $errors[] = 'Введите имя.';
+        }
+
+        if ($message === '') {
+            $errors[] = 'Введите сообщение.';
+        }
+
+        if (!empty($errors)) {
+            return $this->render('form/index', [
+                'title' => 'Тестовая форма',
+                'errors' => $errors,
+                'success' => '',
+                'old' => [
+                    'name' => $name,
+                    'message' => $message,
                 ],
+            ]);
+        }
+
+        /**
+         * Пока никуда не сохраняем.
+         * Просто показываем, что POST-запрос успешно обработан.
+         */
+        return $this->render('form/index', [
+            'title' => 'Тестовая форма',
+            'errors' => [],
+            'success' => 'Форма успешно отправлена. Имя: ' . $name . ', сообщение: ' . $message,
+            'old' => [
+                'name' => '',
+                'message' => '',
             ],
         ]);
     }
 }
 
-Пока список пользователей тестовый — выводим текущего пользователя. Позже подключим нормальную модель и будем брать пользователей из базы Битрикса.
+
+---
+
+2. Создай папку view
+
+/local/mvc_demo/Views/form/
 
 
 ---
 
-2. Создай папку Views для админки
+3. Создай view формы
 
-/local/mvc_demo/Views/admin/
+Файл:
 
+/local/mvc_demo/Views/form/index.php
 
----
-
-3. Создай /local/mvc_demo/Views/admin/dashboard.php
+Код:
 
 <?php
 
@@ -89,127 +136,110 @@ if (!defined('B_PROLOG_INCLUDED') || B_PROLOG_INCLUDED !== true) {
     die();
 }
 
-?>
-
-<div class="mvc-card">
-    <h1 class="mvc-page-title">
-        <?= htmlspecialcharsbx($title ?? 'Админ-панель') ?>
-    </h1>
-
-    <p class="mvc-page-text">
-        <?= htmlspecialcharsbx($message ?? '') ?>
-    </p>
-
-    <div class="mvc-info">
-        <b>Текущий администратор:</b>
-
-        <ol>
-            <li>
-                ID:
-                <span class="mvc-code">
-                    <?= htmlspecialcharsbx($user['id'] ?? '') ?>
-                </span>
-            </li>
-
-            <li>
-                Логин:
-                <span class="mvc-code">
-                    <?= htmlspecialcharsbx($user['login'] ?? '') ?>
-                </span>
-            </li>
-
-            <li>
-                Имя:
-                <span class="mvc-code">
-                    <?= htmlspecialcharsbx($user['name'] ?? '') ?>
-                </span>
-            </li>
-
-            <li>
-                Email:
-                <span class="mvc-code">
-                    <?= htmlspecialcharsbx($user['email'] ?? '') ?>
-                </span>
-            </li>
-        </ol>
-    </div>
-</div>
-
-
----
-
-4. Создай /local/mvc_demo/Views/admin/users.php
-
-<?php
-
-if (!defined('B_PROLOG_INCLUDED') || B_PROLOG_INCLUDED !== true) {
-    die();
-}
+$name = $old['name'] ?? '';
+$message = $old['message'] ?? '';
 
 ?>
 
 <div class="mvc-card">
     <h1 class="mvc-page-title">
-        <?= htmlspecialcharsbx($title ?? 'Пользователи') ?>
+        <?= htmlspecialcharsbx($title ?? 'Форма') ?>
     </h1>
 
     <p class="mvc-page-text">
-        Пока это тестовый список. Позже здесь будет нормальная таблица пользователей.
+        Это простая форма, чтобы проверить POST-запросы в нашем MVC.
     </p>
 
-    <div class="mvc-info">
-        <table style="width: 100%; border-collapse: collapse;">
-            <thead>
-                <tr>
-                    <th style="text-align: left; padding: 8px; border-bottom: 1px solid #e5e7eb;">ID</th>
-                    <th style="text-align: left; padding: 8px; border-bottom: 1px solid #e5e7eb;">Логин</th>
-                    <th style="text-align: left; padding: 8px; border-bottom: 1px solid #e5e7eb;">Имя</th>
-                    <th style="text-align: left; padding: 8px; border-bottom: 1px solid #e5e7eb;">Email</th>
-                    <th style="text-align: left; padding: 8px; border-bottom: 1px solid #e5e7eb;">Админ</th>
-                </tr>
-            </thead>
+    <?php if (!empty($errors)): ?>
+        <div class="mvc-info" style="border-color: #fecaca; background: #fef2f2;">
+            <b style="color: #991b1b;">Ошибки:</b>
 
-            <tbody>
-                <?php foreach (($users ?? []) as $user): ?>
-                    <tr>
-                        <td style="padding: 8px; border-bottom: 1px solid #e5e7eb;">
-                            <?= htmlspecialcharsbx($user['id'] ?? '') ?>
-                        </td>
-
-                        <td style="padding: 8px; border-bottom: 1px solid #e5e7eb;">
-                            <?= htmlspecialcharsbx($user['login'] ?? '') ?>
-                        </td>
-
-                        <td style="padding: 8px; border-bottom: 1px solid #e5e7eb;">
-                            <?= htmlspecialcharsbx($user['name'] ?? '') ?>
-                        </td>
-
-                        <td style="padding: 8px; border-bottom: 1px solid #e5e7eb;">
-                            <?= htmlspecialcharsbx($user['email'] ?? '') ?>
-                        </td>
-
-                        <td style="padding: 8px; border-bottom: 1px solid #e5e7eb;">
-                            <?= htmlspecialcharsbx($user['is_admin'] ?? '') ?>
-                        </td>
-                    </tr>
+            <ol>
+                <?php foreach ($errors as $error): ?>
+                    <li style="color: #991b1b;">
+                        <?= htmlspecialcharsbx($error) ?>
+                    </li>
                 <?php endforeach; ?>
-            </tbody>
-        </table>
-    </div>
+            </ol>
+        </div>
+    <?php endif; ?>
+
+    <?php if (!empty($success)): ?>
+        <div class="mvc-info" style="border-color: #bbf7d0; background: #f0fdf4;">
+            <b style="color: #166534;">Успешно:</b>
+
+            <p style="color: #166534; margin-bottom: 0;">
+                <?= htmlspecialcharsbx($success) ?>
+            </p>
+        </div>
+    <?php endif; ?>
+
+    <form method="post" action="/local/mvc_demo/form/send" style="margin-top: 24px;">
+        <?php if (function_exists('bitrix_sessid_post')): ?>
+            <?= bitrix_sessid_post() ?>
+        <?php endif; ?>
+
+        <div style="margin-bottom: 16px;">
+            <label style="display: block; margin-bottom: 6px; font-weight: 600;">
+                Имя
+            </label>
+
+            <input
+                type="text"
+                name="name"
+                value="<?= htmlspecialcharsbx($name) ?>"
+                style="width: 100%; min-height: 42px; padding: 8px 12px; border: 1px solid #d1d5db; border-radius: 10px;"
+            >
+        </div>
+
+        <div style="margin-bottom: 16px;">
+            <label style="display: block; margin-bottom: 6px; font-weight: 600;">
+                Сообщение
+            </label>
+
+            <textarea
+                name="message"
+                rows="5"
+                style="width: 100%; padding: 8px 12px; border: 1px solid #d1d5db; border-radius: 10px;"
+            ><?= htmlspecialcharsbx($message) ?></textarea>
+        </div>
+
+        <button
+            type="submit"
+            style="min-height: 42px; padding: 0 18px; border: 0; border-radius: 10px; background: #2563eb; color: #fff; font-weight: 600; cursor: pointer;"
+        >
+            Отправить
+        </button>
+    </form>
 </div>
 
 
 ---
 
-5. Обнови /local/mvc_demo/routes.php
+4. Обнови routes
 
-Полностью замени файл:
+Файл:
+
+/local/mvc_demo/routes.php
+
+Добавь use:
+
+use Local\MvcDemo\Controllers\FormController;
+
+И добавь маршруты:
+
+$router->get('/form', [FormController::class, 'index']);
+
+$router->post('/form/send', [FormController::class, 'send']);
+
+Примерно получится так:
 
 <?php
 
 use Local\Mvc\Core\Router;
 use Local\MvcDemo\Controllers\HomeController;
 use Local\MvcDemo\Controllers\AdminController;
+use Local\MvcDemo\Controllers\FormController;
 
 /** @var Router $router */
 
@@ -222,23 +252,16 @@ $router->get('/about', [HomeController::class, 'about']);
 
 $router->get('/ping', [HomeController::class, 'ping']);
 
+$router->get('/form', [FormController::class, 'index']);
+
+$router->post('/form/send', [FormController::class, 'send']);
+
 /**
  * Только авторизованные пользователи.
  */
 $router->group(['middleware' => ['auth']], function (Router $router) {
     $router->get('/me', [HomeController::class, 'me']);
 
-    /**
-     * Админский раздел.
-     *
-     * Всё внутри получит:
-     * prefix: /admin
-     * middleware: auth + admin
-     *
-     * То есть:
-     * /admin/dashboard
-     * /admin/users
-     */
     $router->group([
         'prefix' => '/admin',
         'middleware' => ['admin'],
@@ -248,141 +271,81 @@ $router->group(['middleware' => ['auth']], function (Router $router) {
     });
 });
 
-Что здесь важно
 
-Вот эта группа:
+---
 
-$router->group([
-    'prefix' => '/admin',
-    'middleware' => ['admin'],
-], function (Router $router) {
+5. Добавь ссылку в меню
 
-означает:
+Файл:
 
-Все маршруты внутри начинаются с /admin
-и доступны только администратору.
+/local/mvc_demo/Views/layouts/app.php
 
-То есть:
+В меню добавь:
 
-$router->get('/dashboard', ...)
+<a href="/local/mvc_demo/form">Форма</a>
 
-превращается в:
+Например:
 
-/admin/dashboard
-
-А:
-
-$router->get('/users', ...)
-
-превращается в:
-
-/admin/users
+<nav class="mvc-nav">
+    <a href="/local/mvc_demo/">Главная</a>
+    <a href="/local/mvc_demo/about">О проекте</a>
+    <a href="/local/mvc_demo/form">Форма</a>
+    <a href="/local/mvc_demo/me">Я</a>
+    <a href="/local/mvc_demo/admin/dashboard">Админка</a>
+    <a href="/local/mvc_demo/admin/users">Пользователи</a>
+    <a href="/local/mvc_demo/ping" target="_blank">Ping JSON</a>
+</nav>
 
 
 ---
 
-6. Обнови меню /local/mvc_demo/Views/layouts/app.php
-
-Замени файл:
-
-<?php
-
-if (!defined('B_PROLOG_INCLUDED') || B_PROLOG_INCLUDED !== true) {
-    die();
-}
-
-?>
-
-<div class="mvc-app">
-    <div class="mvc-topbar">
-        <div class="mvc-brand">
-            <div class="mvc-brand__title">MVC Demo</div>
-            <div class="mvc-brand__subtitle">Отдельный проект на общем MVC-фреймворке</div>
-        </div>
-
-        <nav class="mvc-nav">
-            <a href="/local/mvc_demo/">Главная</a>
-            <a href="/local/mvc_demo/about">О проекте</a>
-            <a href="/local/mvc_demo/me">Я</a>
-            <a href="/local/mvc_demo/admin/dashboard">Админка</a>
-            <a href="/local/mvc_demo/admin/users">Пользователи</a>
-            <a href="/local/mvc_demo/ping" target="_blank">Ping JSON</a>
-        </nav>
-    </div>
-
-    <?= $content ?? '' ?>
-</div>
-
-
----
-
-7. Проверяем
+6. Проверяем
 
 Сбрось OPcache:
 
 opcache_reset();
 echo 'OPcache reset OK';
 
-Проверь публичную страницу:
+Открой:
 
-https://bitrix24-stage.gaz.ru/local/mvc_demo/
+https://bitrix24-stage.gaz.ru/local/mvc_demo/form
 
-Проверь страницу текущего пользователя:
+Сначала нажми “Отправить” с пустыми полями. Должны появиться ошибки:
 
-https://bitrix24-stage.gaz.ru/local/mvc_demo/me
+Введите имя.
+Введите сообщение.
 
-Проверь админскую страницу:
+Потом заполни поля и отправь. Должно появиться сообщение:
 
-https://bitrix24-stage.gaz.ru/local/mvc_demo/admin/dashboard
-
-Проверь админский список пользователей:
-
-https://bitrix24-stage.gaz.ru/local/mvc_demo/admin/users
+Форма успешно отправлена...
 
 
 ---
 
-Что мы сделали
+Что мы сейчас добавили
 
-Теперь у нас есть полноценная структура:
+Раньше у нас были только GET-запросы:
 
-/local/mvc
-  общий фреймворк
+открыл страницу
+получил HTML или JSON
 
-/local/mvc_demo
-  отдельный проект
+Теперь появился POST:
 
-/local/mvc_demo/Controllers/HomeController.php
-  публичные и пользовательские страницы
+пользователь заполнил форму
+нажал кнопку
+браузер отправил POST
+Router нашёл POST-маршрут
+Controller проверил данные
+View показал результат
 
-/local/mvc_demo/Controllers/AdminController.php
-  админские страницы
+Главное, что нужно понять:
 
-И маршруты стали понятные:
+GET  — показать страницу
+POST — обработать действие
 
-/                 публичная главная
-/about            публичная страница
-/ping             публичный JSON
-/me               только авторизованный
-/admin/dashboard  только админ
-/admin/users      только админ
+Например:
 
-Главная мысль:
+GET  /form       — показать форму
+POST /form/send  — обработать форму
 
-prefix добавляет начало адреса
-middleware защищает маршрут
-
-То есть группа:
-
-$router->group([
-    'prefix' => '/admin',
-    'middleware' => ['admin'],
-], function (Router $router) {
-    ...
-});
-
-это как сказать:
-
-Всё внутри — админский раздел.
-
-Следующий шаг — сделать нормальный View-helper, чтобы в шаблонах не писать руками htmlspecialcharsbx() и чтобы были функции e(), url(), asset().
+Следующим шагом можно сделать валидацию отдельным инструментом, чтобы проверки Введите имя, Введите сообщение не писать вручную в каждом контроллере.
