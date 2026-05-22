@@ -1,433 +1,418 @@
-Отлично. Значит маршруты уже работают:
+Идём дальше. Сейчас сделаем слой базы данных.
 
-/local/mvc/about
-/local/mvc/ping
+У нас уже есть:
 
-Теперь делаем следующий важный кирпич — Layout.
+Request    — что пришло от пользователя
+Router     — куда отправить запрос
+Controller — что выполнить
+View       — что показать
+Layout     — общая оболочка страницы
+Response   — что вернуть пользователю
 
-Что такое Layout простыми словами
+Теперь добавим:
 
-Сейчас у нас View — это сама страница.
+Db    — подключение к PostgreSQL
+Model — удобная работа с таблицами
 
-Например:
+Зачем нужен Db
 
-Views/home/index.php
+Без Db в каждом контроллере пришлось бы писать:
 
-Но у каждой страницы обычно есть общие части:
+require_once $_SERVER['DOCUMENT_ROOT'].'/local/php_interface/lib/pg_master.php';
 
-верхнее меню
-контейнер
-фон
-заголовок
-подвал
-подключение CSS
+$pdo = getPdo();
 
-Чтобы не копировать это в каждую страницу, делают layout.
+$stmt = $pdo->prepare('SELECT * FROM table');
+$stmt->execute();
+$rows = $stmt->fetchAll();
 
-Представь так:
+И это будет повторяться везде.
 
-Layout — это рамка.
-View — это содержимое внутри рамки.
+А мы хотим так:
 
-Например:
+$rows = Db::fetchAll('SELECT * FROM sitebuilder.sites');
 
-Layout:
-  ┌─────────────────────────────┐
-  │ Меню                        │
-  │ ┌─────────────────────────┐ │
-  │ │ Здесь конкретная View   │ │
-  │ └─────────────────────────┘ │
-  └─────────────────────────────┘
+То есть Db — это как общий переходник к базе.
 
 
 ---
 
-Шаг 1. Создаём папку assets
+Шаг 1. Создаём /local/mvc/Core/Db.php
 
-Создай папку:
+Создай файл:
 
-/local/mvc/assets/
-
-В ней файл:
-
-/local/mvc/assets/app.css
+/local/mvc/Core/Db.php
 
 Код:
-
-.mvc-app {
-    max-width: 1180px;
-    margin: 24px auto 60px;
-    padding: 0 20px;
-}
-
-.mvc-topbar {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 20px;
-    margin-bottom: 24px;
-    padding: 18px 20px;
-    background: #ffffff;
-    border: 1px solid #e6e9ef;
-    border-radius: 18px;
-    box-shadow: 0 8px 24px rgba(15, 23, 42, 0.06);
-}
-
-.mvc-brand {
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-}
-
-.mvc-brand__title {
-    font-size: 20px;
-    font-weight: 700;
-    color: #111827;
-}
-
-.mvc-brand__subtitle {
-    font-size: 13px;
-    color: #6b7280;
-}
-
-.mvc-nav {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    flex-wrap: wrap;
-}
-
-.mvc-nav a {
-    display: inline-flex;
-    align-items: center;
-    min-height: 36px;
-    padding: 0 14px;
-    border-radius: 999px;
-    background: #f3f4f6;
-    color: #374151;
-    text-decoration: none;
-    font-size: 14px;
-    transition: 0.15s ease;
-}
-
-.mvc-nav a:hover {
-    background: #e5e7eb;
-    color: #111827;
-}
-
-.mvc-card {
-    background: #ffffff;
-    border: 1px solid #e6e9ef;
-    border-radius: 20px;
-    padding: 28px;
-    box-shadow: 0 8px 24px rgba(15, 23, 42, 0.06);
-}
-
-.mvc-page-title {
-    margin: 0 0 12px;
-    font-size: 28px;
-    line-height: 1.2;
-    color: #111827;
-}
-
-.mvc-page-text {
-    margin: 0;
-    font-size: 17px;
-    line-height: 1.6;
-    color: #4b5563;
-}
-
-.mvc-info {
-    margin-top: 24px;
-    padding: 18px;
-    background: #f8fafc;
-    border: 1px solid #e5e7eb;
-    border-radius: 16px;
-}
-
-.mvc-info b {
-    color: #111827;
-}
-
-.mvc-info ol {
-    margin: 12px 0 0;
-    padding-left: 20px;
-}
-
-.mvc-info li {
-    margin: 6px 0;
-    color: #4b5563;
-}
-
-.mvc-code {
-    display: inline-block;
-    padding: 2px 6px;
-    border-radius: 6px;
-    background: #eef2ff;
-    color: #3730a3;
-    font-family: monospace;
-    font-size: 13px;
-}
-
-@media (max-width: 700px) {
-    .mvc-topbar {
-        align-items: flex-start;
-        flex-direction: column;
-    }
-
-    .mvc-card {
-        padding: 20px;
-    }
-
-    .mvc-page-title {
-        font-size: 24px;
-    }
-}
-
-
----
-
-Шаг 2. Создаём layout
-
-Создай папку:
-
-/local/mvc/Views/layouts/
-
-В ней файл:
-
-/local/mvc/Views/layouts/app.php
-
-Код:
-
-<?php
-
-/**
- * Layout
- *
- * Это общая рамка для страниц MVC.
- *
- * Внутри переменной $content лежит конкретная страница.
- * Например:
- * Views/home/index.php
- */
-
-if (!defined('B_PROLOG_INCLUDED') || B_PROLOG_INCLUDED !== true) {
-    die();
-}
-
-?>
-
-<div class="mvc-app">
-    <div class="mvc-topbar">
-        <div class="mvc-brand">
-            <div class="mvc-brand__title">Local MVC</div>
-            <div class="mvc-brand__subtitle">Учебный MVC-фреймворк внутри Битрикс24</div>
-        </div>
-
-        <nav class="mvc-nav">
-            <a href="/local/mvc/">Главная</a>
-            <a href="/local/mvc/about">О MVC</a>
-            <a href="/local/mvc/ping" target="_blank">Ping JSON</a>
-        </nav>
-    </div>
-
-    <?= $content ?? '' ?>
-</div>
-
-Что важно понять
-
-Вот эта строка:
-
-<?= $content ?? '' ?>
-
-Это место, куда будет вставляться конкретная страница.
-
-То есть layout говорит:
-
-Я рисую общую оболочку.
-А сюда вставьте содержимое страницы.
-
-
----
-
-Шаг 3. Обновляем Controller.php
-
-Теперь render() должен работать так:
-
-1. Сначала собрать View в переменную $content.
-2. Потом вставить $content внутрь Layout.
-3. Потом отдать всё через Bitrix header/footer.
-
-Полностью замени файл:
-
-/local/mvc/Core/Controller.php
-
-на этот:
 
 <?php
 
 namespace Local\Mvc\Core;
 
-use Bitrix\Main\Page\Asset;
+use PDO;
+use PDOStatement;
+use RuntimeException;
 
 /**
- * Controller
+ * Db
  *
- * Базовый контроллер.
+ * Это единая точка входа в PostgreSQL.
+ *
+ * Простыми словами:
+ * если кому-то нужна база — он идёт сюда.
  */
-class Controller
+class Db
 {
     /**
-     * Текущий запрос.
+     * Здесь будем хранить одно PDO-подключение.
+     *
+     * Чтобы не подключаться к базе 10 раз за один запрос.
      */
-    protected Request $request;
+    private static ?PDO $pdo = null;
 
     /**
-     * Layout по умолчанию.
+     * Получить PDO.
      */
-    protected string $layout = 'layouts/app';
-
-    public function __construct(?Request $request = null)
+    public static function pdo(): PDO
     {
-        $this->request = $request ?? Request::createFromGlobals();
-    }
-
-    /**
-     * Показать HTML-страницу.
-     */
-    protected function render(string $view, array $params = [], ?string $layout = null): Response
-    {
-        $viewFile = dirname(__DIR__) . '/Views/' . $view . '.php';
-
-        if (!is_file($viewFile)) {
-            return Response::html(
-                '<h1>500</h1><p>View не найден.</p><pre>' . htmlspecialchars($viewFile) . '</pre>',
-                500
-            );
-        }
-
-        $layoutName = $layout ?? $this->layout;
-        $layoutFile = dirname(__DIR__) . '/Views/' . $layoutName . '.php';
-
-        if (!is_file($layoutFile)) {
-            return Response::html(
-                '<h1>500</h1><p>Layout не найден.</p><pre>' . htmlspecialchars($layoutFile) . '</pre>',
-                500
-            );
+        if (self::$pdo instanceof PDO) {
+            return self::$pdo;
         }
 
         /**
-         * Делаем переменные из массива.
+         * Подключаем твой существующий файл с PostgreSQL.
          *
-         * Например:
-         * ['title' => 'Главная']
+         * У тебя он уже используется в других проектах:
+         * /local/php_interface/lib/pg_master.php
+         */
+        $pgFile = $_SERVER['DOCUMENT_ROOT'] . '/local/php_interface/lib/pg_master.php';
+
+        if (!is_file($pgFile)) {
+            throw new RuntimeException('Файл подключения к PostgreSQL не найден: ' . $pgFile);
+        }
+
+        require_once $pgFile;
+
+        /**
+         * Ожидаем, что в pg_master.php есть функция getPdo().
+         */
+        if (!function_exists('getPdo')) {
+            throw new RuntimeException('Функция getPdo() не найдена в pg_master.php');
+        }
+
+        $pdo = getPdo();
+
+        if (!$pdo instanceof PDO) {
+            throw new RuntimeException('getPdo() должен вернуть объект PDO');
+        }
+
+        /**
+         * Настраиваем PDO, чтобы ошибки были нормальными исключениями.
+         */
+        $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
+
+        /**
+         * По умолчанию получаем строки как ассоциативные массивы.
          *
-         * станет:
-         * $title = 'Главная';
+         * То есть:
+         * $row['name']
+         *
+         * а не:
+         * $row[0]
          */
-        extract($params);
+        $pdo->setAttribute(PDO::ATTR_DEFAULT_FETCH_MODE, PDO::FETCH_ASSOC);
 
-        /**
-         * 1. Собираем конкретную View.
-         */
-        ob_start();
-        require $viewFile;
-        $content = ob_get_clean();
+        self::$pdo = $pdo;
 
-        /**
-         * 2. Подключаем CSS через механизм Битрикса.
-         */
-        if (class_exists(Asset::class)) {
-            Asset::getInstance()->addCss('/local/mvc/assets/app.css');
+        return self::$pdo;
+    }
+
+    /**
+     * Выполнить SQL-запрос.
+     */
+    public static function query(string $sql, array $params = []): PDOStatement
+    {
+        $stmt = self::pdo()->prepare($sql);
+        $stmt->execute($params);
+
+        return $stmt;
+    }
+
+    /**
+     * Получить все строки.
+     */
+    public static function fetchAll(string $sql, array $params = []): array
+    {
+        return self::query($sql, $params)->fetchAll();
+    }
+
+    /**
+     * Получить одну строку.
+     */
+    public static function fetchOne(string $sql, array $params = []): ?array
+    {
+        $row = self::query($sql, $params)->fetch();
+
+        if ($row === false) {
+            return null;
         }
 
-        /**
-         * 3. Устанавливаем заголовок страницы Битрикса.
-         */
-        global $APPLICATION;
+        return $row;
+    }
 
-        if (isset($APPLICATION) && is_object($APPLICATION) && isset($title)) {
-            $APPLICATION->SetTitle((string)$title);
+    /**
+     * Получить одно значение.
+     *
+     * Например:
+     * SELECT COUNT(*) FROM table
+     */
+    public static function value(string $sql, array $params = []): mixed
+    {
+        $value = self::query($sql, $params)->fetchColumn();
+
+        if ($value === false) {
+            return null;
         }
 
-        /**
-         * 4. Собираем итоговую страницу:
-         * header Битрикса + layout + footer Битрикса.
-         */
-        ob_start();
-
-        require $_SERVER['DOCUMENT_ROOT'] . '/bitrix/header.php';
-
-        require $layoutFile;
-
-        require $_SERVER['DOCUMENT_ROOT'] . '/bitrix/footer.php';
-
-        $html = ob_get_clean();
-
-        return Response::html($html);
+        return $value;
     }
 
     /**
-     * Вернуть произвольный JSON.
+     * Выполнить INSERT / UPDATE / DELETE.
+     *
+     * Возвращает количество затронутых строк.
      */
-    protected function json(array $data, int $status = 200): Response
+    public static function execute(string $sql, array $params = []): int
     {
-        return Response::json($data, $status);
-    }
-
-    /**
-     * Успешный JSON-ответ.
-     */
-    protected function success(array $data = []): Response
-    {
-        return $this->json([
-            'ok' => true,
-            'data' => $data,
-        ]);
-    }
-
-    /**
-     * JSON-ошибка.
-     */
-    protected function error(string $message, array $details = [], int $status = 400): Response
-    {
-        return $this->json([
-            'ok' => false,
-            'error' => $message,
-            'details' => $details,
-        ], $status);
-    }
-
-    /**
-     * Редирект.
-     */
-    protected function redirect(string $url): Response
-    {
-        return Response::redirect($url);
+        return self::query($sql, $params)->rowCount();
     }
 }
 
 
 ---
 
-Шаг 4. Обновляем View
+Шаг 2. Создаём /local/mvc/Core/Model.php
 
-Теперь в View больше не нужен большой контейнер с inline-стилями.
+Теперь сделаем базовую модель.
 
-Замени файл:
+Создай файл:
 
-/local/mvc/Views/home/index.php
+/local/mvc/Core/Model.php
 
-на этот:
+Код:
 
 <?php
 
+namespace Local\Mvc\Core;
+
+use RuntimeException;
+
 /**
- * View главной страницы.
+ * Model
  *
- * Здесь только содержимое страницы.
- * Меню, общий контейнер и стили находятся в layout.
+ * Это базовый класс для моделей.
+ *
+ * Потом от него будут наследоваться:
+ *
+ * Site
+ * Page
+ * UserAccess
+ * Application
  */
+abstract class Model
+{
+    /**
+     * Имя таблицы.
+     *
+     * Например:
+     * protected static string $table = 'sitebuilder.sites';
+     */
+    protected static string $table = '';
+
+    /**
+     * Главный ключ таблицы.
+     *
+     * Обычно id.
+     */
+    protected static string $primaryKey = 'id';
+
+    /**
+     * Получить имя таблицы.
+     */
+    protected static function table(): string
+    {
+        if (static::$table === '') {
+            throw new RuntimeException('У модели не указана таблица: ' . static::class);
+        }
+
+        return static::$table;
+    }
+
+    /**
+     * Получить все записи.
+     */
+    public static function all(int $limit = 100): array
+    {
+        $limit = max(1, min($limit, 500));
+
+        $sql = 'SELECT * FROM ' . static::table()
+            . ' ORDER BY ' . static::$primaryKey . ' DESC'
+            . ' LIMIT ' . $limit;
+
+        return Db::fetchAll($sql);
+    }
+
+    /**
+     * Найти одну запись по ID.
+     */
+    public static function find(int|string $id): ?array
+    {
+        $sql = 'SELECT * FROM ' . static::table()
+            . ' WHERE ' . static::$primaryKey . ' = :id'
+            . ' LIMIT 1';
+
+        return Db::fetchOne($sql, [
+            'id' => $id,
+        ]);
+    }
+
+    /**
+     * Посчитать количество записей.
+     */
+    public static function count(): int
+    {
+        $sql = 'SELECT COUNT(*) FROM ' . static::table();
+
+        return (int)Db::value($sql);
+    }
+
+    /**
+     * Удалить запись по ID.
+     */
+    public static function deleteById(int|string $id): int
+    {
+        $sql = 'DELETE FROM ' . static::table()
+            . ' WHERE ' . static::$primaryKey . ' = :id';
+
+        return Db::execute($sql, [
+            'id' => $id,
+        ]);
+    }
+}
+
+Что такое Model простыми словами
+
+Model — это родитель для таблиц.
+
+Например, потом сделаем:
+
+class Site extends Model
+{
+    protected static string $table = 'sitebuilder.sites';
+}
+
+И сможем писать:
+
+$sites = Site::all();
+$count = Site::count();
+$site = Site::find(5);
+
+То есть модель — это удобная обёртка над таблицей.
+
+
+---
+
+Шаг 3. Создаём тестовый контроллер базы
+
+Создай файл:
+
+/local/mvc/Controllers/DbController.php
+
+Код:
+
+<?php
+
+namespace Local\Mvc\Controllers;
+
+use Local\Mvc\Core\Controller;
+use Local\Mvc\Core\Db;
+use Local\Mvc\Core\Response;
+use Throwable;
+
+/**
+ * DbController
+ *
+ * Контроллер для проверки подключения к PostgreSQL.
+ */
+class DbController extends Controller
+{
+    /**
+     * Проверка базы.
+     */
+    public function test(): Response
+    {
+        try {
+            $row = Db::fetchOne("
+                SELECT
+                    current_database() AS database_name,
+                    current_schema() AS schema_name,
+                    now() AS server_time
+            ");
+
+            return $this->render('db/test', [
+                'title' => 'Проверка базы данных',
+                'row' => $row,
+                'error' => null,
+            ]);
+        } catch (Throwable $e) {
+            return $this->render('db/test', [
+                'title' => 'Ошибка подключения к базе',
+                'row' => null,
+                'error' => $e->getMessage(),
+            ]);
+        }
+    }
+
+    /**
+     * JSON-проверка базы.
+     */
+    public function ping(): Response
+    {
+        try {
+            $row = Db::fetchOne("
+                SELECT
+                    current_database() AS database_name,
+                    current_schema() AS schema_name,
+                    now() AS server_time
+            ");
+
+            return $this->success([
+                'db' => $row,
+            ]);
+        } catch (Throwable $e) {
+            return $this->error('DB_ERROR', [
+                'message' => $e->getMessage(),
+            ], 500);
+        }
+    }
+}
+
+
+---
+
+Шаг 4. Создаём View для проверки базы
+
+Создай папку:
+
+/local/mvc/Views/db/
+
+Создай файл:
+
+/local/mvc/Views/db/test.php
+
+Код:
+
+<?php
 
 if (!defined('B_PROLOG_INCLUDED') || B_PROLOG_INCLUDED !== true) {
     die();
@@ -437,86 +422,185 @@ if (!defined('B_PROLOG_INCLUDED') || B_PROLOG_INCLUDED !== true) {
 
 <div class="mvc-card">
     <h1 class="mvc-page-title">
-        <?= htmlspecialcharsbx($title ?? 'Без заголовка') ?>
+        <?= htmlspecialcharsbx($title ?? 'Проверка базы данных') ?>
     </h1>
 
-    <p class="mvc-page-text">
-        <?= htmlspecialcharsbx($message ?? '') ?>
-    </p>
+    <?php if (!empty($error)): ?>
+        <p class="mvc-page-text" style="color: #b91c1c;">
+            Ошибка:
+        </p>
 
-    <div class="mvc-info">
-        <b>Что сейчас происходит:</b>
+        <div class="mvc-info">
+            <pre><?= htmlspecialcharsbx($error) ?></pre>
+        </div>
+    <?php else: ?>
+        <p class="mvc-page-text">
+            Подключение к PostgreSQL работает.
+        </p>
 
-        <ol>
-            <li>Пользователь открывает адрес.</li>
-            <li><span class="mvc-code">urlrewrite.php</span> отправляет запрос в MVC.</li>
-            <li><span class="mvc-code">index.php</span> создаёт Request и Router.</li>
-            <li><span class="mvc-code">Router</span> находит нужный контроллер.</li>
-            <li><span class="mvc-code">Controller</span> собирает View.</li>
-            <li><span class="mvc-code">Layout</span> оборачивает View в общий шаблон.</li>
-            <li><span class="mvc-code">Response</span> отправляет HTML в браузер.</li>
-        </ol>
-    </div>
+        <div class="mvc-info">
+            <b>Информация от базы:</b>
+
+            <ol>
+                <li>
+                    База:
+                    <span class="mvc-code">
+                        <?= htmlspecialcharsbx($row['database_name'] ?? '') ?>
+                    </span>
+                </li>
+
+                <li>
+                    Схема:
+                    <span class="mvc-code">
+                        <?= htmlspecialcharsbx($row['schema_name'] ?? '') ?>
+                    </span>
+                </li>
+
+                <li>
+                    Время сервера:
+                    <span class="mvc-code">
+                        <?= htmlspecialcharsbx($row['server_time'] ?? '') ?>
+                    </span>
+                </li>
+            </ol>
+        </div>
+    <?php endif; ?>
 </div>
 
 
 ---
 
-Шаг 5. Проверяем
+Шаг 5. Обновляем routes.php
 
-Открой:
+Замени файл:
 
-https://bitrix24-stage.gaz.ru/local/mvc/
+/local/mvc/routes.php
 
-Потом:
+на такой:
 
-https://bitrix24-stage.gaz.ru/local/mvc/about
+<?php
 
-Теперь обе страницы должны быть внутри общего оформления:
+use Local\Mvc\Core\Router;
+use Local\Mvc\Controllers\HomeController;
+use Local\Mvc\Controllers\DbController;
 
-верхняя панель
-меню
-карточка
-единые стили
+/** @var Router $router */
+
+$router->get('/', [HomeController::class, 'index']);
+
+$router->get('/ping', [HomeController::class, 'ping']);
+
+$router->get('/go-home', [HomeController::class, 'goHome']);
+
+$router->get('/about', [HomeController::class, 'about']);
+
+$router->get('/db/test', [DbController::class, 'test']);
+
+$router->get('/db/ping', [DbController::class, 'ping']);
 
 
 ---
 
-Что мы сделали
+Шаг 6. Проверяем
 
-Раньше было так:
+Открой HTML-страницу проверки:
 
-Controller
+https://bitrix24-stage.gaz.ru/local/mvc/db/test
+
+Если всё хорошо, увидишь:
+
+Подключение к PostgreSQL работает.
+
+Потом проверь JSON:
+
+https://bitrix24-stage.gaz.ru/local/mvc/db/ping
+
+Должен быть примерно такой ответ:
+
+{
+    "ok": true,
+    "data": {
+        "db": {
+            "database_name": "...",
+            "schema_name": "public",
+            "server_time": "..."
+        }
+    }
+}
+
+
+---
+
+Что мы сейчас построили
+
+Теперь путь такой:
+
+Браузер
+  ↓
+/local/mvc/db/test
+  ↓
+urlrewrite.php
+  ↓
+index.php
+  ↓
+Request
+  ↓
+Router
+  ↓
+DbController
+  ↓
+Db
+  ↓
+PostgreSQL
   ↓
 View
   ↓
-Bitrix header/footer
-
-Теперь так:
-
-Controller
+Layout
   ↓
-View собирается в $content
+Response
   ↓
-Layout получает $content
-  ↓
-Bitrix header/footer
-  ↓
-Response отправляет HTML
+Браузер
 
-Главная мысль:
+Главное простыми словами
 
-View — это начинка.
-Layout — это оболочка.
+Db — это дверь в базу.
 
-Теперь каждая новая страница может быть маленькой.
+Db::fetchAll(...)
+Db::fetchOne(...)
+Db::value(...)
+Db::execute(...)
+
+Model — это будущая удобная работа с конкретными таблицами.
 
 Например:
 
-<div class="mvc-card">
-    <h1>Список сайтов</h1>
-</div>
+Site::all()
+Site::find(5)
+Site::count()
 
-А меню, контейнер, CSS и общая структура уже будут браться из layout.
+Но пока мы только подготовили основу.
 
-Следующим шагом можно делать Base Model + подключение к PostgreSQL, чтобы наш MVC начал работать с данными.
+
+---
+
+Если будет ошибка
+
+Если /local/mvc/db/test покажет ошибку:
+
+Файл подключения к PostgreSQL не найден
+
+значит путь к pg_master.php другой.
+
+Если покажет:
+
+Функция getPdo() не найдена
+
+значит в твоём файле функция называется иначе.
+
+Если покажет:
+
+SQLSTATE...
+
+значит файл подключился, но сама база вернула ошибку.
+
+Следующим шагом сделаем первую настоящую модель, например DemoItem, и научимся выводить список записей из таблицы через MVC.
