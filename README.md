@@ -1,398 +1,269 @@
-Идём дальше. Сейчас сделаем защиту от белых экранов — общий обработчик ошибок.
+Идём дальше. Сейчас сделаем Logger — журнал событий.
 
-Зачем это нужно
+Зачем нужен Logger
 
-Сейчас если где-то в проекте будет ошибка:
+Когда что-то ломается, сейчас ошибка уходит в стандартный error_log.
 
-не найден класс
-ошибка в SQL
-ошибка в PHP
-не найден файл view
+Но лучше, чтобы каждый проект мог писать свои логи сюда:
 
-может появиться белый экран или непонятная ошибка.
+/local/mvc_demo/logs/app.log
 
-Мы хотим, чтобы фреймворк сам показывал нормальную страницу:
+Простыми словами:
 
-500
-Ошибка приложения
+Logger — это тетрадка, куда приложение записывает:
+- ошибки
+- важные действия
+- отладочную информацию
 
-Файл:
-Строка:
-Сообщение:
+Например:
 
-А если это JSON-запрос — возвращал JSON.
+Logger::info('Пользователь открыл форму');
+Logger::error('Ошибка сохранения сайта');
 
 
 ---
 
-1. Создай /local/mvc/Core/ErrorHandler.php
-
-<?php
-
-namespace Local\Mvc\Core;
-
-use Throwable;
-
-/**
- * ErrorHandler
- *
- * Общий обработчик ошибок MVC.
- *
- * Его задача:
- * вместо белого экрана показать понятную ошибку.
- */
-class ErrorHandler
-{
-    private static ?Request $request = null;
-
-    public static function register(?Request $request = null): void
-    {
-        self::$request = $request;
-
-        /**
-         * Обычные PHP-ошибки превращаем в исключения.
-         */
-        set_error_handler(function ($severity, $message, $file, $line) {
-            if (!(error_reporting() & $severity)) {
-                return false;
-            }
-
-            throw new \ErrorException($message, 0, $severity, $file, $line);
-        });
-
-        /**
-         * Исключения ловим здесь.
-         */
-        set_exception_handler(function (Throwable $e) {
-            self::renderThrowable($e);
-        });
-
-        /**
-         * Фатальные ошибки ловим в конце выполнения.
-         */
-        register_shutdown_function(function () {
-            $error = error_get_last();
-
-            if ($error === null) {
-                return;
-            }
-
-            $fatalTypes = [
-                E_ERROR,
-                E_PARSE,
-                E_CORE_ERROR,
-                E_COMPILE_ERROR,
-            ];
-
-            if (!in_array($error['type'], $fatalTypes, true)) {
-                return;
-            }
-
-            self::renderFatal($error);
-        });
-    }
-
-    public static function renderThrowable(Throwable $e): void
-    {
-        self::log($e->getMessage(), $e->getFile(), $e->getLine());
-
-        if (self::wantsJson()) {
-            Response::json([
-                'ok' => false,
-                'error' => 'SERVER_ERROR',
-                'details' => self::debugEnabled()
-                    ? [
-                        'message' => $e->getMessage(),
-                        'file' => $e->getFile(),
-                        'line' => $e->getLine(),
-                    ]
-                    : [
-                        'message' => 'Внутренняя ошибка сервера',
-                    ],
-            ], 500)->send();
-
-            return;
-        }
-
-        Response::html(self::errorHtml(
-            'Ошибка приложения',
-            $e->getMessage(),
-            $e->getFile(),
-            $e->getLine(),
-            $e->getTraceAsString()
-        ), 500)->send();
-    }
-
-    private static function renderFatal(array $error): void
-    {
-        $message = (string)($error['message'] ?? 'Fatal error');
-        $file = (string)($error['file'] ?? '');
-        $line = (int)($error['line'] ?? 0);
-
-        self::log($message, $file, $line);
-
-        if (self::wantsJson()) {
-            Response::json([
-                'ok' => false,
-                'error' => 'FATAL_ERROR',
-                'details' => self::debugEnabled()
-                    ? [
-                        'message' => $message,
-                        'file' => $file,
-                        'line' => $line,
-                    ]
-                    : [
-                        'message' => 'Критическая ошибка сервера',
-                    ],
-            ], 500)->send();
-
-            return;
-        }
-
-        Response::html(self::errorHtml(
-            'Критическая ошибка',
-            $message,
-            $file,
-            $line,
-            ''
-        ), 500)->send();
-    }
-
-    private static function errorHtml(string $title, string $message, string $file, int $line, string $trace): string
-    {
-        if (!self::debugEnabled()) {
-            return '
-                <div style="max-width:900px;margin:40px auto;padding:24px;border:1px solid #fecaca;border-radius:16px;background:#fef2f2;color:#991b1b;">
-                    <h1 style="margin-top:0;">500</h1>
-                    <p>Внутренняя ошибка сервера.</p>
-                </div>
-            ';
-        }
-
-        return '
-            <div style="max-width:1100px;margin:40px auto;padding:24px;border:1px solid #fecaca;border-radius:16px;background:#fef2f2;color:#111827;font-family:Arial,sans-serif;">
-                <h1 style="margin-top:0;color:#991b1b;">500 — ' . htmlspecialchars($title, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') . '</h1>
-
-                <p><b>Сообщение:</b></p>
-                <pre style="white-space:pre-wrap;background:#fff;padding:16px;border-radius:10px;border:1px solid #fecaca;">' . htmlspecialchars($message, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') . '</pre>
-
-                <p><b>Файл:</b></p>
-                <pre style="white-space:pre-wrap;background:#fff;padding:16px;border-radius:10px;border:1px solid #fecaca;">' . htmlspecialchars($file, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') . ':' . (int)$line . '</pre>
-
-                ' . ($trace !== '' ? '
-                    <p><b>Trace:</b></p>
-                    <pre style="white-space:pre-wrap;background:#111827;color:#e5e7eb;padding:16px;border-radius:10px;overflow:auto;">' . htmlspecialchars($trace, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') . '</pre>
-                ' : '') . '
-            </div>
-        ';
-    }
-
-    private static function wantsJson(): bool
-    {
-        if (!(self::$request instanceof Request)) {
-            return false;
-        }
-
-        $accept = (string)self::$request->server('HTTP_ACCEPT', '');
-        $path = self::$request->path();
-
-        return str_contains($accept, 'application/json')
-            || str_starts_with($path, '/api')
-            || str_contains($path, '/ping');
-    }
-
-    private static function debugEnabled(): bool
-    {
-        return defined('LOCAL_MVC_DEBUG') && LOCAL_MVC_DEBUG === true;
-    }
-
-    private static function log(string $message, string $file, int $line): void
-    {
-        error_log('[LOCAL_MVC_ERROR] ' . $message . ' in ' . $file . ':' . $line);
-    }
-}
-
-
----
-
-2. Обнови /local/mvc/Core/App.php
-
-Полностью замени файл:
+1. Создай /local/mvc/Core/Logger.php
 
 <?php
 
 namespace Local\Mvc\Core;
 
 /**
- * App
+ * Logger
  *
- * Запускатель MVC-приложения.
+ * Простой логгер MVC-фреймворка.
+ *
+ * Он пишет сообщения в файл:
+ * /local/проект/logs/app.log
  */
-class App
+class Logger
 {
-    public static function run(?string $routesFile = null): void
+    public static function info(string $message, array $context = []): void
     {
-        $projectRoot = self::projectRoot();
-
-        if ($routesFile === null) {
-            $routesFile = $projectRoot . '/routes.php';
-        }
-
-        /**
-         * Создаём Request как можно раньше,
-         * чтобы ErrorHandler понимал текущий маршрут.
-         */
-        $request = Request::createFromGlobals();
-
-        /**
-         * Включаем общий обработчик ошибок.
-         */
-        ErrorHandler::register($request);
-
-        try {
-            if (!is_file($routesFile)) {
-                Response::html(
-                    '<h1>500</h1><p>Файл маршрутов не найден.</p><pre>'
-                    . htmlspecialchars($routesFile)
-                    . '</pre>',
-                    500
-                )->send();
-
-                return;
-            }
-
-            $router = new Router();
-
-            require $routesFile;
-
-            $router->dispatch($request);
-        } catch (\Throwable $e) {
-            ErrorHandler::renderThrowable($e);
-        }
+        self::write('INFO', $message, $context);
     }
 
-    public static function projectRoot(): string
+    public static function warning(string $message, array $context = []): void
     {
-        if (!defined('LOCAL_MVC_PROJECT_ROOT')) {
-            return $_SERVER['DOCUMENT_ROOT'] . '/local/mvc';
-        }
-
-        return rtrim((string)LOCAL_MVC_PROJECT_ROOT, '/');
+        self::write('WARNING', $message, $context);
     }
 
-    public static function projectUrl(): string
+    public static function error(string $message, array $context = []): void
     {
-        if (!defined('LOCAL_MVC_PROJECT_URL')) {
-            return '/local/mvc';
-        }
-
-        return rtrim((string)LOCAL_MVC_PROJECT_URL, '/');
+        self::write('ERROR', $message, $context);
     }
 
-    public static function projectNamespace(): string
+    public static function debug(string $message, array $context = []): void
     {
-        if (!defined('LOCAL_MVC_PROJECT_NAMESPACE')) {
-            return 'Local\\Mvc\\';
+        if (!defined('LOCAL_MVC_DEBUG') || LOCAL_MVC_DEBUG !== true) {
+            return;
         }
 
-        return rtrim((string)LOCAL_MVC_PROJECT_NAMESPACE, '\\') . '\\';
+        self::write('DEBUG', $message, $context);
+    }
+
+    private static function write(string $level, string $message, array $context = []): void
+    {
+        $logFile = self::logFile();
+
+        $dir = dirname($logFile);
+
+        if (!is_dir($dir)) {
+            @mkdir($dir, 0775, true);
+        }
+
+        $line = self::formatLine($level, $message, $context);
+
+        @file_put_contents($logFile, $line, FILE_APPEND | LOCK_EX);
+    }
+
+    private static function formatLine(string $level, string $message, array $context = []): string
+    {
+        $date = date('Y-m-d H:i:s');
+
+        $contextText = '';
+
+        if (!empty($context)) {
+            $contextText = ' ' . json_encode($context, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+        }
+
+        return '[' . $date . '] [' . $level . '] ' . $message . $contextText . PHP_EOL;
+    }
+
+    private static function logFile(): string
+    {
+        if (defined('LOCAL_MVC_LOG_FILE')) {
+            return (string)LOCAL_MVC_LOG_FILE;
+        }
+
+        if (defined('LOCAL_MVC_PROJECT_ROOT')) {
+            return rtrim((string)LOCAL_MVC_PROJECT_ROOT, '/') . '/logs/app.log';
+        }
+
+        return $_SERVER['DOCUMENT_ROOT'] . '/local/mvc/logs/app.log';
     }
 }
 
 
 ---
 
-3. Включи debug в /local/mvc_demo/index.php
+2. Обнови /local/mvc/Core/ErrorHandler.php
 
-В файле:
+Внизу файла найди метод:
 
-/local/mvc_demo/index.php
+private static function log(string $message, string $file, int $line): void
+{
+    error_log('[LOCAL_MVC_ERROR] ' . $message . ' in ' . $file . ':' . $line);
+}
 
-добавь константу:
+Замени его на:
 
-define('LOCAL_MVC_DEBUG', true);
+private static function log(string $message, string $file, int $line): void
+{
+    Logger::error($message, [
+        'file' => $file,
+        'line' => $line,
+    ]);
 
-Должно быть так:
+    error_log('[LOCAL_MVC_ERROR] ' . $message . ' in ' . $file . ':' . $line);
+}
 
-<?php
-
-define('LOCAL_MVC_PROJECT_ROOT', __DIR__);
-define('LOCAL_MVC_PROJECT_URL', '/local/mvc_demo');
-define('LOCAL_MVC_PROJECT_NAMESPACE', 'Local\\MvcDemo\\');
-
-/**
- * Пока учимся — debug включён.
- * На боевом проекте лучше поставить false.
- */
-define('LOCAL_MVC_DEBUG', true);
-
-require_once $_SERVER['DOCUMENT_ROOT'] . '/local/mvc/bootstrap.php';
-
-use Local\Mvc\Core\App;
-
-App::run();
+Теперь ошибки будут писаться и в системный лог, и в файл проекта.
 
 
 ---
 
-4. Проверяем ошибку специально
+3. Создай папку логов
+
+Создай папку:
+
+/local/mvc_demo/logs/
+
+Права желательно такие, чтобы веб-сервер мог туда писать.
+
+Можно через Linux:
+
+mkdir -p /srv/bx/docroot/local/mvc_demo/logs
+chmod 775 /srv/bx/docroot/local/mvc_demo/logs
+
+Если пользователь веб-сервера другой, может понадобиться chown, но сначала проверь без этого.
+
+
+---
+
+4. Добавим тест логгера
 
 Открой:
 
 /local/mvc_demo/Controllers/HomeController.php
 
-И временно в метод ping() добавь ошибку:
+Добавь сверху:
 
-public function ping(): Response
+use Local\Mvc\Core\Logger;
+
+И внутрь класса добавь метод:
+
+public function logTest(): Response
 {
-    throw new \RuntimeException('Тестовая ошибка MVC');
+    Logger::info('Открыта тестовая страница логгера', [
+        'user_id' => \Local\Mvc\Core\Auth::id(),
+        'path' => $this->request->path(),
+    ]);
+
+    Logger::debug('Это debug-сообщение. Оно пишется только когда LOCAL_MVC_DEBUG = true');
 
     return $this->success([
-        'message' => 'pong',
+        'message' => 'Лог записан',
+        'file' => '/local/mvc_demo/logs/app.log',
     ]);
 }
 
-Теперь открой:
 
-https://bitrix24-stage.gaz.ru/local/mvc_demo/ping
+---
 
-Должен вернуться JSON:
+5. Обнови /local/mvc_demo/routes.php
+
+Добавь маршрут:
+
+$router->get('/log-test', [HomeController::class, 'logTest']);
+
+Например рядом с публичными:
+
+$router->get('/', [HomeController::class, 'index']);
+
+$router->get('/about', [HomeController::class, 'about']);
+
+$router->get('/ping', [HomeController::class, 'ping']);
+
+$router->get('/log-test', [HomeController::class, 'logTest']);
+
+$router->get('/form', [FormController::class, 'index']);
+
+
+---
+
+6. Проверяем
+
+Сбрось OPcache:
+
+opcache_reset();
+echo 'OPcache reset OK';
+
+Открой:
+
+https://bitrix24-stage.gaz.ru/local/mvc_demo/log-test
+
+Должен быть JSON:
 
 {
-  "ok": false,
-  "error": "SERVER_ERROR",
-  "details": {
-    "message": "Тестовая ошибка MVC",
-    "file": "...",
-    "line": 123
+  "ok": true,
+  "data": {
+    "message": "Лог записан",
+    "file": "/local/mvc_demo/logs/app.log"
   }
 }
 
-Потом обязательно убери строку:
+Потом проверь файл:
 
-throw new \RuntimeException('Тестовая ошибка MVC');
+/srv/bx/docroot/local/mvc_demo/logs/app.log
+
+Там должны появиться строки примерно такие:
+
+[2026-05-28 10:15:00] [INFO] Открыта тестовая страница логгера {"user_id":1,"path":"/log-test"}
+[2026-05-28 10:15:00] [DEBUG] Это debug-сообщение. Оно пишется только когда LOCAL_MVC_DEBUG = true
 
 
 ---
 
 Что мы сделали
 
-Раньше при ошибке мог быть белый экран.
+Теперь у фреймворка есть общий инструмент:
 
-Теперь:
+Logger::info(...)
+Logger::warning(...)
+Logger::error(...)
+Logger::debug(...)
 
-ошибка в PHP
-  ↓
-ErrorHandler ловит ошибку
-  ↓
-пишет в error_log
-  ↓
-показывает понятную страницу 500
-  ↓
-для JSON-маршрутов возвращает JSON
+Он пригодится в реальных проектах.
 
-Это очень важный кирпич фреймворка.
+Например в sitebuilder:
 
-Следующим шагом можно сделать Logger, чтобы писать ошибки и события не только в error_log, а в отдельный файл проекта, например:
+Logger::info('Создан сайт', [
+    'site_id' => $siteId,
+    'user_id' => Auth::id(),
+]);
 
-/local/mvc_demo/logs/app.log
+Или при ошибке:
+
+Logger::error('Ошибка создания страницы', [
+    'message' => $e->getMessage(),
+    'user_id' => Auth::id(),
+]);
+
+Главная мысль:
+
+ErrorHandler ловит ошибки.
+Logger записывает их в файл.
+
+Следующий шаг — сделать Config, чтобы настройки проекта лежали в одном месте: название проекта, debug, путь к логам, база, timezone и прочее.
