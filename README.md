@@ -1,350 +1,298 @@
-Идём дальше. Сейчас сделаем единые API-ошибки через исключения.
+Идём дальше. Сейчас сделаем middleware с параметрами.
 
-Зачем это нужно:
+Сейчас middleware у нас простые:
 
-Сейчас API-контроллер сам возвращает ошибку:
-return $this->notFound(...)
+['auth']
+['admin']
+['csrf']
 
-А хочется уметь так:
-throw new HttpException(...)
+А в реальных проектах часто нужно так:
 
-Тогда если в API что-то сломалось, фреймворк сам вернёт JSON:
+['group:1']
 
-{
-  "ok": false,
-  "error": "USER_NOT_FOUND",
-  "details": {
-    "message": "Пользователь не найден"
-  }
-}
+Это значит:
 
-А не HTML-страницу с ошибкой.
+Пустить только пользователя из группы ID 1.
+
+Или так:
+
+['groups:1,7,12']
+
+Это значит:
+
+Пустить пользователя, если он есть хотя бы в одной из этих групп.
+
+Это пригодится для проектов:
+
+sitebuilder — доступ по группам
+glab — админ/менеджер/ассистент
+qr_opros — доступ к отчётам
 
 
 ---
 
-1. Создай /local/mvc/Core/HttpException.php
+1. Замени /local/mvc/Core/Middleware.php
 
 <?php
 
 namespace Local\Mvc\Core;
 
-use RuntimeException;
-
 /**
- * HttpException
+ * Middleware
  *
- * Исключение с HTTP-статусом.
- *
- * Например:
- * 404 — не найдено
- * 403 — доступ запрещён
- * 422 — ошибка валидации
- * 500 — ошибка сервера
+ * Проверки, которые выполняются ДО контроллера.
  */
-class HttpException extends RuntimeException
+class Middleware
 {
-    private int $status;
-    private string $error;
-    private array $details;
-
-    public function __construct(
-        int $status,
-        string $error,
-        string $message = '',
-        array $details = []
-    ) {
-        parent::__construct($message);
-
-        $this->status = $status;
-        $this->error = $error;
-        $this->details = $details;
-    }
-
-    public function status(): int
+    public static function handle(array $middlewares, Request $request): ?Response
     {
-        return $this->status;
-    }
+        foreach ($middlewares as $middleware) {
+            $middleware = trim((string)$middleware);
 
-    public function error(): string
-    {
-        return $this->error;
-    }
+            if ($middleware === '') {
+                continue;
+            }
 
-    public function details(): array
-    {
-        return $this->details;
-    }
-}
+            $response = self::handleOne($middleware, $request);
 
-
----
-
-2. Обнови /local/mvc/Core/ErrorHandler.php
-
-Найди метод:
-
-public static function renderThrowable(Throwable $e): void
-
-И замени его полностью на этот:
-
-public static function renderThrowable(Throwable $e): void
-{
-    self::log($e->getMessage(), $e->getFile(), $e->getLine());
-
-    $status = 500;
-    $error = 'SERVER_ERROR';
-    $message = 'Внутренняя ошибка сервера';
-    $details = [];
-
-    /**
-     * Если это наше HTTP-исключение,
-     * берём статус и код ошибки из него.
-     */
-    if ($e instanceof HttpException) {
-        $status = $e->status();
-        $error = $e->error();
-        $message = $e->getMessage() !== '' ? $e->getMessage() : 'Ошибка запроса';
-        $details = $e->details();
-    } else {
-        $message = $e->getMessage();
-    }
-
-    if (self::wantsJson()) {
-        $responseDetails = array_merge([
-            'message' => self::debugEnabled() || $e instanceof HttpException
-                ? $message
-                : 'Внутренняя ошибка сервера',
-        ], $details);
-
-        if (self::debugEnabled() && !($e instanceof HttpException)) {
-            $responseDetails['file'] = $e->getFile();
-            $responseDetails['line'] = $e->getLine();
+            if ($response instanceof Response) {
+                return $response;
+            }
         }
 
-        Response::json([
+        return null;
+    }
+
+    private static function handleOne(string $middleware, Request $request): ?Response
+    {
+        [$name, $argument] = self::parse($middleware);
+
+        if ($name === 'auth') {
+            if (Auth::check()) {
+                return null;
+            }
+
+            return Response::json([
+                'ok' => false,
+                'error' => 'AUTH_REQUIRED',
+                'details' => [
+                    'message' => 'Нужно авторизоваться',
+                ],
+            ], 401);
+        }
+
+        if ($name === 'admin') {
+            if (Auth::isAdmin()) {
+                return null;
+            }
+
+            return Response::json([
+                'ok' => false,
+                'error' => 'ADMIN_REQUIRED',
+                'details' => [
+                    'message' => 'Нужны права администратора',
+                ],
+            ], 403);
+        }
+
+        /**
+         * group:1
+         *
+         * Пускает только пользователя из одной конкретной группы.
+         */
+        if ($name === 'group') {
+            $groupId = (int)$argument;
+
+            if ($groupId > 0 && Auth::inGroup($groupId)) {
+                return null;
+            }
+
+            return Response::json([
+                'ok' => false,
+                'error' => 'GROUP_REQUIRED',
+                'details' => [
+                    'message' => 'Недостаточно прав. Требуется группа: ' . $groupId,
+                    'required_group' => $groupId,
+                    'user_groups' => Auth::groups(),
+                ],
+            ], 403);
+        }
+
+        /**
+         * groups:1,7,12
+         *
+         * Пускает пользователя, если он входит хотя бы в одну группу из списка.
+         */
+        if ($name === 'groups') {
+            $requiredGroups = self::parseGroupList($argument);
+            $userGroups = Auth::groups();
+
+            foreach ($requiredGroups as $groupId) {
+                if (in_array($groupId, $userGroups, true)) {
+                    return null;
+                }
+            }
+
+            return Response::json([
+                'ok' => false,
+                'error' => 'GROUPS_REQUIRED',
+                'details' => [
+                    'message' => 'Недостаточно прав. Требуется одна из групп.',
+                    'required_groups' => $requiredGroups,
+                    'user_groups' => $userGroups,
+                ],
+            ], 403);
+        }
+
+        if ($name === 'csrf') {
+            if ($request->method() !== 'POST') {
+                return null;
+            }
+
+            if (function_exists('check_bitrix_sessid') && check_bitrix_sessid()) {
+                return null;
+            }
+
+            $headerSessid = (string)$request->header('X-Bitrix-Sessid', '');
+
+            if (
+                $headerSessid !== ''
+                && function_exists('bitrix_sessid')
+                && hash_equals((string)bitrix_sessid(), $headerSessid)
+            ) {
+                return null;
+            }
+
+            return Response::json([
+                'ok' => false,
+                'error' => 'BAD_SESSID',
+                'details' => [
+                    'message' => 'Неверный sessid. Обновите страницу и попробуйте снова.',
+                ],
+            ], 403);
+        }
+
+        return Response::json([
             'ok' => false,
-            'error' => $error,
-            'details' => $responseDetails,
-        ], $status)->send();
-
-        return;
-    }
-
-    Response::html(self::errorHtml(
-        'Ошибка приложения',
-        $message,
-        $e->getFile(),
-        $e->getLine(),
-        $e->getTraceAsString()
-    ), $status)->send();
-}
-
-Что изменилось:
-
-Если ошибка обычная — SERVER_ERROR.
-Если ошибка HttpException — берём её status/error/details.
-
-
----
-
-3. Обнови /local/mvc/Core/ApiController.php
-
-Полностью замени файл:
-
-<?php
-
-namespace Local\Mvc\Core;
-
-/**
- * ApiController
- *
- * Базовый контроллер для API.
- */
-class ApiController extends Controller
-{
-    protected function ok(array $data = [], int $status = 200): Response
-    {
-        return $this->json([
-            'ok' => true,
-            'data' => $data,
-        ], $status);
-    }
-
-    protected function fail(string $error, array $details = [], int $status = 400): Response
-    {
-        return $this->json([
-            'ok' => false,
-            'error' => $error,
-            'details' => $details,
-        ], $status);
-    }
-
-    protected function validationError(array $errors): Response
-    {
-        return $this->fail('VALIDATION_ERROR', [
-            'errors' => $errors,
-        ], 422);
-    }
-
-    protected function notFound(string $message = 'Запись не найдена', array $details = []): Response
-    {
-        return $this->fail('NOT_FOUND', array_merge([
-            'message' => $message,
-        ], $details), 404);
-    }
-
-    protected function forbidden(string $message = 'Доступ запрещён'): Response
-    {
-        return $this->fail('FORBIDDEN', [
-            'message' => $message,
-        ], 403);
-    }
-
-    protected function jsonData(): array
-    {
-        return $this->request->jsonAll();
+            'error' => 'UNKNOWN_MIDDLEWARE',
+            'details' => [
+                'middleware' => $middleware,
+            ],
+        ], 500);
     }
 
     /**
-     * Выбросить API-ошибку.
+     * Разобрать middleware.
      *
-     * Она будет поймана ErrorHandler,
-     * и клиент получит JSON.
+     * Было:
+     * group:1
+     *
+     * Стало:
+     * name = group
+     * argument = 1
      */
-    protected function abort(
-        int $status,
-        string $error,
-        string $message = '',
-        array $details = []
-    ): void {
-        throw new HttpException($status, $error, $message, $details);
+    private static function parse(string $middleware): array
+    {
+        $parts = explode(':', $middleware, 2);
+
+        $name = trim((string)($parts[0] ?? ''));
+        $argument = trim((string)($parts[1] ?? ''));
+
+        return [$name, $argument];
     }
 
-    protected function abortNotFound(string $message = 'Запись не найдена', array $details = []): void
+    /**
+     * Превратить строку "1,7,12" в массив [1, 7, 12].
+     */
+    private static function parseGroupList(string $argument): array
     {
-        $this->abort(404, 'NOT_FOUND', $message, $details);
-    }
+        $items = explode(',', $argument);
+        $groups = [];
 
-    protected function abortForbidden(string $message = 'Доступ запрещён'): void
-    {
-        $this->abort(403, 'FORBIDDEN', $message);
-    }
+        foreach ($items as $item) {
+            $groupId = (int)trim($item);
 
-    protected function abortValidation(array $errors): void
-    {
-        $this->abort(422, 'VALIDATION_ERROR', 'Ошибка валидации', [
-            'errors' => $errors,
-        ]);
+            if ($groupId > 0) {
+                $groups[] = $groupId;
+            }
+        }
+
+        return array_values(array_unique($groups));
     }
 }
 
 
 ---
 
-4. Обнови /local/mvc_demo/Controllers/UserApiController.php
+2. Добавь тестовый метод в HomeController
 
-Сделаем пример: если пользователя нет, не возвращаем return $this->notFound(...), а выбрасываем исключение.
+Файл:
 
-Замени метод show() на:
+/local/mvc_demo/Controllers/HomeController.php
 
-public function show(string $id): Response
+Добавь внутрь класса:
+
+public function groupTest(): Response
 {
-    $userService = new UserService();
-
-    $user = $userService->findForDetail((int)$id);
-
-    if (!$user) {
-        $this->abortNotFound('Пользователь не найден', [
-            'id' => (int)$id,
-        ]);
-    }
-
-    return $this->ok([
-        'user' => $user,
+    return $this->success([
+        'message' => 'Доступ по группе разрешён.',
+        'user_id' => \Local\Mvc\Core\Auth::id(),
+        'groups' => \Local\Mvc\Core\Auth::groups(),
     ]);
 }
 
 
 ---
 
-5. Добавим тестовую API-ошибку
+3. Добавь маршрут в /local/mvc_demo/routes.php
 
-Открой:
+Добавь публично рядом с остальными тестовыми маршрутами:
 
-/local/mvc_demo/Controllers/AjaxDemoController.php
+$router->get('/group-test', [HomeController::class, 'groupTest'], ['auth', 'group:1']);
 
-Внутрь класса добавь метод:
+Пример:
 
-public function errorTest(): Response
-{
-    $this->abort(418, 'TEST_API_EXCEPTION', 'Это тестовая API-ошибка', [
-        'hint' => 'Так мы проверяем HttpException',
-    ]);
+$router->get('/', [HomeController::class, 'index']);
+$router->get('/about', [HomeController::class, 'about']);
+$router->get('/ping', [HomeController::class, 'ping']);
+$router->get('/group-test', [HomeController::class, 'groupTest'], ['auth', 'group:1']);
 
-    return $this->ok();
-}
+group:1 — это обычно группа администраторов Битрикса. Если у вас другая группа, поменяешь ID.
 
 
 ---
 
-6. Добавь маршрут в /local/mvc_demo/routes.php
-
-В API-группу добавь:
-
-$router->get('/error-test', [AjaxDemoController::class, 'errorTest']);
-
-Должно быть примерно так:
-
-$router->group([
-    'prefix' => '/api',
-    'middleware' => ['auth', 'admin'],
-], function (Router $router) {
-    $router->get('/users', [UserApiController::class, 'index']);
-    $router->get('/users/{id:\d+}', [UserApiController::class, 'show']);
-
-    $router->post('/ajax-demo/echo', [AjaxDemoController::class, 'echoText'], ['csrf']);
-
-    $router->get('/error-test', [AjaxDemoController::class, 'errorTest']);
-});
-
-
----
-
-7. Проверяем
+4. Проверяем
 
 Сбрось OPcache:
 
 opcache_reset();
 echo 'OPcache reset OK';
 
-Проверь тестовую ошибку:
+Открой:
 
-https://bitrix24-stage.gaz.ru/local/mvc_demo/api/error-test
+https://bitrix24-stage.gaz.ru/local/mvc_demo/group-test
 
-Должен быть JSON:
+Если текущий пользователь в группе 1, будет:
 
 {
-  "ok": false,
-  "error": "TEST_API_EXCEPTION",
-  "details": {
-    "message": "Это тестовая API-ошибка",
-    "hint": "Так мы проверяем HttpException"
+  "ok": true,
+  "data": {
+    "message": "Доступ по группе разрешён.",
+    "user_id": 1,
+    "groups": [1, 2]
   }
 }
 
-Проверь несуществующего пользователя:
-
-https://bitrix24-stage.gaz.ru/local/mvc_demo/api/users/999999999
-
-Должно быть:
+Если не в группе, будет:
 
 {
   "ok": false,
-  "error": "NOT_FOUND",
+  "error": "GROUP_REQUIRED",
   "details": {
-    "message": "Пользователь не найден",
-    "id": 999999999
+    "message": "Недостаточно прав. Требуется группа: 1",
+    "required_group": 1,
+    "user_groups": [...]
   }
 }
 
@@ -353,26 +301,27 @@ https://bitrix24-stage.gaz.ru/local/mvc_demo/api/users/999999999
 
 Что мы сделали
 
-Теперь API может работать так:
+Теперь middleware могут быть не только простыми:
 
-$this->abortNotFound('Пользователь не найден');
-$this->abortForbidden('Нет доступа');
-$this->abortValidation([
-    'name' => ['Введите имя']
-]);
+['auth']
+['admin']
+['csrf']
 
-А ErrorHandler сам превратит это в JSON.
+но и с параметрами:
 
-Главная мысль:
+['group:1']
+['groups:1,7,12']
 
-Контроллер может не собирать ошибку вручную.
-Он может просто выбросить HttpException.
-Фреймворк сам отдаст правильный JSON и HTTP-статус.
+Это уже очень полезно для реальных проектов.
 
-Это пригодится в реальных API:
+Например:
 
-создание сайта
-удаление страницы
-загрузка файла
-смена статуса заявки
-обновление настроек
+$router->group(['middleware' => ['auth', 'groups:10,11']], function (Router $router) {
+    $router->get('/reports', [ReportController::class, 'index']);
+});
+
+Простыми словами:
+
+Пустить в отчёты только пользователей из групп 10 или 11.
+
+Следующий шаг — сделать middleware для ролей проекта, чтобы можно было не только по группам Битрикса, а по своим ролям: owner, admin, editor, viewer.
