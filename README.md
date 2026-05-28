@@ -1,307 +1,398 @@
-Идём дальше. Сейчас сделаем CSRF-защиту как middleware.
+Идём дальше. Сейчас сделаем защиту от белых экранов — общий обработчик ошибок.
 
-Простыми словами:
+Зачем это нужно
 
-CSRF — это проверка, что форму отправил именно наш сайт, а не чужая страница.
+Сейчас если где-то в проекте будет ошибка:
 
-В Битриксе за это отвечает sessid.
+не найден класс
+ошибка в SQL
+ошибка в PHP
+не найден файл view
 
-Сейчас мы проверяем sessid прямо в FormController:
+может появиться белый экран или непонятная ошибка.
 
-if (function_exists('check_bitrix_sessid') && !check_bitrix_sessid()) {
-    $errors[] = 'Ошибка безопасности: неверный sessid.';
-}
+Мы хотим, чтобы фреймворк сам показывал нормальную страницу:
 
-Но это неправильно для фреймворка. Лучше так:
+500
+Ошибка приложения
 
-$router->post('/form/send', [FormController::class, 'send'], ['csrf']);
+Файл:
+Строка:
+Сообщение:
 
-То есть маршрут сам говорит:
-
-Перед обработкой формы проверь sessid.
+А если это JSON-запрос — возвращал JSON.
 
 
 ---
 
-1. Замени /local/mvc/Core/Middleware.php
+1. Создай /local/mvc/Core/ErrorHandler.php
+
+<?php
+
+namespace Local\Mvc\Core;
+
+use Throwable;
+
+/**
+ * ErrorHandler
+ *
+ * Общий обработчик ошибок MVC.
+ *
+ * Его задача:
+ * вместо белого экрана показать понятную ошибку.
+ */
+class ErrorHandler
+{
+    private static ?Request $request = null;
+
+    public static function register(?Request $request = null): void
+    {
+        self::$request = $request;
+
+        /**
+         * Обычные PHP-ошибки превращаем в исключения.
+         */
+        set_error_handler(function ($severity, $message, $file, $line) {
+            if (!(error_reporting() & $severity)) {
+                return false;
+            }
+
+            throw new \ErrorException($message, 0, $severity, $file, $line);
+        });
+
+        /**
+         * Исключения ловим здесь.
+         */
+        set_exception_handler(function (Throwable $e) {
+            self::renderThrowable($e);
+        });
+
+        /**
+         * Фатальные ошибки ловим в конце выполнения.
+         */
+        register_shutdown_function(function () {
+            $error = error_get_last();
+
+            if ($error === null) {
+                return;
+            }
+
+            $fatalTypes = [
+                E_ERROR,
+                E_PARSE,
+                E_CORE_ERROR,
+                E_COMPILE_ERROR,
+            ];
+
+            if (!in_array($error['type'], $fatalTypes, true)) {
+                return;
+            }
+
+            self::renderFatal($error);
+        });
+    }
+
+    public static function renderThrowable(Throwable $e): void
+    {
+        self::log($e->getMessage(), $e->getFile(), $e->getLine());
+
+        if (self::wantsJson()) {
+            Response::json([
+                'ok' => false,
+                'error' => 'SERVER_ERROR',
+                'details' => self::debugEnabled()
+                    ? [
+                        'message' => $e->getMessage(),
+                        'file' => $e->getFile(),
+                        'line' => $e->getLine(),
+                    ]
+                    : [
+                        'message' => 'Внутренняя ошибка сервера',
+                    ],
+            ], 500)->send();
+
+            return;
+        }
+
+        Response::html(self::errorHtml(
+            'Ошибка приложения',
+            $e->getMessage(),
+            $e->getFile(),
+            $e->getLine(),
+            $e->getTraceAsString()
+        ), 500)->send();
+    }
+
+    private static function renderFatal(array $error): void
+    {
+        $message = (string)($error['message'] ?? 'Fatal error');
+        $file = (string)($error['file'] ?? '');
+        $line = (int)($error['line'] ?? 0);
+
+        self::log($message, $file, $line);
+
+        if (self::wantsJson()) {
+            Response::json([
+                'ok' => false,
+                'error' => 'FATAL_ERROR',
+                'details' => self::debugEnabled()
+                    ? [
+                        'message' => $message,
+                        'file' => $file,
+                        'line' => $line,
+                    ]
+                    : [
+                        'message' => 'Критическая ошибка сервера',
+                    ],
+            ], 500)->send();
+
+            return;
+        }
+
+        Response::html(self::errorHtml(
+            'Критическая ошибка',
+            $message,
+            $file,
+            $line,
+            ''
+        ), 500)->send();
+    }
+
+    private static function errorHtml(string $title, string $message, string $file, int $line, string $trace): string
+    {
+        if (!self::debugEnabled()) {
+            return '
+                <div style="max-width:900px;margin:40px auto;padding:24px;border:1px solid #fecaca;border-radius:16px;background:#fef2f2;color:#991b1b;">
+                    <h1 style="margin-top:0;">500</h1>
+                    <p>Внутренняя ошибка сервера.</p>
+                </div>
+            ';
+        }
+
+        return '
+            <div style="max-width:1100px;margin:40px auto;padding:24px;border:1px solid #fecaca;border-radius:16px;background:#fef2f2;color:#111827;font-family:Arial,sans-serif;">
+                <h1 style="margin-top:0;color:#991b1b;">500 — ' . htmlspecialchars($title, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') . '</h1>
+
+                <p><b>Сообщение:</b></p>
+                <pre style="white-space:pre-wrap;background:#fff;padding:16px;border-radius:10px;border:1px solid #fecaca;">' . htmlspecialchars($message, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') . '</pre>
+
+                <p><b>Файл:</b></p>
+                <pre style="white-space:pre-wrap;background:#fff;padding:16px;border-radius:10px;border:1px solid #fecaca;">' . htmlspecialchars($file, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') . ':' . (int)$line . '</pre>
+
+                ' . ($trace !== '' ? '
+                    <p><b>Trace:</b></p>
+                    <pre style="white-space:pre-wrap;background:#111827;color:#e5e7eb;padding:16px;border-radius:10px;overflow:auto;">' . htmlspecialchars($trace, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') . '</pre>
+                ' : '') . '
+            </div>
+        ';
+    }
+
+    private static function wantsJson(): bool
+    {
+        if (!(self::$request instanceof Request)) {
+            return false;
+        }
+
+        $accept = (string)self::$request->server('HTTP_ACCEPT', '');
+        $path = self::$request->path();
+
+        return str_contains($accept, 'application/json')
+            || str_starts_with($path, '/api')
+            || str_contains($path, '/ping');
+    }
+
+    private static function debugEnabled(): bool
+    {
+        return defined('LOCAL_MVC_DEBUG') && LOCAL_MVC_DEBUG === true;
+    }
+
+    private static function log(string $message, string $file, int $line): void
+    {
+        error_log('[LOCAL_MVC_ERROR] ' . $message . ' in ' . $file . ':' . $line);
+    }
+}
+
+
+---
+
+2. Обнови /local/mvc/Core/App.php
+
+Полностью замени файл:
 
 <?php
 
 namespace Local\Mvc\Core;
 
 /**
- * Middleware
+ * App
  *
- * Проверки, которые выполняются ДО контроллера.
+ * Запускатель MVC-приложения.
  */
-class Middleware
+class App
 {
-    public static function handle(array $middlewares, Request $request): ?Response
+    public static function run(?string $routesFile = null): void
     {
-        foreach ($middlewares as $middleware) {
-            $middleware = trim((string)$middleware);
+        $projectRoot = self::projectRoot();
 
-            if ($middleware === '') {
-                continue;
-            }
-
-            $response = self::handleOne($middleware, $request);
-
-            if ($response instanceof Response) {
-                return $response;
-            }
+        if ($routesFile === null) {
+            $routesFile = $projectRoot . '/routes.php';
         }
 
-        return null;
+        /**
+         * Создаём Request как можно раньше,
+         * чтобы ErrorHandler понимал текущий маршрут.
+         */
+        $request = Request::createFromGlobals();
+
+        /**
+         * Включаем общий обработчик ошибок.
+         */
+        ErrorHandler::register($request);
+
+        try {
+            if (!is_file($routesFile)) {
+                Response::html(
+                    '<h1>500</h1><p>Файл маршрутов не найден.</p><pre>'
+                    . htmlspecialchars($routesFile)
+                    . '</pre>',
+                    500
+                )->send();
+
+                return;
+            }
+
+            $router = new Router();
+
+            require $routesFile;
+
+            $router->dispatch($request);
+        } catch (\Throwable $e) {
+            ErrorHandler::renderThrowable($e);
+        }
     }
 
-    private static function handleOne(string $middleware, Request $request): ?Response
+    public static function projectRoot(): string
     {
-        /**
-         * auth — только авторизованные пользователи.
-         */
-        if ($middleware === 'auth') {
-            if (Auth::check()) {
-                return null;
-            }
-
-            return Response::json([
-                'ok' => false,
-                'error' => 'AUTH_REQUIRED',
-                'details' => [
-                    'message' => 'Нужно авторизоваться',
-                ],
-            ], 401);
+        if (!defined('LOCAL_MVC_PROJECT_ROOT')) {
+            return $_SERVER['DOCUMENT_ROOT'] . '/local/mvc';
         }
 
-        /**
-         * admin — только администраторы.
-         */
-        if ($middleware === 'admin') {
-            if (Auth::isAdmin()) {
-                return null;
-            }
+        return rtrim((string)LOCAL_MVC_PROJECT_ROOT, '/');
+    }
 
-            return Response::json([
-                'ok' => false,
-                'error' => 'ADMIN_REQUIRED',
-                'details' => [
-                    'message' => 'Нужны права администратора',
-                ],
-            ], 403);
+    public static function projectUrl(): string
+    {
+        if (!defined('LOCAL_MVC_PROJECT_URL')) {
+            return '/local/mvc';
         }
 
-        /**
-         * csrf — проверка sessid Битрикса.
-         *
-         * Используем для POST-запросов:
-         * создание, сохранение, удаление.
-         */
-        if ($middleware === 'csrf') {
-            if ($request->method() !== 'POST') {
-                return null;
-            }
+        return rtrim((string)LOCAL_MVC_PROJECT_URL, '/');
+    }
 
-            if (function_exists('check_bitrix_sessid') && check_bitrix_sessid()) {
-                return null;
-            }
-
-            return Response::html(
-                '<h1>403</h1>'
-                . '<p>Ошибка безопасности.</p>'
-                . '<p>Неверный sessid. Обновите страницу и попробуйте ещё раз.</p>',
-                403
-            );
+    public static function projectNamespace(): string
+    {
+        if (!defined('LOCAL_MVC_PROJECT_NAMESPACE')) {
+            return 'Local\\Mvc\\';
         }
 
-        /**
-         * Неизвестный middleware — ошибка разработчика.
-         */
-        return Response::json([
-            'ok' => false,
-            'error' => 'UNKNOWN_MIDDLEWARE',
-            'details' => [
-                'middleware' => $middleware,
-            ],
-        ], 500);
+        return rtrim((string)LOCAL_MVC_PROJECT_NAMESPACE, '\\') . '\\';
     }
 }
 
 
 ---
 
-2. Обнови /local/mvc_demo/routes.php
+3. Включи debug в /local/mvc_demo/index.php
 
-Найди маршрут:
+В файле:
 
-$router->post('/form/send', [FormController::class, 'send']);
+/local/mvc_demo/index.php
 
-Замени на:
+добавь константу:
 
-$router->post('/form/send', [FormController::class, 'send'], ['csrf']);
+define('LOCAL_MVC_DEBUG', true);
 
-Полный пример:
+Должно быть так:
 
 <?php
 
-use Local\Mvc\Core\Router;
-use Local\MvcDemo\Controllers\HomeController;
-use Local\MvcDemo\Controllers\AdminController;
-use Local\MvcDemo\Controllers\FormController;
-
-/** @var Router $router */
+define('LOCAL_MVC_PROJECT_ROOT', __DIR__);
+define('LOCAL_MVC_PROJECT_URL', '/local/mvc_demo');
+define('LOCAL_MVC_PROJECT_NAMESPACE', 'Local\\MvcDemo\\');
 
 /**
- * Публичные маршруты.
+ * Пока учимся — debug включён.
+ * На боевом проекте лучше поставить false.
  */
-$router->get('/', [HomeController::class, 'index']);
+define('LOCAL_MVC_DEBUG', true);
 
-$router->get('/about', [HomeController::class, 'about']);
+require_once $_SERVER['DOCUMENT_ROOT'] . '/local/mvc/bootstrap.php';
 
-$router->get('/ping', [HomeController::class, 'ping']);
+use Local\Mvc\Core\App;
 
-$router->get('/form', [FormController::class, 'index']);
-
-$router->post('/form/send', [FormController::class, 'send'], ['csrf']);
-
-/**
- * Только авторизованные пользователи.
- */
-$router->group(['middleware' => ['auth']], function (Router $router) {
-    $router->get('/me', [HomeController::class, 'me']);
-
-    $router->group([
-        'prefix' => '/admin',
-        'middleware' => ['admin'],
-    ], function (Router $router) {
-        $router->get('/dashboard', [AdminController::class, 'dashboard']);
-        $router->get('/users', [AdminController::class, 'users']);
-    });
-});
+App::run();
 
 
 ---
 
-3. Убери проверку sessid из FormController
-
-Файл:
-
-/local/mvc_demo/Controllers/FormController.php
-
-Замени полностью:
-
-<?php
-
-namespace Local\MvcDemo\Controllers;
-
-use Local\Mvc\Core\Controller;
-use Local\Mvc\Core\Flash;
-use Local\Mvc\Core\Response;
-use Local\Mvc\Core\Validator;
-
-class FormController extends Controller
-{
-    public function index(): Response
-    {
-        return $this->render('form/index', [
-            'title' => 'Тестовая форма',
-            'errors' => [],
-            'success' => '',
-            'old' => [
-                'name' => '',
-                'message' => '',
-            ],
-        ]);
-    }
-
-    public function send(): Response
-    {
-        $data = [
-            'name' => trim((string)$this->request->post('name', '')),
-            'message' => trim((string)$this->request->post('message', '')),
-        ];
-
-        $errors = [];
-
-        $validator = Validator::make($data)
-            ->required('name', 'Введите имя.')
-            ->min('name', 2, 'Имя должно быть не короче 2 символов.')
-            ->max('name', 100, 'Имя должно быть не длиннее 100 символов.')
-            ->required('message', 'Введите сообщение.')
-            ->min('message', 5, 'Сообщение должно быть не короче 5 символов.')
-            ->max('message', 1000, 'Сообщение должно быть не длиннее 1000 символов.');
-
-        if ($validator->fails()) {
-            $errors = array_merge($errors, $validator->errorList());
-        }
-
-        if (!empty($errors)) {
-            Flash::old($data);
-
-            foreach ($errors as $error) {
-                Flash::error($error);
-            }
-
-            return $this->redirectBack('/form');
-        }
-
-        Flash::success('Форма успешно отправлена. Имя: ' . $data['name']);
-
-        return $this->redirectBack('/form');
-    }
-}
-
-
----
-
-4. Проверяем
-
-Сбрось OPcache:
-
-opcache_reset();
-echo 'OPcache reset OK';
+4. Проверяем ошибку специально
 
 Открой:
 
-https://bitrix24-stage.gaz.ru/local/mvc_demo/form
+/local/mvc_demo/Controllers/HomeController.php
 
-Отправь форму.
+И временно в метод ping() добавь ошибку:
 
-Должно работать так же, как раньше:
+public function ping(): Response
+{
+    throw new \RuntimeException('Тестовая ошибка MVC');
 
-ошибка в полях → красные сообщения + значения остались
-успешно → зелёное сообщение + поля очистились
+    return $this->success([
+        'message' => 'pong',
+    ]);
+}
+
+Теперь открой:
+
+https://bitrix24-stage.gaz.ru/local/mvc_demo/ping
+
+Должен вернуться JSON:
+
+{
+  "ok": false,
+  "error": "SERVER_ERROR",
+  "details": {
+    "message": "Тестовая ошибка MVC",
+    "file": "...",
+    "line": 123
+  }
+}
+
+Потом обязательно убери строку:
+
+throw new \RuntimeException('Тестовая ошибка MVC');
 
 
 ---
 
 Что мы сделали
 
-Раньше контроллер сам проверял безопасность:
+Раньше при ошибке мог быть белый экран.
 
-check_bitrix_sessid()
+Теперь:
 
-Теперь безопасность формы проверяет маршрут:
-
-$router->post('/form/send', [FormController::class, 'send'], ['csrf']);
-
-То есть теперь схема такая:
-
-POST /form/send
+ошибка в PHP
   ↓
-Router
+ErrorHandler ловит ошибку
   ↓
-Middleware csrf проверяет sessid
+пишет в error_log
   ↓
-если всё хорошо — FormController::send()
+показывает понятную страницу 500
   ↓
-Validator проверяет поля
-  ↓
-Flash + redirect
+для JSON-маршрутов возвращает JSON
 
-Главная мысль:
+Это очень важный кирпич фреймворка.
 
-Controller занимается логикой формы.
-Middleware занимается проверкой доступа и безопасности.
+Следующим шагом можно сделать Logger, чтобы писать ошибки и события не только в error_log, а в отдельный файл проекта, например:
 
-Это правильно для фреймворка.
+/local/mvc_demo/logs/app.log
