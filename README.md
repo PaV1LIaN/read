@@ -1,118 +1,196 @@
-Да, страница уже работает, но по скрину видно одну маленькую проблему: колонки съехали.
+Идём дальше. Сейчас сделаем редирект по имени маршрута.
 
-Сейчас у тебя заголовок таблицы такой:
+Сейчас в контроллере мы можем писать так:
 
-Метод | Путь | Имя | Контроллер | Action | Middleware
+return $this->redirect('/local/mvc_demo/form');
 
-А в строках, похоже, нет отдельной ячейки для Имя. Поэтому контроллер попал под колонку Имя, action попал под Контроллер и так далее.
+Но это плохо, потому что контроллер знает точный URL проекта.
 
-Нужно поправить только view.
+Хотим так:
 
-Замени полностью /local/mvc_demo/Views/debug/routes.php
+return $this->redirectRoute('form.index');
 
-<?php
+То есть:
 
-if (!defined('B_PROLOG_INCLUDED') || B_PROLOG_INCLUDED !== true) {
-    die();
+Не важно, какой URL у формы.
+Главное — есть маршрут с именем form.index.
+
+
+---
+
+1. Обнови /local/mvc/Core/Controller.php
+
+Открой файл:
+
+/local/mvc/Core/Controller.php
+
+Найди метод:
+
+protected function redirect(string $url): Response
+{
+    return Response::redirect($url);
 }
 
-?>
+Сразу после него добавь:
 
-<div class="mvc-card">
-    <h1 class="mvc-page-title">
-        <?= htmlspecialcharsbx($title ?? 'Маршруты') ?>
-    </h1>
+/**
+ * Собрать URL по имени маршрута.
+ *
+ * Например:
+ * $this->route('admin.users.show', ['id' => 5])
+ */
+protected function route(string $name, array $params = [], array $query = []): string
+{
+    return App::route($name, $params, $query);
+}
 
-    <p class="mvc-page-text">
-        Здесь показаны маршруты текущего проекта.
-    </p>
+/**
+ * Redirect по имени маршрута.
+ *
+ * Например:
+ * return $this->redirectRoute('form.index');
+ */
+protected function redirectRoute(string $name, array $params = [], array $query = []): Response
+{
+    return $this->redirect($this->route($name, $params, $query));
+}
 
-    <?php if (empty($debug)): ?>
-        <div class="mvc-info" style="border-color: #fde68a; background: #fffbeb;">
-            <b style="color: #92400e;">Внимание:</b>
-            debug-режим выключен.
-        </div>
-    <?php endif; ?>
+Теперь любой контроллер может делать:
 
-    <div class="mvc-info" style="overflow-x: auto;">
-        <table style="width: 100%; border-collapse: collapse;">
-            <thead>
-                <tr>
-                    <th style="text-align: left; padding: 8px; border-bottom: 1px solid #e5e7eb;">Метод</th>
-                    <th style="text-align: left; padding: 8px; border-bottom: 1px solid #e5e7eb;">Путь</th>
-                    <th style="text-align: left; padding: 8px; border-bottom: 1px solid #e5e7eb;">Имя</th>
-                    <th style="text-align: left; padding: 8px; border-bottom: 1px solid #e5e7eb;">Контроллер</th>
-                    <th style="text-align: left; padding: 8px; border-bottom: 1px solid #e5e7eb;">Action</th>
-                    <th style="text-align: left; padding: 8px; border-bottom: 1px solid #e5e7eb;">Middleware</th>
-                </tr>
-            </thead>
+$this->route(...)
+$this->redirectRoute(...)
 
-            <tbody>
-                <?php foreach (($routes ?? []) as $route): ?>
-                    <tr>
-                        <td style="padding: 8px; border-bottom: 1px solid #e5e7eb;">
-                            <span class="mvc-code">
-                                <?= htmlspecialcharsbx($route['method'] ?? '') ?>
-                            </span>
-                        </td>
 
-                        <td style="padding: 8px; border-bottom: 1px solid #e5e7eb;">
-                            <span class="mvc-code">
-                                <?= htmlspecialcharsbx($route['path'] ?? '') ?>
-                            </span>
-                        </td>
+---
 
-                        <td style="padding: 8px; border-bottom: 1px solid #e5e7eb;">
-                            <?php if (!empty($route['name'])): ?>
-                                <span class="mvc-code">
-                                    <?= htmlspecialcharsbx($route['name']) ?>
-                                </span>
-                            <?php else: ?>
-                                <span style="color: #9ca3af;">—</span>
-                            <?php endif; ?>
-                        </td>
+2. Проверь имя маршрута формы
 
-                        <td style="padding: 8px; border-bottom: 1px solid #e5e7eb;">
-                            <?= htmlspecialcharsbx($route['controller'] ?? '') ?>
-                        </td>
+Открой:
 
-                        <td style="padding: 8px; border-bottom: 1px solid #e5e7eb;">
-                            <span class="mvc-code">
-                                <?= htmlspecialcharsbx($route['action'] ?? '') ?>
-                            </span>
-                        </td>
+/local/mvc_demo/routes.php
 
-                        <td style="padding: 8px; border-bottom: 1px solid #e5e7eb;">
-                            <?php if (!empty($route['middleware'])): ?>
-                                <?php foreach (($route['middleware'] ?? []) as $middleware): ?>
-                                    <span class="mvc-code">
-                                        <?= htmlspecialcharsbx($middleware) ?>
-                                    </span>
-                                <?php endforeach; ?>
-                            <?php else: ?>
-                                <span style="color: #9ca3af;">—</span>
-                            <?php endif; ?>
-                        </td>
-                    </tr>
-                <?php endforeach; ?>
-            </tbody>
-        </table>
-    </div>
-</div>
+Найди маршрут формы:
 
-После этого сбрось OPcache:
+$router->get('/form', [FormController::class, 'index']);
+
+Замени на именованный:
+
+$router->get('/form', [FormController::class, 'index'], [], 'form.index');
+
+POST можно тоже назвать:
+
+$router->post('/form/send', [FormController::class, 'send'], ['csrf'], 'form.send');
+
+Должно быть так:
+
+$router->get('/form', [FormController::class, 'index'], [], 'form.index');
+
+$router->post('/form/send', [FormController::class, 'send'], ['csrf'], 'form.send');
+
+
+---
+
+3. Обнови /local/mvc_demo/Controllers/FormController.php
+
+В методе send() у нас сейчас есть:
+
+return $this->redirectBack('/form');
+
+Замени оба таких места на:
+
+return $this->redirectRoute('form.index');
+
+Полный метод send() должен быть такой:
+
+public function send(): Response
+{
+    $data = [
+        'name' => trim((string)$this->request->post('name', '')),
+        'message' => trim((string)$this->request->post('message', '')),
+    ];
+
+    $errors = [];
+
+    $validator = Validator::make($data)
+        ->required('name', 'Введите имя.')
+        ->min('name', 2, 'Имя должно быть не короче 2 символов.')
+        ->max('name', 100, 'Имя должно быть не длиннее 100 символов.')
+        ->required('message', 'Введите сообщение.')
+        ->min('message', 5, 'Сообщение должно быть не короче 5 символов.')
+        ->max('message', 1000, 'Сообщение должно быть не длиннее 1000 символов.');
+
+    if ($validator->fails()) {
+        $errors = array_merge($errors, $validator->errorList());
+    }
+
+    if (!empty($errors)) {
+        Flash::old($data);
+
+        foreach ($errors as $error) {
+            Flash::error($error);
+        }
+
+        return $this->redirectRoute('form.index');
+    }
+
+    Flash::success('Форма успешно отправлена. Имя: ' . $data['name']);
+
+    return $this->redirectRoute('form.index');
+}
+
+
+---
+
+4. Проверяем
+
+Сбрось OPcache:
 
 opcache_reset();
 echo 'OPcache reset OK';
 
-И обнови:
+Проверь форму:
 
-/local/mvc_demo/debug/routes
+https://bitrix24-stage.gaz.ru/local/mvc_demo/form
 
-Если в колонке Имя будут прочерки —, значит сами маршруты ещё не названы в routes.php. Это не ошибка, просто надо потом добавить имена вот так:
+Сценарии те же:
 
-$router->get('/admin/users', [AdminController::class, 'users'], [], 'admin.users.index');
+1. Отправь с ошибками.
+   Должно вернуть на форму, показать ошибки и сохранить поля.
 
-$router->get('/admin/users/{id:\d+}', [AdminController::class, 'userDetail'], [], 'admin.users.show');
+2. Отправь нормально.
+   Должно вернуть на форму, показать зелёное сообщение и очистить поля.
 
-Главное: сейчас debug/routes уже полезен — он показывает, что маршруты реально зарегистрированы, middleware применились, prefix /api и /admin склеился правильно.
+
+---
+
+Что мы сделали
+
+Раньше контроллер знал конкретный адрес:
+
+return $this->redirect('/local/mvc_demo/form');
+
+Теперь контроллер знает только имя маршрута:
+
+return $this->redirectRoute('form.index');
+
+Это правильнее.
+
+Потом в sitebuilder будет красиво:
+
+return $this->redirectRoute('sites.index');
+
+return $this->redirectRoute('sites.edit', [
+    'siteId' => $siteId,
+]);
+
+return $this->redirectRoute('pages.edit', [
+    'siteId' => $siteId,
+    'pageId' => $pageId,
+]);
+
+Главная мысль:
+
+URL может измениться.
+Имя маршрута остаётся.
+
+Дальше логично сделать короткую функцию для ссылок во views, чтобы там тоже не писать \Local\Mvc\Core\App::route(...) полностью.
