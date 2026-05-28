@@ -1,196 +1,220 @@
-Идём дальше. Сейчас сделаем редирект по имени маршрута.
+Идём дальше. Сделаем простые helper-функции для views, но без большого View-класса, чтобы не путаться.
 
-Сейчас в контроллере мы можем писать так:
+Зачем:
 
-return $this->redirect('/local/mvc_demo/form');
+Сейчас во view приходится писать длинно:
 
-Но это плохо, потому что контроллер знает точный URL проекта.
+\Local\Mvc\Core\App::route('admin.users.show', ['id' => 5])
 
-Хотим так:
+А хотим коротко:
 
-return $this->redirectRoute('form.index');
-
-То есть:
-
-Не важно, какой URL у формы.
-Главное — есть маршрут с именем form.index.
+mvc_route('admin.users.show', ['id' => 5])
 
 
 ---
 
-1. Обнови /local/mvc/Core/Controller.php
+1. Создай файл /local/mvc/helpers.php
 
-Открой файл:
+<?php
 
-/local/mvc/Core/Controller.php
+use Local\Mvc\Core\App;
 
-Найди метод:
-
-protected function redirect(string $url): Response
-{
-    return Response::redirect($url);
+if (!function_exists('mvc_route')) {
+    /**
+     * Собрать URL по имени маршрута.
+     *
+     * Пример:
+     * mvc_route('admin.users.show', ['id' => 5])
+     */
+    function mvc_route(string $name, array $params = [], array $query = []): string
+    {
+        return App::route($name, $params, $query);
+    }
 }
 
-Сразу после него добавь:
+if (!function_exists('mvc_e')) {
+    /**
+     * Безопасный вывод текста.
+     *
+     * Это короткая замена htmlspecialcharsbx().
+     */
+    function mvc_e(mixed $value): string
+    {
+        if (function_exists('htmlspecialcharsbx')) {
+            return htmlspecialcharsbx((string)$value);
+        }
 
-/**
- * Собрать URL по имени маршрута.
- *
- * Например:
- * $this->route('admin.users.show', ['id' => 5])
- */
-protected function route(string $name, array $params = [], array $query = []): string
-{
-    return App::route($name, $params, $query);
+        return htmlspecialchars((string)$value, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
+    }
 }
-
-/**
- * Redirect по имени маршрута.
- *
- * Например:
- * return $this->redirectRoute('form.index');
- */
-protected function redirectRoute(string $name, array $params = [], array $query = []): Response
-{
-    return $this->redirect($this->route($name, $params, $query));
-}
-
-Теперь любой контроллер может делать:
-
-$this->route(...)
-$this->redirectRoute(...)
 
 
 ---
 
-2. Проверь имя маршрута формы
+2. Подключи helper в /local/mvc/bootstrap.php
 
 Открой:
 
-/local/mvc_demo/routes.php
+/local/mvc/bootstrap.php
 
-Найди маршрут формы:
+После автозагрузчика добавь:
 
-$router->get('/form', [FormController::class, 'index']);
+$helpersFile = $_SERVER['DOCUMENT_ROOT'] . '/local/mvc/helpers.php';
 
-Замени на именованный:
+if (is_file($helpersFile)) {
+    require_once $helpersFile;
+}
 
-$router->get('/form', [FormController::class, 'index'], [], 'form.index');
+Полностью конец файла должен выглядеть примерно так:
 
-POST можно тоже назвать:
-
-$router->post('/form/send', [FormController::class, 'send'], ['csrf'], 'form.send');
-
-Должно быть так:
-
-$router->get('/form', [FormController::class, 'index'], [], 'form.index');
-
-$router->post('/form/send', [FormController::class, 'send'], ['csrf'], 'form.send');
-
-
----
-
-3. Обнови /local/mvc_demo/Controllers/FormController.php
-
-В методе send() у нас сейчас есть:
-
-return $this->redirectBack('/form');
-
-Замени оба таких места на:
-
-return $this->redirectRoute('form.index');
-
-Полный метод send() должен быть такой:
-
-public function send(): Response
-{
-    $data = [
-        'name' => trim((string)$this->request->post('name', '')),
-        'message' => trim((string)$this->request->post('message', '')),
+spl_autoload_register(function ($class) {
+    $map = [
+        'Local\\Mvc\\' => $_SERVER['DOCUMENT_ROOT'] . '/local/mvc/',
     ];
 
-    $errors = [];
+    if (
+        defined('LOCAL_MVC_PROJECT_NAMESPACE')
+        && defined('LOCAL_MVC_PROJECT_ROOT')
+    ) {
+        $projectNamespace = rtrim((string)LOCAL_MVC_PROJECT_NAMESPACE, '\\') . '\\';
+        $projectRoot = rtrim((string)LOCAL_MVC_PROJECT_ROOT, '/');
 
-    $validator = Validator::make($data)
-        ->required('name', 'Введите имя.')
-        ->min('name', 2, 'Имя должно быть не короче 2 символов.')
-        ->max('name', 100, 'Имя должно быть не длиннее 100 символов.')
-        ->required('message', 'Введите сообщение.')
-        ->min('message', 5, 'Сообщение должно быть не короче 5 символов.')
-        ->max('message', 1000, 'Сообщение должно быть не длиннее 1000 символов.');
-
-    if ($validator->fails()) {
-        $errors = array_merge($errors, $validator->errorList());
+        $map[$projectNamespace] = $projectRoot . '/';
     }
 
-    if (!empty($errors)) {
-        Flash::old($data);
-
-        foreach ($errors as $error) {
-            Flash::error($error);
+    foreach ($map as $prefix => $baseDir) {
+        if (strncmp($prefix, $class, strlen($prefix)) !== 0) {
+            continue;
         }
 
-        return $this->redirectRoute('form.index');
+        $relativeClass = substr($class, strlen($prefix));
+        $file = rtrim($baseDir, '/') . '/' . str_replace('\\', '/', $relativeClass) . '.php';
+
+        if (is_file($file)) {
+            require_once $file;
+        }
+
+        return;
     }
+});
 
-    Flash::success('Форма успешно отправлена. Имя: ' . $data['name']);
+$helpersFile = $_SERVER['DOCUMENT_ROOT'] . '/local/mvc/helpers.php';
 
-    return $this->redirectRoute('form.index');
+if (is_file($helpersFile)) {
+    require_once $helpersFile;
 }
 
 
 ---
 
-4. Проверяем
+3. Обнови ссылки в /local/mvc_demo/Views/admin/users.php
+
+Найди ссылку:
+
+<a href="<?= htmlspecialcharsbx(\Local\Mvc\Core\App::route('admin.users.show', [
+    'id' => (int)($user['id'] ?? 0),
+])) ?>">
+    Открыть
+</a>
+
+Замени на короткую:
+
+<a href="<?= mvc_e(mvc_route('admin.users.show', [
+    'id' => (int)($user['id'] ?? 0),
+])) ?>">
+    Открыть
+</a>
+
+
+---
+
+4. Обнови ссылку назад в /local/mvc_demo/Views/admin/user_detail.php
+
+Найди:
+
+<a href="<?= htmlspecialcharsbx(\Local\Mvc\Core\App::route('admin.users.index')) ?>">
+    ← Назад к списку
+</a>
+
+Замени на:
+
+<a href="<?= mvc_e(mvc_route('admin.users.index')) ?>">
+    ← Назад к списку
+</a>
+
+
+---
+
+5. Обнови форму /local/mvc_demo/Views/form/index.php
+
+Найди:
+
+<form method="post" action="/local/mvc_demo/form/send" style="margin-top: 24px;">
+
+Замени на:
+
+<form method="post" action="<?= mvc_e(mvc_route('form.send')) ?>" style="margin-top: 24px;">
+
+Теперь форма тоже не знает точный URL.
+
+
+---
+
+6. Проверь, что маршруты названы
+
+В /local/mvc_demo/routes.php должно быть:
+
+$router->get('/form', [FormController::class, 'index'], [], 'form.index');
+
+$router->post('/form/send', [FormController::class, 'send'], ['csrf'], 'form.send');
+
+И в админской группе:
+
+$router->get('/users', [AdminController::class, 'users'], [], 'admin.users.index');
+
+$router->get('/users/{id:\d+}', [AdminController::class, 'userDetail'], [], 'admin.users.show');
+
+
+---
+
+7. Проверяем
 
 Сбрось OPcache:
 
 opcache_reset();
 echo 'OPcache reset OK';
 
-Проверь форму:
+Проверь:
 
-https://bitrix24-stage.gaz.ru/local/mvc_demo/form
-
-Сценарии те же:
-
-1. Отправь с ошибками.
-   Должно вернуть на форму, показать ошибки и сохранить поля.
-
-2. Отправь нормально.
-   Должно вернуть на форму, показать зелёное сообщение и очистить поля.
+/local/mvc_demo/form
+/local/mvc_demo/admin/users
+/local/mvc_demo/admin/users/1
+/local/mvc_demo/debug/routes
 
 
 ---
 
 Что мы сделали
 
-Раньше контроллер знал конкретный адрес:
+Теперь во view можно писать коротко:
 
-return $this->redirect('/local/mvc_demo/form');
+mvc_route('admin.users.show', ['id' => 5])
 
-Теперь контроллер знает только имя маршрута:
+вместо длинного:
 
-return $this->redirectRoute('form.index');
+\Local\Mvc\Core\App::route('admin.users.show', ['id' => 5])
 
-Это правильнее.
+И можно безопасно выводить текст так:
 
-Потом в sitebuilder будет красиво:
+mvc_e($value)
 
-return $this->redirectRoute('sites.index');
+вместо:
 
-return $this->redirectRoute('sites.edit', [
-    'siteId' => $siteId,
-]);
-
-return $this->redirectRoute('pages.edit', [
-    'siteId' => $siteId,
-    'pageId' => $pageId,
-]);
+htmlspecialcharsbx($value)
 
 Главная мысль:
 
-URL может измениться.
-Имя маршрута остаётся.
+App::route() — ядро фреймворка.
+mvc_route() — удобная короткая функция для views.
 
-Дальше логично сделать короткую функцию для ссылок во views, чтобы там тоже не писать \Local\Mvc\Core\App::route(...) полностью.
+Дальше логично сделать named route group prefix, чтобы маршруты внутри /admin автоматически получали имена типа admin.users.index, а не писать полное имя руками каждый раз.
