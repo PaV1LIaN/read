@@ -1,59 +1,32 @@
-Идём дальше. Сейчас сделаем middleware для ролей проекта.
+Идём дальше. Делаем иерархию ролей.
 
-Важно: роли проекта — это не группы Битрикса.
+Сейчас роли работают как точное совпадение:
 
-Группы Битрикса:
+role:editor
 
-group:1
-groups:1,7,12
+означает:
 
-А роли проекта:
+У пользователя должна быть именно роль editor.
 
-owner
-admin
-editor
-viewer
+Но в реальной жизни должно быть умнее:
 
-Например в sitebuilder потом будет так:
+owner  — самый главный
+admin  — ниже owner
+editor — ниже admin
+viewer — только просмотр
 
-$router->get('/sites/{id}/edit', [SiteController::class, 'edit'], ['auth', 'role:editor']);
+То есть если у пользователя роль owner, он автоматически должен проходить проверки:
 
-То есть:
+role:admin
+role:editor
+role:viewer
 
-Пустить только того, у кого в этом проекте роль editor или выше.
-
-
----
-
-1. Создай /local/mvc/Core/RoleResolverInterface.php
-
-<?php
-
-namespace Local\Mvc\Core;
-
-/**
- * RoleResolverInterface
- *
- * Интерфейс для проверки ролей проекта.
- *
- * Простыми словами:
- * фреймворк спрашивает:
- * "У пользователя есть такая роль?"
- *
- * А конкретный проект отвечает:
- * "Да" или "Нет".
- */
-interface RoleResolverInterface
-{
-    public function hasRole(string $role, ?int $userId = null): bool;
-
-    public function roles(?int $userId = null): array;
-}
+Потому что owner выше всех.
 
 
 ---
 
-2. Создай /local/mvc/Core/Role.php
+1. Замени /local/mvc/Core/Role.php
 
 <?php
 
@@ -64,20 +37,64 @@ use RuntimeException;
 /**
  * Role
  *
- * Помощник для проверки проектных ролей.
+ * Проверка проектных ролей.
  *
- * Сам фреймворк НЕ знает, откуда берутся роли.
- * Он берёт resolver из config.php проекта.
+ * Поддерживает иерархию:
+ * owner > admin > editor > viewer
  */
 class Role
 {
     private static ?RoleResolverInterface $resolver = null;
 
+    /**
+     * Проверить роль с учётом иерархии.
+     *
+     * Например:
+     * если у пользователя owner,
+     * то Role::has('editor') вернёт true.
+     */
     public static function has(string $role, ?int $userId = null): bool
     {
-        return self::resolver()->hasRole($role, $userId);
+        $role = trim($role);
+
+        if ($role === '') {
+            return false;
+        }
+
+        $userRoles = self::all($userId);
+
+        if (empty($userRoles)) {
+            return false;
+        }
+
+        /**
+         * Сначала проверяем точное совпадение.
+         */
+        if (in_array($role, $userRoles, true)) {
+            return true;
+        }
+
+        /**
+         * Потом проверяем по иерархии.
+         */
+        $requiredRank = self::rank($role);
+
+        if ($requiredRank <= 0) {
+            return false;
+        }
+
+        foreach ($userRoles as $userRole) {
+            if (self::rank((string)$userRole) >= $requiredRank) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
+    /**
+     * Проверить, есть ли хотя бы одна роль из списка.
+     */
     public static function hasAny(array $roles, ?int $userId = null): bool
     {
         foreach ($roles as $role) {
@@ -89,9 +106,63 @@ class Role
         return false;
     }
 
+    /**
+     * Получить роли пользователя.
+     */
     public static function all(?int $userId = null): array
     {
         return self::resolver()->roles($userId);
+    }
+
+    /**
+     * Получить числовой уровень роли.
+     *
+     * Чем больше число — тем выше роль.
+     */
+    public static function rank(string $role): int
+    {
+        $role = trim($role);
+
+        $hierarchy = self::hierarchy();
+
+        return (int)($hierarchy[$role] ?? 0);
+    }
+
+    /**
+     * Роли из config.php.
+     */
+    public static function hierarchy(): array
+    {
+        $hierarchy = Config::get('roles.hierarchy', [
+            'viewer' => 10,
+            'editor' => 20,
+            'admin' => 30,
+            'owner' => 40,
+        ]);
+
+        return is_array($hierarchy) ? $hierarchy : [];
+    }
+
+    /**
+     * Самая высокая роль пользователя.
+     */
+    public static function highest(?int $userId = null): string
+    {
+        $roles = self::all($userId);
+
+        $highestRole = '';
+        $highestRank = 0;
+
+        foreach ($roles as $role) {
+            $rank = self::rank((string)$role);
+
+            if ($rank > $highestRank) {
+                $highestRank = $rank;
+                $highestRole = (string)$role;
+            }
+        }
+
+        return $highestRole;
     }
 
     private static function resolver(): RoleResolverInterface
@@ -125,149 +196,11 @@ class Role
 
 ---
 
-3. Обнови /local/mvc/Core/Middleware.php
+2. Обнови /local/mvc_demo/config.php
 
-Найди место после блоков group / groups и перед csrf.
+Добавь иерархию ролей в блок roles.
 
-Добавь туда:
-
-/**
- * role:editor
- *
- * Проверяет одну проектную роль.
- */
-if ($name === 'role') {
-    if ($argument !== '' && Role::has($argument)) {
-        return null;
-    }
-
-    return Response::json([
-        'ok' => false,
-        'error' => 'ROLE_REQUIRED',
-        'details' => [
-            'message' => 'Недостаточно прав. Требуется роль: ' . $argument,
-            'required_role' => $argument,
-            'user_roles' => Role::all(),
-        ],
-    ], 403);
-}
-
-/**
- * roles:owner,admin,editor
- *
- * Пускает, если есть хотя бы одна роль из списка.
- */
-if ($name === 'roles') {
-    $requiredRoles = self::parseRoleList($argument);
-
-    if (Role::hasAny($requiredRoles)) {
-        return null;
-    }
-
-    return Response::json([
-        'ok' => false,
-        'error' => 'ROLES_REQUIRED',
-        'details' => [
-            'message' => 'Недостаточно прав. Требуется одна из ролей.',
-            'required_roles' => $requiredRoles,
-            'user_roles' => Role::all(),
-        ],
-    ], 403);
-}
-
-Теперь в конец класса Middleware, рядом с parseGroupList(), добавь метод:
-
-private static function parseRoleList(string $argument): array
-{
-    $items = explode(',', $argument);
-    $roles = [];
-
-    foreach ($items as $item) {
-        $role = trim((string)$item);
-
-        if ($role !== '') {
-            $roles[] = $role;
-        }
-    }
-
-    return array_values(array_unique($roles));
-}
-
-
----
-
-4. Создай role resolver для demo-проекта
-
-Файл:
-
-/local/mvc_demo/Services/DemoRoleResolver.php
-
-<?php
-
-namespace Local\MvcDemo\Services;
-
-use Local\Mvc\Core\Auth;
-use Local\Mvc\Core\RoleResolverInterface;
-
-/**
- * DemoRoleResolver
- *
- * Тестовая проверка ролей для mvc_demo.
- *
- * В реальном проекте роли можно брать:
- * - из таблицы доступа
- * - из HL-блока
- * - из PostgreSQL
- * - из групп Битрикса
- */
-class DemoRoleResolver implements RoleResolverInterface
-{
-    public function hasRole(string $role, ?int $userId = null): bool
-    {
-        return in_array($role, $this->roles($userId), true);
-    }
-
-    public function roles(?int $userId = null): array
-    {
-        if (!Auth::check()) {
-            return [];
-        }
-
-        /**
-         * Для demo:
-         *
-         * Админ Битрикса получает все роли.
-         */
-        if (Auth::isAdmin()) {
-            return [
-                'owner',
-                'admin',
-                'editor',
-                'viewer',
-            ];
-        }
-
-        /**
-         * Обычный авторизованный пользователь получает viewer.
-         */
-        return [
-            'viewer',
-        ];
-    }
-}
-
-
----
-
-5. Подключи resolver в /local/mvc_demo/config.php
-
-Добавь блок:
-
-'roles' => [
-    'resolver' => \Local\MvcDemo\Services\DemoRoleResolver::class,
-],
-
-Полный файл будет примерно такой:
+Должно быть так:
 
 <?php
 
@@ -285,40 +218,111 @@ return [
 
     'roles' => [
         'resolver' => \Local\MvcDemo\Services\DemoRoleResolver::class,
+
+        /**
+         * Чем больше число — тем выше роль.
+         */
+        'hierarchy' => [
+            'viewer' => 10,
+            'editor' => 20,
+            'admin' => 30,
+            'owner' => 40,
+        ],
     ],
 ];
 
 
 ---
 
-6. Добавь тестовые методы в HomeController
+3. Обнови /local/mvc_demo/Services/DemoRoleResolver.php
+
+Сейчас лучше сделать так, чтобы админ получал только owner, а не все роли сразу. Тогда мы точно проверим, что иерархия работает.
+
+<?php
+
+namespace Local\MvcDemo\Services;
+
+use Local\Mvc\Core\Auth;
+use Local\Mvc\Core\RoleResolverInterface;
+
+/**
+ * DemoRoleResolver
+ *
+ * Тестовая проверка ролей для mvc_demo.
+ */
+class DemoRoleResolver implements RoleResolverInterface
+{
+    public function hasRole(string $role, ?int $userId = null): bool
+    {
+        return in_array($role, $this->roles($userId), true);
+    }
+
+    public function roles(?int $userId = null): array
+    {
+        if (!Auth::check()) {
+            return [];
+        }
+
+        /**
+         * Для demo:
+         * админ Битрикса получает только owner.
+         *
+         * Благодаря иерархии owner проходит проверки:
+         * role:admin
+         * role:editor
+         * role:viewer
+         */
+        if (Auth::isAdmin()) {
+            return [
+                'owner',
+            ];
+        }
+
+        /**
+         * Обычный авторизованный пользователь получает viewer.
+         */
+        return [
+            'viewer',
+        ];
+    }
+}
+
+
+---
+
+4. Обнови тестовые методы в HomeController
 
 Файл:
 
 /local/mvc_demo/Controllers/HomeController.php
 
-Добавь внутрь класса:
+Добавь метод:
 
-public function roleViewerTest(): Response
+public function roleInfo(): Response
 {
     return $this->success([
-        'message' => 'Доступ по роли viewer разрешён.',
         'roles' => \Local\Mvc\Core\Role::all(),
-    ]);
-}
-
-public function roleEditorTest(): Response
-{
-    return $this->success([
-        'message' => 'Доступ по роли editor разрешён.',
-        'roles' => \Local\Mvc\Core\Role::all(),
+        'highest' => \Local\Mvc\Core\Role::highest(),
+        'checks' => [
+            'viewer' => \Local\Mvc\Core\Role::has('viewer'),
+            'editor' => \Local\Mvc\Core\Role::has('editor'),
+            'admin' => \Local\Mvc\Core\Role::has('admin'),
+            'owner' => \Local\Mvc\Core\Role::has('owner'),
+        ],
+        'hierarchy' => \Local\Mvc\Core\Role::hierarchy(),
     ]);
 }
 
 
 ---
 
-7. Добавь маршруты в /local/mvc_demo/routes.php
+5. Добавь маршрут в /local/mvc_demo/routes.php
+
+$router->get('/role-info', [HomeController::class, 'roleInfo'], ['auth']);
+
+Рядом с тестами ролей можно сделать так:
+
+$router->get('/role-info', [HomeController::class, 'roleInfo'], ['auth']);
 
 $router->get('/role-viewer-test', [HomeController::class, 'roleViewerTest'], ['auth', 'role:viewer']);
 
@@ -327,7 +331,7 @@ $router->get('/role-editor-test', [HomeController::class, 'roleEditorTest'], ['a
 
 ---
 
-8. Проверяем
+6. Проверяем
 
 Сбрось OPcache:
 
@@ -336,54 +340,76 @@ echo 'OPcache reset OK';
 
 Открой:
 
-https://bitrix24-stage.gaz.ru/local/mvc_demo/role-viewer-test
+https://bitrix24-stage.gaz.ru/local/mvc_demo/role-info
 
-Если пользователь авторизован, должно работать.
+Если ты админ Битрикса, должно быть примерно так:
 
-Потом:
+{
+  "ok": true,
+  "data": {
+    "roles": ["owner"],
+    "highest": "owner",
+    "checks": {
+      "viewer": true,
+      "editor": true,
+      "admin": true,
+      "owner": true
+    }
+  }
+}
+
+Вот это главное:
+
+roles: ["owner"]
+но editor/admin/viewer тоже true
+
+Значит иерархия работает.
+
+Потом проверь:
 
 https://bitrix24-stage.gaz.ru/local/mvc_demo/role-editor-test
 
-Если ты админ Битрикса — тоже будет работать.
-
-Если обычный пользователь — будет ошибка:
-
-{
-  "ok": false,
-  "error": "ROLE_REQUIRED",
-  "details": {
-    "message": "Недостаточно прав. Требуется роль: editor",
-    "required_role": "editor",
-    "user_roles": ["viewer"]
-  }
-}
+Если у тебя роль owner, маршрут role:editor должен пустить.
 
 
 ---
 
 Что мы сделали
 
-Теперь фреймворк умеет проверять не только группы Битрикса:
+Раньше:
 
-['group:1']
+role:editor
 
-но и проектные роли:
+означало:
 
-['role:editor']
-['roles:owner,admin']
+нужна именно editor
 
-Главная мысль:
+Теперь:
 
-Фреймворк не знает, где хранятся роли.
-Проект сам говорит фреймворку, как роли проверять.
+role:editor
 
-Для будущего sitebuilder это будет идеально:
+означает:
 
-$router->group(['middleware' => ['auth']], function (Router $router) {
-    $router->get('/sites', [SiteController::class, 'index'], ['role:viewer']);
-    $router->get('/sites/create', [SiteController::class, 'create'], ['role:editor']);
-    $router->post('/sites/store', [SiteController::class, 'store'], ['role:editor', 'csrf']);
-    $router->post('/sites/delete', [SiteController::class, 'delete'], ['role:owner', 'csrf']);
-});
+нужна editor или выше
 
-Дальше можно сделать иерархию ролей, чтобы owner автоматически был выше admin, admin выше editor, а editor выше viewer.
+Иерархия:
+
+owner  = 40
+admin  = 30
+editor = 20
+viewer = 10
+
+То есть:
+
+owner проходит всё
+admin проходит admin/editor/viewer
+editor проходит editor/viewer
+viewer проходит только viewer
+
+Это очень важно для будущего sitebuilder, потому что там будет удобно писать:
+
+$router->get('/sites/{siteId}/edit', [SiteController::class, 'edit'], ['auth', 'role:editor']);
+
+$router->post('/sites/{siteId}/delete', [SiteController::class, 'delete'], ['auth', 'role:owner', 'csrf']);
+
+Контроллер не будет сам разбираться, кто выше. Это делает фреймворк.
