@@ -1,36 +1,138 @@
-Да, тогда не делаем View-helper.
-Идём дальше проще: учимся обрабатывать формы и POST-запросы.
+Идём дальше. Сейчас вынесем проверки формы в отдельный класс:
 
-Сейчас сделаем страницу:
+/local/mvc/Core/Validator.php
 
-/local/mvc_demo/form
+Простыми словами:
 
-На ней будет форма:
-
-Имя
-Сообщение
-Кнопка отправить
-
-Форма будет отправляться сюда:
-
-POST /local/mvc_demo/form/send
-
-И контроллер проверит:
-
-имя заполнено?
-сообщение заполнено?
-sessid Битрикса правильный?
+Controller — не должен сам проверять каждое поле вручную.
+Validator — отдельный помощник, который проверяет данные.
 
 
 ---
 
-1. Создай контроллер формы
+1. Создай /local/mvc/Core/Validator.php
 
-Файл:
+<?php
+
+namespace Local\Mvc\Core;
+
+/**
+ * Validator
+ *
+ * Помощник для проверки данных.
+ *
+ * Например:
+ * - поле обязательно
+ * - минимум символов
+ * - максимум символов
+ */
+class Validator
+{
+    private array $data;
+    private array $errors = [];
+
+    public function __construct(array $data)
+    {
+        $this->data = $data;
+    }
+
+    /**
+     * Быстро создать validator.
+     */
+    public static function make(array $data): self
+    {
+        return new self($data);
+    }
+
+    /**
+     * Поле обязательно.
+     */
+    public function required(string $field, string $message): self
+    {
+        $value = $this->data[$field] ?? null;
+
+        if ($value === null || trim((string)$value) === '') {
+            $this->errors[$field][] = $message;
+        }
+
+        return $this;
+    }
+
+    /**
+     * Минимальная длина строки.
+     */
+    public function min(string $field, int $length, string $message): self
+    {
+        $value = trim((string)($this->data[$field] ?? ''));
+
+        if ($value !== '' && mb_strlen($value) < $length) {
+            $this->errors[$field][] = $message;
+        }
+
+        return $this;
+    }
+
+    /**
+     * Максимальная длина строки.
+     */
+    public function max(string $field, int $length, string $message): self
+    {
+        $value = trim((string)($this->data[$field] ?? ''));
+
+        if ($value !== '' && mb_strlen($value) > $length) {
+            $this->errors[$field][] = $message;
+        }
+
+        return $this;
+    }
+
+    /**
+     * Есть ли ошибки?
+     */
+    public function fails(): bool
+    {
+        return !empty($this->errors);
+    }
+
+    /**
+     * Ошибки по полям.
+     */
+    public function errors(): array
+    {
+        return $this->errors;
+    }
+
+    /**
+     * Все ошибки одним списком.
+     *
+     * Удобно для простого вывода во view.
+     */
+    public function errorList(): array
+    {
+        $list = [];
+
+        foreach ($this->errors as $fieldErrors) {
+            foreach ($fieldErrors as $error) {
+                $list[] = $error;
+            }
+        }
+
+        return $list;
+    }
+}
+
+
+---
+
+2. Обнови /local/mvc_demo/Controllers/FormController.php
+
+Теперь контроллер станет чище.
+
+Полностью замени файл:
 
 /local/mvc_demo/Controllers/FormController.php
 
-Код:
+на:
 
 <?php
 
@@ -38,6 +140,7 @@ namespace Local\MvcDemo\Controllers;
 
 use Local\Mvc\Core\Controller;
 use Local\Mvc\Core\Response;
+use Local\Mvc\Core\Validator;
 
 class FormController extends Controller
 {
@@ -62,26 +165,33 @@ class FormController extends Controller
      */
     public function send(): Response
     {
-        $name = trim((string)$this->request->post('name', ''));
-        $message = trim((string)$this->request->post('message', ''));
+        $data = [
+            'name' => trim((string)$this->request->post('name', '')),
+            'message' => trim((string)$this->request->post('message', '')),
+        ];
 
         $errors = [];
 
         /**
          * Проверяем sessid Битрикса.
-         *
-         * Это защита от чужой отправки формы.
          */
         if (function_exists('check_bitrix_sessid') && !check_bitrix_sessid()) {
             $errors[] = 'Ошибка безопасности: неверный sessid.';
         }
 
-        if ($name === '') {
-            $errors[] = 'Введите имя.';
-        }
+        /**
+         * Проверяем поля через Validator.
+         */
+        $validator = Validator::make($data)
+            ->required('name', 'Введите имя.')
+            ->min('name', 2, 'Имя должно быть не короче 2 символов.')
+            ->max('name', 100, 'Имя должно быть не длиннее 100 символов.')
+            ->required('message', 'Введите сообщение.')
+            ->min('message', 5, 'Сообщение должно быть не короче 5 символов.')
+            ->max('message', 1000, 'Сообщение должно быть не длиннее 1000 символов.');
 
-        if ($message === '') {
-            $errors[] = 'Введите сообщение.';
+        if ($validator->fails()) {
+            $errors = array_merge($errors, $validator->errorList());
         }
 
         if (!empty($errors)) {
@@ -89,21 +199,14 @@ class FormController extends Controller
                 'title' => 'Тестовая форма',
                 'errors' => $errors,
                 'success' => '',
-                'old' => [
-                    'name' => $name,
-                    'message' => $message,
-                ],
+                'old' => $data,
             ]);
         }
 
-        /**
-         * Пока никуда не сохраняем.
-         * Просто показываем, что POST-запрос успешно обработан.
-         */
         return $this->render('form/index', [
             'title' => 'Тестовая форма',
             'errors' => [],
-            'success' => 'Форма успешно отправлена. Имя: ' . $name . ', сообщение: ' . $message,
+            'success' => 'Форма успешно отправлена. Имя: ' . $data['name'] . ', сообщение: ' . $data['message'],
             'old' => [
                 'name' => '',
                 'message' => '',
@@ -115,191 +218,36 @@ class FormController extends Controller
 
 ---
 
-2. Создай папку view
+Что изменилось
 
-/local/mvc_demo/Views/form/
+Раньше было так:
 
-
----
-
-3. Создай view формы
-
-Файл:
-
-/local/mvc_demo/Views/form/index.php
-
-Код:
-
-<?php
-
-if (!defined('B_PROLOG_INCLUDED') || B_PROLOG_INCLUDED !== true) {
-    die();
+if ($name === '') {
+    $errors[] = 'Введите имя.';
 }
 
-$name = $old['name'] ?? '';
-$message = $old['message'] ?? '';
+if ($message === '') {
+    $errors[] = 'Введите сообщение.';
+}
 
-?>
+А теперь так:
 
-<div class="mvc-card">
-    <h1 class="mvc-page-title">
-        <?= htmlspecialcharsbx($title ?? 'Форма') ?>
-    </h1>
+$validator = Validator::make($data)
+    ->required('name', 'Введите имя.')
+    ->min('name', 2, 'Имя должно быть не короче 2 символов.')
+    ->required('message', 'Введите сообщение.')
+    ->min('message', 5, 'Сообщение должно быть не короче 5 символов.');
 
-    <p class="mvc-page-text">
-        Это простая форма, чтобы проверить POST-запросы в нашем MVC.
-    </p>
+То есть контроллер говорит:
 
-    <?php if (!empty($errors)): ?>
-        <div class="mvc-info" style="border-color: #fecaca; background: #fef2f2;">
-            <b style="color: #991b1b;">Ошибки:</b>
-
-            <ol>
-                <?php foreach ($errors as $error): ?>
-                    <li style="color: #991b1b;">
-                        <?= htmlspecialcharsbx($error) ?>
-                    </li>
-                <?php endforeach; ?>
-            </ol>
-        </div>
-    <?php endif; ?>
-
-    <?php if (!empty($success)): ?>
-        <div class="mvc-info" style="border-color: #bbf7d0; background: #f0fdf4;">
-            <b style="color: #166534;">Успешно:</b>
-
-            <p style="color: #166534; margin-bottom: 0;">
-                <?= htmlspecialcharsbx($success) ?>
-            </p>
-        </div>
-    <?php endif; ?>
-
-    <form method="post" action="/local/mvc_demo/form/send" style="margin-top: 24px;">
-        <?php if (function_exists('bitrix_sessid_post')): ?>
-            <?= bitrix_sessid_post() ?>
-        <?php endif; ?>
-
-        <div style="margin-bottom: 16px;">
-            <label style="display: block; margin-bottom: 6px; font-weight: 600;">
-                Имя
-            </label>
-
-            <input
-                type="text"
-                name="name"
-                value="<?= htmlspecialcharsbx($name) ?>"
-                style="width: 100%; min-height: 42px; padding: 8px 12px; border: 1px solid #d1d5db; border-radius: 10px;"
-            >
-        </div>
-
-        <div style="margin-bottom: 16px;">
-            <label style="display: block; margin-bottom: 6px; font-weight: 600;">
-                Сообщение
-            </label>
-
-            <textarea
-                name="message"
-                rows="5"
-                style="width: 100%; padding: 8px 12px; border: 1px solid #d1d5db; border-radius: 10px;"
-            ><?= htmlspecialcharsbx($message) ?></textarea>
-        </div>
-
-        <button
-            type="submit"
-            style="min-height: 42px; padding: 0 18px; border: 0; border-radius: 10px; background: #2563eb; color: #fff; font-weight: 600; cursor: pointer;"
-        >
-            Отправить
-        </button>
-    </form>
-</div>
+Проверь name.
+Проверь message.
+Если есть ошибки — верни мне список.
 
 
 ---
 
-4. Обнови routes
-
-Файл:
-
-/local/mvc_demo/routes.php
-
-Добавь use:
-
-use Local\MvcDemo\Controllers\FormController;
-
-И добавь маршруты:
-
-$router->get('/form', [FormController::class, 'index']);
-
-$router->post('/form/send', [FormController::class, 'send']);
-
-Примерно получится так:
-
-<?php
-
-use Local\Mvc\Core\Router;
-use Local\MvcDemo\Controllers\HomeController;
-use Local\MvcDemo\Controllers\AdminController;
-use Local\MvcDemo\Controllers\FormController;
-
-/** @var Router $router */
-
-/**
- * Публичные маршруты.
- */
-$router->get('/', [HomeController::class, 'index']);
-
-$router->get('/about', [HomeController::class, 'about']);
-
-$router->get('/ping', [HomeController::class, 'ping']);
-
-$router->get('/form', [FormController::class, 'index']);
-
-$router->post('/form/send', [FormController::class, 'send']);
-
-/**
- * Только авторизованные пользователи.
- */
-$router->group(['middleware' => ['auth']], function (Router $router) {
-    $router->get('/me', [HomeController::class, 'me']);
-
-    $router->group([
-        'prefix' => '/admin',
-        'middleware' => ['admin'],
-    ], function (Router $router) {
-        $router->get('/dashboard', [AdminController::class, 'dashboard']);
-        $router->get('/users', [AdminController::class, 'users']);
-    });
-});
-
-
----
-
-5. Добавь ссылку в меню
-
-Файл:
-
-/local/mvc_demo/Views/layouts/app.php
-
-В меню добавь:
-
-<a href="/local/mvc_demo/form">Форма</a>
-
-Например:
-
-<nav class="mvc-nav">
-    <a href="/local/mvc_demo/">Главная</a>
-    <a href="/local/mvc_demo/about">О проекте</a>
-    <a href="/local/mvc_demo/form">Форма</a>
-    <a href="/local/mvc_demo/me">Я</a>
-    <a href="/local/mvc_demo/admin/dashboard">Админка</a>
-    <a href="/local/mvc_demo/admin/users">Пользователи</a>
-    <a href="/local/mvc_demo/ping" target="_blank">Ping JSON</a>
-</nav>
-
-
----
-
-6. Проверяем
+3. Проверяем
 
 Сбрось OPcache:
 
@@ -310,42 +258,58 @@ echo 'OPcache reset OK';
 
 https://bitrix24-stage.gaz.ru/local/mvc_demo/form
 
-Сначала нажми “Отправить” с пустыми полями. Должны появиться ошибки:
+Проверь так:
 
-Введите имя.
-Введите сообщение.
+1. Отправь пустую форму.
+2. Введи имя из 1 буквы.
+3. Введи сообщение короче 5 символов.
+4. Потом введи нормальные данные.
 
-Потом заполни поля и отправь. Должно появиться сообщение:
-
-Форма успешно отправлена...
+Должны появляться нормальные ошибки.
 
 
 ---
 
-Что мы сейчас добавили
+Что мы сделали простыми словами
 
-Раньше у нас были только GET-запросы:
+Мы вынесли проверку данных из контроллера.
 
-открыл страницу
-получил HTML или JSON
+Было:
 
-Теперь появился POST:
+Controller сам проверяет каждое поле.
 
-пользователь заполнил форму
-нажал кнопку
-браузер отправил POST
-Router нашёл POST-маршрут
-Controller проверил данные
-View показал результат
+Стало:
 
-Главное, что нужно понять:
+Controller получает данные.
+Validator проверяет данные.
+Controller решает, что показать дальше.
 
-GET  — показать страницу
-POST — обработать действие
+То есть:
 
-Например:
+Controller — руководит.
+Validator — проверяет.
+View — показывает.
 
-GET  /form       — показать форму
-POST /form/send  — обработать форму
 
-Следующим шагом можно сделать валидацию отдельным инструментом, чтобы проверки Введите имя, Введите сообщение не писать вручную в каждом контроллере.
+---
+
+Почему это важно
+
+В реальных проектах будет много форм:
+
+создать сайт
+создать страницу
+создать заявку
+создать папку
+загрузить файл
+назначить права
+
+И везде надо проверять данные.
+
+Теперь мы сможем использовать один общий инструмент:
+
+$validator = Validator::make($data)
+    ->required('title', 'Введите название.')
+    ->max('title', 255, 'Название слишком длинное.');
+
+Следующий шаг — сделать Session Flash-сообщения, чтобы после успешной POST-отправки делать редирект обратно и показывать сообщение, а не оставаться на /form/send.
