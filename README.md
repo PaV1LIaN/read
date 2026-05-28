@@ -1,230 +1,297 @@
-Идём дальше. Сейчас сделаем middleware с параметрами.
+Идём дальше. Сейчас сделаем middleware для ролей проекта.
 
-Сейчас middleware у нас простые:
+Важно: роли проекта — это не группы Битрикса.
 
-['auth']
-['admin']
-['csrf']
+Группы Битрикса:
 
-А в реальных проектах часто нужно так:
+group:1
+groups:1,7,12
 
-['group:1']
+А роли проекта:
 
-Это значит:
+owner
+admin
+editor
+viewer
 
-Пустить только пользователя из группы ID 1.
+Например в sitebuilder потом будет так:
 
-Или так:
+$router->get('/sites/{id}/edit', [SiteController::class, 'edit'], ['auth', 'role:editor']);
 
-['groups:1,7,12']
+То есть:
 
-Это значит:
-
-Пустить пользователя, если он есть хотя бы в одной из этих групп.
-
-Это пригодится для проектов:
-
-sitebuilder — доступ по группам
-glab — админ/менеджер/ассистент
-qr_opros — доступ к отчётам
+Пустить только того, у кого в этом проекте роль editor или выше.
 
 
 ---
 
-1. Замени /local/mvc/Core/Middleware.php
+1. Создай /local/mvc/Core/RoleResolverInterface.php
 
 <?php
 
 namespace Local\Mvc\Core;
 
 /**
- * Middleware
+ * RoleResolverInterface
  *
- * Проверки, которые выполняются ДО контроллера.
+ * Интерфейс для проверки ролей проекта.
+ *
+ * Простыми словами:
+ * фреймворк спрашивает:
+ * "У пользователя есть такая роль?"
+ *
+ * А конкретный проект отвечает:
+ * "Да" или "Нет".
  */
-class Middleware
+interface RoleResolverInterface
 {
-    public static function handle(array $middlewares, Request $request): ?Response
+    public function hasRole(string $role, ?int $userId = null): bool;
+
+    public function roles(?int $userId = null): array;
+}
+
+
+---
+
+2. Создай /local/mvc/Core/Role.php
+
+<?php
+
+namespace Local\Mvc\Core;
+
+use RuntimeException;
+
+/**
+ * Role
+ *
+ * Помощник для проверки проектных ролей.
+ *
+ * Сам фреймворк НЕ знает, откуда берутся роли.
+ * Он берёт resolver из config.php проекта.
+ */
+class Role
+{
+    private static ?RoleResolverInterface $resolver = null;
+
+    public static function has(string $role, ?int $userId = null): bool
     {
-        foreach ($middlewares as $middleware) {
-            $middleware = trim((string)$middleware);
-
-            if ($middleware === '') {
-                continue;
-            }
-
-            $response = self::handleOne($middleware, $request);
-
-            if ($response instanceof Response) {
-                return $response;
-            }
-        }
-
-        return null;
+        return self::resolver()->hasRole($role, $userId);
     }
 
-    private static function handleOne(string $middleware, Request $request): ?Response
+    public static function hasAny(array $roles, ?int $userId = null): bool
     {
-        [$name, $argument] = self::parse($middleware);
-
-        if ($name === 'auth') {
-            if (Auth::check()) {
-                return null;
+        foreach ($roles as $role) {
+            if (self::has((string)$role, $userId)) {
+                return true;
             }
-
-            return Response::json([
-                'ok' => false,
-                'error' => 'AUTH_REQUIRED',
-                'details' => [
-                    'message' => 'Нужно авторизоваться',
-                ],
-            ], 401);
         }
 
-        if ($name === 'admin') {
-            if (Auth::isAdmin()) {
-                return null;
-            }
-
-            return Response::json([
-                'ok' => false,
-                'error' => 'ADMIN_REQUIRED',
-                'details' => [
-                    'message' => 'Нужны права администратора',
-                ],
-            ], 403);
-        }
-
-        /**
-         * group:1
-         *
-         * Пускает только пользователя из одной конкретной группы.
-         */
-        if ($name === 'group') {
-            $groupId = (int)$argument;
-
-            if ($groupId > 0 && Auth::inGroup($groupId)) {
-                return null;
-            }
-
-            return Response::json([
-                'ok' => false,
-                'error' => 'GROUP_REQUIRED',
-                'details' => [
-                    'message' => 'Недостаточно прав. Требуется группа: ' . $groupId,
-                    'required_group' => $groupId,
-                    'user_groups' => Auth::groups(),
-                ],
-            ], 403);
-        }
-
-        /**
-         * groups:1,7,12
-         *
-         * Пускает пользователя, если он входит хотя бы в одну группу из списка.
-         */
-        if ($name === 'groups') {
-            $requiredGroups = self::parseGroupList($argument);
-            $userGroups = Auth::groups();
-
-            foreach ($requiredGroups as $groupId) {
-                if (in_array($groupId, $userGroups, true)) {
-                    return null;
-                }
-            }
-
-            return Response::json([
-                'ok' => false,
-                'error' => 'GROUPS_REQUIRED',
-                'details' => [
-                    'message' => 'Недостаточно прав. Требуется одна из групп.',
-                    'required_groups' => $requiredGroups,
-                    'user_groups' => $userGroups,
-                ],
-            ], 403);
-        }
-
-        if ($name === 'csrf') {
-            if ($request->method() !== 'POST') {
-                return null;
-            }
-
-            if (function_exists('check_bitrix_sessid') && check_bitrix_sessid()) {
-                return null;
-            }
-
-            $headerSessid = (string)$request->header('X-Bitrix-Sessid', '');
-
-            if (
-                $headerSessid !== ''
-                && function_exists('bitrix_sessid')
-                && hash_equals((string)bitrix_sessid(), $headerSessid)
-            ) {
-                return null;
-            }
-
-            return Response::json([
-                'ok' => false,
-                'error' => 'BAD_SESSID',
-                'details' => [
-                    'message' => 'Неверный sessid. Обновите страницу и попробуйте снова.',
-                ],
-            ], 403);
-        }
-
-        return Response::json([
-            'ok' => false,
-            'error' => 'UNKNOWN_MIDDLEWARE',
-            'details' => [
-                'middleware' => $middleware,
-            ],
-        ], 500);
+        return false;
     }
 
-    /**
-     * Разобрать middleware.
-     *
-     * Было:
-     * group:1
-     *
-     * Стало:
-     * name = group
-     * argument = 1
-     */
-    private static function parse(string $middleware): array
+    public static function all(?int $userId = null): array
     {
-        $parts = explode(':', $middleware, 2);
-
-        $name = trim((string)($parts[0] ?? ''));
-        $argument = trim((string)($parts[1] ?? ''));
-
-        return [$name, $argument];
+        return self::resolver()->roles($userId);
     }
 
-    /**
-     * Превратить строку "1,7,12" в массив [1, 7, 12].
-     */
-    private static function parseGroupList(string $argument): array
+    private static function resolver(): RoleResolverInterface
     {
-        $items = explode(',', $argument);
-        $groups = [];
-
-        foreach ($items as $item) {
-            $groupId = (int)trim($item);
-
-            if ($groupId > 0) {
-                $groups[] = $groupId;
-            }
+        if (self::$resolver instanceof RoleResolverInterface) {
+            return self::$resolver;
         }
 
-        return array_values(array_unique($groups));
+        $class = (string)Config::get('roles.resolver', '');
+
+        if ($class === '') {
+            throw new RuntimeException('ROLE_RESOLVER_NOT_CONFIGURED');
+        }
+
+        if (!class_exists($class)) {
+            throw new RuntimeException('ROLE_RESOLVER_CLASS_NOT_FOUND: ' . $class);
+        }
+
+        $resolver = new $class();
+
+        if (!$resolver instanceof RoleResolverInterface) {
+            throw new RuntimeException('ROLE_RESOLVER_MUST_IMPLEMENT_INTERFACE: ' . $class);
+        }
+
+        self::$resolver = $resolver;
+
+        return self::$resolver;
     }
 }
 
 
 ---
 
-2. Добавь тестовый метод в HomeController
+3. Обнови /local/mvc/Core/Middleware.php
+
+Найди место после блоков group / groups и перед csrf.
+
+Добавь туда:
+
+/**
+ * role:editor
+ *
+ * Проверяет одну проектную роль.
+ */
+if ($name === 'role') {
+    if ($argument !== '' && Role::has($argument)) {
+        return null;
+    }
+
+    return Response::json([
+        'ok' => false,
+        'error' => 'ROLE_REQUIRED',
+        'details' => [
+            'message' => 'Недостаточно прав. Требуется роль: ' . $argument,
+            'required_role' => $argument,
+            'user_roles' => Role::all(),
+        ],
+    ], 403);
+}
+
+/**
+ * roles:owner,admin,editor
+ *
+ * Пускает, если есть хотя бы одна роль из списка.
+ */
+if ($name === 'roles') {
+    $requiredRoles = self::parseRoleList($argument);
+
+    if (Role::hasAny($requiredRoles)) {
+        return null;
+    }
+
+    return Response::json([
+        'ok' => false,
+        'error' => 'ROLES_REQUIRED',
+        'details' => [
+            'message' => 'Недостаточно прав. Требуется одна из ролей.',
+            'required_roles' => $requiredRoles,
+            'user_roles' => Role::all(),
+        ],
+    ], 403);
+}
+
+Теперь в конец класса Middleware, рядом с parseGroupList(), добавь метод:
+
+private static function parseRoleList(string $argument): array
+{
+    $items = explode(',', $argument);
+    $roles = [];
+
+    foreach ($items as $item) {
+        $role = trim((string)$item);
+
+        if ($role !== '') {
+            $roles[] = $role;
+        }
+    }
+
+    return array_values(array_unique($roles));
+}
+
+
+---
+
+4. Создай role resolver для demo-проекта
+
+Файл:
+
+/local/mvc_demo/Services/DemoRoleResolver.php
+
+<?php
+
+namespace Local\MvcDemo\Services;
+
+use Local\Mvc\Core\Auth;
+use Local\Mvc\Core\RoleResolverInterface;
+
+/**
+ * DemoRoleResolver
+ *
+ * Тестовая проверка ролей для mvc_demo.
+ *
+ * В реальном проекте роли можно брать:
+ * - из таблицы доступа
+ * - из HL-блока
+ * - из PostgreSQL
+ * - из групп Битрикса
+ */
+class DemoRoleResolver implements RoleResolverInterface
+{
+    public function hasRole(string $role, ?int $userId = null): bool
+    {
+        return in_array($role, $this->roles($userId), true);
+    }
+
+    public function roles(?int $userId = null): array
+    {
+        if (!Auth::check()) {
+            return [];
+        }
+
+        /**
+         * Для demo:
+         *
+         * Админ Битрикса получает все роли.
+         */
+        if (Auth::isAdmin()) {
+            return [
+                'owner',
+                'admin',
+                'editor',
+                'viewer',
+            ];
+        }
+
+        /**
+         * Обычный авторизованный пользователь получает viewer.
+         */
+        return [
+            'viewer',
+        ];
+    }
+}
+
+
+---
+
+5. Подключи resolver в /local/mvc_demo/config.php
+
+Добавь блок:
+
+'roles' => [
+    'resolver' => \Local\MvcDemo\Services\DemoRoleResolver::class,
+],
+
+Полный файл будет примерно такой:
+
+<?php
+
+return [
+    'app' => [
+        'name' => 'MVC Demo',
+        'description' => 'Тестовый проект на общем MVC-фреймворке',
+    ],
+
+    'debug' => true,
+
+    'log' => [
+        'file' => __DIR__ . '/logs/app.log',
+    ],
+
+    'roles' => [
+        'resolver' => \Local\MvcDemo\Services\DemoRoleResolver::class,
+    ],
+];
+
+
+---
+
+6. Добавь тестовые методы в HomeController
 
 Файл:
 
@@ -232,37 +299,35 @@ class Middleware
 
 Добавь внутрь класса:
 
-public function groupTest(): Response
+public function roleViewerTest(): Response
 {
     return $this->success([
-        'message' => 'Доступ по группе разрешён.',
-        'user_id' => \Local\Mvc\Core\Auth::id(),
-        'groups' => \Local\Mvc\Core\Auth::groups(),
+        'message' => 'Доступ по роли viewer разрешён.',
+        'roles' => \Local\Mvc\Core\Role::all(),
+    ]);
+}
+
+public function roleEditorTest(): Response
+{
+    return $this->success([
+        'message' => 'Доступ по роли editor разрешён.',
+        'roles' => \Local\Mvc\Core\Role::all(),
     ]);
 }
 
 
 ---
 
-3. Добавь маршрут в /local/mvc_demo/routes.php
+7. Добавь маршруты в /local/mvc_demo/routes.php
 
-Добавь публично рядом с остальными тестовыми маршрутами:
+$router->get('/role-viewer-test', [HomeController::class, 'roleViewerTest'], ['auth', 'role:viewer']);
 
-$router->get('/group-test', [HomeController::class, 'groupTest'], ['auth', 'group:1']);
-
-Пример:
-
-$router->get('/', [HomeController::class, 'index']);
-$router->get('/about', [HomeController::class, 'about']);
-$router->get('/ping', [HomeController::class, 'ping']);
-$router->get('/group-test', [HomeController::class, 'groupTest'], ['auth', 'group:1']);
-
-group:1 — это обычно группа администраторов Битрикса. Если у вас другая группа, поменяешь ID.
+$router->get('/role-editor-test', [HomeController::class, 'roleEditorTest'], ['auth', 'role:editor']);
 
 
 ---
 
-4. Проверяем
+8. Проверяем
 
 Сбрось OPcache:
 
@@ -271,28 +336,25 @@ echo 'OPcache reset OK';
 
 Открой:
 
-https://bitrix24-stage.gaz.ru/local/mvc_demo/group-test
+https://bitrix24-stage.gaz.ru/local/mvc_demo/role-viewer-test
 
-Если текущий пользователь в группе 1, будет:
+Если пользователь авторизован, должно работать.
 
-{
-  "ok": true,
-  "data": {
-    "message": "Доступ по группе разрешён.",
-    "user_id": 1,
-    "groups": [1, 2]
-  }
-}
+Потом:
 
-Если не в группе, будет:
+https://bitrix24-stage.gaz.ru/local/mvc_demo/role-editor-test
+
+Если ты админ Битрикса — тоже будет работать.
+
+Если обычный пользователь — будет ошибка:
 
 {
   "ok": false,
-  "error": "GROUP_REQUIRED",
+  "error": "ROLE_REQUIRED",
   "details": {
-    "message": "Недостаточно прав. Требуется группа: 1",
-    "required_group": 1,
-    "user_groups": [...]
+    "message": "Недостаточно прав. Требуется роль: editor",
+    "required_role": "editor",
+    "user_roles": ["viewer"]
   }
 }
 
@@ -301,27 +363,27 @@ https://bitrix24-stage.gaz.ru/local/mvc_demo/group-test
 
 Что мы сделали
 
-Теперь middleware могут быть не только простыми:
-
-['auth']
-['admin']
-['csrf']
-
-но и с параметрами:
+Теперь фреймворк умеет проверять не только группы Битрикса:
 
 ['group:1']
-['groups:1,7,12']
 
-Это уже очень полезно для реальных проектов.
+но и проектные роли:
 
-Например:
+['role:editor']
+['roles:owner,admin']
 
-$router->group(['middleware' => ['auth', 'groups:10,11']], function (Router $router) {
-    $router->get('/reports', [ReportController::class, 'index']);
+Главная мысль:
+
+Фреймворк не знает, где хранятся роли.
+Проект сам говорит фреймворку, как роли проверять.
+
+Для будущего sitebuilder это будет идеально:
+
+$router->group(['middleware' => ['auth']], function (Router $router) {
+    $router->get('/sites', [SiteController::class, 'index'], ['role:viewer']);
+    $router->get('/sites/create', [SiteController::class, 'create'], ['role:editor']);
+    $router->post('/sites/store', [SiteController::class, 'store'], ['role:editor', 'csrf']);
+    $router->post('/sites/delete', [SiteController::class, 'delete'], ['role:owner', 'csrf']);
 });
 
-Простыми словами:
-
-Пустить в отчёты только пользователей из групп 10 или 11.
-
-Следующий шаг — сделать middleware для ролей проекта, чтобы можно было не только по группам Битрикса, а по своим ролям: owner, admin, editor, viewer.
+Дальше можно сделать иерархию ролей, чтобы owner автоматически был выше admin, admin выше editor, а editor выше viewer.
