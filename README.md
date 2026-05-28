@@ -1,34 +1,37 @@
-Ошибка говорит почти прямо:
+Отлично. Дальше делаем именованные маршруты.
 
-syntax error, unexpected token "<", expecting "function" or "const"
+Зачем это нужно
 
-Это значит, что в файле:
+Сейчас во views мы руками пишем ссылки:
 
-/local/mvc/Core/Router.php
+<a href="/local/mvc_demo/admin/users/<?= (int)$user['id'] ?>">
 
-на строке 36 PHP встретил символ <.
+Это плохо, потому что если адрес изменится, например:
 
-Скорее всего, ты случайно вставил внутрь класса повторный открывающий тег:
+/admin/users/{id}
 
-<?php
+на:
 
-Например было так:
+/admin/people/{id}
 
-class Router
-{
-    public function get(...)
-    {
-        ...
-    }
+придётся искать ссылки по всему проекту.
 
-    <?php // ← вот это внутри класса ломает файл
+А мы хотим так:
 
-Чтобы не искать вручную, проще заменить Router.php полностью.
+<a href="<?= App::route('admin.users.show', ['id' => $user['id']]) ?>">
+
+То есть ссылка строится не по строке URL, а по имени маршрута.
 
 
 ---
 
-Замени полностью /local/mvc/Core/Router.php
+1. Заменяем /local/mvc/Core/Router.php
+
+Полностью замени файл:
+
+/local/mvc/Core/Router.php
+
+на этот:
 
 <?php
 
@@ -38,39 +41,33 @@ namespace Local\Mvc\Core;
  * Router
  *
  * Диспетчер маршрутов.
- *
- * Умеет:
- * - GET / POST маршруты
- * - middleware
- * - группы
- * - prefix
- * - динамические параметры /users/{id}
- * - ограничения параметров /users/{id:\d+}
- * - список маршрутов для debug-страницы
  */
 class Router
 {
     private array $routes = [];
 
+    /**
+     * Маршруты по имени.
+     *
+     * Например:
+     * admin.users.show => /admin/users/{id:\d+}
+     */
+    private array $namedRoutes = [];
+
     private string $groupPrefix = '';
 
     private array $groupMiddleware = [];
 
-    public function get(string $path, array $handler, array $middleware = []): void
+    public function get(string $path, array $handler, array $middleware = [], ?string $name = null): void
     {
-        $this->add('GET', $path, $handler, $middleware);
+        $this->add('GET', $path, $handler, $middleware, $name);
     }
 
-    public function post(string $path, array $handler, array $middleware = []): void
+    public function post(string $path, array $handler, array $middleware = [], ?string $name = null): void
     {
-        $this->add('POST', $path, $handler, $middleware);
+        $this->add('POST', $path, $handler, $middleware, $name);
     }
 
-    /**
-     * Получить список всех маршрутов.
-     *
-     * Нужно для debug-страницы /debug/routes.
-     */
     public function routes(): array
     {
         $list = [];
@@ -85,6 +82,7 @@ class Router
                 $list[] = [
                     'method' => $method,
                     'path' => $route['path'] ?? '',
+                    'name' => $route['name'] ?? '',
                     'controller' => (string)$controller,
                     'action' => (string)$action,
                     'middleware' => $route['middleware'] ?? [],
@@ -122,7 +120,7 @@ class Router
         $this->groupMiddleware = $oldMiddleware;
     }
 
-    private function add(string $method, string $path, array $handler, array $middleware = []): void
+    private function add(string $method, string $path, array $handler, array $middleware = [], ?string $name = null): void
     {
         $method = strtoupper($method);
 
@@ -136,13 +134,68 @@ class Router
 
         $compiled = $this->compilePath($path);
 
-        $this->routes[$method][] = [
+        $route = [
+            'method' => $method,
             'path' => $path,
             'pattern' => $compiled['pattern'],
             'params' => $compiled['params'],
             'handler' => $handler,
             'middleware' => $middleware,
+            'name' => $name,
         ];
+
+        $this->routes[$method][] = $route;
+
+        if ($name !== null && $name !== '') {
+            $this->namedRoutes[$name] = $route;
+        }
+    }
+
+    /**
+     * Собрать URL по имени маршрута.
+     *
+     * Пример:
+     * $router->url('admin.users.show', ['id' => 5])
+     *
+     * Вернёт:
+     * /local/mvc_demo/admin/users/5
+     */
+    public function url(string $name, array $params = [], array $query = []): string
+    {
+        if (!isset($this->namedRoutes[$name])) {
+            return '#route-not-found-' . rawurlencode($name);
+        }
+
+        $route = $this->namedRoutes[$name];
+
+        $path = (string)($route['path'] ?? '/');
+
+        /**
+         * Заменяем параметры маршрута.
+         *
+         * Было:
+         * /admin/users/{id:\d+}
+         *
+         * Стало:
+         * /admin/users/5
+         */
+        $path = preg_replace_callback(
+            '#\{([a-zA-Z_][a-zA-Z0-9_]*)(?::[^}]+)?\}#',
+            static function ($matches) use ($params) {
+                $key = $matches[1];
+
+                return rawurlencode((string)($params[$key] ?? ''));
+            },
+            $path
+        );
+
+        $url = rtrim(App::projectUrl(), '/') . $path;
+
+        if (!empty($query)) {
+            $url .= '?' . http_build_query($query);
+        }
+
+        return $url;
     }
 
     public function dispatch(Request $request): void
@@ -335,24 +388,190 @@ class Router
 
 ---
 
-Потом сбрось OPcache
+2. Обновляем /local/mvc/Core/App.php
 
-opcache_reset();
-echo 'OPcache reset OK';
+Добавим короткий помощник:
+
+App::route(...)
+
+Открой:
+
+/local/mvc/Core/App.php
+
+Внутрь класса добавь метод:
+
+/**
+ * Собрать URL по имени маршрута.
+ */
+public static function route(string $name, array $params = [], array $query = []): string
+{
+    if (!(self::$router instanceof Router)) {
+        return '#router-not-ready';
+    }
+
+    return self::$router->url($name, $params, $query);
+}
+
+Лучше вставить сразу после метода:
+
+public static function router(): ?Router
 
 
 ---
 
-Проверь
+3. Обновляем /local/mvc_demo/routes.php
 
-Открой:
+Теперь дадим имена нескольким маршрутам.
 
-https://bitrix24-stage.gaz.ru/local/mvc_demo/debug/routes
+Найди эти строки:
 
-Должна открыться таблица маршрутов.
+$router->get('/', [HomeController::class, 'index']);
+$router->get('/about', [HomeController::class, 'about']);
+$router->get('/form', [FormController::class, 'index']);
 
-Главное правило: в PHP-файле Router.php открывающий тег:
+Замени на:
 
-<?php
+$router->get('/', [HomeController::class, 'index'], [], 'home');
 
-должен быть только один раз — в самом начале файла.
+$router->get('/about', [HomeController::class, 'about'], [], 'about');
+
+$router->get('/form', [FormController::class, 'index'], [], 'form.index');
+
+В админской группе замени:
+
+$router->get('/dashboard', [AdminController::class, 'dashboard']);
+$router->get('/users', [AdminController::class, 'users']);
+$router->get('/users/{id:\d+}', [AdminController::class, 'userDetail']);
+
+на:
+
+$router->get('/dashboard', [AdminController::class, 'dashboard'], [], 'admin.dashboard');
+
+$router->get('/users', [AdminController::class, 'users'], [], 'admin.users.index');
+
+$router->get('/users/{id:\d+}', [AdminController::class, 'userDetail'], [], 'admin.users.show');
+
+
+---
+
+4. Обновляем debug-страницу маршрутов
+
+Файл:
+
+/local/mvc_demo/Views/debug/routes.php
+
+В таблице добавим колонку Имя.
+
+Найди заголовки таблицы и сделай так:
+
+<tr>
+    <th style="text-align: left; padding: 8px; border-bottom: 1px solid #e5e7eb;">Метод</th>
+    <th style="text-align: left; padding: 8px; border-bottom: 1px solid #e5e7eb;">Путь</th>
+    <th style="text-align: left; padding: 8px; border-bottom: 1px solid #e5e7eb;">Имя</th>
+    <th style="text-align: left; padding: 8px; border-bottom: 1px solid #e5e7eb;">Контроллер</th>
+    <th style="text-align: left; padding: 8px; border-bottom: 1px solid #e5e7eb;">Action</th>
+    <th style="text-align: left; padding: 8px; border-bottom: 1px solid #e5e7eb;">Middleware</th>
+</tr>
+
+И в строке маршрута после колонки Путь добавь:
+
+<td style="padding: 8px; border-bottom: 1px solid #e5e7eb;">
+    <span class="mvc-code">
+        <?= htmlspecialcharsbx($route['name'] ?? '') ?>
+    </span>
+</td>
+
+
+---
+
+5. Обновляем /local/mvc_demo/Views/admin/users.php
+
+Сейчас ссылка такая:
+
+<a href="/local/mvc_demo/admin/users/<?= (int)($user['id'] ?? 0) ?>">
+    Открыть
+</a>
+
+Замени её на:
+
+<a href="<?= htmlspecialcharsbx(\Local\Mvc\Core\App::route('admin.users.show', [
+    'id' => (int)($user['id'] ?? 0),
+])) ?>">
+    Открыть
+</a>
+
+Теперь view не знает точный URL. Она знает только имя маршрута:
+
+admin.users.show
+
+
+---
+
+6. Обновляем /local/mvc_demo/Views/admin/user_detail.php
+
+Ссылка назад сейчас такая:
+
+<a href="/local/mvc_demo/admin/users">
+    ← Назад к списку
+</a>
+
+Замени на:
+
+<a href="<?= htmlspecialcharsbx(\Local\Mvc\Core\App::route('admin.users.index')) ?>">
+    ← Назад к списку
+</a>
+
+
+---
+
+7. Проверяем
+
+Сбрось OPcache:
+
+opcache_reset();
+echo 'OPcache reset OK';
+
+Проверь список маршрутов:
+
+/local/mvc_demo/debug/routes
+
+Теперь должна появиться колонка с именами:
+
+home
+about
+form.index
+admin.dashboard
+admin.users.index
+admin.users.show
+
+Проверь пользователей:
+
+/local/mvc_demo/admin/users
+
+Нажми “Открыть”. Должно открыть карточку пользователя.
+
+
+---
+
+Что мы сделали
+
+Раньше ссылка была привязана к адресу:
+
+/local/mvc_demo/admin/users/5
+
+Теперь ссылка привязана к имени:
+
+App::route('admin.users.show', ['id' => 5])
+
+Главная мысль:
+
+URL может поменяться.
+Имя маршрута остаётся стабильным.
+
+Для будущего sitebuilder это будет очень удобно:
+
+App::route('sites.edit', ['siteId' => 10])
+App::route('pages.edit', ['siteId' => 10, 'pageId' => 55])
+App::route('blocks.store', ['pageId' => 55])
+
+Следующий шаг — сделать redirectRoute(), чтобы в контроллере тоже не писать URL руками.
