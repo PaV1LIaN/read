@@ -1,34 +1,156 @@
-Идём дальше. Сейчас сделаем базовый ApiController.
+Идём дальше. Сейчас сделаем единые API-ошибки через исключения.
 
-Зачем он нужен
+Зачем это нужно:
 
-Сейчас API-контроллеры наследуются от обычного:
+Сейчас API-контроллер сам возвращает ошибку:
+return $this->notFound(...)
 
-Controller
+А хочется уметь так:
+throw new HttpException(...)
 
-И возвращают JSON через:
+Тогда если в API что-то сломалось, фреймворк сам вернёт JSON:
 
-$this->success(...)
-$this->error(...)
+{
+  "ok": false,
+  "error": "USER_NOT_FOUND",
+  "details": {
+    "message": "Пользователь не найден"
+  }
+}
 
-Но API у нас будет много:
-
-/api/users
-/api/sites
-/api/pages
-/api/files
-/api/settings
-
-Поэтому удобно сделать отдельного родителя:
-
-ApiController
-
-Он будет специально для JSON-ответов.
+А не HTML-страницу с ошибкой.
 
 
 ---
 
-1. Создай /local/mvc/Core/ApiController.php
+1. Создай /local/mvc/Core/HttpException.php
+
+<?php
+
+namespace Local\Mvc\Core;
+
+use RuntimeException;
+
+/**
+ * HttpException
+ *
+ * Исключение с HTTP-статусом.
+ *
+ * Например:
+ * 404 — не найдено
+ * 403 — доступ запрещён
+ * 422 — ошибка валидации
+ * 500 — ошибка сервера
+ */
+class HttpException extends RuntimeException
+{
+    private int $status;
+    private string $error;
+    private array $details;
+
+    public function __construct(
+        int $status,
+        string $error,
+        string $message = '',
+        array $details = []
+    ) {
+        parent::__construct($message);
+
+        $this->status = $status;
+        $this->error = $error;
+        $this->details = $details;
+    }
+
+    public function status(): int
+    {
+        return $this->status;
+    }
+
+    public function error(): string
+    {
+        return $this->error;
+    }
+
+    public function details(): array
+    {
+        return $this->details;
+    }
+}
+
+
+---
+
+2. Обнови /local/mvc/Core/ErrorHandler.php
+
+Найди метод:
+
+public static function renderThrowable(Throwable $e): void
+
+И замени его полностью на этот:
+
+public static function renderThrowable(Throwable $e): void
+{
+    self::log($e->getMessage(), $e->getFile(), $e->getLine());
+
+    $status = 500;
+    $error = 'SERVER_ERROR';
+    $message = 'Внутренняя ошибка сервера';
+    $details = [];
+
+    /**
+     * Если это наше HTTP-исключение,
+     * берём статус и код ошибки из него.
+     */
+    if ($e instanceof HttpException) {
+        $status = $e->status();
+        $error = $e->error();
+        $message = $e->getMessage() !== '' ? $e->getMessage() : 'Ошибка запроса';
+        $details = $e->details();
+    } else {
+        $message = $e->getMessage();
+    }
+
+    if (self::wantsJson()) {
+        $responseDetails = array_merge([
+            'message' => self::debugEnabled() || $e instanceof HttpException
+                ? $message
+                : 'Внутренняя ошибка сервера',
+        ], $details);
+
+        if (self::debugEnabled() && !($e instanceof HttpException)) {
+            $responseDetails['file'] = $e->getFile();
+            $responseDetails['line'] = $e->getLine();
+        }
+
+        Response::json([
+            'ok' => false,
+            'error' => $error,
+            'details' => $responseDetails,
+        ], $status)->send();
+
+        return;
+    }
+
+    Response::html(self::errorHtml(
+        'Ошибка приложения',
+        $message,
+        $e->getFile(),
+        $e->getLine(),
+        $e->getTraceAsString()
+    ), $status)->send();
+}
+
+Что изменилось:
+
+Если ошибка обычная — SERVER_ERROR.
+Если ошибка HttpException — берём её status/error/details.
+
+
+---
+
+3. Обнови /local/mvc/Core/ApiController.php
+
+Полностью замени файл:
 
 <?php
 
@@ -38,15 +160,9 @@ namespace Local\Mvc\Core;
  * ApiController
  *
  * Базовый контроллер для API.
- *
- * Обычный Controller умеет HTML + JSON.
- * ApiController специально заточен под JSON.
  */
 class ApiController extends Controller
 {
-    /**
-     * Успешный JSON-ответ.
-     */
     protected function ok(array $data = [], int $status = 200): Response
     {
         return $this->json([
@@ -55,9 +171,6 @@ class ApiController extends Controller
         ], $status);
     }
 
-    /**
-     * JSON-ошибка.
-     */
     protected function fail(string $error, array $details = [], int $status = 400): Response
     {
         return $this->json([
@@ -67,9 +180,6 @@ class ApiController extends Controller
         ], $status);
     }
 
-    /**
-     * Ошибка валидации.
-     */
     protected function validationError(array $errors): Response
     {
         return $this->fail('VALIDATION_ERROR', [
@@ -77,9 +187,6 @@ class ApiController extends Controller
         ], 422);
     }
 
-    /**
-     * Не найдено.
-     */
     protected function notFound(string $message = 'Запись не найдена', array $details = []): Response
     {
         return $this->fail('NOT_FOUND', array_merge([
@@ -87,9 +194,6 @@ class ApiController extends Controller
         ], $details), 404);
     }
 
-    /**
-     * Доступ запрещён.
-     */
     protected function forbidden(string $message = 'Доступ запрещён'): Response
     {
         return $this->fail('FORBIDDEN', [
@@ -97,127 +201,40 @@ class ApiController extends Controller
         ], 403);
     }
 
-    /**
-     * Данные JSON-запроса.
-     */
     protected function jsonData(): array
     {
         return $this->request->jsonAll();
     }
-}
-
-
----
-
-2. Обнови /local/mvc_demo/Controllers/UserApiController.php
-
-Полностью замени файл:
-
-<?php
-
-namespace Local\MvcDemo\Controllers;
-
-use Local\Mvc\Core\ApiController;
-use Local\Mvc\Core\Response;
-use Local\MvcDemo\Services\UserService;
-
-class UserApiController extends ApiController
-{
-    /**
-     * GET /api/users
-     */
-    public function index(): Response
-    {
-        $page = (int)$this->request->get('page', 1);
-        $search = trim((string)$this->request->get('q', ''));
-
-        $userService = new UserService();
-
-        $result = $userService->paginateForTable($page, 10, $search);
-
-        return $this->ok([
-            'items' => $result['items'],
-            'pagination' => $result['pagination'],
-            'search' => $result['search'],
-        ]);
-    }
 
     /**
-     * GET /api/users/{id}
-     */
-    public function show(string $id): Response
-    {
-        $userService = new UserService();
-
-        $user = $userService->findForDetail((int)$id);
-
-        if (!$user) {
-            return $this->notFound('Пользователь не найден', [
-                'id' => (int)$id,
-            ]);
-        }
-
-        return $this->ok([
-            'user' => $user,
-        ]);
-    }
-}
-
-
----
-
-3. Обнови /local/mvc_demo/Controllers/AjaxDemoController.php
-
-Я предлагаю переименовать метод echo() в echoText(), чтобы не путаться с языковой конструкцией echo.
-
-Полностью замени файл:
-
-<?php
-
-namespace Local\MvcDemo\Controllers;
-
-use Local\Mvc\Core\ApiController;
-use Local\Mvc\Core\Auth;
-use Local\Mvc\Core\Response;
-
-class AjaxDemoController extends ApiController
-{
-    /**
-     * HTML-страница с AJAX-примером.
-     */
-    public function index(): Response
-    {
-        return $this->render('ajax/index', [
-            'title' => 'AJAX Demo',
-            'sessid' => function_exists('bitrix_sessid') ? bitrix_sessid() : '',
-            'userId' => Auth::id(),
-        ]);
-    }
-
-    /**
-     * POST /api/ajax-demo/echo
+     * Выбросить API-ошибку.
      *
-     * API принимает JSON и возвращает JSON.
+     * Она будет поймана ErrorHandler,
+     * и клиент получит JSON.
      */
-    public function echoText(): Response
+    protected function abort(
+        int $status,
+        string $error,
+        string $message = '',
+        array $details = []
+    ): void {
+        throw new HttpException($status, $error, $message, $details);
+    }
+
+    protected function abortNotFound(string $message = 'Запись не найдена', array $details = []): void
     {
-        $data = $this->jsonData();
+        $this->abort(404, 'NOT_FOUND', $message, $details);
+    }
 
-        $text = trim((string)($data['text'] ?? ''));
+    protected function abortForbidden(string $message = 'Доступ запрещён'): void
+    {
+        $this->abort(403, 'FORBIDDEN', $message);
+    }
 
-        if ($text === '') {
-            return $this->validationError([
-                'text' => [
-                    'Введите текст.',
-                ],
-            ]);
-        }
-
-        return $this->ok([
-            'received_text' => $text,
-            'length' => mb_strlen($text),
-            'user_id' => Auth::id(),
-            'time' => date('Y-m-d H:i:s'),
+    protected function abortValidation(array $errors): void
+    {
+        $this->abort(422, 'VALIDATION_ERROR', 'Ошибка валидации', [
+            'errors' => $errors,
         ]);
     }
 }
@@ -225,73 +242,137 @@ class AjaxDemoController extends ApiController
 
 ---
 
-4. Обнови маршрут AJAX в /local/mvc_demo/routes.php
+4. Обнови /local/mvc_demo/Controllers/UserApiController.php
 
-Найди:
+Сделаем пример: если пользователя нет, не возвращаем return $this->notFound(...), а выбрасываем исключение.
 
-$router->post('/ajax-demo/echo', [AjaxDemoController::class, 'echo'], ['csrf']);
+Замени метод show() на:
 
-Замени на:
+public function show(string $id): Response
+{
+    $userService = new UserService();
 
-$router->post('/ajax-demo/echo', [AjaxDemoController::class, 'echoText'], ['csrf']);
+    $user = $userService->findForDetail((int)$id);
+
+    if (!$user) {
+        $this->abortNotFound('Пользователь не найден', [
+            'id' => (int)$id,
+        ]);
+    }
+
+    return $this->ok([
+        'user' => $user,
+    ]);
+}
 
 
 ---
 
-5. Проверяем
+5. Добавим тестовую API-ошибку
+
+Открой:
+
+/local/mvc_demo/Controllers/AjaxDemoController.php
+
+Внутрь класса добавь метод:
+
+public function errorTest(): Response
+{
+    $this->abort(418, 'TEST_API_EXCEPTION', 'Это тестовая API-ошибка', [
+        'hint' => 'Так мы проверяем HttpException',
+    ]);
+
+    return $this->ok();
+}
+
+
+---
+
+6. Добавь маршрут в /local/mvc_demo/routes.php
+
+В API-группу добавь:
+
+$router->get('/error-test', [AjaxDemoController::class, 'errorTest']);
+
+Должно быть примерно так:
+
+$router->group([
+    'prefix' => '/api',
+    'middleware' => ['auth', 'admin'],
+], function (Router $router) {
+    $router->get('/users', [UserApiController::class, 'index']);
+    $router->get('/users/{id:\d+}', [UserApiController::class, 'show']);
+
+    $router->post('/ajax-demo/echo', [AjaxDemoController::class, 'echoText'], ['csrf']);
+
+    $router->get('/error-test', [AjaxDemoController::class, 'errorTest']);
+});
+
+
+---
+
+7. Проверяем
 
 Сбрось OPcache:
 
 opcache_reset();
 echo 'OPcache reset OK';
 
-Проверь API пользователей:
+Проверь тестовую ошибку:
 
-/local/mvc_demo/api/users
+https://bitrix24-stage.gaz.ru/local/mvc_demo/api/error-test
 
-Проверь одного пользователя:
+Должен быть JSON:
 
-/local/mvc_demo/api/users/1
+{
+  "ok": false,
+  "error": "TEST_API_EXCEPTION",
+  "details": {
+    "message": "Это тестовая API-ошибка",
+    "hint": "Так мы проверяем HttpException"
+  }
+}
 
-Проверь AJAX-страницу:
+Проверь несуществующего пользователя:
 
-/local/mvc_demo/ajax-demo
+https://bitrix24-stage.gaz.ru/local/mvc_demo/api/users/999999999
 
-Нажми кнопку:
+Должно быть:
 
-Отправить AJAX
-
-Должен вернуться JSON.
+{
+  "ok": false,
+  "error": "NOT_FOUND",
+  "details": {
+    "message": "Пользователь не найден",
+    "id": 999999999
+  }
+}
 
 
 ---
 
 Что мы сделали
 
-Раньше API-контроллер был обычным контроллером:
+Теперь API может работать так:
 
-class UserApiController extends Controller
+$this->abortNotFound('Пользователь не найден');
+$this->abortForbidden('Нет доступа');
+$this->abortValidation([
+    'name' => ['Введите имя']
+]);
 
-Теперь он специальный:
-
-class UserApiController extends ApiController
-
-И вместо:
-
-return $this->success([...]);
-return $this->error(...);
-
-пишем более API-понятно:
-
-return $this->ok([...]);
-return $this->fail(...);
-return $this->validationError([...]);
-return $this->notFound(...);
+А ErrorHandler сам превратит это в JSON.
 
 Главная мысль:
 
-Controller — для HTML-страниц.
-ApiController — для JSON API.
-Service и Model можно использовать и там, и там.
+Контроллер может не собирать ошибку вручную.
+Он может просто выбросить HttpException.
+Фреймворк сам отдаст правильный JSON и HTTP-статус.
 
-Дальше можно сделать единый формат API-ответов и обработку исключений API, чтобы любая ошибка в /api/... автоматически возвращалась JSON, а не HTML.
+Это пригодится в реальных API:
+
+создание сайта
+удаление страницы
+загрузка файла
+смена статуса заявки
+обновление настроек
