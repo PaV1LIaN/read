@@ -1,418 +1,368 @@
-Идём дальше. Сейчас сделаем важную вещь для реальных проектов: роли с контекстом.
+Идём дальше. Сделаем полезную вещь для разработки — страницу списка маршрутов.
 
-Сейчас у нас роль проверяется просто так:
+Она нужна, чтобы быстро видеть:
 
-role:editor
-
-Но для sitebuilder этого мало.
-
-Почему?
-
-Потому что пользователь может быть:
-
-editor на сайте 5
-viewer на сайте 7
-owner на сайте 10
-
-То есть роль зависит не просто от пользователя, а от конкретного объекта.
+какие URL есть
+какой контроллер вызывается
+какие middleware стоят
 
 Например:
 
-/local/sitebuilder/sites/5/edit
+GET /admin/users              AdminController::users       auth, admin
+GET /api/users/{id:\d+}       UserApiController::show      auth, admin
+POST /form/send               FormController::send         csrf
 
-Здесь надо проверить:
-
-А у пользователя есть роль editor именно на site_id = 5?
-
-
----
-
-Что сделаем
-
-Мы научим роли получать контекст маршрута.
-
-Например маршрут:
-
-$router->get('/site-role-test/{siteId:\d+}', [HomeController::class, 'siteRoleTest'], ['auth', 'role:editor']);
-
-Если открыть:
-
-/local/mvc_demo/site-role-test/5
-
-то middleware сможет передать в Role:
-
-[
-    'route' => [
-        'siteId' => 5
-    ]
-]
+Это очень помогает, когда появляется 404 и непонятно, зарегистрирован маршрут или нет.
 
 
 ---
 
-1. Замени /local/mvc/Core/RoleResolverInterface.php
+1. Обновляем /local/mvc/Core/Router.php
 
-<?php
+Нам нужно добавить метод, который вернёт список маршрутов.
 
-namespace Local\Mvc\Core;
+Открой:
+
+/local/mvc/Core/Router.php
+
+Внутрь класса Router добавь метод:
 
 /**
- * RoleResolverInterface
+ * Получить список всех маршрутов.
  *
- * Интерфейс проверки проектных ролей.
- *
- * Важно:
- * $context нужен, чтобы проверять роль не просто глобально,
- * а относительно конкретного объекта.
- *
- * Например:
- * siteId = 5
- * pageId = 10
+ * Нужно для debug-страницы.
  */
-interface RoleResolverInterface
+public function routes(): array
 {
-    public function hasRole(string $role, ?int $userId = null, array $context = []): bool;
+    $list = [];
 
-    public function roles(?int $userId = null, array $context = []): array;
+    foreach ($this->routes as $method => $routes) {
+        foreach ($routes as $route) {
+            $handler = $route['handler'] ?? [];
+
+            $controller = $handler[0] ?? '';
+            $action = $handler[1] ?? '';
+
+            $list[] = [
+                'method' => $method,
+                'path' => $route['path'] ?? '',
+                'controller' => (string)$controller,
+                'action' => (string)$action,
+                'middleware' => $route['middleware'] ?? [],
+            ];
+        }
+    }
+
+    return $list;
 }
 
+Лучше вставить его после методов get() и post().
+
 
 ---
 
-2. Замени /local/mvc/Core/Role.php
+2. Обновляем /local/mvc/Core/App.php
+
+Сейчас Router создаётся внутри App::run(), и контроллеры не знают список маршрутов.
+
+Сделаем так, чтобы App хранил текущий router.
+
+Полностью замени файл:
+
+/local/mvc/Core/App.php
+
+на:
 
 <?php
 
 namespace Local\Mvc\Core;
 
-use RuntimeException;
-
 /**
- * Role
+ * App
  *
- * Проверка проектных ролей.
- *
- * Поддерживает:
- * - роли проекта
- * - иерархию ролей
- * - контекст маршрута
+ * Запускатель MVC-приложения.
  */
-class Role
+class App
 {
-    private static ?RoleResolverInterface $resolver = null;
+    private static ?Router $router = null;
+
+    public static function run(?string $routesFile = null): void
+    {
+        $projectRoot = self::projectRoot();
+
+        /**
+         * 1. Загружаем config.php проекта.
+         */
+        self::loadConfig($projectRoot);
+
+        if ($routesFile === null) {
+            $routesFile = $projectRoot . '/routes.php';
+        }
+
+        /**
+         * 2. Создаём Request.
+         */
+        $request = Request::createFromGlobals();
+
+        /**
+         * 3. Включаем общий обработчик ошибок.
+         */
+        ErrorHandler::register($request);
+
+        try {
+            if (!is_file($routesFile)) {
+                Response::html(
+                    '<h1>500</h1><p>Файл маршрутов не найден.</p><pre>'
+                    . htmlspecialchars($routesFile)
+                    . '</pre>',
+                    500
+                )->send();
+
+                return;
+            }
+
+            /**
+             * 4. Создаём Router и сохраняем его в App.
+             */
+            $router = new Router();
+            self::$router = $router;
+
+            /**
+             * 5. Подключаем маршруты проекта.
+             */
+            require $routesFile;
+
+            /**
+             * 6. Запускаем обработку запроса.
+             */
+            $router->dispatch($request);
+        } catch (\Throwable $e) {
+            ErrorHandler::renderThrowable($e);
+        }
+    }
 
     /**
-     * Проверить роль с учётом иерархии.
+     * Получить текущий Router.
      */
-    public static function has(string $role, ?int $userId = null, array $context = []): bool
+    public static function router(): ?Router
     {
-        $role = trim($role);
+        return self::$router;
+    }
 
-        if ($role === '') {
-            return false;
-        }
+    private static function loadConfig(string $projectRoot): void
+    {
+        $configFile = rtrim($projectRoot, '/') . '/config.php';
 
-        $userRoles = self::all($userId, $context);
+        $config = [];
 
-        if (empty($userRoles)) {
-            return false;
-        }
+        if (is_file($configFile)) {
+            $loaded = require $configFile;
 
-        if (in_array($role, $userRoles, true)) {
-            return true;
-        }
-
-        $requiredRank = self::rank($role);
-
-        if ($requiredRank <= 0) {
-            return false;
-        }
-
-        foreach ($userRoles as $userRole) {
-            if (self::rank((string)$userRole) >= $requiredRank) {
-                return true;
+            if (is_array($loaded)) {
+                $config = $loaded;
             }
         }
 
-        return false;
-    }
-
-    public static function hasAny(array $roles, ?int $userId = null, array $context = []): bool
-    {
-        foreach ($roles as $role) {
-            if (self::has((string)$role, $userId, $context)) {
-                return true;
-            }
-        }
-
-        return false;
-    }
-
-    public static function all(?int $userId = null, array $context = []): array
-    {
-        return self::resolver()->roles($userId, $context);
-    }
-
-    public static function highest(?int $userId = null, array $context = []): string
-    {
-        $roles = self::all($userId, $context);
-
-        $highestRole = '';
-        $highestRank = 0;
-
-        foreach ($roles as $role) {
-            $rank = self::rank((string)$role);
-
-            if ($rank > $highestRank) {
-                $highestRank = $rank;
-                $highestRole = (string)$role;
-            }
-        }
-
-        return $highestRole;
-    }
-
-    public static function rank(string $role): int
-    {
-        $role = trim($role);
-
-        $hierarchy = self::hierarchy();
-
-        return (int)($hierarchy[$role] ?? 0);
-    }
-
-    public static function hierarchy(): array
-    {
-        $hierarchy = Config::get('roles.hierarchy', [
-            'viewer' => 10,
-            'editor' => 20,
-            'admin' => 30,
-            'owner' => 40,
+        Config::load([
+            'app' => [
+                'name' => 'Local MVC App',
+                'description' => '',
+            ],
+            'debug' => defined('LOCAL_MVC_DEBUG') && LOCAL_MVC_DEBUG === true,
+            'log' => [
+                'file' => rtrim($projectRoot, '/') . '/logs/app.log',
+            ],
         ]);
 
-        return is_array($hierarchy) ? $hierarchy : [];
+        Config::load($config);
     }
 
-    private static function resolver(): RoleResolverInterface
+    public static function projectRoot(): string
     {
-        if (self::$resolver instanceof RoleResolverInterface) {
-            return self::$resolver;
+        if (!defined('LOCAL_MVC_PROJECT_ROOT')) {
+            return $_SERVER['DOCUMENT_ROOT'] . '/local/mvc';
         }
 
-        $class = (string)Config::get('roles.resolver', '');
+        return rtrim((string)LOCAL_MVC_PROJECT_ROOT, '/');
+    }
 
-        if ($class === '') {
-            throw new RuntimeException('ROLE_RESOLVER_NOT_CONFIGURED');
+    public static function projectUrl(): string
+    {
+        if (!defined('LOCAL_MVC_PROJECT_URL')) {
+            return '/local/mvc';
         }
 
-        if (!class_exists($class)) {
-            throw new RuntimeException('ROLE_RESOLVER_CLASS_NOT_FOUND: ' . $class);
+        return rtrim((string)LOCAL_MVC_PROJECT_URL, '/');
+    }
+
+    public static function projectNamespace(): string
+    {
+        if (!defined('LOCAL_MVC_PROJECT_NAMESPACE')) {
+            return 'Local\\Mvc\\';
         }
 
-        $resolver = new $class();
-
-        if (!$resolver instanceof RoleResolverInterface) {
-            throw new RuntimeException('ROLE_RESOLVER_MUST_IMPLEMENT_INTERFACE: ' . $class);
-        }
-
-        self::$resolver = $resolver;
-
-        return self::$resolver;
+        return rtrim((string)LOCAL_MVC_PROJECT_NAMESPACE, '\\') . '\\';
     }
 }
 
 
 ---
 
-3. Обнови /local/mvc/Core/Middleware.php
+3. Создаём DebugController
 
-Найди блок:
+Создай файл:
 
-if ($name === 'role') {
+/local/mvc_demo/Controllers/DebugController.php
 
-И замени его на:
-
-if ($name === 'role') {
-    $context = self::contextFromRequest($request);
-
-    if ($argument !== '' && Role::has($argument, null, $context)) {
-        return null;
-    }
-
-    return Response::json([
-        'ok' => false,
-        'error' => 'ROLE_REQUIRED',
-        'details' => [
-            'message' => 'Недостаточно прав. Требуется роль: ' . $argument,
-            'required_role' => $argument,
-            'user_roles' => Role::all(null, $context),
-            'context' => $context,
-        ],
-    ], 403);
-}
-
-Найди блок:
-
-if ($name === 'roles') {
-
-И замени его на:
-
-if ($name === 'roles') {
-    $context = self::contextFromRequest($request);
-    $requiredRoles = self::parseRoleList($argument);
-
-    if (Role::hasAny($requiredRoles, null, $context)) {
-        return null;
-    }
-
-    return Response::json([
-        'ok' => false,
-        'error' => 'ROLES_REQUIRED',
-        'details' => [
-            'message' => 'Недостаточно прав. Требуется одна из ролей.',
-            'required_roles' => $requiredRoles,
-            'user_roles' => Role::all(null, $context),
-            'context' => $context,
-        ],
-    ], 403);
-}
-
-В конец класса Middleware, рядом с parseRoleList(), добавь метод:
-
-/**
- * Собрать контекст для проверки ролей.
- *
- * Сюда кладём параметры маршрута.
- *
- * Например:
- * /site-role-test/{siteId}
- *
- * даст:
- * [
- *   'route' => [
- *     'siteId' => 5
- *   ]
- * ]
- */
-private static function contextFromRequest(Request $request): array
-{
-    return [
-        'route' => $request->routeParams(),
-        'method' => $request->method(),
-        'path' => $request->path(),
-    ];
-}
-
-
----
-
-4. Замени /local/mvc_demo/Services/DemoRoleResolver.php
+Код:
 
 <?php
 
-namespace Local\MvcDemo\Services;
+namespace Local\MvcDemo\Controllers;
 
-use Local\Mvc\Core\Auth;
-use Local\Mvc\Core\RoleResolverInterface;
+use Local\Mvc\Core\App;
+use Local\Mvc\Core\Config;
+use Local\Mvc\Core\Controller;
+use Local\Mvc\Core\Response;
 
-/**
- * DemoRoleResolver
- *
- * Тестовая проверка ролей.
- *
- * В реальном проекте здесь можно смотреть:
- * - siteId
- * - pageId
- * - applicationId
- * - права из таблицы
- */
-class DemoRoleResolver implements RoleResolverInterface
+class DebugController extends Controller
 {
-    public function hasRole(string $role, ?int $userId = null, array $context = []): bool
+    public function routes(): Response
     {
-        return in_array($role, $this->roles($userId, $context), true);
-    }
+        $router = App::router();
 
-    public function roles(?int $userId = null, array $context = []): array
-    {
-        if (!Auth::check()) {
-            return [];
-        }
-
-        /**
-         * Для demo смотрим siteId из маршрута.
-         *
-         * /site-role-test/1
-         * /site-role-test/2
-         * /site-role-test/3
-         */
-        $siteId = (int)($context['route']['siteId'] ?? 0);
-
-        /**
-         * Админ Битрикса всегда owner.
-         */
-        if (Auth::isAdmin()) {
-            return ['owner'];
-        }
-
-        /**
-         * Тестовая логика для обычного пользователя:
-         *
-         * siteId = 1 => viewer
-         * siteId = 2 => editor
-         * siteId = 3 => admin
-         * другое     => viewer
-         */
-        if ($siteId === 3) {
-            return ['admin'];
-        }
-
-        if ($siteId === 2) {
-            return ['editor'];
-        }
-
-        return ['viewer'];
+        return $this->render('debug/routes', [
+            'title' => 'Debug: маршруты',
+            'routes' => $router ? $router->routes() : [],
+            'debug' => Config::debug(),
+        ]);
     }
 }
 
 
 ---
 
-5. Добавь метод в /local/mvc_demo/Controllers/HomeController.php
+4. Создаём View
 
-Внутрь класса добавь:
+Создай папку:
 
-public function siteRoleTest(string $siteId): Response
-{
-    return $this->success([
-        'message' => 'Доступ к site-role-test разрешён.',
-        'site_id' => (int)$siteId,
-        'roles' => \Local\Mvc\Core\Role::all(null, [
-            'route' => [
-                'siteId' => (int)$siteId,
-            ],
-        ]),
-        'highest' => \Local\Mvc\Core\Role::highest(null, [
-            'route' => [
-                'siteId' => (int)$siteId,
-            ],
-        ]),
-    ]);
+/local/mvc_demo/Views/debug/
+
+Создай файл:
+
+/local/mvc_demo/Views/debug/routes.php
+
+Код:
+
+<?php
+
+if (!defined('B_PROLOG_INCLUDED') || B_PROLOG_INCLUDED !== true) {
+    die();
 }
 
+?>
+
+<div class="mvc-card">
+    <h1 class="mvc-page-title">
+        <?= htmlspecialcharsbx($title ?? 'Маршруты') ?>
+    </h1>
+
+    <p class="mvc-page-text">
+        Здесь показаны маршруты текущего проекта.
+    </p>
+
+    <?php if (empty($debug)): ?>
+        <div class="mvc-info" style="border-color: #fde68a; background: #fffbeb;">
+            <b style="color: #92400e;">Внимание:</b>
+            debug-режим выключен.
+        </div>
+    <?php endif; ?>
+
+    <div class="mvc-info">
+        <table style="width: 100%; border-collapse: collapse;">
+            <thead>
+                <tr>
+                    <th style="text-align: left; padding: 8px; border-bottom: 1px solid #e5e7eb;">Метод</th>
+                    <th style="text-align: left; padding: 8px; border-bottom: 1px solid #e5e7eb;">Путь</th>
+                    <th style="text-align: left; padding: 8px; border-bottom: 1px solid #e5e7eb;">Контроллер</th>
+                    <th style="text-align: left; padding: 8px; border-bottom: 1px solid #e5e7eb;">Action</th>
+                    <th style="text-align: left; padding: 8px; border-bottom: 1px solid #e5e7eb;">Middleware</th>
+                </tr>
+            </thead>
+
+            <tbody>
+                <?php foreach (($routes ?? []) as $route): ?>
+                    <tr>
+                        <td style="padding: 8px; border-bottom: 1px solid #e5e7eb;">
+                            <span class="mvc-code">
+                                <?= htmlspecialcharsbx($route['method'] ?? '') ?>
+                            </span>
+                        </td>
+
+                        <td style="padding: 8px; border-bottom: 1px solid #e5e7eb;">
+                            <span class="mvc-code">
+                                <?= htmlspecialcharsbx($route['path'] ?? '') ?>
+                            </span>
+                        </td>
+
+                        <td style="padding: 8px; border-bottom: 1px solid #e5e7eb;">
+                            <?= htmlspecialcharsbx($route['controller'] ?? '') ?>
+                        </td>
+
+                        <td style="padding: 8px; border-bottom: 1px solid #e5e7eb;">
+                            <?= htmlspecialcharsbx($route['action'] ?? '') ?>
+                        </td>
+
+                        <td style="padding: 8px; border-bottom: 1px solid #e5e7eb;">
+                            <?php foreach (($route['middleware'] ?? []) as $middleware): ?>
+                                <span class="mvc-code">
+                                    <?= htmlspecialcharsbx($middleware) ?>
+                                </span>
+                            <?php endforeach; ?>
+                        </td>
+                    </tr>
+                <?php endforeach; ?>
+            </tbody>
+        </table>
+    </div>
+</div>
+
 
 ---
 
-6. Добавь маршрут в /local/mvc_demo/routes.php
+5. Добавляем маршрут
 
-Добавь рядом с тестами ролей:
+Открой:
 
-$router->get('/site-role-test/{siteId:\d+}', [HomeController::class, 'siteRoleTest'], ['auth', 'role:editor']);
+/local/mvc_demo/routes.php
+
+Добавь use:
+
+use Local\MvcDemo\Controllers\DebugController;
+
+И добавь маршрут, лучше только для админа:
+
+$router->get('/debug/routes', [DebugController::class, 'routes'], ['auth', 'admin']);
+
+Например рядом с публичными/тестовыми маршрутами или в админской группе.
 
 
 ---
 
-7. Проверяем
+6. Добавь ссылку в меню
+
+Файл:
+
+/local/mvc_demo/Views/layouts/app.php
+
+В меню добавь:
+
+<a href="/local/mvc_demo/debug/routes">Routes</a>
+
+
+---
+
+7. Проверка
 
 Сбрось OPcache:
 
@@ -421,57 +371,32 @@ echo 'OPcache reset OK';
 
 Открой:
 
-/local/mvc_demo/site-role-test/1
+https://bitrix24-stage.gaz.ru/local/mvc_demo/debug/routes
 
-Для обычного пользователя там будет viewer, а нужен editor, значит должно быть 403.
-
-Открой:
-
-/local/mvc_demo/site-role-test/2
-
-Там обычный пользователь получает editor, значит доступ разрешён.
-
-Открой:
-
-/local/mvc_demo/site-role-test/3
-
-Там обычный пользователь получает admin, а admin выше editor, значит доступ тоже разрешён.
-
-Если ты админ Битрикса, везде будет доступ, потому что админ получает owner.
+Должна появиться таблица всех маршрутов.
 
 
 ---
 
 Что мы сделали
 
-Раньше роль была просто ролью пользователя:
+Теперь у нас есть debug-страница:
 
-user → role
+/local/mvc_demo/debug/routes
 
-Теперь роль может зависеть от объекта:
+Она показывает:
 
-user + siteId → role
+метод
+путь
+контроллер
+action
+middleware
 
-Это очень важно.
+Это очень полезно для разработки. Когда будет 50–100 маршрутов, можно быстро проверить:
 
-Для sitebuilder потом будет так:
+есть ли нужный маршрут
+какой controller/action стоит
+не забыли ли middleware
+правильно ли prefix склеился
 
-$router->get('/sites/{siteId:\d+}/edit', [SiteController::class, 'edit'], ['auth', 'role:editor']);
-
-И внутри resolver можно будет проверить:
-
-Какую роль пользователь имеет именно на этом сайте?
-
-Например:
-
-site_id = 5
-user_id = 101
-role = editor
-
-Главная мысль:
-
-Middleware достаёт siteId из маршрута.
-Role передаёт siteId в resolver.
-Resolver решает, есть ли доступ.
-
-Вот это уже похоже на нормальный фундамент для sitebuilder, glab и других проектов.
+Следующим шагом можно сделать именованные маршруты, чтобы не писать ссылки руками вроде /local/mvc_demo/admin/users, а обращаться к ним по имени.
