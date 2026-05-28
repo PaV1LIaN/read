@@ -1,347 +1,170 @@
-Давай дальше. Сейчас делаем Flash-сообщения.
+Да, это чинится в самом фреймворке.
 
-Зачем это нужно
+Сейчас у нас redirect() возвращает пустой ответ с заголовком:
 
-Сейчас форма работает так:
+Location: /local/mvc_demo/form
 
-GET  /form       — показать форму
-POST /form/send  — обработать форму и показать результат
+Но если PHP уже что-то вывел до редиректа, например пробел, BOM или предупреждение, заголовок Location не отправляется. В итоге браузер получает пустой HTML — белый экран.
 
-Но это не идеально.
-
-Почему?
-
-Если пользователь после успешной отправки нажмёт F5, браузер может спросить:
-
-Повторно отправить форму?
-
-И POST-запрос может выполниться ещё раз.
-
-Правильная схема такая:
-
-GET  /form
-  ↓
-показали форму
-
-POST /form/send
-  ↓
-проверили данные
-  ↓
-записали flash-сообщение
-  ↓
-redirect обратно на /form
-
-GET /form
-  ↓
-показали сообщение "Форма успешно отправлена"
-
-То есть после успешного POST мы делаем редирект.
+Сделаем безопасный redirect.
 
 
 ---
 
-1. Создай /local/mvc/Core/Flash.php
+1. Замени /local/mvc/Core/Response.php
+
+Полностью замени файл:
+
+/local/mvc/Core/Response.php
+
+на этот:
 
 <?php
 
 namespace Local\Mvc\Core;
 
 /**
- * Flash
+ * Response
  *
- * Одноразовые сообщения.
- *
- * Простыми словами:
- * мы кладём сообщение в сессию,
- * показываем его на следующей странице,
- * и сразу удаляем.
+ * Ответ сервера пользователю.
  */
-class Flash
+class Response
 {
-    private const SESSION_KEY = 'LOCAL_MVC_FLASH';
+    private string $content;
+    private int $status;
+    private array $headers;
 
-    public static function success(string $message): void
+    public function __construct(string $content = '', int $status = 200, array $headers = [])
     {
-        self::add('success', $message);
+        $this->content = $content;
+        $this->status = $status;
+        $this->headers = $headers;
     }
 
-    public static function error(string $message): void
+    public static function html(string $content, int $status = 200): self
     {
-        self::add('error', $message);
-    }
-
-    public static function warning(string $message): void
-    {
-        self::add('warning', $message);
-    }
-
-    public static function info(string $message): void
-    {
-        self::add('info', $message);
-    }
-
-    public static function add(string $type, string $message): void
-    {
-        self::ensureSession();
-
-        if (!isset($_SESSION[self::SESSION_KEY])) {
-            $_SESSION[self::SESSION_KEY] = [];
-        }
-
-        $_SESSION[self::SESSION_KEY][] = [
-            'type' => $type,
-            'message' => $message,
-        ];
-    }
-
-    /**
-     * Забрать все сообщения и удалить их.
-     */
-    public static function all(): array
-    {
-        self::ensureSession();
-
-        $messages = $_SESSION[self::SESSION_KEY] ?? [];
-
-        unset($_SESSION[self::SESSION_KEY]);
-
-        return is_array($messages) ? $messages : [];
-    }
-
-    private static function ensureSession(): void
-    {
-        if (session_status() === PHP_SESSION_NONE) {
-            session_start();
-        }
-    }
-}
-
-
----
-
-2. Обнови /local/mvc/Core/Controller.php
-
-Нужно, чтобы каждый View автоматически получал переменную:
-
-$flash
-
-Открой файл:
-
-/local/mvc/Core/Controller.php
-
-Найди в методе render() строку:
-
-extract($params);
-
-Сразу после неё добавь:
-
-$flash = Flash::all();
-
-Должно быть так:
-
-extract($params);
-
-/**
- * Flash-сообщения.
- *
- * Они доступны в любом View через переменную $flash.
- */
-$flash = Flash::all();
-
-Теперь любой шаблон сможет показать сообщения.
-
-
----
-
-3. Обнови /local/mvc_demo/Views/form/index.php
-
-В этом файле после описания формы добавим вывод Flash-сообщений.
-
-Найди место после текста:
-
-<p class="mvc-page-text">
-    Это простая форма, чтобы проверить POST-запросы в нашем MVC.
-</p>
-
-Сразу после него вставь:
-
-<?php if (!empty($flash)): ?>
-    <?php foreach ($flash as $item): ?>
-        <?php
-        $type = $item['type'] ?? 'info';
-        $message = $item['message'] ?? '';
-
-        $style = 'border-color: #bfdbfe; background: #eff6ff; color: #1d4ed8;';
-
-        if ($type === 'success') {
-            $style = 'border-color: #bbf7d0; background: #f0fdf4; color: #166534;';
-        } elseif ($type === 'error') {
-            $style = 'border-color: #fecaca; background: #fef2f2; color: #991b1b;';
-        } elseif ($type === 'warning') {
-            $style = 'border-color: #fde68a; background: #fffbeb; color: #92400e;';
-        }
-        ?>
-
-        <div class="mvc-info" style="<?= htmlspecialcharsbx($style) ?>">
-            <?= htmlspecialcharsbx($message) ?>
-        </div>
-    <?php endforeach; ?>
-<?php endif; ?>
-
-
----
-
-4. Обнови /local/mvc_demo/Controllers/FormController.php
-
-Теперь при успешной отправке будем не рендерить страницу сразу, а делать flash + redirect.
-
-Полностью замени FormController.php:
-
-<?php
-
-namespace Local\MvcDemo\Controllers;
-
-use Local\Mvc\Core\Controller;
-use Local\Mvc\Core\Flash;
-use Local\Mvc\Core\Response;
-use Local\Mvc\Core\Validator;
-
-class FormController extends Controller
-{
-    /**
-     * Показать форму.
-     */
-    public function index(): Response
-    {
-        return $this->render('form/index', [
-            'title' => 'Тестовая форма',
-            'errors' => [],
-            'success' => '',
-            'old' => [
-                'name' => '',
-                'message' => '',
-            ],
+        return new self($content, $status, [
+            'Content-Type' => 'text/html; charset=utf-8',
         ]);
     }
 
-    /**
-     * Обработать отправку формы.
-     */
-    public function send(): Response
+    public static function json(array $data, int $status = 200): self
     {
-        $data = [
-            'name' => trim((string)$this->request->post('name', '')),
-            'message' => trim((string)$this->request->post('message', '')),
-        ];
+        return new self(
+            json_encode($data, JSON_UNESCAPED_UNICODE),
+            $status,
+            [
+                'Content-Type' => 'application/json; charset=utf-8',
+            ]
+        );
+    }
 
-        $errors = [];
+    /**
+     * Безопасный редирект.
+     *
+     * Если header Location отправится — браузер перейдёт сам.
+     * Если header уже нельзя отправить — покажем HTML с переходом.
+     */
+    public static function redirect(string $url, int $status = 302): self
+    {
+        $safeUrl = htmlspecialchars($url, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
 
-        if (function_exists('check_bitrix_sessid') && !check_bitrix_sessid()) {
-            $errors[] = 'Ошибка безопасности: неверный sessid.';
+        $content = '
+            <!doctype html>
+            <html lang="ru">
+            <head>
+                <meta charset="utf-8">
+                <meta http-equiv="refresh" content="0;url=' . $safeUrl . '">
+                <title>Переход...</title>
+            </head>
+            <body>
+                <p>Переход...</p>
+                <script>
+                    window.location.href = ' . json_encode($url, JSON_UNESCAPED_UNICODE) . ';
+                </script>
+                <p>
+                    Если переход не произошёл автоматически,
+                    <a href="' . $safeUrl . '">нажмите сюда</a>.
+                </p>
+            </body>
+            </html>
+        ';
+
+        return new self($content, $status, [
+            'Location' => $url,
+            'Content-Type' => 'text/html; charset=utf-8',
+        ]);
+    }
+
+    public function header(string $name, string $value): self
+    {
+        $this->headers[$name] = $value;
+
+        return $this;
+    }
+
+    public function send(): void
+    {
+        if (!headers_sent()) {
+            http_response_code($this->status);
+
+            foreach ($this->headers as $name => $value) {
+                header($name . ': ' . $value, true);
+            }
         }
 
-        $validator = Validator::make($data)
-            ->required('name', 'Введите имя.')
-            ->min('name', 2, 'Имя должно быть не короче 2 символов.')
-            ->max('name', 100, 'Имя должно быть не длиннее 100 символов.')
-            ->required('message', 'Введите сообщение.')
-            ->min('message', 5, 'Сообщение должно быть не короче 5 символов.')
-            ->max('message', 1000, 'Сообщение должно быть не длиннее 1000 символов.');
-
-        if ($validator->fails()) {
-            $errors = array_merge($errors, $validator->errorList());
-        }
-
-        /**
-         * Если ошибки есть — остаёмся на этой же странице
-         * и показываем ошибки.
-         */
-        if (!empty($errors)) {
-            return $this->render('form/index', [
-                'title' => 'Тестовая форма',
-                'errors' => $errors,
-                'success' => '',
-                'old' => $data,
-            ]);
-        }
-
-        /**
-         * Если всё хорошо:
-         * 1. Кладём одноразовое сообщение.
-         * 2. Делаем redirect обратно на форму.
-         */
-        Flash::success('Форма успешно отправлена. Имя: ' . $data['name']);
-
-        return $this->redirect('/local/mvc_demo/form');
+        echo $this->content;
     }
 }
 
 
 ---
 
-5. Проверяем
+2. Сбрось OPcache
 
-Сбрось OPcache:
+В PHP-командной строке Битрикса:
 
 opcache_reset();
 echo 'OPcache reset OK';
+
+
+---
+
+3. Проверь форму снова
 
 Открой:
 
 https://bitrix24-stage.gaz.ru/local/mvc_demo/form
 
-Заполни форму нормально и отправь.
+Заполни форму и отправь.
 
-Должно произойти так:
+Теперь после отправки должно перекинуть обратно на:
 
-1. POST уйдёт на /form/send.
-2. Контроллер проверит данные.
-3. Положит сообщение во Flash.
-4. Перекинет обратно на /form.
-5. На /form появится зелёное сообщение.
+/local/mvc_demo/form
 
-После этого обнови страницу F5.
-
-Сообщение должно исчезнуть.
-
-Это и есть смысл Flash:
-
-показать один раз и забыть
+и показать зелёное flash-сообщение.
 
 
 ---
 
-Что мы сделали
+Если снова белый экран
 
-Добавили новый общий инструмент:
+Тогда надо временно включить диагностику именно в /local/mvc_demo/index.php.
 
-Flash::success('Готово');
-Flash::error('Ошибка');
-Flash::warning('Внимание');
-Flash::info('Информация');
+В самое начало после <?php добавь:
 
-Теперь его можно будет использовать в любых проектах:
+ini_set('display_errors', '1');
+ini_set('display_startup_errors', '1');
+error_reporting(E_ALL);
 
-sitebuilder
-glab
-qr_opros
-admin dashboard
+register_shutdown_function(function () {
+    $error = error_get_last();
 
-Например:
+    if ($error !== null) {
+        echo '<pre style="background:#300;color:#fff;padding:20px;">';
+        print_r($error);
+        echo '</pre>';
+    }
+});
 
-Flash::success('Сайт успешно создан');
-return $this->redirect('/local/sitebuilder/sites');
-
-Или:
-
-Flash::error('Недостаточно прав');
-return $this->redirect('/local/sitebuilder/');
-
-Главная мысль:
-
-POST делает действие.
-Flash запоминает сообщение.
-Redirect возвращает пользователя на нормальную страницу.
-GET показывает результат.
-
-Следующий шаг — сделать Request old input, чтобы при ошибках после redirect можно было вернуть старые введённые значения.
+Но сначала попробуй замену Response.php. Скорее всего, белый экран уйдёт.
