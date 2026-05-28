@@ -1,89 +1,33 @@
-Идём дальше. Следующий важный кирпич — динамические маршруты.
+Идём дальше. Сейчас сделаем ограничения параметров маршрута.
 
-Сейчас у нас маршруты только точные:
+Сейчас у нас маршрут:
 
-$router->get('/about', [HomeController::class, 'about']);
-$router->get('/admin/users', [AdminController::class, 'users']);
+$router->get('/users/{id}', [AdminController::class, 'userDetail']);
 
-Но в реальном проекте нам нужны адреса с ID:
+Он принимает всё:
 
-/local/mvc_demo/admin/users/5
-/local/sitebuilder/sites/10/edit
-/local/glab/applications/25
+/admin/users/5       — ок
+/admin/users/123     — ок
+/admin/users/test    — тоже ок, хотя нам это не нужно
 
-То есть маршрут должен уметь понимать:
+А мы хотим сказать:
 
-$router->get('/admin/users/{id}', [AdminController::class, 'userDetail']);
+id должен быть только числом
 
-И если пользователь открыл:
+Чтобы было так:
 
-/admin/users/5
-
-контроллер должен получить:
-
-$id = 5;
+$router->get('/users/{id:\d+}', [AdminController::class, 'userDetail']);
 
 
 ---
 
-1. Обновляем Request.php
+1. Заменяем /local/mvc/Core/Router.php
 
-Открой файл:
+Полностью замени файл:
 
-/local/mvc/Core/Request.php
+/local/mvc/Core/Router.php
 
-Внутрь класса добавь свойство:
-
-private array $routeParams = [];
-
-Лучше вставить рядом с остальными свойствами:
-
-private array $get;
-private array $post;
-private array $server;
-private array $files;
-private array $routeParams = [];
-
-И в конец класса, перед последней }, добавь методы:
-
-/**
- * Сохранить параметры маршрута.
- *
- * Например:
- * /users/{id}
- * /users/5
- *
- * станет:
- * ['id' => '5']
- */
-public function setRouteParams(array $params): void
-{
-    $this->routeParams = $params;
-}
-
-/**
- * Получить параметр маршрута.
- *
- * Например:
- * $request->route('id')
- */
-public function route(string $key, mixed $default = null): mixed
-{
-    return $this->routeParams[$key] ?? $default;
-}
-
-/**
- * Получить все параметры маршрута.
- */
-public function routeParams(): array
-{
-    return $this->routeParams;
-}
-
-
----
-
-2. Полностью замени /local/mvc/Core/Router.php
+на этот:
 
 <?php
 
@@ -99,7 +43,8 @@ namespace Local\Mvc\Core;
  * - middleware
  * - группы
  * - prefix
- * - динамические параметры вида /users/{id}
+ * - динамические параметры /users/{id}
+ * - ограничения параметров /users/{id:\d+}
  */
 class Router
 {
@@ -184,15 +129,6 @@ class Router
         $route = $matched['route'];
         $routeParams = $matched['params'];
 
-        /**
-         * Кладём параметры маршрута в Request.
-         *
-         * Например:
-         * /users/{id}
-         * /users/5
-         *
-         * $request->route('id') вернёт 5.
-         */
         $request->setRouteParams($routeParams);
 
         $handler = $route['handler'] ?? [];
@@ -227,15 +163,6 @@ class Router
             return;
         }
 
-        /**
-         * Передаём параметры маршрута прямо в метод контроллера.
-         *
-         * Маршрут:
-         * /users/{id}
-         *
-         * Метод:
-         * userDetail($id)
-         */
         $result = $controller->{$controllerMethod}(...array_values($routeParams));
 
         if ($result instanceof Response) {
@@ -244,9 +171,6 @@ class Router
         }
     }
 
-    /**
-     * Найти подходящий маршрут.
-     */
     private function match(string $method, string $path): ?array
     {
         $routes = $this->routes[$method] ?? [];
@@ -274,24 +198,72 @@ class Router
     }
 
     /**
-     * Превратить путь маршрута в регулярку.
+     * Превратить маршрут в регулярку.
      *
-     * Было:
+     * Пример 1:
      * /admin/users/{id}
      *
-     * Стало:
+     * станет:
      * #^/admin/users/(?P<id>[^/]+)$#u
+     *
+     * Пример 2:
+     * /admin/users/{id:\d+}
+     *
+     * станет:
+     * #^/admin/users/(?P<id>\d+)$#u
+     *
+     * То есть:
+     * {id}       — любой текст до /
+     * {id:\d+}  — только цифры
+     * {slug:[a-z0-9-]+} — только slug
      */
     private function compilePath(string $path): array
     {
         $params = [];
+        $pattern = '';
+        $offset = 0;
 
-        $pattern = preg_replace_callback('#\{([a-zA-Z_][a-zA-Z0-9_]*)\}#', function ($matches) use (&$params) {
-            $name = $matches[1];
+        preg_match_all(
+            '#\{([a-zA-Z_][a-zA-Z0-9_]*)(?::([^}]+))?\}#',
+            $path,
+            $matches,
+            PREG_OFFSET_CAPTURE
+        );
+
+        foreach ($matches[0] as $index => $match) {
+            $full = $match[0];
+            $position = $match[1];
+
+            /**
+             * Кусок обычного текста до параметра.
+             */
+            $staticPart = substr($path, $offset, $position - $offset);
+            $pattern .= preg_quote($staticPart, '#');
+
+            $name = $matches[1][$index][0];
+
+            /**
+             * Если ограничение не указано,
+             * параметр принимает любой текст кроме "/".
+             */
+            $rule = $matches[2][$index][0] ?? '[^/]+';
+
+            /**
+             * На всякий случай экранируем разделитель регулярки.
+             */
+            $rule = str_replace('#', '\#', $rule);
+
             $params[] = $name;
 
-            return '(?P<' . $name . '>[^/]+)';
-        }, $path);
+            $pattern .= '(?P<' . $name . '>' . $rule . ')';
+
+            $offset = $position + strlen($full);
+        }
+
+        /**
+         * Остаток обычного текста после последнего параметра.
+         */
+        $pattern .= preg_quote(substr($path, $offset), '#');
 
         return [
             'pattern' => '#^' . $pattern . '$#u',
@@ -367,79 +339,17 @@ class Router
 
 ---
 
-3. Добавляем метод в AdminController
+2. Обнови маршрут в /local/mvc_demo/routes.php
 
-Открой:
-
-/local/mvc_demo/Controllers/AdminController.php
-
-Добавь внутрь класса метод:
-
-public function userDetail(string $id): Response
-{
-    return $this->render('admin/user_detail', [
-        'title' => 'Карточка пользователя',
-        'userId' => (int)$id,
-    ]);
-}
-
-
----
-
-4. Создай view /local/mvc_demo/Views/admin/user_detail.php
-
-<?php
-
-if (!defined('B_PROLOG_INCLUDED') || B_PROLOG_INCLUDED !== true) {
-    die();
-}
-
-?>
-
-<div class="mvc-card">
-    <h1 class="mvc-page-title">
-        <?= htmlspecialcharsbx($title ?? 'Карточка пользователя') ?>
-    </h1>
-
-    <p class="mvc-page-text">
-        Это тестовая страница динамического маршрута.
-    </p>
-
-    <div class="mvc-info">
-        <b>Что произошло:</b>
-
-        <ol>
-            <li>
-                В routes.php есть маршрут:
-                <span class="mvc-code">/admin/users/{id}</span>
-            </li>
-
-            <li>
-                Ты открыл адрес с конкретным ID.
-            </li>
-
-            <li>
-                Router вытащил ID из адреса.
-            </li>
-
-            <li>
-                Контроллер получил ID:
-                <span class="mvc-code"><?= htmlspecialcharsbx($userId ?? '') ?></span>
-            </li>
-        </ol>
-    </div>
-</div>
-
-
----
-
-5. Обнови /local/mvc_demo/routes.php
-
-Внутри админской группы добавь маршрут:
+Найди:
 
 $router->get('/users/{id}', [AdminController::class, 'userDetail']);
 
-Должно быть примерно так:
+Замени на:
+
+$router->get('/users/{id:\d+}', [AdminController::class, 'userDetail']);
+
+Полностью админская группа должна быть примерно такая:
 
 $router->group([
     'prefix' => '/admin',
@@ -447,13 +357,13 @@ $router->group([
 ], function (Router $router) {
     $router->get('/dashboard', [AdminController::class, 'dashboard']);
     $router->get('/users', [AdminController::class, 'users']);
-    $router->get('/users/{id}', [AdminController::class, 'userDetail']);
+    $router->get('/users/{id:\d+}', [AdminController::class, 'userDetail']);
 });
 
 
 ---
 
-6. Проверяем
+3. Проверяем
 
 Сбрось OPcache:
 
@@ -464,52 +374,58 @@ echo 'OPcache reset OK';
 
 https://bitrix24-stage.gaz.ru/local/mvc_demo/admin/users/5
 
-Должна открыться страница:
+Должно работать.
 
-Карточка пользователя
-Контроллер получил ID: 5
+Теперь открой:
 
-Потом проверь другой ID:
+https://bitrix24-stage.gaz.ru/local/mvc_demo/admin/users/test
 
-https://bitrix24-stage.gaz.ru/local/mvc_demo/admin/users/123
+Должно быть:
 
-Должно показать:
+404
+Маршрут не найден
 
-Контроллер получил ID: 123
+Это правильно, потому что test — не число.
 
 
 ---
 
 Что мы сделали
 
-Раньше Router понимал только точные адреса:
+Раньше:
 
-/admin/users
-/about
-/form
+/users/{id}
 
-Теперь он понимает адреса с параметрами:
+означало:
 
-/admin/users/{id}
-/sites/{siteId}/pages/{pageId}
-/applications/{id}
+id может быть чем угодно
 
-Пример для будущего sitebuilder:
+Теперь:
 
-$router->get('/sites/{siteId}/edit', [SiteController::class, 'edit']);
-$router->get('/sites/{siteId}/pages/{pageId}', [PageController::class, 'edit']);
+/users/{id:\d+}
 
-Контроллер:
+означает:
 
-public function edit(string $siteId): Response
-{
-    // $siteId пришёл из адреса
-}
+id только цифры
+
+Примеры на будущее
+
+Для ID:
+
+$router->get('/sites/{id:\d+}', [SiteController::class, 'show']);
+
+Для slug:
+
+$router->get('/pages/{slug:[a-z0-9-]+}', [PageController::class, 'show']);
+
+Для кода:
+
+$router->get('/items/{code:[A-Z0-9_]+}', [ItemController::class, 'show']);
 
 Главная мысль:
 
-{id} — это дырка в маршруте.
-Router достаёт значение из адреса.
-Controller получает это значение.
+{id} — любое значение
+{id:\d+} — только число
+{slug:[a-z0-9-]+} — только красивый текстовый код
 
-Следующим шагом можно сделать ограничения параметров, чтобы {id} принимал только цифры, а не любой текст.
+Теперь Router стал намного ближе к настоящему фреймворку.
