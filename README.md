@@ -1,66 +1,212 @@
-Отлично, идём дальше.
+Идём дальше. Сейчас сделаем пагинацию.
 
-Сейчас сделаем Service-слой.
+Что такое пагинация
 
-Зачем нужен Service
+Сейчас страница пользователей показывает последние 10 пользователей:
 
-Смотри, сейчас у нас цепочка такая:
+/admin/users
 
-Controller → Model → Db
+Но если пользователей 5000, нельзя выводить всех сразу.
 
-Это уже хорошо.
+Нужно так:
 
-Но есть проблема: если в контроллере начнёт появляться много логики, он снова станет большим.
+/admin/users?page=1
+/admin/users?page=2
+/admin/users?page=3
 
-Например:
+То есть страница будет показывать кусками:
 
-$users = User::latest(10);
+1 страница — пользователи 1–10
+2 страница — пользователи 11–20
+3 страница — пользователи 21–30
 
-foreach ($users as &$user) {
-    $user['FULL_NAME'] = User::fullName($user);
-    $user['ACTIVE_LABEL'] = $user['ACTIVE'] === 'Y' ? 'Да' : 'Нет';
+
+---
+
+1. Создаём /local/mvc/Core/Paginator.php
+
+<?php
+
+namespace Local\Mvc\Core;
+
+/**
+ * Paginator
+ *
+ * Помощник для постраничного вывода.
+ */
+class Paginator
+{
+    private int $total;
+    private int $page;
+    private int $perPage;
+
+    public function __construct(int $total, int $page = 1, int $perPage = 10)
+    {
+        $this->total = max(0, $total);
+        $this->perPage = max(1, min($perPage, 100));
+
+        $totalPages = $this->totalPages();
+
+        $page = max(1, $page);
+
+        if ($totalPages > 0) {
+            $page = min($page, $totalPages);
+        }
+
+        $this->page = $page;
+    }
+
+    public function total(): int
+    {
+        return $this->total;
+    }
+
+    public function page(): int
+    {
+        return $this->page;
+    }
+
+    public function perPage(): int
+    {
+        return $this->perPage;
+    }
+
+    public function totalPages(): int
+    {
+        if ($this->total === 0) {
+            return 1;
+        }
+
+        return (int)ceil($this->total / $this->perPage);
+    }
+
+    public function offset(): int
+    {
+        return ($this->page - 1) * $this->perPage;
+    }
+
+    public function hasPrev(): bool
+    {
+        return $this->page > 1;
+    }
+
+    public function hasNext(): bool
+    {
+        return $this->page < $this->totalPages();
+    }
+
+    public function prevPage(): int
+    {
+        return max(1, $this->page - 1);
+    }
+
+    public function nextPage(): int
+    {
+        return min($this->totalPages(), $this->page + 1);
+    }
+
+    public function pages(): array
+    {
+        $pages = [];
+
+        $start = max(1, $this->page - 2);
+        $end = min($this->totalPages(), $this->page + 2);
+
+        for ($i = $start; $i <= $end; $i++) {
+            $pages[] = $i;
+        }
+
+        return $pages;
+    }
+
+    public function from(): int
+    {
+        if ($this->total === 0) {
+            return 0;
+        }
+
+        return $this->offset() + 1;
+    }
+
+    public function to(): int
+    {
+        return min($this->offset() + $this->perPage, $this->total);
+    }
+
+    public function toArray(): array
+    {
+        return [
+            'total' => $this->total(),
+            'page' => $this->page(),
+            'per_page' => $this->perPage(),
+            'total_pages' => $this->totalPages(),
+            'offset' => $this->offset(),
+            'has_prev' => $this->hasPrev(),
+            'has_next' => $this->hasNext(),
+            'prev_page' => $this->prevPage(),
+            'next_page' => $this->nextPage(),
+            'pages' => $this->pages(),
+            'from' => $this->from(),
+            'to' => $this->to(),
+        ];
+    }
 }
 
-Это уже не совсем задача контроллера.
 
-Простыми словами:
+---
 
-Model — просто достаёт данные из таблицы.
-Service — готовит данные для задачи.
-Controller — командует процессом.
-View — показывает результат.
+2. Обновляем /local/mvc_demo/Models/User.php
+
+Внутрь класса User добавь метод:
+
+public static function latestPage(int $limit = 10, int $offset = 0): array
+{
+    $limit = max(1, min($limit, 100));
+    $offset = max(0, $offset);
+
+    return Db::fetchAll("
+        SELECT
+            ID,
+            LOGIN,
+            NAME,
+            LAST_NAME,
+            SECOND_NAME,
+            EMAIL,
+            ACTIVE,
+            DATE_REGISTER,
+            LAST_LOGIN
+        FROM b_user
+        ORDER BY ID DESC
+        LIMIT {$limit} OFFSET {$offset}
+    ");
+}
+
+То есть в модели теперь будет:
+
+User::count();
+User::latestPage($limit, $offset);
 
 
 ---
 
-1. Создай папку Services
+3. Обновляем /local/mvc_demo/Services/UserService.php
 
-/local/mvc_demo/Services/
-
-
----
-
-2. Создай /local/mvc_demo/Services/UserService.php
+Замени файл полностью:
 
 <?php
 
 namespace Local\MvcDemo\Services;
 
+use Local\Mvc\Core\Paginator;
 use Local\MvcDemo\Models\User;
 
 /**
  * UserService
  *
- * Сервис для работы с пользователями.
- *
- * Model просто достаёт данные.
- * Service подготавливает эти данные для контроллера и view.
+ * Готовит данные пользователей для контроллеров.
  */
 class UserService
 {
-    /**
-     * Данные для админского dashboard.
-     */
     public function dashboardStats(): array
     {
         return [
@@ -68,9 +214,6 @@ class UserService
         ];
     }
 
-    /**
-     * Последние пользователи для таблицы.
-     */
     public function latestForTable(int $limit = 10): array
     {
         $users = User::latest($limit);
@@ -84,9 +227,29 @@ class UserService
         return $result;
     }
 
-    /**
-     * Найти пользователя для карточки.
-     */
+    public function paginateForTable(int $page = 1, int $perPage = 10): array
+    {
+        $total = User::count();
+
+        $paginator = new Paginator($total, $page, $perPage);
+
+        $users = User::latestPage(
+            $paginator->perPage(),
+            $paginator->offset()
+        );
+
+        $items = [];
+
+        foreach ($users as $user) {
+            $items[] = $this->prepareForTable($user);
+        }
+
+        return [
+            'items' => $items,
+            'pagination' => $paginator->toArray(),
+        ];
+    }
+
     public function findForDetail(int $id): ?array
     {
         $user = User::findForAdmin($id);
@@ -98,9 +261,6 @@ class UserService
         return $this->prepareForDetail($user);
     }
 
-    /**
-     * Подготовить пользователя для таблицы.
-     */
     private function prepareForTable(array $user): array
     {
         return [
@@ -113,9 +273,6 @@ class UserService
         ];
     }
 
-    /**
-     * Подготовить пользователя для карточки.
-     */
     private function prepareForDetail(array $user): array
     {
         return [
@@ -134,83 +291,43 @@ class UserService
 
 ---
 
-3. Обнови /local/mvc_demo/Controllers/AdminController.php
+4. Обновляем /local/mvc_demo/Controllers/AdminController.php
 
-Полностью замени файл:
+В методе users() было примерно так:
 
-<?php
-
-namespace Local\MvcDemo\Controllers;
-
-use Local\Mvc\Core\Auth;
-use Local\Mvc\Core\Controller;
-use Local\Mvc\Core\Response;
-use Local\MvcDemo\Services\UserService;
-
-class AdminController extends Controller
+public function users(): Response
 {
-    public function dashboard(): Response
-    {
-        $userService = new UserService();
+    $userService = new UserService();
 
-        return $this->render('admin/dashboard', [
-            'title' => 'Админ-панель',
-            'message' => 'Это защищённая админская страница. Сюда может зайти только администратор.',
-            'user' => [
-                'id' => Auth::id(),
-                'login' => Auth::login(),
-                'name' => Auth::name(),
-                'email' => Auth::email(),
-            ],
-            'stats' => $userService->dashboardStats(),
-        ]);
-    }
+    return $this->render('admin/users', [
+        'title' => 'Пользователи',
+        'users' => $userService->latestForTable(10),
+    ]);
+}
 
-    public function users(): Response
-    {
-        $userService = new UserService();
+Замени метод users() на:
 
-        return $this->render('admin/users', [
-            'title' => 'Пользователи',
-            'users' => $userService->latestForTable(10),
-        ]);
-    }
+public function users(): Response
+{
+    $page = (int)$this->request->get('page', 1);
 
-    public function userDetail(string $id): Response
-    {
-        $userService = new UserService();
+    $userService = new UserService();
 
-        $user = $userService->findForDetail((int)$id);
+    $result = $userService->paginateForTable($page, 10);
 
-        if (!$user) {
-            return Response::html(
-                '<h1>404</h1><p>Пользователь не найден.</p>',
-                404
-            );
-        }
-
-        return $this->render('admin/user_detail', [
-            'title' => 'Карточка пользователя',
-            'user' => $user,
-        ]);
-    }
+    return $this->render('admin/users', [
+        'title' => 'Пользователи',
+        'users' => $result['items'],
+        'pagination' => $result['pagination'],
+    ]);
 }
 
 
 ---
 
-4. Обнови /local/mvc_demo/Views/admin/dashboard.php
+5. Обновляем /local/mvc_demo/Views/admin/users.php
 
-Найди блок, где выводится количество пользователей.
-Если у тебя было:
-
-<?= htmlspecialcharsbx($usersCount ?? 0) ?>
-
-замени на:
-
-<?= htmlspecialcharsbx($stats['users_count'] ?? 0) ?>
-
-Полный файл может быть таким:
+Замени файл полностью:
 
 <?php
 
@@ -218,74 +335,7 @@ if (!defined('B_PROLOG_INCLUDED') || B_PROLOG_INCLUDED !== true) {
     die();
 }
 
-?>
-
-<div class="mvc-card">
-    <h1 class="mvc-page-title">
-        <?= htmlspecialcharsbx($title ?? 'Админ-панель') ?>
-    </h1>
-
-    <p class="mvc-page-text">
-        <?= htmlspecialcharsbx($message ?? '') ?>
-    </p>
-
-    <div class="mvc-info">
-        <b>Текущий администратор:</b>
-
-        <ol>
-            <li>
-                ID:
-                <span class="mvc-code">
-                    <?= htmlspecialcharsbx($user['id'] ?? '') ?>
-                </span>
-            </li>
-
-            <li>
-                Логин:
-                <span class="mvc-code">
-                    <?= htmlspecialcharsbx($user['login'] ?? '') ?>
-                </span>
-            </li>
-
-            <li>
-                Имя:
-                <span class="mvc-code">
-                    <?= htmlspecialcharsbx($user['name'] ?? '') ?>
-                </span>
-            </li>
-
-            <li>
-                Email:
-                <span class="mvc-code">
-                    <?= htmlspecialcharsbx($user['email'] ?? '') ?>
-                </span>
-            </li>
-
-            <li>
-                Всего пользователей:
-                <span class="mvc-code">
-                    <?= htmlspecialcharsbx($stats['users_count'] ?? 0) ?>
-                </span>
-            </li>
-        </ol>
-    </div>
-</div>
-
-
----
-
-5. Обнови /local/mvc_demo/Views/admin/users.php
-
-Теперь view больше не вызывает модель User::fullName().
-Она просто показывает уже готовые данные.
-
-Полностью замени файл:
-
-<?php
-
-if (!defined('B_PROLOG_INCLUDED') || B_PROLOG_INCLUDED !== true) {
-    die();
-}
+$pageUrl = '/local/mvc_demo/admin/users';
 
 ?>
 
@@ -295,8 +345,19 @@ if (!defined('B_PROLOG_INCLUDED') || B_PROLOG_INCLUDED !== true) {
     </h1>
 
     <p class="mvc-page-text">
-        Это список последних пользователей из таблицы <span class="mvc-code">b_user</span>.
+        Это список пользователей из таблицы <span class="mvc-code">b_user</span> с пагинацией.
     </p>
+
+    <?php if (!empty($pagination)): ?>
+        <div class="mvc-info">
+            Показаны записи
+            <span class="mvc-code"><?= htmlspecialcharsbx($pagination['from'] ?? 0) ?></span>
+            —
+            <span class="mvc-code"><?= htmlspecialcharsbx($pagination['to'] ?? 0) ?></span>
+            из
+            <span class="mvc-code"><?= htmlspecialcharsbx($pagination['total'] ?? 0) ?></span>
+        </div>
+    <?php endif; ?>
 
     <div class="mvc-info">
         <table style="width: 100%; border-collapse: collapse;">
@@ -344,131 +405,104 @@ if (!defined('B_PROLOG_INCLUDED') || B_PROLOG_INCLUDED !== true) {
             </tbody>
         </table>
     </div>
+
+    <?php if (!empty($pagination)): ?>
+        <div style="margin-top: 20px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
+            <?php if (!empty($pagination['has_prev'])): ?>
+                <a
+                    href="<?= htmlspecialcharsbx($pageUrl . '?page=' . (int)$pagination['prev_page']) ?>"
+                    style="padding: 8px 12px; border: 1px solid #d1d5db; border-radius: 8px; text-decoration: none;"
+                >
+                    ← Назад
+                </a>
+            <?php endif; ?>
+
+            <?php foreach (($pagination['pages'] ?? []) as $page): ?>
+                <?php $isCurrent = ((int)$page === (int)($pagination['page'] ?? 1)); ?>
+
+                <a
+                    href="<?= htmlspecialcharsbx($pageUrl . '?page=' . (int)$page) ?>"
+                    style="
+                        padding: 8px 12px;
+                        border: 1px solid <?= $isCurrent ? '#2563eb' : '#d1d5db' ?>;
+                        border-radius: 8px;
+                        text-decoration: none;
+                        background: <?= $isCurrent ? '#2563eb' : '#fff' ?>;
+                        color: <?= $isCurrent ? '#fff' : '#111827' ?>;
+                    "
+                >
+                    <?= (int)$page ?>
+                </a>
+            <?php endforeach; ?>
+
+            <?php if (!empty($pagination['has_next'])): ?>
+                <a
+                    href="<?= htmlspecialcharsbx($pageUrl . '?page=' . (int)$pagination['next_page']) ?>"
+                    style="padding: 8px 12px; border: 1px solid #d1d5db; border-radius: 8px; text-decoration: none;"
+                >
+                    Вперёд →
+                </a>
+            <?php endif; ?>
+        </div>
+    <?php endif; ?>
 </div>
 
 
 ---
 
-6. Обнови /local/mvc_demo/Views/admin/user_detail.php
-
-Полностью замени файл:
-
-<?php
-
-if (!defined('B_PROLOG_INCLUDED') || B_PROLOG_INCLUDED !== true) {
-    die();
-}
-
-?>
-
-<div class="mvc-card">
-    <h1 class="mvc-page-title">
-        <?= htmlspecialcharsbx($title ?? 'Карточка пользователя') ?>
-    </h1>
-
-    <p class="mvc-page-text">
-        Данные пользователя получены через модель и подготовлены через сервис.
-    </p>
-
-    <div class="mvc-info">
-        <b><?= htmlspecialcharsbx($user['full_name'] ?? '') ?></b>
-
-        <ol>
-            <li>
-                ID:
-                <span class="mvc-code"><?= htmlspecialcharsbx($user['id'] ?? '') ?></span>
-            </li>
-
-            <li>
-                Логин:
-                <span class="mvc-code"><?= htmlspecialcharsbx($user['login'] ?? '') ?></span>
-            </li>
-
-            <li>
-                Email:
-                <span class="mvc-code"><?= htmlspecialcharsbx($user['email'] ?? '') ?></span>
-            </li>
-
-            <li>
-                Активен:
-                <span class="mvc-code"><?= htmlspecialcharsbx($user['active_label'] ?? '') ?></span>
-            </li>
-
-            <li>
-                Дата регистрации:
-                <span class="mvc-code"><?= htmlspecialcharsbx($user['date_register'] ?? '') ?></span>
-            </li>
-
-            <li>
-                Последний вход:
-                <span class="mvc-code"><?= htmlspecialcharsbx($user['last_login'] ?? '') ?></span>
-            </li>
-        </ol>
-    </div>
-
-    <div style="margin-top: 20px;">
-        <a href="/local/mvc_demo/admin/users">
-            ← Назад к списку
-        </a>
-    </div>
-</div>
-
-
----
-
-7. Проверяем
+6. Проверяем
 
 Сбрось OPcache:
 
 opcache_reset();
 echo 'OPcache reset OK';
 
-Проверь:
+Открой:
 
-/local/mvc_demo/admin/dashboard
-/local/mvc_demo/admin/users
-/local/mvc_demo/admin/users/1
+https://bitrix24-stage.gaz.ru/local/mvc_demo/admin/users
+
+Потом:
+
+https://bitrix24-stage.gaz.ru/local/mvc_demo/admin/users?page=2
+
+Если пользователей много, увидишь разные страницы.
 
 
 ---
 
 Что мы сделали
 
-Теперь цепочка стала ещё правильнее:
+Теперь список пользователей не грузит всё сразу.
 
-Route
-  ↓
+Путь стал такой:
+
 Controller
   ↓
-Service
+берёт page из Request
   ↓
-Model
+UserService
   ↓
-Db
+Paginator считает limit и offset
   ↓
-View
+User Model получает нужный кусок пользователей
+  ↓
+View показывает таблицу и кнопки страниц
 
-Простыми словами:
+Главная мысль:
 
-Model — знает таблицу.
-Service — готовит данные для задачи.
-Controller — вызывает нужный сервис.
-View — просто показывает.
+Paginator не знает про пользователей.
+Он просто умеет считать:
+- какая страница
+- сколько всего записей
+- сколько показывать
+- какой offset
 
-Почему это важно
+То есть потом его можно использовать где угодно:
 
-Для маленькой страницы можно обойтись без Service.
+список сайтов
+список страниц
+список заявок
+список файлов
+список отзывов
 
-Но в реальных проектах он очень нужен.
-
-Например для sitebuilder:
-
-Site model       — работает с таблицей sites
-Page model       — работает с таблицей pages
-Block model      — работает с таблицей blocks
-
-SiteService      — создать сайт, выдать права, создать главную страницу
-PageService      — создать страницу, проверить slug, сохранить layout
-DiskService      — создать папку в Диске, синхронизировать права
-
-То есть бизнес-логика будет не в контроллере, а в сервисах.
+Дальше логично сделать поиск и фильтрацию для этой таблицы пользователей.
