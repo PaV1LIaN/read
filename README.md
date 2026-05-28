@@ -1,123 +1,116 @@
-Идём дальше. Табличный компонент пока не делаем, чтобы не путаться. Следующий важный шаг — API для AJAX.
+Идём дальше. Сейчас сделаем важную вещь для будущих проектов: AJAX-запросы к API.
 
-В реальных проектах у нас будут страницы и API:
+Простыми словами:
 
-Страница:
-GET /local/sitebuilder/sites
+HTML-страница показывает кнопку.
+JS нажимает кнопку.
+fetch отправляет POST-запрос в API.
+API возвращает JSON.
+Страница показывает результат без перезагрузки.
 
-API:
-GET  /local/sitebuilder/api/sites
-POST /local/sitebuilder/api/sites/create
-POST /local/sitebuilder/api/sites/delete
+Это потом пригодится для:
 
-Сейчас сделаем API в mvc_demo:
-
-/local/mvc_demo/api/users
-/local/mvc_demo/api/users/1
+sitebuilder — сохранить блок без перезагрузки
+диск — создать папку через AJAX
+glab — сменить статус заявки
+qr — фильтры и графики
 
 
 ---
 
-1. Добавляем JSON в Request
+1. Добавим работу с headers в Request
 
 Открой файл:
 
 /local/mvc/Core/Request.php
 
-Внутрь класса добавь свойства:
-
-private ?string $rawBody = null;
-private ?array $jsonBody = null;
-
-Чтобы начало класса было примерно такое:
-
-private array $get;
-private array $post;
-private array $server;
-private array $files;
-private array $routeParams = [];
-
-private ?string $rawBody = null;
-private ?array $jsonBody = null;
-
-Потом перед последней } класса добавь методы:
+Внутрь класса добавь метод:
 
 /**
- * Сырой body запроса.
+ * Получить HTTP-заголовок.
  *
- * Нужно для JSON-запросов.
+ * Например:
+ * $request->header('X-Bitrix-Sessid')
  */
-public function rawBody(): string
+public function header(string $name, mixed $default = null): mixed
 {
-    if ($this->rawBody !== null) {
-        return $this->rawBody;
-    }
+    $key = 'HTTP_' . strtoupper(str_replace('-', '_', $name));
 
-    $body = file_get_contents('php://input');
-
-    $this->rawBody = is_string($body) ? $body : '';
-
-    return $this->rawBody;
+    return $this->server[$key] ?? $default;
 }
 
-/**
- * JSON из body запроса.
- *
- * Например, если фронт отправил:
- * {"name":"Тест"}
- *
- * То:
- * $request->json('name')
- * вернёт "Тест".
- */
-public function json(string $key, mixed $default = null): mixed
-{
-    $data = $this->jsonAll();
+Добавь его рядом с методом:
 
-    return $data[$key] ?? $default;
-}
-
-/**
- * Весь JSON body как массив.
- */
-public function jsonAll(): array
-{
-    if ($this->jsonBody !== null) {
-        return $this->jsonBody;
-    }
-
-    $raw = trim($this->rawBody());
-
-    if ($raw === '') {
-        $this->jsonBody = [];
-        return $this->jsonBody;
-    }
-
-    $decoded = json_decode($raw, true);
-
-    $this->jsonBody = is_array($decoded) ? $decoded : [];
-
-    return $this->jsonBody;
-}
-
-/**
- * Это AJAX-запрос?
- */
-public function isAjax(): bool
-{
-    $requestedWith = (string)$this->server('HTTP_X_REQUESTED_WITH', '');
-
-    return strtolower($requestedWith) === 'xmlhttprequest';
-}
+public function server(string $key, mixed $default = null): mixed
 
 
 ---
 
-2. Создаём API-контроллер пользователей
+2. Обновим csrf middleware
+
+Сейчас csrf хорошо работает для обычной формы, но для JSON/AJAX удобнее передавать sessid в заголовке:
+
+X-Bitrix-Sessid: ...
+
+Открой:
+
+/local/mvc/Core/Middleware.php
+
+Найди блок:
+
+if ($middleware === 'csrf') {
+
+и замени весь блок на этот:
+
+if ($middleware === 'csrf') {
+    if ($request->method() !== 'POST') {
+        return null;
+    }
+
+    /**
+     * Вариант 1:
+     * обычная форма Битрикса через bitrix_sessid_post().
+     */
+    if (function_exists('check_bitrix_sessid') && check_bitrix_sessid()) {
+        return null;
+    }
+
+    /**
+     * Вариант 2:
+     * AJAX/JSON-запрос.
+     *
+     * JS может отправить:
+     * X-Bitrix-Sessid: текущий_sessid
+     */
+    $headerSessid = (string)$request->header('X-Bitrix-Sessid', '');
+
+    if (
+        $headerSessid !== ''
+        && function_exists('bitrix_sessid')
+        && hash_equals((string)bitrix_sessid(), $headerSessid)
+    ) {
+        return null;
+    }
+
+    return Response::json([
+        'ok' => false,
+        'error' => 'BAD_SESSID',
+        'details' => [
+            'message' => 'Неверный sessid. Обновите страницу и попробуйте снова.',
+        ],
+    ], 403);
+}
+
+Теперь csrf будет работать и для обычных форм, и для AJAX.
+
+
+---
+
+3. Создаём AjaxDemoController
 
 Создай файл:
 
-/local/mvc_demo/Controllers/UserApiController.php
+/local/mvc_demo/Controllers/AjaxDemoController.php
 
 Код:
 
@@ -125,53 +118,46 @@ public function isAjax(): bool
 
 namespace Local\MvcDemo\Controllers;
 
+use Local\Mvc\Core\Auth;
 use Local\Mvc\Core\Controller;
 use Local\Mvc\Core\Response;
-use Local\MvcDemo\Services\UserService;
 
-class UserApiController extends Controller
+class AjaxDemoController extends Controller
 {
     /**
-     * GET /api/users
-     *
-     * Список пользователей JSON.
+     * Страница с AJAX-примером.
      */
     public function index(): Response
     {
-        $page = (int)$this->request->get('page', 1);
-        $search = trim((string)$this->request->get('q', ''));
-
-        $userService = new UserService();
-
-        $result = $userService->paginateForTable($page, 10, $search);
-
-        return $this->success([
-            'items' => $result['items'],
-            'pagination' => $result['pagination'],
-            'search' => $result['search'],
+        return $this->render('ajax/index', [
+            'title' => 'AJAX Demo',
+            'sessid' => function_exists('bitrix_sessid') ? bitrix_sessid() : '',
+            'userId' => Auth::id(),
         ]);
     }
 
     /**
-     * GET /api/users/{id}
+     * POST /api/ajax-demo/echo
      *
-     * Один пользователь JSON.
+     * API принимает JSON и возвращает JSON.
      */
-    public function show(string $id): Response
+    public function echo(): Response
     {
-        $userService = new UserService();
+        $data = $this->request->jsonAll();
 
-        $user = $userService->findForDetail((int)$id);
+        $text = trim((string)($data['text'] ?? ''));
 
-        if (!$user) {
-            return $this->error('USER_NOT_FOUND', [
-                'message' => 'Пользователь не найден',
-                'id' => (int)$id,
-            ], 404);
+        if ($text === '') {
+            return $this->error('VALIDATION_ERROR', [
+                'message' => 'Введите текст.',
+            ], 422);
         }
 
         return $this->success([
-            'user' => $user,
+            'received_text' => $text,
+            'length' => mb_strlen($text),
+            'user_id' => Auth::id(),
+            'time' => date('Y-m-d H:i:s'),
         ]);
     }
 }
@@ -179,7 +165,116 @@ class UserApiController extends Controller
 
 ---
 
-3. Обновляем routes
+4. Создаём view страницы AJAX
+
+Создай папку:
+
+/local/mvc_demo/Views/ajax/
+
+Создай файл:
+
+/local/mvc_demo/Views/ajax/index.php
+
+Код:
+
+<?php
+
+if (!defined('B_PROLOG_INCLUDED') || B_PROLOG_INCLUDED !== true) {
+    die();
+}
+
+?>
+
+<div class="mvc-card">
+    <h1 class="mvc-page-title">
+        <?= htmlspecialcharsbx($title ?? 'AJAX Demo') ?>
+    </h1>
+
+    <p class="mvc-page-text">
+        Эта страница отправляет JSON-запрос в API без перезагрузки страницы.
+    </p>
+
+    <div class="mvc-info">
+        <b>Как это работает:</b>
+
+        <ol>
+            <li>Ты вводишь текст.</li>
+            <li>JavaScript отправляет POST-запрос на <span class="mvc-code">/api/ajax-demo/echo</span>.</li>
+            <li>Middleware <span class="mvc-code">csrf</span> проверяет sessid.</li>
+            <li>Контроллер возвращает JSON.</li>
+            <li>JS показывает результат на странице.</li>
+        </ol>
+    </div>
+
+    <div style="margin-top: 24px;">
+        <label style="display:block; margin-bottom: 6px; font-weight: 600;">
+            Текст для отправки
+        </label>
+
+        <input
+            id="ajaxText"
+            type="text"
+            value="Привет из AJAX"
+            style="width: 100%; min-height: 42px; padding: 8px 12px; border: 1px solid #d1d5db; border-radius: 10px;"
+        >
+    </div>
+
+    <div style="margin-top: 16px;">
+        <button
+            id="ajaxSendBtn"
+            type="button"
+            style="min-height: 42px; padding: 0 18px; border: 0; border-radius: 10px; background: #2563eb; color: #fff; font-weight: 600; cursor: pointer;"
+        >
+            Отправить AJAX
+        </button>
+    </div>
+
+    <div class="mvc-info" style="margin-top: 24px;">
+        <b>Ответ API:</b>
+
+        <pre id="ajaxResult" style="white-space: pre-wrap; margin-bottom: 0;">Пока запроса не было.</pre>
+    </div>
+</div>
+
+<script>
+(function () {
+    const button = document.getElementById('ajaxSendBtn');
+    const input = document.getElementById('ajaxText');
+    const result = document.getElementById('ajaxResult');
+
+    const sessid = <?= json_encode((string)($sessid ?? ''), JSON_UNESCAPED_UNICODE) ?>;
+
+    button.addEventListener('click', async function () {
+        result.textContent = 'Отправляем запрос...';
+
+        try {
+            const response = await fetch('/local/mvc_demo/api/ajax-demo/echo', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Accept': 'application/json',
+                    'X-Requested-With': 'XMLHttpRequest',
+                    'X-Bitrix-Sessid': sessid
+                },
+                body: JSON.stringify({
+                    text: input.value
+                })
+            });
+
+            const json = await response.json();
+
+            result.textContent = JSON.stringify(json, null, 2);
+        } catch (error) {
+            result.textContent = 'AJAX ERROR: ' + error.message;
+        }
+    });
+})();
+</script>
+
+
+---
+
+5. Обновляем routes.php
 
 Открой:
 
@@ -187,75 +282,64 @@ class UserApiController extends Controller
 
 Добавь use:
 
-use Local\MvcDemo\Controllers\UserApiController;
+use Local\MvcDemo\Controllers\AjaxDemoController;
 
-И ниже добавь API-группу:
+В публичные маршруты добавь страницу:
 
-/**
- * API.
- *
- * Пока API пользователей доступен только админам.
- */
+$router->get('/ajax-demo', [AjaxDemoController::class, 'index']);
+
+В API-группу добавь POST-маршрут:
+
+$router->post('/ajax-demo/echo', [AjaxDemoController::class, 'echo'], ['csrf']);
+
+Полный важный кусок должен выглядеть примерно так:
+
+use Local\MvcDemo\Controllers\AjaxDemoController;
+
+$router->get('/ajax-demo', [AjaxDemoController::class, 'index']);
+
 $router->group([
     'prefix' => '/api',
     'middleware' => ['auth', 'admin'],
 ], function (Router $router) {
     $router->get('/users', [UserApiController::class, 'index']);
     $router->get('/users/{id:\d+}', [UserApiController::class, 'show']);
+
+    $router->post('/ajax-demo/echo', [AjaxDemoController::class, 'echo'], ['csrf']);
 });
 
-Полностью файл должен быть примерно такой:
-
-<?php
-
-use Local\Mvc\Core\Router;
-use Local\MvcDemo\Controllers\HomeController;
-use Local\MvcDemo\Controllers\AdminController;
-use Local\MvcDemo\Controllers\FormController;
-use Local\MvcDemo\Controllers\UserApiController;
-
-/** @var Router $router */
-
-/**
- * Публичные маршруты.
- */
-$router->get('/', [HomeController::class, 'index']);
-$router->get('/about', [HomeController::class, 'about']);
-$router->get('/ping', [HomeController::class, 'ping']);
-$router->get('/form', [FormController::class, 'index']);
-$router->post('/form/send', [FormController::class, 'send'], ['csrf']);
-
-/**
- * Только авторизованные пользователи.
- */
-$router->group(['middleware' => ['auth']], function (Router $router) {
-    $router->get('/me', [HomeController::class, 'me']);
-
-    $router->group([
-        'prefix' => '/admin',
-        'middleware' => ['admin'],
-    ], function (Router $router) {
-        $router->get('/dashboard', [AdminController::class, 'dashboard']);
-        $router->get('/users', [AdminController::class, 'users']);
-        $router->get('/users/{id:\d+}', [AdminController::class, 'userDetail']);
-    });
-});
-
-/**
- * API.
- */
-$router->group([
-    'prefix' => '/api',
-    'middleware' => ['auth', 'admin'],
-], function (Router $router) {
-    $router->get('/users', [UserApiController::class, 'index']);
-    $router->get('/users/{id:\d+}', [UserApiController::class, 'show']);
-});
+Так как API-группа защищена auth + admin, AJAX-демо будет работать только у администратора.
 
 
 ---
 
-4. Проверяем
+6. Добавь ссылку в меню
+
+Файл:
+
+/local/mvc_demo/Views/layouts/app.php
+
+В меню добавь:
+
+<a href="/local/mvc_demo/ajax-demo">AJAX</a>
+
+Например:
+
+<nav class="mvc-nav">
+    <a href="/local/mvc_demo/">Главная</a>
+    <a href="/local/mvc_demo/about">О проекте</a>
+    <a href="/local/mvc_demo/form">Форма</a>
+    <a href="/local/mvc_demo/ajax-demo">AJAX</a>
+    <a href="/local/mvc_demo/me">Я</a>
+    <a href="/local/mvc_demo/admin/dashboard">Админка</a>
+    <a href="/local/mvc_demo/admin/users">Пользователи</a>
+    <a href="/local/mvc_demo/ping" target="_blank">Ping JSON</a>
+</nav>
+
+
+---
+
+7. Проверяем
 
 Сбрось OPcache:
 
@@ -264,38 +348,21 @@ echo 'OPcache reset OK';
 
 Открой:
 
-https://bitrix24-stage.gaz.ru/local/mvc_demo/api/users
+https://bitrix24-stage.gaz.ru/local/mvc_demo/ajax-demo
 
-Должен быть JSON:
+Нажми кнопку:
+
+Отправить AJAX
+
+Должен появиться JSON примерно такой:
 
 {
   "ok": true,
   "data": {
-    "items": [],
-    "pagination": {
-      "total": 10,
-      "page": 1
-    },
-    "search": ""
-  }
-}
-
-Проверь поиск:
-
-https://bitrix24-stage.gaz.ru/local/mvc_demo/api/users?q=admin
-
-Проверь одного пользователя:
-
-https://bitrix24-stage.gaz.ru/local/mvc_demo/api/users/1
-
-Если пользователя нет, будет:
-
-{
-  "ok": false,
-  "error": "USER_NOT_FOUND",
-  "details": {
-    "message": "Пользователь не найден",
-    "id": 1
+    "received_text": "Привет из AJAX",
+    "length": 15,
+    "user_id": 1,
+    "time": "2026-05-28 12:00:00"
   }
 }
 
@@ -304,35 +371,30 @@ https://bitrix24-stage.gaz.ru/local/mvc_demo/api/users/1
 
 Что мы сделали
 
-Теперь у проекта есть два типа маршрутов:
+Теперь наш MVC умеет не только формы, но и AJAX:
 
-HTML-страницы:
-GET /admin/users
-
-JSON API:
-GET /api/users
-GET /api/users/{id}
-
-Путь такой:
-
-Браузер / AJAX
+Страница
+  ↓
+JavaScript fetch()
+  ↓
+POST JSON
   ↓
 Router
   ↓
-Middleware auth/admin
+Middleware auth/admin/csrf
   ↓
-UserApiController
-  ↓
-UserService
-  ↓
-User Model
+Controller
   ↓
 JSON Response
+  ↓
+JavaScript показывает результат
 
-Главная мысль:
+Это очень важный шаг. Именно так будут работать многие действия в реальных проектах:
 
-Обычный Controller может возвращать HTML.
-API Controller возвращает JSON.
-Service и Model при этом используются те же самые.
+сохранить блок
+создать страницу
+удалить файл
+обновить настройки
+загрузить данные графика
 
-Это правильно: одну бизнес-логику можно использовать и для страницы, и для API.
+Дальше можно сделать отдельный ApiController, чтобы API-контроллеры имели дополнительные удобные методы для JSON-ответов.
