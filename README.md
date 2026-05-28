@@ -1,346 +1,261 @@
-Отлично. Дальше добавим поиск по пользователям.
+Идём дальше. Табличный компонент пока не делаем, чтобы не путаться. Следующий важный шаг — API для AJAX.
 
-Сейчас есть:
+В реальных проектах у нас будут страницы и API:
 
-/local/mvc_demo/admin/users
-/local/mvc_demo/admin/users?page=2
+Страница:
+GET /local/sitebuilder/sites
 
-Сделаем так:
+API:
+GET  /local/sitebuilder/api/sites
+POST /local/sitebuilder/api/sites/create
+POST /local/sitebuilder/api/sites/delete
 
-/local/mvc_demo/admin/users?q=ivan
-/local/mvc_demo/admin/users?q=ivan&page=2
+Сейчас сделаем API в mvc_demo:
 
-То есть пользователь сможет искать по:
-
-ID
-логину
-имени
-фамилии
-email
+/local/mvc_demo/api/users
+/local/mvc_demo/api/users/1
 
 
 ---
 
-1. Обнови /local/mvc_demo/Models/User.php
+1. Добавляем JSON в Request
 
-Внутрь класса User добавь два метода:
+Открой файл:
 
-public static function countSearch(string $search = ''): int
+/local/mvc/Core/Request.php
+
+Внутрь класса добавь свойства:
+
+private ?string $rawBody = null;
+private ?array $jsonBody = null;
+
+Чтобы начало класса было примерно такое:
+
+private array $get;
+private array $post;
+private array $server;
+private array $files;
+private array $routeParams = [];
+
+private ?string $rawBody = null;
+private ?array $jsonBody = null;
+
+Потом перед последней } класса добавь методы:
+
+/**
+ * Сырой body запроса.
+ *
+ * Нужно для JSON-запросов.
+ */
+public function rawBody(): string
 {
-    $search = trim($search);
-
-    if ($search === '') {
-        return self::count();
+    if ($this->rawBody !== null) {
+        return $this->rawBody;
     }
 
-    return (int)Db::value("
-        SELECT COUNT(*)
-        FROM b_user
-        WHERE
-            CAST(ID AS CHAR) LIKE :q
-            OR LOGIN LIKE :q
-            OR NAME LIKE :q
-            OR LAST_NAME LIKE :q
-            OR SECOND_NAME LIKE :q
-            OR EMAIL LIKE :q
-    ", [
-        'q' => '%' . $search . '%',
-    ]);
+    $body = file_get_contents('php://input');
+
+    $this->rawBody = is_string($body) ? $body : '';
+
+    return $this->rawBody;
 }
 
-public static function searchPage(string $search = '', int $limit = 10, int $offset = 0): array
+/**
+ * JSON из body запроса.
+ *
+ * Например, если фронт отправил:
+ * {"name":"Тест"}
+ *
+ * То:
+ * $request->json('name')
+ * вернёт "Тест".
+ */
+public function json(string $key, mixed $default = null): mixed
 {
-    $search = trim($search);
-    $limit = max(1, min($limit, 100));
-    $offset = max(0, $offset);
+    $data = $this->jsonAll();
 
-    if ($search === '') {
-        return self::latestPage($limit, $offset);
+    return $data[$key] ?? $default;
+}
+
+/**
+ * Весь JSON body как массив.
+ */
+public function jsonAll(): array
+{
+    if ($this->jsonBody !== null) {
+        return $this->jsonBody;
     }
 
-    return Db::fetchAll("
-        SELECT
-            ID,
-            LOGIN,
-            NAME,
-            LAST_NAME,
-            SECOND_NAME,
-            EMAIL,
-            ACTIVE,
-            DATE_REGISTER,
-            LAST_LOGIN
-        FROM b_user
-        WHERE
-            CAST(ID AS CHAR) LIKE :q
-            OR LOGIN LIKE :q
-            OR NAME LIKE :q
-            OR LAST_NAME LIKE :q
-            OR SECOND_NAME LIKE :q
-            OR EMAIL LIKE :q
-        ORDER BY ID DESC
-        LIMIT {$limit} OFFSET {$offset}
-    ", [
-        'q' => '%' . $search . '%',
-    ]);
-}
+    $raw = trim($this->rawBody());
 
-Что это значит простыми словами:
-
-countSearch() — считает, сколько найдено пользователей.
-searchPage()  — получает только нужный кусок найденных пользователей.
-
-
----
-
-2. Обнови /local/mvc_demo/Services/UserService.php
-
-Найди метод:
-
-public function paginateForTable(int $page = 1, int $perPage = 10): array
-
-И замени его на:
-
-public function paginateForTable(int $page = 1, int $perPage = 10, string $search = ''): array
-{
-    $search = trim($search);
-
-    $total = User::countSearch($search);
-
-    $paginator = new Paginator($total, $page, $perPage);
-
-    $users = User::searchPage(
-        $search,
-        $paginator->perPage(),
-        $paginator->offset()
-    );
-
-    $items = [];
-
-    foreach ($users as $user) {
-        $items[] = $this->prepareForTable($user);
+    if ($raw === '') {
+        $this->jsonBody = [];
+        return $this->jsonBody;
     }
 
-    return [
-        'items' => $items,
-        'pagination' => $paginator->toArray(),
-        'search' => $search,
-    ];
+    $decoded = json_decode($raw, true);
+
+    $this->jsonBody = is_array($decoded) ? $decoded : [];
+
+    return $this->jsonBody;
 }
 
-Теперь сервис умеет не только страницы, но и поиск.
-
-
----
-
-3. Обнови метод users() в /local/mvc_demo/Controllers/AdminController.php
-
-Замени метод users() на этот:
-
-public function users(): Response
+/**
+ * Это AJAX-запрос?
+ */
+public function isAjax(): bool
 {
-    $page = (int)$this->request->get('page', 1);
-    $search = trim((string)$this->request->get('q', ''));
+    $requestedWith = (string)$this->server('HTTP_X_REQUESTED_WITH', '');
 
-    $userService = new UserService();
-
-    $result = $userService->paginateForTable($page, 10, $search);
-
-    return $this->render('admin/users', [
-        'title' => 'Пользователи',
-        'users' => $result['items'],
-        'pagination' => $result['pagination'],
-        'search' => $result['search'],
-    ]);
+    return strtolower($requestedWith) === 'xmlhttprequest';
 }
-
-Что теперь делает контроллер:
-
-1. Берёт page из URL.
-2. Берёт q из URL.
-3. Передаёт всё в UserService.
-4. Отдаёт users, pagination и search во View.
 
 
 ---
 
-4. Замени /local/mvc_demo/Views/admin/users.php
+2. Создаём API-контроллер пользователей
 
-Полностью замени файл:
+Создай файл:
+
+/local/mvc_demo/Controllers/UserApiController.php
+
+Код:
 
 <?php
 
-if (!defined('B_PROLOG_INCLUDED') || B_PROLOG_INCLUDED !== true) {
-    die();
-}
+namespace Local\MvcDemo\Controllers;
 
-$pageUrl = '/local/mvc_demo/admin/users';
-$search = trim((string)($search ?? ''));
+use Local\Mvc\Core\Controller;
+use Local\Mvc\Core\Response;
+use Local\MvcDemo\Services\UserService;
 
-$makePageUrl = static function (int $page) use ($pageUrl, $search): string {
-    $params = [
-        'page' => $page,
-    ];
+class UserApiController extends Controller
+{
+    /**
+     * GET /api/users
+     *
+     * Список пользователей JSON.
+     */
+    public function index(): Response
+    {
+        $page = (int)$this->request->get('page', 1);
+        $search = trim((string)$this->request->get('q', ''));
 
-    if ($search !== '') {
-        $params['q'] = $search;
+        $userService = new UserService();
+
+        $result = $userService->paginateForTable($page, 10, $search);
+
+        return $this->success([
+            'items' => $result['items'],
+            'pagination' => $result['pagination'],
+            'search' => $result['search'],
+        ]);
     }
 
-    return $pageUrl . '?' . http_build_query($params);
-};
+    /**
+     * GET /api/users/{id}
+     *
+     * Один пользователь JSON.
+     */
+    public function show(string $id): Response
+    {
+        $userService = new UserService();
 
-?>
+        $user = $userService->findForDetail((int)$id);
 
-<div class="mvc-card">
-    <h1 class="mvc-page-title">
-        <?= htmlspecialcharsbx($title ?? 'Пользователи') ?>
-    </h1>
+        if (!$user) {
+            return $this->error('USER_NOT_FOUND', [
+                'message' => 'Пользователь не найден',
+                'id' => (int)$id,
+            ], 404);
+        }
 
-    <p class="mvc-page-text">
-        Это список пользователей из таблицы <span class="mvc-code">b_user</span> с поиском и пагинацией.
-    </p>
-
-    <form method="get" action="<?= htmlspecialcharsbx($pageUrl) ?>" style="margin-top: 24px; display: flex; gap: 10px; align-items: center;">
-        <input
-            type="text"
-            name="q"
-            value="<?= htmlspecialcharsbx($search) ?>"
-            placeholder="Поиск по ID, логину, ФИО или email"
-            style="flex: 1; min-height: 42px; padding: 8px 12px; border: 1px solid #d1d5db; border-radius: 10px;"
-        >
-
-        <button
-            type="submit"
-            style="min-height: 42px; padding: 0 18px; border: 0; border-radius: 10px; background: #2563eb; color: #fff; font-weight: 600; cursor: pointer;"
-        >
-            Найти
-        </button>
-
-        <?php if ($search !== ''): ?>
-            <a
-                href="<?= htmlspecialcharsbx($pageUrl) ?>"
-                style="min-height: 42px; display: inline-flex; align-items: center; padding: 0 14px; border: 1px solid #d1d5db; border-radius: 10px; text-decoration: none;"
-            >
-                Сбросить
-            </a>
-        <?php endif; ?>
-    </form>
-
-    <?php if ($search !== ''): ?>
-        <div class="mvc-info">
-            Поиск:
-            <span class="mvc-code"><?= htmlspecialcharsbx($search) ?></span>
-        </div>
-    <?php endif; ?>
-
-    <?php if (!empty($pagination)): ?>
-        <div class="mvc-info">
-            Показаны записи
-            <span class="mvc-code"><?= htmlspecialcharsbx($pagination['from'] ?? 0) ?></span>
-            —
-            <span class="mvc-code"><?= htmlspecialcharsbx($pagination['to'] ?? 0) ?></span>
-            из
-            <span class="mvc-code"><?= htmlspecialcharsbx($pagination['total'] ?? 0) ?></span>
-        </div>
-    <?php endif; ?>
-
-    <div class="mvc-info">
-        <?php if (empty($users)): ?>
-            <p style="margin: 0;">
-                Пользователи не найдены.
-            </p>
-        <?php else: ?>
-            <table style="width: 100%; border-collapse: collapse;">
-                <thead>
-                    <tr>
-                        <th style="text-align: left; padding: 8px; border-bottom: 1px solid #e5e7eb;">ID</th>
-                        <th style="text-align: left; padding: 8px; border-bottom: 1px solid #e5e7eb;">Логин</th>
-                        <th style="text-align: left; padding: 8px; border-bottom: 1px solid #e5e7eb;">ФИО</th>
-                        <th style="text-align: left; padding: 8px; border-bottom: 1px solid #e5e7eb;">Email</th>
-                        <th style="text-align: left; padding: 8px; border-bottom: 1px solid #e5e7eb;">Активен</th>
-                        <th style="text-align: left; padding: 8px; border-bottom: 1px solid #e5e7eb;">Действие</th>
-                    </tr>
-                </thead>
-
-                <tbody>
-                    <?php foreach (($users ?? []) as $user): ?>
-                        <tr>
-                            <td style="padding: 8px; border-bottom: 1px solid #e5e7eb;">
-                                <?= htmlspecialcharsbx($user['id'] ?? '') ?>
-                            </td>
-
-                            <td style="padding: 8px; border-bottom: 1px solid #e5e7eb;">
-                                <?= htmlspecialcharsbx($user['login'] ?? '') ?>
-                            </td>
-
-                            <td style="padding: 8px; border-bottom: 1px solid #e5e7eb;">
-                                <?= htmlspecialcharsbx($user['full_name'] ?? '') ?>
-                            </td>
-
-                            <td style="padding: 8px; border-bottom: 1px solid #e5e7eb;">
-                                <?= htmlspecialcharsbx($user['email'] ?? '') ?>
-                            </td>
-
-                            <td style="padding: 8px; border-bottom: 1px solid #e5e7eb;">
-                                <?= htmlspecialcharsbx($user['active_label'] ?? '') ?>
-                            </td>
-
-                            <td style="padding: 8px; border-bottom: 1px solid #e5e7eb;">
-                                <a href="/local/mvc_demo/admin/users/<?= (int)($user['id'] ?? 0) ?>">
-                                    Открыть
-                                </a>
-                            </td>
-                        </tr>
-                    <?php endforeach; ?>
-                </tbody>
-            </table>
-        <?php endif; ?>
-    </div>
-
-    <?php if (!empty($pagination) && (int)($pagination['total_pages'] ?? 1) > 1): ?>
-        <div style="margin-top: 20px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
-            <?php if (!empty($pagination['has_prev'])): ?>
-                <a
-                    href="<?= htmlspecialcharsbx($makePageUrl((int)$pagination['prev_page'])) ?>"
-                    style="padding: 8px 12px; border: 1px solid #d1d5db; border-radius: 8px; text-decoration: none;"
-                >
-                    ← Назад
-                </a>
-            <?php endif; ?>
-
-            <?php foreach (($pagination['pages'] ?? []) as $page): ?>
-                <?php $isCurrent = ((int)$page === (int)($pagination['page'] ?? 1)); ?>
-
-                <a
-                    href="<?= htmlspecialcharsbx($makePageUrl((int)$page)) ?>"
-                    style="
-                        padding: 8px 12px;
-                        border: 1px solid <?= $isCurrent ? '#2563eb' : '#d1d5db' ?>;
-                        border-radius: 8px;
-                        text-decoration: none;
-                        background: <?= $isCurrent ? '#2563eb' : '#fff' ?>;
-                        color: <?= $isCurrent ? '#fff' : '#111827' ?>;
-                    "
-                >
-                    <?= (int)$page ?>
-                </a>
-            <?php endforeach; ?>
-
-            <?php if (!empty($pagination['has_next'])): ?>
-                <a
-                    href="<?= htmlspecialcharsbx($makePageUrl((int)$pagination['next_page'])) ?>"
-                    style="padding: 8px 12px; border: 1px solid #d1d5db; border-radius: 8px; text-decoration: none;"
-                >
-                    Вперёд →
-                </a>
-            <?php endif; ?>
-        </div>
-    <?php endif; ?>
-</div>
+        return $this->success([
+            'user' => $user,
+        ]);
+    }
+}
 
 
 ---
 
-5. Проверяем
+3. Обновляем routes
+
+Открой:
+
+/local/mvc_demo/routes.php
+
+Добавь use:
+
+use Local\MvcDemo\Controllers\UserApiController;
+
+И ниже добавь API-группу:
+
+/**
+ * API.
+ *
+ * Пока API пользователей доступен только админам.
+ */
+$router->group([
+    'prefix' => '/api',
+    'middleware' => ['auth', 'admin'],
+], function (Router $router) {
+    $router->get('/users', [UserApiController::class, 'index']);
+    $router->get('/users/{id:\d+}', [UserApiController::class, 'show']);
+});
+
+Полностью файл должен быть примерно такой:
+
+<?php
+
+use Local\Mvc\Core\Router;
+use Local\MvcDemo\Controllers\HomeController;
+use Local\MvcDemo\Controllers\AdminController;
+use Local\MvcDemo\Controllers\FormController;
+use Local\MvcDemo\Controllers\UserApiController;
+
+/** @var Router $router */
+
+/**
+ * Публичные маршруты.
+ */
+$router->get('/', [HomeController::class, 'index']);
+$router->get('/about', [HomeController::class, 'about']);
+$router->get('/ping', [HomeController::class, 'ping']);
+$router->get('/form', [FormController::class, 'index']);
+$router->post('/form/send', [FormController::class, 'send'], ['csrf']);
+
+/**
+ * Только авторизованные пользователи.
+ */
+$router->group(['middleware' => ['auth']], function (Router $router) {
+    $router->get('/me', [HomeController::class, 'me']);
+
+    $router->group([
+        'prefix' => '/admin',
+        'middleware' => ['admin'],
+    ], function (Router $router) {
+        $router->get('/dashboard', [AdminController::class, 'dashboard']);
+        $router->get('/users', [AdminController::class, 'users']);
+        $router->get('/users/{id:\d+}', [AdminController::class, 'userDetail']);
+    });
+});
+
+/**
+ * API.
+ */
+$router->group([
+    'prefix' => '/api',
+    'middleware' => ['auth', 'admin'],
+], function (Router $router) {
+    $router->get('/users', [UserApiController::class, 'index']);
+    $router->get('/users/{id:\d+}', [UserApiController::class, 'show']);
+});
+
+
+---
+
+4. Проверяем
 
 Сбрось OPcache:
 
@@ -349,38 +264,75 @@ echo 'OPcache reset OK';
 
 Открой:
 
-https://bitrix24-stage.gaz.ru/local/mvc_demo/admin/users
+https://bitrix24-stage.gaz.ru/local/mvc_demo/api/users
+
+Должен быть JSON:
+
+{
+  "ok": true,
+  "data": {
+    "items": [],
+    "pagination": {
+      "total": 10,
+      "page": 1
+    },
+    "search": ""
+  }
+}
 
 Проверь поиск:
 
-https://bitrix24-stage.gaz.ru/local/mvc_demo/admin/users?q=admin
+https://bitrix24-stage.gaz.ru/local/mvc_demo/api/users?q=admin
 
-Проверь вторую страницу поиска:
+Проверь одного пользователя:
 
-https://bitrix24-stage.gaz.ru/local/mvc_demo/admin/users?q=admin&page=2
+https://bitrix24-stage.gaz.ru/local/mvc_demo/api/users/1
+
+Если пользователя нет, будет:
+
+{
+  "ok": false,
+  "error": "USER_NOT_FOUND",
+  "details": {
+    "message": "Пользователь не найден",
+    "id": 1
+  }
+}
 
 
 ---
 
 Что мы сделали
 
-Теперь цепочка стала такой:
+Теперь у проекта есть два типа маршрутов:
 
-URL содержит q
+HTML-страницы:
+GET /admin/users
+
+JSON API:
+GET /api/users
+GET /api/users/{id}
+
+Путь такой:
+
+Браузер / AJAX
   ↓
-Controller берёт q из Request
+Router
   ↓
-Service передаёт q в Model
+Middleware auth/admin
   ↓
-Model делает WHERE
+UserApiController
   ↓
-Paginator считает страницы только по найденным записям
+UserService
   ↓
-View показывает поиск, таблицу и страницы
+User Model
+  ↓
+JSON Response
 
 Главная мысль:
 
-page отвечает за номер страницы
-q отвечает за строку поиска
+Обычный Controller может возвращать HTML.
+API Controller возвращает JSON.
+Service и Model при этом используются те же самые.
 
-Дальше логичный шаг — сделать универсальный Table/List компонент для вывода таблиц, чтобы не писать HTML-таблицу руками каждый раз.
+Это правильно: одну бизнес-логику можно использовать и для страницы, и для API.
