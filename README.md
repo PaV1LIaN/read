@@ -1,280 +1,738 @@
-Идём дальше. Сейчас сделаем поддержку PUT / PATCH / DELETE через _method.
+Отлично, тогда с этого момента держим курс: наш MVC должен быть похож на Laravel по подходу и синтаксису, насколько это нормально для Битрикс24.
 
-Зачем это нужно:
+То есть будем постепенно двигаться к таким вещам:
 
-GET     — открыть страницу
-POST    — создать
-PUT     — полностью обновить
-PATCH   — частично обновить
-DELETE  — удалить
+Route::get('/users', [UserController::class, 'index'])
+    ->middleware(['auth'])
+    ->name('users.index');
 
-Но обычная HTML-форма умеет только:
+Route::prefix('/admin')
+    ->middleware(['auth', 'admin'])
+    ->name('admin.')
+    ->group(function () {
+        Route::get('/users', [AdminController::class, 'users'])
+            ->name('users.index');
+    });
 
-GET
-POST
-
-Поэтому во фреймворках часто делают так:
-
-<form method="post">
-    <input type="hidden" name="_method" value="DELETE">
-</form>
-
-Форма физически отправляет POST, но наш MVC понимает это как DELETE.
+Это как в Laravel: маршруты читаются легко, контроллеры тонкие, логика в сервисах, модели отдельно.
 
 
 ---
 
-1. Обнови /local/mvc/Core/Request.php
+Что делаем сейчас
 
-Найди метод:
+Сделаем Laravel-like Route facade.
 
-public function method(): string
+Чтобы вместо:
 
-и замени его на:
+$router->get('/form', [FormController::class, 'index'], [], 'form.index');
 
-public function method(): string
-{
-    $method = strtoupper((string)$this->server('REQUEST_METHOD', 'GET'));
+можно было писать:
 
-    /**
-     * HTML-форма не умеет DELETE/PUT/PATCH.
-     * Поэтому разрешаем подмену метода через скрытое поле _method.
-     *
-     * Пример:
-     * <input type="hidden" name="_method" value="DELETE">
-     */
-    if ($method === 'POST') {
-        $override = strtoupper(trim((string)$this->post('_method', '')));
-
-        if ($override === '') {
-            $override = strtoupper(trim((string)$this->header('X-HTTP-Method-Override', '')));
-        }
-
-        if (in_array($override, ['PUT', 'PATCH', 'DELETE'], true)) {
-            return $override;
-        }
-    }
-
-    return $method;
-}
-
-Если метода header() ещё нет, добавь в Request.php:
-
-public function header(string $name, mixed $default = null): mixed
-{
-    $key = 'HTTP_' . strtoupper(str_replace('-', '_', $name));
-
-    return $this->server[$key] ?? $default;
-}
+Route::get('/form', [FormController::class, 'index'])
+    ->name('form.index');
 
 
 ---
 
-2. Обнови /local/mvc/Core/Router.php
-
-Внутри класса Router после методов get() и post() добавь:
-
-public function put(string $path, array $handler, array $middleware = [], ?string $name = null): void
-{
-    $this->add('PUT', $path, $handler, $middleware, $name);
-}
-
-public function patch(string $path, array $handler, array $middleware = [], ?string $name = null): void
-{
-    $this->add('PATCH', $path, $handler, $middleware, $name);
-}
-
-public function delete(string $path, array $handler, array $middleware = [], ?string $name = null): void
-{
-    $this->add('DELETE', $path, $handler, $middleware, $name);
-}
-
-Теперь можно будет писать:
-
-$router->delete('/something/delete', [Controller::class, 'delete'], ['csrf']);
-
-
----
-
-3. Обнови CSRF в /local/mvc/Core/Middleware.php
-
-Найди блок:
-
-if ($name === 'csrf') {
-
-и замени его полностью на:
-
-if ($name === 'csrf') {
-    /**
-     * Безопасные методы не проверяем.
-     */
-    if (in_array($request->method(), ['GET', 'HEAD', 'OPTIONS'], true)) {
-        return null;
-    }
-
-    /**
-     * Обычная форма Битрикса через bitrix_sessid_post().
-     */
-    if (function_exists('check_bitrix_sessid') && check_bitrix_sessid()) {
-        return null;
-    }
-
-    /**
-     * AJAX/JSON-запрос через заголовок.
-     */
-    $headerSessid = (string)$request->header('X-Bitrix-Sessid', '');
-
-    if (
-        $headerSessid !== ''
-        && function_exists('bitrix_sessid')
-        && hash_equals((string)bitrix_sessid(), $headerSessid)
-    ) {
-        return null;
-    }
-
-    return Response::json([
-        'ok' => false,
-        'error' => 'BAD_SESSID',
-        'details' => [
-            'message' => 'Неверный sessid. Обновите страницу и попробуйте снова.',
-        ],
-    ], 403);
-}
-
-Важно: раньше CSRF проверялся только для POST. Теперь он проверяется для всех опасных методов:
-
-POST
-PUT
-PATCH
-DELETE
-
-
----
-
-4. Создай контроллер /local/mvc_demo/Controllers/MethodDemoController.php
+1. Создай /local/mvc/Core/RouteDefinition.php
 
 <?php
 
-namespace Local\MvcDemo\Controllers;
+namespace Local\Mvc\Core;
 
-use Local\Mvc\Core\Controller;
-use Local\Mvc\Core\Flash;
-use Local\Mvc\Core\Response;
-
-class MethodDemoController extends Controller
+/**
+ * RouteDefinition
+ *
+ * Объект одного маршрута.
+ *
+ * Нужен, чтобы писать почти как в Laravel:
+ *
+ * Route::get('/users', [UserController::class, 'index'])
+ *     ->middleware(['auth'])
+ *     ->name('users.index');
+ */
+class RouteDefinition
 {
-    public function index(): Response
+    public function __construct(
+        private Router $router,
+        private string $method,
+        private int $index
+    ) {}
+
+    public function name(string $name): self
     {
-        return $this->render('method/index', [
-            'title' => 'Method Demo',
-        ]);
+        $this->router->setRouteName($this->method, $this->index, $name);
+
+        return $this;
     }
 
-    public function delete(): Response
+    public function middleware(array|string $middleware): self
     {
-        Flash::success('DELETE-запрос успешно обработан через _method.');
+        $this->router->addRouteMiddleware($this->method, $this->index, $middleware);
 
-        return $this->redirectRoute('method.index');
+        return $this;
     }
 }
 
 
 ---
 
-5. Создай view /local/mvc_demo/Views/method/index.php
-
-Сначала создай папку:
-
-/local/mvc_demo/Views/method/
-
-Файл:
+2. Замени /local/mvc/Core/Router.php
 
 <?php
 
-if (!defined('B_PROLOG_INCLUDED') || B_PROLOG_INCLUDED !== true) {
-    die();
+namespace Local\Mvc\Core;
+
+/**
+ * Router
+ *
+ * Диспетчер маршрутов.
+ *
+ * Теперь поддерживает Laravel-like синтаксис:
+ *
+ * Route::get('/path', [Controller::class, 'method'])
+ *     ->middleware(['auth'])
+ *     ->name('route.name');
+ */
+class Router
+{
+    private array $routes = [];
+
+    private array $namedRoutes = [];
+
+    private string $groupPrefix = '';
+
+    private array $groupMiddleware = [];
+
+    private string $groupNamePrefix = '';
+
+    public function get(string $path, array $handler, array $middleware = [], ?string $name = null): RouteDefinition
+    {
+        return $this->add('GET', $path, $handler, $middleware, $name);
+    }
+
+    public function post(string $path, array $handler, array $middleware = [], ?string $name = null): RouteDefinition
+    {
+        return $this->add('POST', $path, $handler, $middleware, $name);
+    }
+
+    public function put(string $path, array $handler, array $middleware = [], ?string $name = null): RouteDefinition
+    {
+        return $this->add('PUT', $path, $handler, $middleware, $name);
+    }
+
+    public function patch(string $path, array $handler, array $middleware = [], ?string $name = null): RouteDefinition
+    {
+        return $this->add('PATCH', $path, $handler, $middleware, $name);
+    }
+
+    public function delete(string $path, array $handler, array $middleware = [], ?string $name = null): RouteDefinition
+    {
+        return $this->add('DELETE', $path, $handler, $middleware, $name);
+    }
+
+    public function routes(): array
+    {
+        $list = [];
+
+        foreach ($this->routes as $method => $routes) {
+            foreach ($routes as $route) {
+                $handler = $route['handler'] ?? [];
+
+                $list[] = [
+                    'method' => $method,
+                    'path' => $route['path'] ?? '',
+                    'name' => $route['name'] ?? '',
+                    'controller' => (string)($handler[0] ?? ''),
+                    'action' => (string)($handler[1] ?? ''),
+                    'middleware' => $route['middleware'] ?? [],
+                ];
+            }
+        }
+
+        return $list;
+    }
+
+    public function group(array $options, callable $callback): void
+    {
+        $oldPrefix = $this->groupPrefix;
+        $oldMiddleware = $this->groupMiddleware;
+        $oldNamePrefix = $this->groupNamePrefix;
+
+        $prefix = (string)($options['prefix'] ?? '');
+        $namePrefix = (string)($options['as'] ?? $options['name'] ?? '');
+        $middleware = $options['middleware'] ?? [];
+
+        if (!is_array($middleware)) {
+            $middleware = [$middleware];
+        }
+
+        if ($prefix !== '') {
+            $this->groupPrefix = $this->joinPaths($this->groupPrefix, $prefix);
+        }
+
+        if ($namePrefix !== '') {
+            $this->groupNamePrefix .= $namePrefix;
+        }
+
+        $this->groupMiddleware = array_values(array_unique(array_filter(array_merge(
+            $this->groupMiddleware,
+            $middleware
+        ))));
+
+        $callback($this);
+
+        $this->groupPrefix = $oldPrefix;
+        $this->groupMiddleware = $oldMiddleware;
+        $this->groupNamePrefix = $oldNamePrefix;
+    }
+
+    private function add(string $method, string $path, array $handler, array $middleware = [], ?string $name = null): RouteDefinition
+    {
+        $method = strtoupper($method);
+
+        $path = $this->joinPaths($this->groupPrefix, $path);
+        $path = $this->normalizePath($path);
+
+        $middleware = array_values(array_unique(array_filter(array_merge(
+            $this->groupMiddleware,
+            $middleware
+        ))));
+
+        $finalName = $this->applyNamePrefix($name);
+
+        $compiled = $this->compilePath($path);
+
+        $route = [
+            'method' => $method,
+            'path' => $path,
+            'pattern' => $compiled['pattern'],
+            'params' => $compiled['params'],
+            'handler' => $handler,
+            'middleware' => $middleware,
+            'name' => $finalName,
+        ];
+
+        $this->routes[$method][] = $route;
+
+        $index = array_key_last($this->routes[$method]);
+
+        if ($finalName !== null && $finalName !== '') {
+            $this->namedRoutes[$finalName] = $this->routes[$method][$index];
+        }
+
+        return new RouteDefinition($this, $method, (int)$index);
+    }
+
+    public function setRouteName(string $method, int $index, string $name): void
+    {
+        $method = strtoupper($method);
+
+        if (!isset($this->routes[$method][$index])) {
+            return;
+        }
+
+        $finalName = $this->applyNamePrefix($name);
+
+        $this->routes[$method][$index]['name'] = $finalName;
+
+        if ($finalName !== null && $finalName !== '') {
+            $this->namedRoutes[$finalName] = $this->routes[$method][$index];
+        }
+    }
+
+    public function addRouteMiddleware(string $method, int $index, array|string $middleware): void
+    {
+        $method = strtoupper($method);
+
+        if (!isset($this->routes[$method][$index])) {
+            return;
+        }
+
+        if (!is_array($middleware)) {
+            $middleware = [$middleware];
+        }
+
+        $this->routes[$method][$index]['middleware'] = array_values(array_unique(array_filter(array_merge(
+            $this->routes[$method][$index]['middleware'] ?? [],
+            $middleware
+        ))));
+    }
+
+    public function url(string $name, array $params = [], array $query = []): string
+    {
+        if (!isset($this->namedRoutes[$name])) {
+            return '#route-not-found-' . rawurlencode($name);
+        }
+
+        $route = $this->namedRoutes[$name];
+
+        $path = (string)($route['path'] ?? '/');
+
+        $path = preg_replace_callback(
+            '#\{([a-zA-Z_][a-zA-Z0-9_]*)(?::[^}]+)?\}#',
+            static function ($matches) use ($params) {
+                $key = $matches[1];
+
+                return rawurlencode((string)($params[$key] ?? ''));
+            },
+            $path
+        );
+
+        $url = rtrim(App::projectUrl(), '/') . $path;
+
+        if (!empty($query)) {
+            $url .= '?' . http_build_query($query);
+        }
+
+        return $url;
+    }
+
+    public function dispatch(Request $request): void
+    {
+        $method = $request->method();
+        $path = $this->normalizePath($request->path());
+
+        $matched = $this->match($method, $path);
+
+        if ($matched === null) {
+            $this->notFound($method, $path);
+            return;
+        }
+
+        $route = $matched['route'];
+        $routeParams = $matched['params'];
+
+        $request->setRouteParams($routeParams);
+
+        $handler = $route['handler'] ?? [];
+        $middlewares = $route['middleware'] ?? [];
+
+        $middlewareResponse = Middleware::handle($middlewares, $request);
+
+        if ($middlewareResponse instanceof Response) {
+            $middlewareResponse->send();
+            return;
+        }
+
+        $controllerClass = $handler[0] ?? null;
+        $controllerMethod = $handler[1] ?? null;
+
+        if (!$controllerClass || !class_exists($controllerClass)) {
+            $this->serverError('Контроллер не найден: ' . (string)$controllerClass);
+            return;
+        }
+
+        $controller = new $controllerClass($request);
+
+        if (!$controllerMethod || !method_exists($controller, $controllerMethod)) {
+            $methods = get_class_methods($controller);
+
+            $this->serverError(
+                'Метод контроллера не найден: ' . $controllerClass . '::' . (string)$controllerMethod
+                . "\n\nPHP видит такие методы:\n"
+                . implode("\n", $methods)
+            );
+
+            return;
+        }
+
+        $result = $controller->{$controllerMethod}(...array_values($routeParams));
+
+        if ($result instanceof Response) {
+            $result->send();
+            return;
+        }
+    }
+
+    private function match(string $method, string $path): ?array
+    {
+        $routes = $this->routes[$method] ?? [];
+
+        foreach ($routes as $route) {
+            $matches = [];
+
+            if (!preg_match($route['pattern'], $path, $matches)) {
+                continue;
+            }
+
+            $params = [];
+
+            foreach (($route['params'] ?? []) as $paramName) {
+                $params[$paramName] = $matches[$paramName] ?? null;
+            }
+
+            return [
+                'route' => $route,
+                'params' => $params,
+            ];
+        }
+
+        return null;
+    }
+
+    private function compilePath(string $path): array
+    {
+        $params = [];
+        $pattern = '';
+        $offset = 0;
+
+        preg_match_all(
+            '#\{([a-zA-Z_][a-zA-Z0-9_]*)(?::([^}]+))?\}#',
+            $path,
+            $matches,
+            PREG_OFFSET_CAPTURE
+        );
+
+        foreach ($matches[0] as $index => $match) {
+            $full = $match[0];
+            $position = $match[1];
+
+            $staticPart = substr($path, $offset, $position - $offset);
+            $pattern .= preg_quote($staticPart, '#');
+
+            $name = $matches[1][$index][0];
+            $rule = $matches[2][$index][0] ?? '[^/]+';
+            $rule = str_replace('#', '\#', $rule);
+
+            $params[] = $name;
+
+            $pattern .= '(?P<' . $name . '>' . $rule . ')';
+
+            $offset = $position + strlen($full);
+        }
+
+        $pattern .= preg_quote(substr($path, $offset), '#');
+
+        return [
+            'pattern' => '#^' . $pattern . '$#u',
+            'params' => $params,
+        ];
+    }
+
+    private function applyNamePrefix(?string $name): ?string
+    {
+        if ($name === null || $name === '') {
+            return null;
+        }
+
+        if ($this->groupNamePrefix !== '' && !str_starts_with($name, $this->groupNamePrefix)) {
+            return $this->groupNamePrefix . $name;
+        }
+
+        return $name;
+    }
+
+    private function joinPaths(string $left, string $right): string
+    {
+        $left = trim($left);
+        $right = trim($right);
+
+        if ($left === '' && $right === '') {
+            return '/';
+        }
+
+        if ($left === '') {
+            return $this->normalizePath($right);
+        }
+
+        if ($right === '') {
+            return $this->normalizePath($left);
+        }
+
+        return $this->normalizePath(trim($left, '/') . '/' . trim($right, '/'));
+    }
+
+    private function normalizePath(string $path): string
+    {
+        $path = trim($path);
+
+        if ($path === '') {
+            return '/';
+        }
+
+        $path = '/' . trim($path, '/');
+
+        if ($path !== '/') {
+            $path = rtrim($path, '/');
+        }
+
+        return $path;
+    }
+
+    private function notFound(string $method, string $path): void
+    {
+        Response::html(
+            '<h1>404</h1>'
+            . '<p>Маршрут не найден.</p>'
+            . '<pre>'
+            . 'Method: ' . htmlspecialchars($method) . "\n"
+            . 'Path: ' . htmlspecialchars($path) . "\n"
+            . '</pre>',
+            404
+        )->send();
+
+        exit;
+    }
+
+    private function serverError(string $message): void
+    {
+        Response::html(
+            '<h1>500</h1>'
+            . '<p>Ошибка MVC.</p>'
+            . '<pre>' . htmlspecialchars($message) . '</pre>',
+            500
+        )->send();
+
+        exit;
+    }
 }
 
-?>
-
-<div class="mvc-card">
-    <h1 class="mvc-page-title">
-        <?= htmlspecialcharsbx($title ?? 'Method Demo') ?>
-    </h1>
-
-    <p class="mvc-page-text">
-        Эта страница проверяет DELETE-запрос через скрытое поле
-        <span class="mvc-code">_method</span>.
-    </p>
-
-    <?php if (!empty($flash)): ?>
-        <?php foreach ($flash as $item): ?>
-            <div class="mvc-info" style="border-color: #bbf7d0; background: #f0fdf4; color: #166534;">
-                <?= htmlspecialcharsbx($item['message'] ?? '') ?>
-            </div>
-        <?php endforeach; ?>
-    <?php endif; ?>
-
-    <div class="mvc-info">
-        <b>Как это работает:</b>
-
-        <ol>
-            <li>Форма отправляется обычным методом <span class="mvc-code">POST</span>.</li>
-            <li>Внутри формы есть поле <span class="mvc-code">_method = DELETE</span>.</li>
-            <li>Request превращает POST в DELETE.</li>
-            <li>Router находит DELETE-маршрут.</li>
-            <li>Controller обрабатывает удаление.</li>
-        </ol>
-    </div>
-
-    <form method="post" action="<?= mvc_e(mvc_route('method.delete')) ?>" style="margin-top: 24px;">
-        <?php if (function_exists('bitrix_sessid_post')): ?>
-            <?= bitrix_sessid_post() ?>
-        <?php endif; ?>
-
-        <input type="hidden" name="_method" value="DELETE">
-
-        <button
-            type="submit"
-            style="min-height: 42px; padding: 0 18px; border: 0; border-radius: 10px; background: #dc2626; color: #fff; font-weight: 600; cursor: pointer;"
-        >
-            Проверить DELETE
-        </button>
-    </form>
-</div>
-
 
 ---
 
-6. Обнови /local/mvc_demo/routes.php
+3. Создай /local/mvc/Support/RouteGroup.php
 
-Добавь use:
+Создай папку:
 
-use Local\MvcDemo\Controllers\MethodDemoController;
-
-В публичные маршруты добавь:
-
-$router->get('/method-demo', [MethodDemoController::class, 'index'], [], 'method.index');
-
-$router->delete('/method-demo/delete', [MethodDemoController::class, 'delete'], ['csrf'], 'method.delete');
-
-
----
-
-7. Добавь ссылку в меню
+/local/mvc/Support/
 
 Файл:
 
-/local/mvc_demo/Views/layouts/app.php
+/local/mvc/Support/RouteGroup.php
 
-В меню добавь:
+Код:
 
-<a href="/local/mvc_demo/method-demo">Methods</a>
+<?php
+
+namespace Local\Mvc\Support;
+
+use Local\Mvc\Support\Facades\Route;
+
+/**
+ * RouteGroup
+ *
+ * Нужен для Laravel-like синтаксиса:
+ *
+ * Route::prefix('/admin')
+ *     ->middleware(['auth', 'admin'])
+ *     ->name('admin.')
+ *     ->group(function () {
+ *         Route::get('/users', [Controller::class, 'index']);
+ *     });
+ */
+class RouteGroup
+{
+    public function __construct(
+        private array $options = []
+    ) {}
+
+    public function prefix(string $prefix): self
+    {
+        $new = clone $this;
+        $new->options['prefix'] = $prefix;
+
+        return $new;
+    }
+
+    public function middleware(array|string $middleware): self
+    {
+        $new = clone $this;
+
+        if (!is_array($middleware)) {
+            $middleware = [$middleware];
+        }
+
+        $current = $new->options['middleware'] ?? [];
+
+        if (!is_array($current)) {
+            $current = [$current];
+        }
+
+        $new->options['middleware'] = array_values(array_unique(array_filter(array_merge(
+            $current,
+            $middleware
+        ))));
+
+        return $new;
+    }
+
+    public function name(string $prefix): self
+    {
+        return $this->as($prefix);
+    }
+
+    public function as(string $prefix): self
+    {
+        $new = clone $this;
+        $new->options['as'] = $prefix;
+
+        return $new;
+    }
+
+    public function group(callable $callback): void
+    {
+        Route::router()->group($this->options, $callback);
+    }
+}
 
 
 ---
 
-8. Проверка
+4. Создай /local/mvc/Support/Facades/Route.php
+
+Создай папку:
+
+/local/mvc/Support/Facades/
+
+Файл:
+
+/local/mvc/Support/Facades/Route.php
+
+Код:
+
+<?php
+
+namespace Local\Mvc\Support\Facades;
+
+use Local\Mvc\Core\RouteDefinition;
+use Local\Mvc\Core\Router;
+use Local\Mvc\Support\RouteGroup;
+use RuntimeException;
+
+/**
+ * Route
+ *
+ * Laravel-like facade для маршрутов.
+ */
+class Route
+{
+    private static ?Router $router = null;
+
+    public static function setRouter(Router $router): void
+    {
+        self::$router = $router;
+    }
+
+    public static function router(): Router
+    {
+        if (!(self::$router instanceof Router)) {
+            throw new RuntimeException('ROUTER_NOT_INITIALIZED');
+        }
+
+        return self::$router;
+    }
+
+    public static function get(string $path, array $handler): RouteDefinition
+    {
+        return self::router()->get($path, $handler);
+    }
+
+    public static function post(string $path, array $handler): RouteDefinition
+    {
+        return self::router()->post($path, $handler);
+    }
+
+    public static function put(string $path, array $handler): RouteDefinition
+    {
+        return self::router()->put($path, $handler);
+    }
+
+    public static function patch(string $path, array $handler): RouteDefinition
+    {
+        return self::router()->patch($path, $handler);
+    }
+
+    public static function delete(string $path, array $handler): RouteDefinition
+    {
+        return self::router()->delete($path, $handler);
+    }
+
+    public static function prefix(string $prefix): RouteGroup
+    {
+        return (new RouteGroup())->prefix($prefix);
+    }
+
+    public static function middleware(array|string $middleware): RouteGroup
+    {
+        return (new RouteGroup())->middleware($middleware);
+    }
+
+    public static function name(string $prefix): RouteGroup
+    {
+        return (new RouteGroup())->name($prefix);
+    }
+
+    public static function group(array $options, callable $callback): void
+    {
+        self::router()->group($options, $callback);
+    }
+}
+
+
+---
+
+5. Обнови /local/mvc/Core/App.php
+
+Найди место, где создаётся router:
+
+$router = new Router();
+self::$router = $router;
+
+Сразу после этого добавь:
+
+\Local\Mvc\Support\Facades\Route::setRouter($router);
+
+Должно быть так:
+
+$router = new Router();
+self::$router = $router;
+
+\Local\Mvc\Support\Facades\Route::setRouter($router);
+
+require $routesFile;
+
+$router->dispatch($request);
+
+
+---
+
+6. Добавь Laravel-like тест в /local/mvc_demo/routes.php
+
+Вверху файла добавь:
+
+use Local\Mvc\Support\Facades\Route;
+
+Потом рядом с публичными маршрутами добавь:
+
+Route::get('/laravel-like-ping', [HomeController::class, 'ping'])
+    ->name('laravel.ping');
+
+И добавь пример группы:
+
+Route::prefix('/laravel-admin')
+    ->middleware(['auth', 'admin'])
+    ->name('laravel.admin.')
+    ->group(function () {
+        Route::get('/dashboard', [\Local\MvcDemo\Controllers\AdminController::class, 'dashboard'])
+            ->name('dashboard');
+    });
+
+После этого будут работать маршруты:
+
+/local/mvc_demo/laravel-like-ping
+/local/mvc_demo/laravel-admin/dashboard
+
+И в debug/routes появятся имена:
+
+laravel.ping
+laravel.admin.dashboard
+
+
+---
+
+7. Проверка
 
 Сбрось OPcache:
 
@@ -283,31 +741,55 @@ echo 'OPcache reset OK';
 
 Открой:
 
-https://bitrix24-stage.gaz.ru/local/mvc_demo/method-demo
+https://bitrix24-stage.gaz.ru/local/mvc_demo/laravel-like-ping
 
-Нажми:
+Потом:
 
-Проверить DELETE
+https://bitrix24-stage.gaz.ru/local/mvc_demo/laravel-admin/dashboard
 
-Должно вернуть обратно на страницу и показать зелёное сообщение:
+И затем:
 
-DELETE-запрос успешно обработан через _method.
+https://bitrix24-stage.gaz.ru/local/mvc_demo/debug/routes
 
 
 ---
 
-Что мы добавили:
+Что мы сделали
 
-$router->put(...)
-$router->patch(...)
-$router->delete(...)
+Теперь у нас есть Laravel-like маршруты:
 
-Теперь для будущих проектов можно писать красиво:
+Route::get('/path', [Controller::class, 'method'])
+    ->middleware(['auth'])
+    ->name('route.name');
 
-$router->post('/sites', [SiteController::class, 'store'], ['csrf'], 'sites.store');
+И группы:
 
-$router->put('/sites/{siteId:\d+}', [SiteController::class, 'update'], ['csrf'], 'sites.update');
+Route::prefix('/admin')
+    ->middleware(['auth', 'admin'])
+    ->name('admin.')
+    ->group(function () {
+        Route::get('/dashboard', [AdminController::class, 'dashboard'])
+            ->name('dashboard');
+    });
 
-$router->delete('/sites/{siteId:\d+}', [SiteController::class, 'delete'], ['csrf'], 'sites.delete');
+Простыми словами:
 
-Это уже ближе к нормальному CRUD-фреймворку.
+Router — двигатель маршрутизации.
+Route facade — красивый Laravel-похожий интерфейс.
+
+Дальше будем постепенно приводить фреймворк к Laravel-стилю:
+
+Route facade
+Request object
+Controller
+Middleware
+Service container
+Config
+Logger
+Validation
+Redirect
+Response
+Models
+Services
+
+Следующий очень Laravel-like шаг — сделать service container: чтобы можно было не писать new UserService(), а фреймворк сам создавал нужные классы.
