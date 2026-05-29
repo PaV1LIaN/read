@@ -1,21 +1,36 @@
-Идём дальше. После Migrations и Seeders в Laravel обычно идут Factories.
+Идём дальше. Сейчас сделаем очень Laravel-like вещь — Route Model Binding.
 
-Простыми словами:
+В Laravel можно писать так:
 
-Migration — создаёт таблицу.
-Seeder — запускает заполнение.
-Factory — умеет создавать тестовые данные.
+public function edit(Note $note)
+{
+    //
+}
 
-В Laravel это выглядит примерно так:
+А фреймворк сам понимает:
 
-Note::factory()->count(3)->create();
+В URL пришёл id заметки.
+Надо найти Note по этому id.
+И передать готовую модель в контроллер.
 
-Сделаем похожее.
+Сейчас у нас так:
+
+public function edit(string $id): Response
+{
+    $note = Note::findNormalized((int)$id);
+}
+
+А хотим так:
+
+public function edit(Note $note): Response
+{
+    //
+}
 
 
 ---
 
-1. Создай /local/mvc/Core/Factory.php
+1. Создай /local/mvc/Core/ModelNotFoundException.php
 
 <?php
 
@@ -23,135 +38,30 @@ namespace Local\Mvc\Core;
 
 use RuntimeException;
 
-/**
- * Factory
- *
- * Laravel-like фабрика тестовых данных.
- *
- * Пример:
- * Note::factory()->count(3)->create();
- */
-abstract class Factory
+class ModelNotFoundException extends RuntimeException
 {
-    /**
-     * Класс модели, для которой работает factory.
-     *
-     * Например:
-     * protected string $model = Note::class;
-     */
-    protected string $model = '';
-
-    protected int $count = 1;
-
-    protected array $state = [];
-
-    public static function new(): static
-    {
-        return new static();
+    public function __construct(
+        private string $model,
+        private int|string $id
+    ) {
+        parent::__construct('Модель не найдена: ' . $model . ' ID=' . $id);
     }
 
-    /**
-     * Описание одной записи.
-     */
-    abstract public function definition(): array;
-
-    /**
-     * Сколько записей создать.
-     */
-    public function count(int $count): static
+    public function model(): string
     {
-        $new = clone $this;
-        $new->count = max(1, min($count, 1000));
-
-        return $new;
-    }
-
-    /**
-     * Перезаписать часть данных.
-     *
-     * Пример:
-     * Note::factory()->state([
-     *     'title' => 'Моё название'
-     * ])->create();
-     */
-    public function state(array $state): static
-    {
-        $new = clone $this;
-        $new->state = array_merge($new->state, $state);
-
-        return $new;
-    }
-
-    /**
-     * Просто подготовить данные, но не сохранять в БД.
-     */
-    public function make(array $attributes = []): array
-    {
-        $items = [];
-
-        for ($i = 0; $i < $this->count; $i++) {
-            $items[] = $this->raw($attributes);
-        }
-
-        return $this->count === 1 ? $items[0] : $items;
-    }
-
-    /**
-     * Создать записи в БД.
-     */
-    public function create(array $attributes = []): array
-    {
-        $model = $this->modelClass();
-
-        $created = [];
-
-        for ($i = 0; $i < $this->count; $i++) {
-            $data = $this->raw($attributes);
-
-            $model::create($data);
-
-            $created[] = $data;
-        }
-
-        return $created;
-    }
-
-    /**
-     * Данные одной записи.
-     */
-    protected function raw(array $attributes = []): array
-    {
-        return array_merge(
-            $this->definition(),
-            $this->state,
-            $attributes
-        );
-    }
-
-    protected function modelClass(): string
-    {
-        if ($this->model === '') {
-            throw new RuntimeException('FACTORY_MODEL_NOT_SET: ' . static::class);
-        }
-
-        if (!class_exists($this->model)) {
-            throw new RuntimeException('FACTORY_MODEL_CLASS_NOT_FOUND: ' . $this->model);
-        }
-
-        if (!is_subclass_of($this->model, Model::class)) {
-            throw new RuntimeException('FACTORY_MODEL_MUST_EXTEND_MODEL: ' . $this->model);
-        }
-
         return $this->model;
+    }
+
+    public function id(): int|string
+    {
+        return $this->id;
     }
 }
 
 
 ---
 
-2. Обнови /local/mvc/Core/Model.php
-
-Полностью замени файл:
+2. Замени /local/mvc/Core/Model.php
 
 <?php
 
@@ -169,22 +79,20 @@ abstract class Model
 
     protected static array $fillable = [];
 
-    /**
-     * Factory-класс модели.
-     *
-     * Например:
-     * protected static string $factory = NoteFactory::class;
-     */
     protected static string $factory = '';
 
-    /**
-     * Laravel-like timestamps.
-     */
     protected static bool $timestamps = false;
 
     protected static string $createdAtColumn = 'created_at';
 
     protected static string $updatedAtColumn = 'updated_at';
+
+    protected array $attributes = [];
+
+    public function __construct(array $attributes = [])
+    {
+        $this->attributes = $attributes;
+    }
 
     protected static function table(): string
     {
@@ -200,12 +108,6 @@ abstract class Model
         return QueryBuilder::table(static::table(), static::$connection);
     }
 
-    /**
-     * Laravel-like factory.
-     *
-     * Пример:
-     * Note::factory()->count(3)->create();
-     */
     public static function factory(): Factory
     {
         if (static::$factory === '') {
@@ -240,6 +142,23 @@ abstract class Model
             ->first();
     }
 
+    /**
+     * Найти запись и вернуть объект модели.
+     *
+     * Это нужно для Route Model Binding:
+     * public function edit(Note $note)
+     */
+    public static function findModel(int|string $id): ?static
+    {
+        $row = static::find($id);
+
+        if (!$row) {
+            return null;
+        }
+
+        return new static($row);
+    }
+
     public static function count(): int
     {
         return static::query()->count();
@@ -266,6 +185,61 @@ abstract class Model
         return static::query()
             ->where(static::$primaryKey, $id)
             ->delete();
+    }
+
+    /**
+     * Обновить текущую модель.
+     */
+    public function update(array $data): bool
+    {
+        return static::updateById($this->getKey(), $data);
+    }
+
+    /**
+     * Удалить текущую модель.
+     */
+    public function delete(): bool
+    {
+        return static::deleteById($this->getKey());
+    }
+
+    public function getKey(): int|string
+    {
+        return $this->getAttribute(static::$primaryKey)
+            ?? $this->getAttribute(strtolower(static::$primaryKey))
+            ?? $this->getAttribute(strtoupper(static::$primaryKey))
+            ?? 0;
+    }
+
+    public function getAttribute(string $key, mixed $default = null): mixed
+    {
+        if (array_key_exists($key, $this->attributes)) {
+            return $this->attributes[$key];
+        }
+
+        $upper = strtoupper($key);
+
+        if (array_key_exists($upper, $this->attributes)) {
+            return $this->attributes[$upper];
+        }
+
+        $lower = strtolower($key);
+
+        if (array_key_exists($lower, $this->attributes)) {
+            return $this->attributes[$lower];
+        }
+
+        return $default;
+    }
+
+    public function __get(string $key): mixed
+    {
+        return $this->getAttribute($key);
+    }
+
+    public function toArray(): array
+    {
+        return $this->attributes;
     }
 
     protected static function onlyFillable(array $data): array
@@ -324,49 +298,117 @@ abstract class Model
 
 ---
 
-3. Создай папку factories
+3. Обнови /local/mvc/Core/Container.php
 
-/local/mvc_demo/Database/Factories/
+Найди в методе resolveParameters() кусок:
+
+if ($type instanceof ReflectionNamedType && !$type->isBuiltin()) {
+    $object = $this->make($type->getName());
+
+    if ($object instanceof FormRequest) {
+        $object->validateResolved();
+    }
+
+    $dependencies[] = $object;
+    continue;
+}
+
+Замени его на:
+
+if ($type instanceof ReflectionNamedType && !$type->isBuiltin()) {
+    $className = $type->getName();
+
+    /**
+     * Laravel-like Route Model Binding.
+     *
+     * Если метод контроллера просит модель:
+     * edit(Note $note)
+     *
+     * А в маршруте есть {id},
+     * то контейнер сам делает Note::findModel($id).
+     */
+    if (is_subclass_of($className, Model::class) && array_key_exists('id', $parameters)) {
+        $model = $className::findModel($parameters['id']);
+
+        if (!$model instanceof Model) {
+            throw new ModelNotFoundException($className, $parameters['id']);
+        }
+
+        $dependencies[] = $model;
+        continue;
+    }
+
+    $object = $this->make($className);
+
+    if ($object instanceof FormRequest) {
+        $object->validateResolved();
+    }
+
+    $dependencies[] = $object;
+    continue;
+}
 
 
 ---
 
-4. Создай /local/mvc_demo/Database/Factories/NoteFactory.php
+4. Обнови /local/mvc/Core/ErrorHandler.php
 
-<?php
+В методе:
 
-namespace Local\MvcDemo\Database\Factories;
+public static function renderThrowable(Throwable $e): void
 
-use Local\Mvc\Core\Factory;
-use Local\MvcDemo\Models\Note;
+в самое начало добавь:
 
-class NoteFactory extends Factory
+if ($e instanceof ModelNotFoundException) {
+    self::renderModelNotFoundException($e);
+    return;
+}
+
+Должно быть примерно так:
+
+public static function renderThrowable(Throwable $e): void
 {
-    protected string $model = Note::class;
-
-    public function definition(): array
-    {
-        $titles = [
-            'Тестовая заметка',
-            'Заметка из factory',
-            'Laravel-like MVC',
-            'Проверка CRUD',
-            'Работа с PostgreSQL',
-        ];
-
-        $bodies = [
-            'Эта запись создана через NoteFactory.',
-            'Factory нужна для генерации тестовых данных.',
-            'Такой подход похож на Laravel factories.',
-            'Seeder запускает factory, а factory создаёт данные.',
-            'Это удобно для проверки таблиц и страниц.',
-        ];
-
-        return [
-            'title' => $titles[array_rand($titles)] . ' #' . random_int(1000, 9999),
-            'body' => $bodies[array_rand($bodies)],
-        ];
+    if ($e instanceof ModelNotFoundException) {
+        self::renderModelNotFoundException($e);
+        return;
     }
+
+    if ($e instanceof ValidationException) {
+        self::renderValidationException($e);
+        return;
+    }
+
+    // дальше старый код
+}
+
+Теперь в этот же класс добавь метод:
+
+private static function renderModelNotFoundException(ModelNotFoundException $e): void
+{
+    self::log($e->getMessage(), $e->getFile(), $e->getLine());
+
+    if (self::wantsJson()) {
+        Response::json([
+            'ok' => false,
+            'error' => 'MODEL_NOT_FOUND',
+            'details' => [
+                'message' => 'Запись не найдена.',
+                'model' => $e->model(),
+                'id' => $e->id(),
+            ],
+        ], 404)->send();
+
+        return;
+    }
+
+    Response::html(
+        '<h1>404</h1>'
+        . '<p>Запись не найдена.</p>'
+        . '<pre>'
+        . htmlspecialchars($e->model() . ' ID=' . $e->id())
+        . '</pre>',
+        404
+    )->send();
 }
 
 
@@ -374,7 +416,9 @@ class NoteFactory extends Factory
 
 5. Обнови /local/mvc_demo/Models/Note.php
 
-Полностью замени файл:
+Добавим метод normalized() для объекта модели.
+
+Полный файл:
 
 <?php
 
@@ -427,6 +471,11 @@ class Note extends Model
         return self::normalize($row);
     }
 
+    public function normalized(): array
+    {
+        return self::normalize($this->toArray());
+    }
+
     public static function normalize(array $row): array
     {
         return [
@@ -442,150 +491,139 @@ class Note extends Model
 
 ---
 
-6. Обнови /local/mvc_demo/Database/Seeders/DemoNotesSeeder.php
+6. Обнови /local/mvc_demo/Controllers/NoteController.php
 
-Полностью замени файл:
+Теперь методы edit, update, destroy будут получать Note $note, а не string $id.
+
+Полный файл:
 
 <?php
 
-namespace Local\MvcDemo\Database\Seeders;
+namespace Local\MvcDemo\Controllers;
 
-use Local\Mvc\Core\Seeder;
+use Local\Mvc\Core\Controller;
+use Local\Mvc\Core\Flash;
+use Local\Mvc\Core\Response;
 use Local\MvcDemo\Models\Note;
+use Local\MvcDemo\Requests\StoreNoteRequest;
+use Local\MvcDemo\Requests\UpdateNoteRequest;
 
-class DemoNotesSeeder extends Seeder
+class NoteController extends Controller
 {
-    public function run(): void
+    public function index(): Response
     {
-        /**
-         * Чтобы не плодить одинаковые записи каждый раз,
-         * добавляем тестовые заметки только если таблица пустая.
-         */
-        if (Note::count() > 0) {
-            return;
-        }
+        return $this->render('notes/index', [
+            'title' => 'Заметки',
+            'notes' => Note::latest(20),
+        ]);
+    }
 
+    public function store(StoreNoteRequest $request): Response
+    {
+        $data = $request->validated();
+
+        Note::create([
+            'title' => $data['title'],
+            'body' => $data['body'],
+        ]);
+
+        Flash::success('Заметка создана.');
+
+        return redirect()->route('notes.index');
+    }
+
+    public function edit(Note $note): Response
+    {
+        return $this->render('notes/edit', [
+            'title' => 'Редактирование заметки',
+            'note' => $note->normalized(),
+        ]);
+    }
+
+    public function update(Note $note, UpdateNoteRequest $request): Response
+    {
+        $data = $request->validated();
+
+        $note->update([
+            'title' => $data['title'],
+            'body' => $data['body'],
+        ]);
+
+        Flash::success('Заметка обновлена.');
+
+        return redirect()->route('notes.index');
+    }
+
+    public function destroy(Note $note): Response
+    {
+        $note->delete();
+
+        Flash::success('Заметка удалена.');
+
+        return redirect()->route('notes.index');
+    }
+
+    public function factory(): Response
+    {
         Note::factory()
-            ->count(3)
+            ->count(5)
             ->create();
+
+        Flash::success('Factory создала 5 тестовых заметок.');
+
+        return redirect()->route('notes.index');
     }
 }
 
-Вот это уже очень похоже на Laravel:
-
-Note::factory()->count(3)->create();
-
 
 ---
 
-7. Добавим страницу теста factory
-
-Открой:
-
-/local/mvc_demo/Controllers/NoteController.php
-
-Добавь внутрь класса метод:
-
-public function factory(): Response
-{
-    Note::factory()
-        ->count(5)
-        ->create();
-
-    Flash::success('Factory создала 5 тестовых заметок.');
-
-    return redirect()->route('notes.index');
-}
-
-
----
-
-8. Добавь маршрут в /local/mvc_demo/routes.php
-
-Добавь рядом с notes:
-
-Route::post('/notes/factory', [NoteController::class, 'factory'])
-    ->middleware(['auth', 'admin', 'csrf'])
-    ->name('notes.factory');
-
-Важно: поставь этот маршрут выше Route::resource('/notes', ...), чтобы /notes/factory не конфликтовал с /notes/{id}.
-
-Должно быть примерно так:
-
-Route::post('/notes/factory', [NoteController::class, 'factory'])
-    ->middleware(['auth', 'admin', 'csrf'])
-    ->name('notes.factory');
-
-Route::resource('/notes', NoteController::class, [
-    'only' => [
-        'index',
-        'store',
-        'edit',
-        'update',
-        'destroy',
-    ],
-    'middleware' => ['csrf'],
-]);
-
-
----
-
-9. Добавь кнопку в /local/mvc_demo/Views/notes/index.php
-
-После формы создания заметки добавь ещё один блок:
-
-<div class="mvc-info">
-    <form method="post" action="<?= e(route('notes.factory')) ?>">
-        <?= csrf_field() ?>
-
-        <button
-            type="submit"
-            style="min-height:42px;padding:0 18px;border:0;border-radius:10px;background:#7c3aed;color:#fff;font-weight:600;cursor:pointer;"
-        >
-            Создать 5 заметок через Factory
-        </button>
-    </form>
-</div>
-
-
----
-
-10. Проверка
+7. Проверка
 
 Сбрось OPcache:
 
 opcache_reset();
 echo 'OPcache reset OK';
 
-Открой:
+Проверь:
 
 /local/mvc_demo/notes
 
-Нажми:
+Сценарии:
 
-Создать 5 заметок через Factory
+1. Нажми "Изменить".
+2. Измени заметку.
+3. Удали заметку.
+4. Открой несуществующую:
+   /local/mvc_demo/notes/999999/edit
 
-Должны появиться 5 случайных заметок.
+Для несуществующей заметки должен быть нормальный 404, а не 500.
 
 
 ---
 
 Что мы сделали
 
-Теперь у нас есть Laravel-like factory:
+Раньше контроллер сам искал модель:
 
-Note::factory()
-    ->count(5)
-    ->create();
+public function edit(string $id): Response
+{
+    $note = Note::findNormalized((int)$id);
+}
+
+Теперь Laravel-like:
+
+public function edit(Note $note): Response
+{
+    //
+}
 
 Простыми словами:
 
-Factory — это шаблон тестовой записи.
-Seeder — решает, когда и сколько таких записей создать.
-Model — сохраняет запись в таблицу.
+Router нашёл id из URL.
+Container увидел, что контроллеру нужен Note.
+Container сделал Note::findModel(id).
+Если запись найдена — передал её в контроллер.
+Если не найдена — отдал 404.
 
-В Laravel ты потом увидишь почти то же самое:
-
-User::factory()->count(10)->create();
-
-Теперь эта идея тебе уже будет знакома.
+Это очень важная часть Laravel — Route Model Binding.
