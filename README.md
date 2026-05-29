@@ -1,575 +1,365 @@
-Отлично. Дальше делаем ещё один Laravel-like кирпич — Service Providers.
+Идём дальше в сторону Laravel. Следующий кирпич — Facades.
 
-В Laravel есть файлы-поставщики сервисов, например:
+В Laravel ты часто видишь:
 
-AppServiceProvider
-RouteServiceProvider
-AuthServiceProvider
+Route::get(...)
+Log::info(...)
+Config::get(...)
 
-Простыми словами:
+То есть мы не пишем:
 
-ServiceProvider — это место, где проект говорит фреймворку:
-"Вот мои сервисы, вот как их создавать, вот что надо настроить при запуске".
+\Local\Mvc\Core\Logger::info(...)
+\Local\Mvc\Core\Config::get(...)
+
+А пишем короче и похоже на Laravel:
+
+Log::info('Сообщение');
+ConfigFacade::get('app.name');
+
+У нас Route facade уже есть. Сейчас добавим ещё:
+
+Log
+ConfigFacade
+AppFacade
 
 
 ---
 
-1. Обнови /local/mvc/Core/Container.php
-
-Полностью замени файл:
+1. Создай базовый facade /local/mvc/Support/Facades/Facade.php
 
 <?php
 
-namespace Local\Mvc\Core;
+namespace Local\Mvc\Support\Facades;
 
-use ReflectionClass;
-use ReflectionFunctionAbstract;
-use ReflectionMethod;
-use ReflectionNamedType;
+use Local\Mvc\Core\App;
 use RuntimeException;
 
 /**
- * Container
+ * Facade
  *
- * Laravel-like service container.
+ * Базовый Laravel-like facade.
+ *
+ * Простыми словами:
+ * facade — это короткая статическая обёртка
+ * над объектом из Container.
  */
-class Container
+abstract class Facade
 {
-    private array $bindings = [];
+    /**
+     * Имя класса/сервиса, который нужно взять из контейнера.
+     */
+    abstract protected static function accessor(): string;
 
-    private array $instances = [];
-
-    private array $singletons = [];
-
-    public function instance(string $abstract, object $instance): void
+    public static function __callStatic(string $method, array $arguments): mixed
     {
-        $this->instances[$abstract] = $instance;
-    }
+        $accessor = static::accessor();
 
-    public function bind(string $abstract, string|callable $concrete): void
-    {
-        $this->bindings[$abstract] = $concrete;
-    }
-
-    public function singleton(string $abstract, string|callable $concrete): void
-    {
-        $this->bindings[$abstract] = $concrete;
-        $this->singletons[$abstract] = true;
-    }
-
-    public function make(string $class, array $parameters = []): object
-    {
-        if (isset($this->instances[$class])) {
-            return $this->instances[$class];
+        if ($accessor === '') {
+            throw new RuntimeException('FACADE_ACCESSOR_EMPTY: ' . static::class);
         }
 
-        $abstract = $class;
+        $instance = App::make($accessor);
 
-        if (isset($this->bindings[$class])) {
-            $concrete = $this->bindings[$class];
-
-            if (is_callable($concrete)) {
-                $object = $concrete($this);
-
-                if (!is_object($object)) {
-                    throw new RuntimeException('CONTAINER_BINDING_DID_NOT_RETURN_OBJECT: ' . $class);
-                }
-
-                if (!empty($this->singletons[$abstract])) {
-                    $this->instances[$abstract] = $object;
-                }
-
-                return $object;
-            }
-
-            $class = $concrete;
-        }
-
-        if (!class_exists($class)) {
-            throw new RuntimeException('CONTAINER_CLASS_NOT_FOUND: ' . $class);
-        }
-
-        $reflection = new ReflectionClass($class);
-
-        if (!$reflection->isInstantiable()) {
-            throw new RuntimeException('CONTAINER_CLASS_NOT_INSTANTIABLE: ' . $class);
-        }
-
-        $constructor = $reflection->getConstructor();
-
-        if ($constructor === null) {
-            $object = new $class();
-
-            if (!empty($this->singletons[$abstract])) {
-                $this->instances[$abstract] = $object;
-            }
-
-            return $object;
-        }
-
-        $dependencies = $this->resolveParameters($constructor, $parameters);
-
-        $object = $reflection->newInstanceArgs($dependencies);
-
-        if (!empty($this->singletons[$abstract])) {
-            $this->instances[$abstract] = $object;
-        }
-
-        return $object;
-    }
-
-    public function call(array $callable, array $parameters = []): mixed
-    {
-        [$object, $method] = $callable;
-
-        $reflection = new ReflectionMethod($object, $method);
-
-        $dependencies = $this->resolveParameters($reflection, $parameters);
-
-        return $reflection->invokeArgs($object, $dependencies);
-    }
-
-    private function resolveParameters(ReflectionMethod|ReflectionFunctionAbstract $reflection, array $parameters = []): array
-    {
-        $dependencies = [];
-
-        foreach ($reflection->getParameters() as $parameter) {
-            $name = $parameter->getName();
-            $type = $parameter->getType();
-
-            if (array_key_exists($name, $parameters)) {
-                $dependencies[] = $parameters[$name];
-                continue;
-            }
-
-            if ($type instanceof ReflectionNamedType && !$type->isBuiltin()) {
-                $object = $this->make($type->getName());
-
-                if ($object instanceof FormRequest) {
-                    $object->validateResolved();
-                }
-
-                $dependencies[] = $object;
-                continue;
-            }
-
-            if ($parameter->isDefaultValueAvailable()) {
-                $dependencies[] = $parameter->getDefaultValue();
-                continue;
-            }
-
+        if (!method_exists($instance, $method)) {
             throw new RuntimeException(
-                'CONTAINER_CANNOT_RESOLVE_PARAMETER: $' . $name . ' in ' . $reflection->getName()
+                'FACADE_METHOD_NOT_FOUND: ' . static::class . '::' . $method
             );
         }
 
-        return $dependencies;
+        return $instance->{$method}(...$arguments);
     }
 }
 
 
 ---
 
-2. Создай /local/mvc/Core/ServiceProvider.php
+2. Сделаем объектный логгер
+
+Сейчас Logger у нас статический. Для facade лучше сделать обычный сервис.
+
+Создай файл:
+
+/local/mvc/Core/LogManager.php
 
 <?php
 
 namespace Local\Mvc\Core;
 
 /**
- * ServiceProvider
+ * LogManager
  *
- * Laravel-like поставщик сервисов.
+ * Объектная обёртка над Logger.
  *
- * register() — регистрируем сервисы в контейнере.
- * boot()     — действия после регистрации.
+ * Нужна, чтобы использовать Laravel-like facade:
+ * Log::info(...)
  */
-abstract class ServiceProvider
+class LogManager
 {
-    public function __construct(
-        protected Container $app
-    ) {}
-
-    public function register(): void
+    public function info(string $message, array $context = []): void
     {
-        //
+        Logger::info($message, $context);
     }
 
-    public function boot(): void
+    public function warning(string $message, array $context = []): void
     {
-        //
+        Logger::warning($message, $context);
+    }
+
+    public function error(string $message, array $context = []): void
+    {
+        Logger::error($message, $context);
+    }
+
+    public function debug(string $message, array $context = []): void
+    {
+        Logger::debug($message, $context);
     }
 }
 
 
 ---
 
-3. Обнови /local/mvc/Core/App.php
+3. Создай facade /local/mvc/Support/Facades/Log.php
 
-Полностью замени файл:
+<?php
+
+namespace Local\Mvc\Support\Facades;
+
+use Local\Mvc\Core\LogManager;
+
+/**
+ * Log
+ *
+ * Laravel-like facade для логов.
+ *
+ * Пример:
+ * Log::info('Текст');
+ */
+class Log extends Facade
+{
+    protected static function accessor(): string
+    {
+        return LogManager::class;
+    }
+}
+
+Теперь можно будет писать:
+
+Log::info('Что-то произошло');
+
+
+---
+
+4. Создай facade /local/mvc/Support/Facades/Config.php
+
+<?php
+
+namespace Local\Mvc\Support\Facades;
+
+/**
+ * Config
+ *
+ * Laravel-like facade для config.
+ *
+ * Чтобы не конфликтовать с Core\Config,
+ * использовать будем так:
+ *
+ * use Local\Mvc\Support\Facades\Config as ConfigFacade;
+ */
+class Config extends Facade
+{
+    protected static function accessor(): string
+    {
+        return \Local\Mvc\Core\Config::class;
+    }
+}
+
+Но у нас Core\Config пока статический класс, а facade ожидает объект. Поэтому сделаем маленький manager.
+
+
+---
+
+5. Создай /local/mvc/Core/ConfigManager.php
 
 <?php
 
 namespace Local\Mvc\Core;
+
+/**
+ * ConfigManager
+ *
+ * Объектная обёртка над Config.
+ */
+class ConfigManager
+{
+    public function get(string $key, mixed $default = null): mixed
+    {
+        return Config::get($key, $default);
+    }
+
+    public function debug(): bool
+    {
+        return Config::debug();
+    }
+
+    public function all(): array
+    {
+        return Config::all();
+    }
+}
+
+Теперь поправь facade Config.
+
+Полностью замени:
+
+/local/mvc/Support/Facades/Config.php
+
+на:
+
+<?php
+
+namespace Local\Mvc\Support\Facades;
+
+use Local\Mvc\Core\ConfigManager;
+
+/**
+ * Config
+ *
+ * Laravel-like facade для config.
+ */
+class Config extends Facade
+{
+    protected static function accessor(): string
+    {
+        return ConfigManager::class;
+    }
+}
+
+
+---
+
+6. Создай facade /local/mvc/Support/Facades/App.php
+
+<?php
+
+namespace Local\Mvc\Support\Facades;
 
 /**
  * App
  *
- * Запускатель MVC-приложения.
+ * Laravel-like facade для приложения/container.
  */
-class App
+class App extends Facade
 {
-    private static ?Router $router = null;
-
-    private static ?Container $container = null;
-
-    public static function run(?string $routesFile = null): void
+    protected static function accessor(): string
     {
-        $projectRoot = self::projectRoot();
-
-        self::loadConfig($projectRoot);
-
-        if ($routesFile === null) {
-            $routesFile = $projectRoot . '/routes.php';
-        }
-
-        $request = Request::createFromGlobals();
-
-        ErrorHandler::register($request);
-
-        try {
-            if (!is_file($routesFile)) {
-                Response::html(
-                    '<h1>500</h1><p>Файл маршрутов не найден.</p><pre>'
-                    . htmlspecialchars($routesFile)
-                    . '</pre>',
-                    500
-                )->send();
-
-                return;
-            }
-
-            $container = new Container();
-            self::$container = $container;
-
-            $router = new Router();
-            self::$router = $router;
-
-            $container->instance(Request::class, $request);
-            $container->instance(Router::class, $router);
-            $container->instance(Container::class, $container);
-
-            /**
-             * Регистрируем service providers проекта.
-             */
-            self::registerProviders($container);
-
-            \Local\Mvc\Support\Facades\Route::setRouter($router);
-
-            require $routesFile;
-
-            $router->dispatch($request);
-        } catch (\Throwable $e) {
-            ErrorHandler::renderThrowable($e);
-        }
-    }
-
-    public static function router(): ?Router
-    {
-        return self::$router;
-    }
-
-    public static function container(): Container
-    {
-        if (!(self::$container instanceof Container)) {
-            self::$container = new Container();
-        }
-
-        return self::$container;
-    }
-
-    public static function make(string $class, array $parameters = []): object
-    {
-        return self::container()->make($class, $parameters);
-    }
-
-    public static function route(string $name, array $params = [], array $query = []): string
-    {
-        if (!(self::$router instanceof Router)) {
-            return '#router-not-ready';
-        }
-
-        return self::$router->url($name, $params, $query);
-    }
-
-    private static function loadConfig(string $projectRoot): void
-    {
-        $configFile = rtrim($projectRoot, '/') . '/config.php';
-
-        $config = [];
-
-        if (is_file($configFile)) {
-            $loaded = require $configFile;
-
-            if (is_array($loaded)) {
-                $config = $loaded;
-            }
-        }
-
-        Config::load([
-            'app' => [
-                'name' => 'Local MVC App',
-                'description' => '',
-            ],
-
-            'debug' => defined('LOCAL_MVC_DEBUG') && LOCAL_MVC_DEBUG === true,
-
-            'log' => [
-                'file' => rtrim($projectRoot, '/') . '/logs/app.log',
-            ],
-
-            'providers' => [],
-
-            'middleware' => [
-                'auth' => \Local\Mvc\Core\Middlewares\AuthMiddleware::class,
-                'admin' => \Local\Mvc\Core\Middlewares\AdminMiddleware::class,
-                'csrf' => \Local\Mvc\Core\Middlewares\CsrfMiddleware::class,
-
-                'group' => \Local\Mvc\Core\Middlewares\GroupMiddleware::class,
-                'groups' => \Local\Mvc\Core\Middlewares\GroupsMiddleware::class,
-
-                'role' => \Local\Mvc\Core\Middlewares\RoleMiddleware::class,
-                'roles' => \Local\Mvc\Core\Middlewares\RolesMiddleware::class,
-            ],
-        ]);
-
-        Config::load($config);
-    }
-
-    private static function registerProviders(Container $container): void
-    {
-        $providerClasses = Config::get('providers', []);
-
-        if (!is_array($providerClasses)) {
-            return;
-        }
-
-        $providers = [];
-
-        foreach ($providerClasses as $providerClass) {
-            if (!is_string($providerClass) || $providerClass === '') {
-                continue;
-            }
-
-            $provider = new $providerClass($container);
-
-            if (!$provider instanceof ServiceProvider) {
-                throw new \RuntimeException('SERVICE_PROVIDER_INVALID: ' . $providerClass);
-            }
-
-            $provider->register();
-
-            $providers[] = $provider;
-        }
-
-        foreach ($providers as $provider) {
-            $provider->boot();
-        }
-    }
-
-    public static function projectRoot(): string
-    {
-        if (!defined('LOCAL_MVC_PROJECT_ROOT')) {
-            return $_SERVER['DOCUMENT_ROOT'] . '/local/mvc';
-        }
-
-        return rtrim((string)LOCAL_MVC_PROJECT_ROOT, '/');
-    }
-
-    public static function projectUrl(): string
-    {
-        if (!defined('LOCAL_MVC_PROJECT_URL')) {
-            return '/local/mvc';
-        }
-
-        return rtrim((string)LOCAL_MVC_PROJECT_URL, '/');
-    }
-
-    public static function projectNamespace(): string
-    {
-        if (!defined('LOCAL_MVC_PROJECT_NAMESPACE')) {
-            return 'Local\\Mvc\\';
-        }
-
-        return rtrim((string)LOCAL_MVC_PROJECT_NAMESPACE, '\\') . '\\';
+        return \Local\Mvc\Core\Container::class;
     }
 }
+
+Теперь можно будет писать:
+
+App::make(UserService::class);
 
 
 ---
 
-4. Добавь helper app() в /local/mvc/helpers.php
+7. Зарегистрируй эти сервисы в Container
 
-В конец файла добавь:
+Открой:
 
-if (!function_exists('app')) {
+/local/mvc/Core/App.php
+
+В методе run() найди место:
+
+$container->instance(Request::class, $request);
+$container->instance(Router::class, $router);
+$container->instance(Container::class, $container);
+
+Сразу после этого добавь:
+
+$container->singleton(\Local\Mvc\Core\LogManager::class, \Local\Mvc\Core\LogManager::class);
+$container->singleton(\Local\Mvc\Core\ConfigManager::class, \Local\Mvc\Core\ConfigManager::class);
+
+Должно быть так:
+
+$container->instance(Request::class, $request);
+$container->instance(Router::class, $router);
+$container->instance(Container::class, $container);
+
+$container->singleton(\Local\Mvc\Core\LogManager::class, \Local\Mvc\Core\LogManager::class);
+$container->singleton(\Local\Mvc\Core\ConfigManager::class, \Local\Mvc\Core\ConfigManager::class);
+
+
+---
+
+8. Добавь Laravel-like helper config()
+
+Открой:
+
+/local/mvc/helpers.php
+
+В конец добавь:
+
+if (!function_exists('config')) {
     /**
-     * Laravel-like app()
+     * Laravel-like config()
      *
-     * app() вернёт контейнер.
-     * app(UserService::class) создаст сервис.
+     * config('app.name')
      */
-    function app(?string $abstract = null): mixed
+    function config(string $key, mixed $default = null): mixed
     {
-        if ($abstract === null) {
-            return App::container();
-        }
-
-        return App::make($abstract);
+        return \Local\Mvc\Core\Config::get($key, $default);
     }
 }
 
+Теперь во views/контроллерах можно писать:
 
----
-
-5. Создай demo-сервис /local/mvc_demo/Services/DemoGreetingService.php
-
-<?php
-
-namespace Local\MvcDemo\Services;
-
-class DemoGreetingService
-{
-    public function __construct(
-        private string $appName
-    ) {}
-
-    public function message(): string
-    {
-        return 'Привет из ServiceProvider. Приложение: ' . $this->appName;
-    }
-}
+config('app.name')
 
 
 ---
 
-6. Создай provider /local/mvc_demo/Providers/AppServiceProvider.php
+9. Добавь тест в HomeController
 
-Сначала папка:
+Открой:
 
-/local/mvc_demo/Providers/
+/local/mvc_demo/Controllers/HomeController.php
 
-Файл:
+Сверху добавь:
 
-<?php
-
-namespace Local\MvcDemo\Providers;
-
-use Local\Mvc\Core\Config;
-use Local\Mvc\Core\ServiceProvider;
-use Local\MvcDemo\Services\DemoGreetingService;
-use Local\MvcDemo\Services\UserService;
-
-class AppServiceProvider extends ServiceProvider
-{
-    public function register(): void
-    {
-        /**
-         * singleton — один объект на запрос.
-         */
-        $this->app->singleton(DemoGreetingService::class, function () {
-            return new DemoGreetingService(
-                (string)Config::get('app.name', 'MVC Demo')
-            );
-        });
-
-        /**
-         * Можно явно зарегистрировать сервис.
-         * Сейчас это не обязательно, но это Laravel-like подход.
-         */
-        $this->app->bind(UserService::class, UserService::class);
-    }
-
-    public function boot(): void
-    {
-        //
-    }
-}
-
-
----
-
-7. Подключи provider в /local/mvc_demo/config.php
-
-Добавь блок:
-
-'providers' => [
-    \Local\MvcDemo\Providers\AppServiceProvider::class,
-],
-
-Полный файл должен быть примерно таким:
-
-<?php
-
-return [
-    'app' => [
-        'name' => 'MVC Demo',
-        'description' => 'Тестовый проект на общем MVC-фреймворке',
-    ],
-
-    'debug' => true,
-
-    'log' => [
-        'file' => __DIR__ . '/logs/app.log',
-    ],
-
-    'providers' => [
-        \Local\MvcDemo\Providers\AppServiceProvider::class,
-    ],
-
-    'roles' => [
-        'resolver' => \Local\MvcDemo\Services\DemoRoleResolver::class,
-
-        'hierarchy' => [
-            'viewer' => 10,
-            'editor' => 20,
-            'admin' => 30,
-            'owner' => 40,
-        ],
-    ],
-];
-
-
----
-
-8. Добавь тест в HomeController
-
-Вверху файла добавь:
-
-use Local\MvcDemo\Services\DemoGreetingService;
+use Local\Mvc\Support\Facades\Log;
+use Local\Mvc\Support\Facades\Config as ConfigFacade;
 
 Внутрь класса добавь метод:
 
-public function providerTest(DemoGreetingService $greeting): Response
+public function facadeTest(): Response
 {
+    Log::info('Открыт facade-test', [
+        'user_id' => \Local\Mvc\Core\Auth::id(),
+    ]);
+
     return $this->success([
-        'message' => $greeting->message(),
-        'service' => DemoGreetingService::class,
+        'message' => 'Facades работают',
+        'app_name_from_facade' => ConfigFacade::get('app.name'),
+        'app_name_from_helper' => config('app.name'),
     ]);
 }
 
 
 ---
 
-9. Добавь маршрут в /local/mvc_demo/routes.php
+10. Добавь маршрут
 
-Route::get('/provider-test', [HomeController::class, 'providerTest'])
-    ->name('provider.test');
+В /local/mvc_demo/routes.php добавь:
+
+Route::get('/facade-test', [HomeController::class, 'facadeTest'])
+    ->name('facade.test');
 
 
 ---
 
-10. Проверка
+11. Проверяем
 
 Сбрось OPcache:
 
@@ -578,43 +368,45 @@ echo 'OPcache reset OK';
 
 Открой:
 
-/local/mvc_demo/provider-test
+/local/mvc_demo/facade-test
 
-Должен быть JSON примерно такой:
+Должен быть JSON:
 
 {
   "ok": true,
   "data": {
-    "message": "Привет из ServiceProvider. Приложение: MVC Demo",
-    "service": "Local\\MvcDemo\\Services\\DemoGreetingService"
+    "message": "Facades работают",
+    "app_name_from_facade": "MVC Demo",
+    "app_name_from_helper": "MVC Demo"
   }
 }
+
+И в логе:
+
+/local/mvc_demo/logs/app.log
+
+должна появиться запись:
+
+[INFO] Открыт facade-test ...
 
 
 ---
 
 Что мы сделали
 
-Теперь у нас есть Laravel-like ServiceProvider.
+Теперь у нас есть Laravel-like facades:
 
-Было:
+Route::get(...)
+Log::info(...)
+ConfigFacade::get(...)
 
-Container сам создаёт классы как умеет.
+И helper:
 
-Стало:
-
-Проект может явно сказать контейнеру:
-"Вот этот сервис создавай вот так".
-
-Пример:
-
-$this->app->singleton(DemoGreetingService::class, function () {
-    return new DemoGreetingService('MVC Demo');
-});
+config('app.name')
 
 Главная мысль:
 
-Container — создаёт зависимости.
-ServiceProvider — настраивает Container.
+Container хранит сервисы.
+Facade даёт красивый статический доступ к сервисам.
 
-Это очень похоже на Laravel.
+В Laravel это работает похожим образом: ты пишешь красиво Log::info(), а внутри Laravel достаёт нужный сервис из контейнера.
