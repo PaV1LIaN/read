@@ -1,38 +1,25 @@
-Ошибка теперь уже другая и понятная:
+Да, правильно. Значит проблема была не в MVC-коде, а в том, что ProjectsDB/pg_hba.conf был настроен не на том PostgreSQL-сервере.
 
-DB_UNAVAILABLE
-/local/php_interface/lib/pg_master.php
+Перед тем как идти дальше, на рабочем сервере проверь 3 вещи.
 
-Это значит:
+1. Верни Note на projects
 
-Наш MVC теперь пытается идти в ProjectsDB через pg_master.php,
-но pg_master.php не может найти доступный master PostgreSQL.
+Файл:
 
-То есть код переключился правильно:
+/local/mvc_demo/Models/Note.php
 
-Note → connection projects → pg_master.php → ProjectsDB
+Должно быть так:
 
-Но подключение к ProjectsDB сейчас не работает с этого сервера.
+protected static string $connection = 'projects';
 
-
----
-
-Быстро вернуть страницу в рабочее состояние
-
-Пока можно временно вернуть Note на базу Битрикса:
-
-protected static string $connection = 'bitrix';
-
-Но если цель — писать именно в:
+То есть модель заметок теперь должна писать сюда:
 
 ProjectsDB → mvc → mvc_demo_notes
 
-тогда надо починить подключение к ProjectsDB.
-
 
 ---
 
-1. Сначала получим точную диагностику
+2. Проверь подключение с рабочего Битрикс-сервера
 
 В PHP-командной строке Битрикса выполни:
 
@@ -63,105 +50,69 @@ try {
 
 echo '</pre>';
 
-Если снова будет просто:
+Нужно увидеть:
 
-DB_UNAVAILABLE
+PDO OK
+db_name => ProjectsDB
+db_user => bx_user
 
-значит pg_master.php скрывает детали в error_log.
+И in_recovery должен быть:
+
+f
+
+или пусто/false — то есть это master.
 
 
 ---
 
-2. Получим диагностику напрямую по нодам
+3. Проверь таблицу именно в ProjectsDB
 
-Выполни вот это:
+В PHP-командной строке Битрикса:
+
+require_once $_SERVER['DOCUMENT_ROOT'] . '/local/php_interface/lib/pg_master.php';
+
+$pdo = getPdo();
+
+$pdo->exec("SET search_path TO mvc, public");
+
+$row = $pdo->query("
+    SELECT to_regclass('mvc.mvc_demo_notes') AS table_name
+")->fetch(PDO::FETCH_ASSOC);
 
 echo '<pre>';
-
-$user = 'bx_user';
-$pass = '25##PostPassBX';
-
-$nodes = [
-    "pgsql:host=192.168.7.101;port=5432;dbname=ProjectsDB",
-    "pgsql:host=192.168.7.102;port=5432;dbname=ProjectsDB",
-    "pgsql:host=192.168.7.100;port=5432;dbname=ProjectsDB",
-];
-
-foreach ($nodes as $dsn) {
-    echo "\n=== {$dsn} ===\n";
-
-    try {
-        $pdo = new PDO($dsn, $user, $pass, [
-            PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
-            PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
-        ]);
-
-        $row = $pdo->query("
-            SELECT
-                current_database() AS db_name,
-                current_user AS db_user,
-                inet_server_addr() AS server_ip,
-                inet_server_port() AS server_port,
-                pg_is_in_recovery() AS in_recovery
-        ")->fetch();
-
-        print_r($row);
-    } catch (Throwable $e) {
-        echo "ERROR: " . $e->getMessage() . "\n";
-    }
-}
-
+print_r($row);
 echo '</pre>';
 
-Вот этот вывод покажет реальную причину: pg_hba, пароль, SSL, master/replica или недоступная нода.
+Должно быть:
+
+table_name => mvc.mvc_demo_notes
+
+Если пусто — создай таблицу в ProjectsDB:
+
+CREATE SCHEMA IF NOT EXISTS mvc;
+
+CREATE TABLE IF NOT EXISTS mvc.mvc_demo_notes (
+    id BIGSERIAL PRIMARY KEY,
+    title VARCHAR(255) NOT NULL,
+    body TEXT NULL,
+    created_at TIMESTAMP NULL,
+    updated_at TIMESTAMP NULL
+);
 
 
 ---
 
-3. Скорее всего причина будет pg_hba
+После этого сбрось OPcache:
 
-Раньше у тебя уже была похожая ошибка:
+opcache_reset();
+echo 'OPcache reset OK';
 
-в pg_hba.conf нет записи для компьютера "192.168.7.109", пользователя "bx_user", базы "ProjectsDB"
+И проверь:
 
-Сейчас Битрикс работает с сервера:
+/local/mvc_demo/notes
 
-192.168.7.110
+Создай новую заметку. Она должна появиться уже в:
 
-Значит для PostgreSQL ProjectsDB надо разрешить подключение с 192.168.7.110.
+ProjectsDB → mvc → mvc_demo_notes
 
-На сервере PostgreSQL в pg_hba.conf должна быть запись примерно такая:
-
-host    ProjectsDB    bx_user    192.168.7.110/32    md5
-
-Или, если пароль SCRAM:
-
-host    ProjectsDB    bx_user    192.168.7.110/32    scram-sha-256
-
-После изменения надо перезагрузить PostgreSQL config:
-
-SELECT pg_reload_conf();
-
-
----
-
-4. Пока не починим ProjectsDB, можешь временно вернуть bitrix
-
-В файле:
-
-/local/mvc_demo/Models/Note.php
-
-временно поставь:
-
-protected static string $connection = 'bitrix';
-
-Тогда /notes снова будет работать через базу bx.
-
-А когда pg_master.php начнёт подключаться к ProjectsDB, вернём:
-
-protected static string $connection = 'projects';
-
-
----
-
-Сейчас лучше сделай пункт 2 и пришли вывод. По нему я точно скажу, что именно чинить: pg_hba, SSL, пароль, master-ноду или DSN.
+Когда это заработает, двигаемся дальше и сделаем следующий Laravel-like шаг: StoreNoteRequest + UpdateNoteRequest + полноценное редактирование заметки.
