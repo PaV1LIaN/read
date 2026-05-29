@@ -1,480 +1,278 @@
-Идём дальше по Laravel-подходу.
+Да, идём дальше в сторону Laravel.
 
-Сейчас у нас FormRequest уже есть, но контроллер всё ещё сам проверяет:
+Сейчас сделаем Laravel-like helper-функции для шаблонов:
 
-if ($request->fails()) {
-    ...
-}
+route('form.send')
+old('name')
+csrf_field()
+method_field('DELETE')
+e($value)
 
-А в Laravel обычно контроллеру уже приходит проверенный request. Если данные плохие — Laravel сам редиректит назад с ошибками.
-
-Мы сделаем так же.
-
-Хотим получить в FormController вот такой чистый код:
-
-public function send(StoreMessageRequest $request): Response
-{
-    $data = $request->validated();
-
-    Flash::success('Форма успешно отправлена. Имя: ' . $data['name']);
-
-    return $this->redirectRoute('form.index');
-}
+То есть во view будет почти как в Laravel.
 
 
 ---
 
-1. Создай /local/mvc/Core/ValidationException.php
+1. Создай /local/mvc/Core/ViewData.php
 
-<?php
-
-namespace Local\Mvc\Core;
-
-use RuntimeException;
-
-/**
- * ValidationException
- *
- * Исключение ошибки валидации.
- *
- * Если FormRequest не прошёл проверку,
- * он выбрасывает это исключение.
- */
-class ValidationException extends RuntimeException
-{
-    public function __construct(
-        private array $errors = [],
-        private array $old = [],
-        private string $redirectTo = ''
-    ) {
-        parent::__construct('Ошибка валидации');
-    }
-
-    public function errors(): array
-    {
-        return $this->errors;
-    }
-
-    public function old(): array
-    {
-        return $this->old;
-    }
-
-    public function redirectTo(): string
-    {
-        return $this->redirectTo;
-    }
-
-    public function errorList(): array
-    {
-        $list = [];
-
-        foreach ($this->errors as $fieldErrors) {
-            foreach ($fieldErrors as $error) {
-                $list[] = $error;
-            }
-        }
-
-        return $list;
-    }
-}
-
-
----
-
-2. Замени /local/mvc/Core/FormRequest.php
+Это маленькое хранилище данных текущего view.
 
 <?php
 
 namespace Local\Mvc\Core;
 
 /**
- * FormRequest
+ * ViewData
  *
- * Laravel-like request для валидации форм.
+ * Хранилище данных текущего шаблона.
+ *
+ * Нужно, чтобы helper old('name') мог достать старое значение формы.
  */
-abstract class FormRequest
+class ViewData
 {
-    protected Request $request;
+    private static array $data = [];
 
-    private ?Validator $validator = null;
-
-    public function __construct(Request $request)
+    public static function set(array $data): void
     {
-        $this->request = $request;
+        self::$data = $data;
     }
 
-    abstract public function rules(): array;
-
-    public function messages(): array
+    public static function get(string $key, mixed $default = null): mixed
     {
-        return [];
+        return self::$data[$key] ?? $default;
     }
 
-    public function authorize(): bool
+    public static function old(string $key, mixed $default = null): mixed
     {
-        return true;
-    }
+        $old = self::get('old', []);
 
-    /**
-     * Имя маршрута, куда редиректить при ошибке.
-     *
-     * Если null — фреймворк попробует вернуть назад.
-     */
-    public function redirectRoute(): ?string
-    {
-        return null;
-    }
-
-    public function all(): array
-    {
-        return array_merge(
-            $this->request->postAll(),
-            $this->request->jsonAll()
-        );
-    }
-
-    public function input(string $key, mixed $default = null): mixed
-    {
-        $data = $this->all();
-
-        return $data[$key] ?? $default;
-    }
-
-    public function validator(): Validator
-    {
-        if ($this->validator instanceof Validator) {
-            return $this->validator;
+        if (!is_array($old)) {
+            return $default;
         }
 
-        $this->validator = Validator::validate(
-            $this->all(),
-            $this->rules(),
-            $this->messages()
-        );
-
-        return $this->validator;
-    }
-
-    public function fails(): bool
-    {
-        return !$this->authorize() || $this->validator()->fails();
-    }
-
-    public function errors(): array
-    {
-        if (!$this->authorize()) {
-            return [
-                'auth' => [
-                    'Недостаточно прав для выполнения действия.',
-                ],
-            ];
-        }
-
-        return $this->validator()->errors();
-    }
-
-    public function errorList(): array
-    {
-        if (!$this->authorize()) {
-            return [
-                'Недостаточно прав для выполнения действия.',
-            ];
-        }
-
-        return $this->validator()->errorList();
-    }
-
-    public function validated(): array
-    {
-        $data = $this->all();
-        $validated = [];
-
-        foreach (array_keys($this->rules()) as $field) {
-            $value = $data[$field] ?? null;
-
-            if (is_string($value)) {
-                $value = trim($value);
-            }
-
-            $validated[$field] = $value;
-        }
-
-        return $validated;
-    }
-
-    /**
-     * Автоматическая проверка.
-     *
-     * Container вызовет этот метод сам.
-     */
-    public function validateResolved(): void
-    {
-        if (!$this->fails()) {
-            return;
-        }
-
-        $redirectTo = '';
-
-        if ($this->redirectRoute()) {
-            $redirectTo = App::route($this->redirectRoute());
-        }
-
-        throw new ValidationException(
-            $this->errors(),
-            $this->all(),
-            $redirectTo
-        );
+        return $old[$key] ?? $default;
     }
 }
 
 
 ---
 
-3. Обнови /local/mvc/Core/Container.php
+2. Обнови /local/mvc/Core/Controller.php
 
-Найди в методе resolveParameters() вот этот кусок:
+В методе render() найди место, где у тебя уже есть:
 
-if ($type instanceof ReflectionNamedType && !$type->isBuiltin()) {
-    $dependencies[] = $this->make($type->getName());
-    continue;
+extract($params);
+
+$flash = Flash::all();
+
+$oldFromFlash = Flash::getOld();
+
+if (!isset($old) || !is_array($old)) {
+    $old = [];
 }
 
-Замени на:
+$old = array_replace($old, $oldFromFlash);
 
-if ($type instanceof ReflectionNamedType && !$type->isBuiltin()) {
-    $object = $this->make($type->getName());
+Сразу после этого добавь:
 
-    /**
-     * Laravel-like поведение:
-     * если в метод контроллера пришёл FormRequest,
-     * валидируем его автоматически ДО запуска контроллера.
-     */
-    if ($object instanceof FormRequest) {
-        $object->validateResolved();
-    }
+ViewData::set(array_merge($params, [
+    'flash' => $flash,
+    'old' => $old,
+]));
 
-    $dependencies[] = $object;
-    continue;
+Должно получиться так:
+
+extract($params);
+
+/**
+ * Flash-сообщения.
+ */
+$flash = Flash::all();
+
+/**
+ * Старые значения формы.
+ */
+$oldFromFlash = Flash::getOld();
+
+if (!isset($old) || !is_array($old)) {
+    $old = [];
 }
 
-Теперь, если метод контроллера принимает StoreMessageRequest, контейнер сам его проверит.
+$old = array_replace($old, $oldFromFlash);
+
+/**
+ * Данные для Laravel-like helper-функций:
+ * old('name')
+ */
+ViewData::set(array_merge($params, [
+    'flash' => $flash,
+    'old' => $old,
+]));
 
 
 ---
 
-4. Обнови /local/mvc/Core/ErrorHandler.php
-
-Найди метод:
-
-public static function renderThrowable(Throwable $e): void
-
-В самое начало метода, сразу после открывающей {, добавь:
-
-if ($e instanceof ValidationException) {
-    self::renderValidationException($e);
-    return;
-}
-
-Должно стать так:
-
-public static function renderThrowable(Throwable $e): void
-{
-    if ($e instanceof ValidationException) {
-        self::renderValidationException($e);
-        return;
-    }
-
-    self::log($e->getMessage(), $e->getFile(), $e->getLine());
-
-    ...
-}
-
-Теперь в этот же файл, перед методом debugEnabled(), добавь новые методы:
-
-private static function renderValidationException(ValidationException $e): void
-{
-    self::log($e->getMessage(), $e->getFile(), $e->getLine());
-
-    /**
-     * Для API отдаём JSON, как в Laravel.
-     */
-    if (self::wantsJson()) {
-        Response::json([
-            'ok' => false,
-            'error' => 'VALIDATION_ERROR',
-            'details' => [
-                'message' => 'Ошибка валидации',
-                'errors' => $e->errors(),
-            ],
-        ], 422)->send();
-
-        return;
-    }
-
-    /**
-     * Для обычной формы:
-     * 1. сохраняем старые значения
-     * 2. сохраняем ошибки
-     * 3. редиректим назад
-     */
-    Flash::old($e->old());
-
-    foreach ($e->errorList() as $error) {
-        Flash::error($error);
-    }
-
-    Response::redirect(self::validationRedirectUrl($e))->send();
-}
-
-private static function validationRedirectUrl(ValidationException $e): string
-{
-    if ($e->redirectTo() !== '') {
-        return $e->redirectTo();
-    }
-
-    if (self::$request instanceof Request) {
-        $referer = (string)self::$request->server('HTTP_REFERER', '');
-
-        if (self::isSafeRedirectUrl($referer)) {
-            return $referer;
-        }
-    }
-
-    return App::projectUrl() . '/';
-}
-
-private static function isSafeRedirectUrl(string $url): bool
-{
-    $url = trim($url);
-
-    if ($url === '') {
-        return false;
-    }
-
-    if (str_starts_with($url, '/')) {
-        return true;
-    }
-
-    if (!(self::$request instanceof Request)) {
-        return false;
-    }
-
-    $currentHost = (string)self::$request->server('HTTP_HOST', '');
-
-    $parts = parse_url($url);
-
-    if (!is_array($parts)) {
-        return false;
-    }
-
-    $urlHost = (string)($parts['host'] ?? '');
-
-    if ($urlHost === '' || $currentHost === '') {
-        return false;
-    }
-
-    return strcasecmp($urlHost, $currentHost) === 0;
-}
-
-
----
-
-5. Обнови /local/mvc_demo/Requests/StoreMessageRequest.php
-
-Добавь метод redirectRoute():
-
-public function redirectRoute(): ?string
-{
-    return 'form.index';
-}
-
-Полный файл:
-
-<?php
-
-namespace Local\MvcDemo\Requests;
-
-use Local\Mvc\Core\FormRequest;
-
-class StoreMessageRequest extends FormRequest
-{
-    public function rules(): array
-    {
-        return [
-            'name' => ['required', 'min:2', 'max:100'],
-            'message' => ['required', 'min:5', 'max:1000'],
-        ];
-    }
-
-    public function messages(): array
-    {
-        return [
-            'name.required' => 'Введите имя.',
-            'name.min' => 'Имя должно быть не короче 2 символов.',
-            'name.max' => 'Имя должно быть не длиннее 100 символов.',
-
-            'message.required' => 'Введите сообщение.',
-            'message.min' => 'Сообщение должно быть не короче 5 символов.',
-            'message.max' => 'Сообщение должно быть не длиннее 1000 символов.',
-        ];
-    }
-
-    public function redirectRoute(): ?string
-    {
-        return 'form.index';
-    }
-}
-
-
----
-
-6. Упрости /local/mvc_demo/Controllers/FormController.php
-
-Теперь контроллеру не нужно проверять ошибки.
+3. Замени /local/mvc/helpers.php
 
 Полностью замени файл:
 
 <?php
 
-namespace Local\MvcDemo\Controllers;
+use Local\Mvc\Core\App;
+use Local\Mvc\Core\ViewData;
 
-use Local\Mvc\Core\Controller;
-use Local\Mvc\Core\Flash;
-use Local\Mvc\Core\Response;
-use Local\MvcDemo\Requests\StoreMessageRequest;
-
-class FormController extends Controller
-{
-    public function index(): Response
+if (!function_exists('mvc_route')) {
+    function mvc_route(string $name, array $params = [], array $query = []): string
     {
-        return $this->render('form/index', [
-            'title' => 'Тестовая форма',
-            'errors' => [],
-            'success' => '',
-            'old' => [
-                'name' => '',
-                'message' => '',
-            ],
-        ]);
-    }
-
-    public function send(StoreMessageRequest $request): Response
-    {
-        $data = $request->validated();
-
-        Flash::success('Форма успешно отправлена. Имя: ' . $data['name']);
-
-        return $this->redirectRoute('form.index');
+        return App::route($name, $params, $query);
     }
 }
 
-Вот теперь это уже прям Laravel-like.
+if (!function_exists('mvc_e')) {
+    function mvc_e(mixed $value): string
+    {
+        if (function_exists('htmlspecialcharsbx')) {
+            return htmlspecialcharsbx((string)$value);
+        }
+
+        return htmlspecialchars((string)$value, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
+    }
+}
+
+/**
+ * Laravel-like route()
+ *
+ * Пример:
+ * route('admin.users.show', ['id' => 5])
+ */
+if (!function_exists('route')) {
+    function route(string $name, array $params = [], array $query = []): string
+    {
+        return mvc_route($name, $params, $query);
+    }
+}
+
+/**
+ * Laravel-like e()
+ *
+ * Пример:
+ * e($title)
+ */
+if (!function_exists('e')) {
+    function e(mixed $value): string
+    {
+        return mvc_e($value);
+    }
+}
+
+/**
+ * Laravel-like old()
+ *
+ * Пример:
+ * old('name')
+ */
+if (!function_exists('old')) {
+    function old(string $key, mixed $default = ''): mixed
+    {
+        return ViewData::old($key, $default);
+    }
+}
+
+/**
+ * Laravel-like csrf_field()
+ *
+ * Пример:
+ * <?= csrf_field() ?>
+ */
+if (!function_exists('csrf_field')) {
+    function csrf_field(): string
+    {
+        if (function_exists('bitrix_sessid_post')) {
+            return bitrix_sessid_post();
+        }
+
+        return '';
+    }
+}
+
+/**
+ * Laravel-like method_field()
+ *
+ * Пример:
+ * <?= method_field('DELETE') ?>
+ */
+if (!function_exists('method_field')) {
+    function method_field(string $method): string
+    {
+        return '<input type="hidden" name="_method" value="' . e(strtoupper($method)) . '">';
+    }
+}
 
 
 ---
 
-7. Проверяем
+4. Обнови /local/mvc_demo/Views/form/index.php
+
+Найди форму.
+
+Было примерно так:
+
+<form method="post" action="<?= mvc_e(mvc_route('form.send')) ?>" style="margin-top: 24px;">
+    <?php if (function_exists('bitrix_sessid_post')): ?>
+        <?= bitrix_sessid_post() ?>
+    <?php endif; ?>
+
+Замени на Laravel-like вариант:
+
+<form method="post" action="<?= e(route('form.send')) ?>" style="margin-top: 24px;">
+    <?= csrf_field() ?>
+
+Теперь найди поле name.
+
+Было:
+
+value="<?= htmlspecialcharsbx($formName) ?>"
+
+Замени на:
+
+value="<?= e(old('name')) ?>"
+
+Найди textarea.
+
+Было:
+
+><?= htmlspecialcharsbx($formMessage) ?></textarea>
+
+Замени на:
+
+><?= e(old('message')) ?></textarea>
+
+
+---
+
+5. Обнови /local/mvc_demo/Views/method/index.php
+
+Найди форму DELETE.
+
+Было:
+
+<form method="post" action="<?= mvc_e(mvc_route('method.delete')) ?>" style="margin-top: 24px;">
+    <?php if (function_exists('bitrix_sessid_post')): ?>
+        <?= bitrix_sessid_post() ?>
+    <?php endif; ?>
+
+    <input type="hidden" name="_method" value="DELETE">
+
+Замени на:
+
+<form method="post" action="<?= e(route('method.delete')) ?>" style="margin-top: 24px;">
+    <?= csrf_field() ?>
+    <?= method_field('DELETE') ?>
+
+
+---
+
+6. Проверяем
 
 Сбрось OPcache:
 
@@ -485,51 +283,49 @@ echo 'OPcache reset OK';
 
 /local/mvc_demo/form
 
-Сценарии:
+Проверь:
 
 1. Отправь пустую форму.
-   Должны появиться ошибки, поля должны сохраниться.
+2. Ошибки должны появиться.
+3. Введённые значения должны сохраняться.
+4. Отправь нормальные данные.
 
-2. Введи имя из 1 буквы и короткое сообщение.
-   Должны появиться ошибки.
+Проверь method demo:
 
-3. Введи нормальные данные.
-   Должно появиться зелёное сообщение, поля очистятся.
+/local/mvc_demo/method-demo
+
+Нажми:
+
+Проверить DELETE
 
 
 ---
 
 Что мы сделали
 
-Раньше контроллер сам проверял:
+Теперь шаблоны можно писать ближе к Laravel:
 
-if ($request->fails()) {
-    ...
-}
+<form method="post" action="<?= e(route('form.send')) ?>">
+    <?= csrf_field() ?>
 
-Теперь контроллер получает уже валидный request:
+    <input name="name" value="<?= e(old('name')) ?>">
+</form>
 
-public function send(StoreMessageRequest $request): Response
-{
-    $data = $request->validated();
-}
+И DELETE-форма:
 
-Если данные плохие, контроллер вообще не запускается.
+<form method="post" action="<?= e(route('method.delete')) ?>">
+    <?= csrf_field() ?>
+    <?= method_field('DELETE') ?>
 
-Цепочка теперь такая:
+    <button>Удалить</button>
+</form>
 
-POST /form/send
-  ↓
-Router
-  ↓
-Container видит StoreMessageRequest
-  ↓
-FormRequest автоматически валидируется
-  ↓
-если ошибка — ValidationException
-  ↓
-ErrorHandler сохраняет Flash и редиректит обратно
-  ↓
-если всё хорошо — запускается FormController::send()
+Главная мысль:
 
-Это очень похоже на Laravel.
+route()        — собрать URL по имени маршрута
+old()          — вернуть старое значение поля после ошибки
+csrf_field()   — вставить sessid Битрикса
+method_field() — подменить POST на DELETE / PUT / PATCH
+e()            — безопасно вывести текст
+
+Это уже очень похоже на Laravel, но адаптировано под Битрикс24.
