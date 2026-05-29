@@ -1,1135 +1,220 @@
-Заменяй полностью файл:
+Идём дальше. Сделаем простые helper-функции для views, но без большого View-класса, чтобы не путаться.
 
-/local/sitebuilder/components/disk/styles.css
+Зачем:
 
-на этот:
+Сейчас во view приходится писать длинно:
 
-/* =========================================================
-   SITEBUILDER DISK
-   Modern File Manager UI
-   ========================================================= */
+\Local\Mvc\Core\App::route('admin.users.show', ['id' => 5])
 
-.sb-disk {
-    --disk-accent: var(--sb-accent, #2563eb);
-    --disk-accent-hover: #3f5de9;
-    --disk-accent-soft: rgba(37, 99, 235, .08);
-    --disk-bg: #ffffff;
-    --disk-soft: #f8fafc;
-    --disk-soft-2: #f1f5f9;
-    --disk-border: #e5e7eb;
-    --disk-border-2: #dbe3ef;
-    --disk-text: #111827;
-    --disk-muted: #6b7280;
-    --disk-danger: #dc2626;
-    --disk-radius: 18px;
-    --disk-shadow: 0 14px 34px rgba(15, 23, 42, .06);
+А хотим коротко:
 
-    width: 100%;
-    min-width: 0;
-    box-sizing: border-box;
-    color: var(--disk-text);
-}
+mvc_route('admin.users.show', ['id' => 5])
 
-.sb-disk *,
-.sb-disk *::before,
-.sb-disk *::after {
-    box-sizing: border-box;
-}
 
-.sb-disk--modern {
-    width: 100%;
-    min-width: 0;
-}
+---
 
-.sb-disk a {
-    color: var(--disk-accent);
-    text-decoration: none;
-}
+1. Создай файл /local/mvc/helpers.php
 
-.sb-disk a:hover {
-    text-decoration: underline;
-}
+<?php
 
-.sb-disk button,
-.sb-disk input,
-.sb-disk select,
-.sb-disk textarea {
-    font-family: inherit;
-}
+use Local\Mvc\Core\App;
 
-.sb-disk [hidden] {
-    display: none !important;
-}
-
-/* =========================================================
-   HIDE DUPLICATES / COMPACT TOP
-   ========================================================= */
-
-.sb-disk--modern .sb-disk__title,
-.sb-disk--modern .sb-disk-title,
-.sb-disk--modern [data-role="subtitle"],
-.sb-disk--modern .sb-disk__subtitle,
-.sb-disk--modern .sb-disk-subtitle {
-    display: none !important;
-}
-
-.sb-disk--modern .sb-disk__top,
-.sb-disk--modern .sb-disk__header,
-.sb-disk--modern .sb-disk__head,
-.sb-disk--modern .sb-disk-head {
-    min-height: 0 !important;
-    margin: 0 !important;
-    padding: 0 !important;
-}
-
-.sb-disk--modern .sb-disk__toolbar:empty,
-.sb-disk--modern .sb-disk__controls:empty,
-.sb-disk--modern .sb-disk__actions-panel:empty,
-.sb-disk--modern .sb-disk__filter:empty,
-.sb-disk--modern .sb-disk__filters:empty {
-    display: none !important;
-}
-
-/* =========================================================
-   BLOCK HEAD
-   ========================================================= */
-
-.sb-public-block--disk {
-    margin-top: 12px;
-}
-
-.sb-public-disk-head {
-    display: flex;
-    align-items: flex-start;
-    justify-content: space-between;
-    gap: 16px;
-    margin-bottom: 10px;
-}
-
-.sb-public-block-title,
-.sb-disk h2,
-.sb-disk h3 {
-    margin: 0;
-    font-size: 22px;
-    line-height: 1.25;
-    font-weight: 800;
-    color: var(--disk-text);
-}
-
-/* =========================================================
-   SMART HEADER: breadcrumbs + refresh/settings
-   ========================================================= */
-
-.sb-disk__smart-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 16px;
-    margin: 0 0 10px;
-    padding: 0;
-    width: 100%;
-    min-width: 0;
-}
-
-.sb-disk__smart-header-left {
-    flex: 1 1 auto;
-    min-width: 0;
-    display: flex;
-    align-items: center;
-}
-
-.sb-disk__smart-header-right {
-    flex: 0 0 auto;
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    flex-wrap: wrap;
-    justify-content: flex-end;
-}
-
-.sb-disk [data-role="breadcrumbs"],
-.sb-disk__breadcrumbs {
-    display: flex !important;
-    align-items: center;
-    gap: 8px;
-    flex-wrap: wrap;
-    margin: 0 !important;
-    padding: 0 !important;
-    min-width: 0;
-    color: var(--disk-muted);
-    font-size: 13px;
-}
-
-.sb-disk__crumb {
-    display: inline-flex !important;
-    align-items: center;
-    justify-content: center;
-    min-height: 30px !important;
-    padding: 0 10px !important;
-    border: 1px solid #e3e8f2 !important;
-    border-radius: 999px !important;
-    background: #f8fafc !important;
-    color: #4b5563 !important;
-    font-size: 12px !important;
-    font-weight: 700 !important;
-    line-height: 1 !important;
-    cursor: pointer;
-    white-space: nowrap;
-    transition: background .15s ease, border-color .15s ease, color .15s ease;
-}
-
-.sb-disk__crumb:hover {
-    background: #eef4ff !important;
-    color: var(--disk-accent) !important;
-    border-color: #cfe0ff !important;
-}
-
-.sb-disk__crumb-separator,
-.sb-disk [data-role="breadcrumbs"] > span {
-    color: #9ca3af;
-}
-
-/* =========================================================
-   SMART TOOLBAR
-   ========================================================= */
-
-.sb-disk__smart-toolbar {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 14px 18px;
-    flex-wrap: wrap;
-    margin: 0 0 14px;
-    padding: 12px 14px;
-    border: 1px solid #e6ebf3;
-    border-radius: 16px;
-    background: #fbfcfe;
-    width: 100%;
-    min-width: 0;
-}
-
-.sb-disk__smart-toolbar-left,
-.sb-disk__smart-toolbar-right {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    flex-wrap: wrap;
-    min-width: 0;
-}
-
-.sb-disk__smart-toolbar-left {
-    flex: 1 1 360px;
-}
-
-.sb-disk__smart-toolbar-right {
-    flex: 0 1 auto;
-    justify-content: flex-end;
-}
-
-.sb-disk__toolbar,
-.sb-disk__controls,
-.sb-disk__actions-panel,
-.sb-disk__filter,
-.sb-disk__filters {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    flex-wrap: wrap;
-    width: 100%;
-    min-width: 0;
-}
-
-/* =========================================================
-   INPUTS / SELECTS
-   ========================================================= */
-
-.sb-disk input[type="text"],
-.sb-disk input[type="search"],
-.sb-disk select {
-    height: 36px !important;
-    padding: 0 12px !important;
-    border: 1px solid var(--disk-border-2) !important;
-    border-radius: 10px !important;
-    background: #fff !important;
-    color: var(--disk-text) !important;
-    font-size: 13px !important;
-    outline: none !important;
-    transition: border-color .15s ease, box-shadow .15s ease;
-}
-
-.sb-disk input[type="text"]:focus,
-.sb-disk input[type="search"]:focus,
-.sb-disk select:focus {
-    border-color: var(--disk-accent) !important;
-    box-shadow: 0 0 0 3px rgba(37, 99, 235, .12) !important;
-}
-
-.sb-disk [data-role="search-input"] {
-    min-width: 260px !important;
-    width: 260px !important;
-}
-
-.sb-disk [data-role="sort-select"] {
-    min-width: 150px !important;
-}
-
-/* =========================================================
-   BUTTONS
-   ========================================================= */
-
-.sb-disk button,
-.sb-disk .sb-disk__row-btn,
-.sb-disk .sb-disk__view-btn,
-.sb-disk .sb-disk-modern-control {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    min-height: 36px;
-    padding: 0 12px;
-    border: 1px solid var(--disk-border-2);
-    border-radius: 10px;
-    background: #ffffff;
-    color: #374151;
-    font-size: 13px;
-    font-weight: 700;
-    line-height: 1;
-    cursor: pointer;
-    white-space: nowrap;
-    text-decoration: none !important;
-    transition:
-        background .15s ease,
-        border-color .15s ease,
-        color .15s ease,
-        box-shadow .15s ease,
-        transform .15s ease;
-}
-
-.sb-disk button:hover,
-.sb-disk .sb-disk__row-btn:hover,
-.sb-disk .sb-disk__view-btn:hover {
-    border-color: #c7d7f3;
-    background: #f8fbff;
-    color: var(--disk-accent);
-}
-
-.sb-disk button:active,
-.sb-disk .sb-disk__row-btn:active,
-.sb-disk .sb-disk__view-btn:active {
-    transform: translateY(1px);
-}
-
-.sb-disk [data-action="upload"],
-.sb-disk .sb-disk-modern-primary,
-.sb-disk .sb-disk__view-btn.is-active,
-.sb-disk .sb-disk__row-btn.is-primary,
-.sb-disk .sb-disk__row-btn--primary {
-    border-color: var(--disk-accent) !important;
-    background: var(--disk-accent) !important;
-    color: #fff !important;
-}
-
-.sb-disk [data-action="upload"]:hover,
-.sb-disk .sb-disk-modern-primary:hover,
-.sb-disk .sb-disk__view-btn.is-active:hover,
-.sb-disk .sb-disk__row-btn.is-primary:hover,
-.sb-disk .sb-disk__row-btn--primary:hover {
-    border-color: var(--disk-accent-hover) !important;
-    background: var(--disk-accent-hover) !important;
-    color: #fff !important;
-    box-shadow: 0 8px 20px rgba(37, 99, 235, .22);
-}
-
-.sb-disk .sb-disk__row-btn.is-danger,
-.sb-disk [data-row-action="delete"] {
-    border-color: #fecaca;
-    background: #fff;
-    color: var(--disk-danger);
-}
-
-.sb-disk .sb-disk__row-btn.is-danger:hover,
-.sb-disk [data-row-action="delete"]:hover {
-    background: #fee2e2;
-    color: #991b1b;
-}
-
-/* =========================================================
-   STATES
-   ========================================================= */
-
-.sb-disk [data-state] {
-    margin-top: 12px;
-}
-
-.sb-disk [data-state="loading"],
-.sb-disk [data-state="error"],
-.sb-disk [data-state="no-root"],
-.sb-disk [data-state="no-access"],
-.sb-disk [data-state="empty"],
-.sb-public-disk-loading {
-    min-height: 150px;
-    padding: 28px;
-    border: 1px dashed #cbd5e1;
-    border-radius: 18px;
-    background:
-        radial-gradient(circle at top left, rgba(37, 99, 235, .08), transparent 35%),
-        #fff;
-    color: var(--disk-muted);
-    text-align: center;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    flex-direction: column;
-    gap: 8px;
-}
-
-.sb-disk [data-state="error"] {
-    border-color: #fecaca;
-    background:
-        radial-gradient(circle at top left, rgba(220, 38, 38, .08), transparent 35%),
-        #fff;
-    color: #991b1b;
-}
-
-.sb-disk-empty-enhanced {
-    min-height: 150px;
-    padding: 28px;
-    border: 1px dashed #cbd5e1;
-    border-radius: 18px;
-    background:
-        radial-gradient(circle at top left, rgba(37, 99, 235, .08), transparent 35%),
-        #fff;
-    color: var(--disk-muted);
-    text-align: center;
-    display: flex !important;
-    align-items: center;
-    justify-content: center;
-    flex-direction: column;
-    gap: 8px;
-}
-
-.sb-disk-empty-icon {
-    width: 58px;
-    height: 58px;
-    border-radius: 20px;
-    background: #eef2ff;
-    color: var(--disk-accent);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-size: 30px;
-}
-
-.sb-disk-empty-enhanced strong,
-.sb-disk [data-state] strong {
-    color: var(--disk-text);
-    font-size: 16px;
-}
-
-.sb-disk-empty-enhanced span,
-.sb-disk [data-state] span {
-    color: var(--disk-muted);
-    font-size: 13px;
-}
-
-/* =========================================================
-   TABLE VIEW
-   ========================================================= */
-
-.sb-disk__table-wrap,
-.sb-disk__table-container,
-.sb-disk [data-view-container="table"] {
-    width: 100%;
-    min-width: 0;
-    overflow-x: auto;
-    border: 1px solid var(--disk-border);
-    border-radius: 16px;
-    background: #fff;
-}
-
-.sb-disk table {
-    width: 100%;
-    min-width: 760px;
-    border-collapse: separate;
-    border-spacing: 0;
-    background: #fff;
-}
-
-.sb-disk thead th {
-    height: 38px;
-    padding: 8px 14px;
-    border-bottom: 1px solid var(--disk-border);
-    background: #f8fafc;
-    color: #64748b;
-    font-size: 12px;
-    font-weight: 800;
-    text-align: left;
-    text-transform: uppercase;
-    letter-spacing: .03em;
-    vertical-align: middle;
-}
-
-.sb-disk tbody td {
-    height: 50px;
-    padding: 8px 14px;
-    border-bottom: 1px solid #f1f5f9;
-    vertical-align: middle;
-    color: #374151;
-    font-size: 13px;
-}
-
-.sb-disk tbody tr:last-child td {
-    border-bottom: 0;
-}
-
-.sb-disk tbody tr {
-    transition: background .15s ease;
-}
-
-.sb-disk tbody tr:hover {
-    background: #f8fbff;
-}
-
-.sb-disk tbody tr.is-selected {
-    background: #eff6ff;
-}
-
-.sb-disk__check-cell {
-    width: 44px;
-}
-
-.sb-disk__name-cell {
-    min-width: 260px;
-}
-
-/* =========================================================
-   FILE NAME / ICONS
-   ========================================================= */
-
-.sb-disk__modern-name {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    min-width: 0;
-    max-width: 100%;
-}
-
-.sb-disk__modern-name-main {
-    min-width: 0;
-}
-
-.sb-disk__modern-name-title {
-    color: var(--disk-text);
-    font-size: 14px;
-    font-weight: 800;
-    line-height: 1.25;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-}
-
-.sb-disk__modern-name-sub {
-    margin-top: 3px;
-    color: var(--disk-muted);
-    font-size: 12px;
-}
-
-.sb-disk__modern-icon {
-    width: 38px;
-    height: 38px;
-    min-width: 38px;
-    max-width: 38px;
-    min-height: 38px;
-    max-height: 38px;
-    border-radius: 13px;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    background: #f1f5f9;
-    color: #475569;
-    font-size: 10px;
-    font-weight: 900;
-    line-height: 1;
-    flex: 0 0 38px;
-}
-
-.sb-disk__modern-icon--folder {
-    background: #fef3c7;
-    color: #92400e;
-    font-size: 20px;
-}
-
-.sb-disk__modern-icon--pdf {
-    background: #fee2e2;
-    color: #991b1b;
-}
-
-.sb-disk__modern-icon--doc {
-    background: #dbeafe;
-    color: #1d4ed8;
-}
-
-.sb-disk__modern-icon--xls {
-    background: #dcfce7;
-    color: #166534;
-}
-
-.sb-disk__modern-icon--ppt {
-    background: #ffedd5;
-    color: #c2410c;
-}
-
-.sb-disk__modern-icon--img {
-    background: #fce7f3;
-    color: #be185d;
-}
-
-.sb-disk__modern-icon--zip {
-    background: #ede9fe;
-    color: #6d28d9;
-}
-
-.sb-disk__modern-icon--file {
-    background: #f1f5f9;
-    color: #475569;
-}
-
-.sb-disk__item-name {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    min-width: 0;
-}
-
-.sb-disk__item-name-label {
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    font-weight: 700;
-    color: #1f2937;
-}
-
-.sb-disk__badge,
-.sb-disk__type-pill {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    min-height: 24px;
-    padding: 0 9px;
-    border-radius: 999px;
-    background: #f3f4f6;
-    color: #4b5563;
-    font-size: 12px;
-    font-weight: 800;
-    white-space: nowrap;
-}
-
-/* =========================================================
-   ROW ACTIONS
-   ========================================================= */
-
-.sb-disk__actions {
-    display: flex;
-    align-items: center;
-    justify-content: flex-end;
-    gap: 6px;
-    flex-wrap: wrap;
-}
-
-.sb-disk__actions .sb-disk__row-btn,
-.sb-disk__viewer-btn {
-    min-height: 30px;
-    padding: 0 10px;
-    border-radius: 9px;
-    font-size: 12px;
-}
-
-.sb-disk__viewer-btn {
-    display: inline-flex !important;
-    align-items: center;
-    justify-content: center;
-    border: 1px solid var(--disk-accent) !important;
-    background: var(--disk-accent) !important;
-    color: #fff !important;
-    cursor: pointer;
-    text-decoration: none !important;
-}
-
-.sb-disk__viewer-btn:hover {
-    background: var(--disk-accent-hover) !important;
-    border-color: var(--disk-accent-hover) !important;
-    color: #fff !important;
-}
-
-/* =========================================================
-   GRID VIEW
-   ========================================================= */
-
-.sb-disk__grid,
-.sb-disk [data-view-container="grid"] {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
-    gap: 12px;
-    width: 100%;
-    min-width: 0;
-}
-
-.sb-disk__card {
-    min-height: 220px;
-    padding: 14px;
-    border: 1px solid var(--disk-border);
-    border-radius: 18px;
-    background: #fff;
-    transition:
-        border-color .15s ease,
-        box-shadow .15s ease,
-        transform .15s ease,
-        background .15s ease;
-}
-
-.sb-disk__card:hover {
-    border-color: #c7d2fe;
-    background: #f8fbff;
-    box-shadow: 0 12px 26px rgba(37, 99, 235, .10);
-    transform: translateY(-1px);
-}
-
-.sb-disk__card.is-selected {
-    border-color: var(--disk-accent);
-    background: #eff6ff;
-}
-
-.sb-disk__card-top {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 8px;
-}
-
-.sb-disk__card-check {
-    display: inline-flex;
-    align-items: center;
-}
-
-.sb-disk__card-preview {
-    height: 86px;
-    margin: 12px 0;
-    border-radius: 15px;
-    background: #f8fafc;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-}
-
-.sb-disk__card-preview .sb-disk__modern-icon {
-    width: 48px;
-    height: 48px;
-    min-width: 48px;
-    min-height: 48px;
-    border-radius: 16px;
-}
-
-.sb-disk__card-preview .sb-disk__modern-icon--folder {
-    font-size: 24px;
-}
-
-.sb-disk__card-name {
-    font-size: 14px;
-    font-weight: 800;
-    color: var(--disk-text);
-    line-height: 1.3;
-    word-break: break-word;
-}
-
-.sb-disk__card-meta {
-    margin-top: 5px;
-    color: var(--disk-muted);
-    font-size: 12px;
-}
-
-.sb-disk__card-sub {
-    color: var(--disk-muted);
-}
-
-.sb-disk__card-actions {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 6px;
-    margin-top: 12px;
-}
-
-.sb-disk__card-actions .sb-disk__row-btn {
-    min-height: 32px;
-    padding: 0 10px;
-    border-radius: 10px;
-    font-size: 12px;
-}
-
-/* =========================================================
-   BULK BAR
-   ========================================================= */
-
-.sb-disk [data-role="bulkbar"] {
-    margin: 12px 0;
-    padding: 12px 14px;
-    border: 1px solid #c7d2fe;
-    border-radius: 14px;
-    background: #eef2ff;
-    color: #1e3a8a;
-}
-
-.sb-disk [data-role="bulkbar-text"] {
-    font-weight: 800;
-}
-
-/* =========================================================
-   SETTINGS MODAL FINAL
-   ========================================================= */
-
-.sb-disk-settings-modal {
-    position: fixed !important;
-    inset: 0 !important;
-    z-index: 10000 !important;
-    display: flex !important;
-    align-items: center !important;
-    justify-content: center !important;
-    padding: 24px !important;
-    background: rgba(15, 23, 42, .50) !important;
-    backdrop-filter: blur(7px);
-    overflow: auto !important;
-}
-
-.sb-disk-settings-modal[hidden] {
-    display: none !important;
-}
-
-.sb-disk-settings-shell {
-    position: relative !important;
-    width: min(760px, calc(100vw - 48px)) !important;
-    max-height: calc(100vh - 48px) !important;
-    margin: 0 !important;
-    padding: 26px !important;
-    overflow: auto !important;
-    border: 1px solid rgba(226, 232, 240, .95) !important;
-    border-radius: 24px !important;
-    background: #ffffff !important;
-    box-shadow: 0 34px 90px rgba(15, 23, 42, .30) !important;
-}
-
-.sb-disk-settings-modal h1,
-.sb-disk-settings-modal h2,
-.sb-disk-settings-modal h3 {
-    margin: 0 48px 22px 0 !important;
-    color: #111827 !important;
-    font-size: 24px !important;
-    line-height: 1.2 !important;
-    font-weight: 900 !important;
-}
-
-/* Close X */
-
-.sb-disk-settings-modal [data-action="close-settings"] {
-    min-height: 36px !important;
-    height: 36px !important;
-    padding: 0 14px !important;
-    border-radius: 12px !important;
-    border: 1px solid #dbe3ef !important;
-    background: #ffffff !important;
-    color: #374151 !important;
-    font-size: 13px !important;
-    font-weight: 800 !important;
-}
-
-.sb-disk-settings-modal [data-action="close-settings"]:not(.sb-disk-settings-footer [data-action="close-settings"]) {
-    position: absolute !important;
-    top: 20px !important;
-    right: 20px !important;
-    width: 36px !important;
-    min-width: 36px !important;
-    padding: 0 !important;
-    font-size: 0 !important;
-}
-
-.sb-disk-settings-modal [data-action="close-settings"]:not(.sb-disk-settings-footer [data-action="close-settings"])::before {
-    content: "×";
-    font-size: 20px;
-    line-height: 1;
-}
-
-/* Form */
-
-.sb-disk-settings-modal [data-role="settings-form"] {
-    display: grid !important;
-    grid-template-columns: 210px minmax(0, 1fr) !important;
-    gap: 12px 16px !important;
-    align-items: center !important;
-    margin: 0 !important;
-    padding: 0 !important;
-}
-
-.sb-disk-settings-section-main,
-.sb-disk-settings-section-title {
-    grid-column: 1 / -1 !important;
-    margin-top: 6px !important;
-    padding-top: 6px !important;
-    color: #111827 !important;
-    font-size: 15px !important;
-    font-weight: 900 !important;
-}
-
-.sb-disk-settings-section-title {
-    margin-top: 18px !important;
-    padding-top: 18px !important;
-    border-top: 1px solid #eef2f7 !important;
-}
-
-.sb-disk-settings-modal [data-role="settings-form"] > label:not(:has(input[type="checkbox"])) {
-    margin: 0 !important;
-    color: #374151 !important;
-    font-size: 13px !important;
-    font-weight: 800 !important;
-    line-height: 1.3 !important;
-}
-
-.sb-disk-settings-modal [data-role="settings-form"] input[type="text"],
-.sb-disk-settings-modal [data-role="settings-form"] input[type="number"],
-.sb-disk-settings-modal [data-role="settings-form"] select,
-.sb-disk-settings-modal [data-role="settings-form"] textarea {
-    width: 100% !important;
-    min-width: 0 !important;
-    max-width: 100% !important;
-    height: 40px !important;
-    padding: 0 13px !important;
-    border: 1px solid #dbe3ef !important;
-    border-radius: 13px !important;
-    background: #ffffff !important;
-    color: #111827 !important;
-    font-size: 13px !important;
-    outline: none !important;
-    box-shadow: none !important;
-}
-
-.sb-disk-settings-modal [data-role="settings-form"] textarea {
-    height: auto !important;
-    min-height: 84px !important;
-    padding-top: 10px !important;
-    padding-bottom: 10px !important;
-}
-
-.sb-disk-settings-modal [data-role="settings-form"] input:focus,
-.sb-disk-settings-modal [data-role="settings-form"] select:focus,
-.sb-disk-settings-modal [data-role="settings-form"] textarea:focus {
-    border-color: var(--disk-accent, #2563eb) !important;
-    box-shadow: 0 0 0 3px rgba(37, 99, 235, .12) !important;
-}
-
-/* Hints */
-
-.sb-disk-settings-modal [data-role="settings-form"] small,
-.sb-disk-settings-modal [data-role="settings-form"] .hint,
-.sb-disk-settings-modal [data-role="settings-form"] .help {
-    grid-column: 2 / 3 !important;
-    margin: -6px 0 4px !important;
-    color: #6b7280 !important;
-    font-size: 12px !important;
-    line-height: 1.35 !important;
-}
-
-/* Checkboxes */
-
-.sb-disk-settings-checks {
-    grid-column: 1 / -1 !important;
-    display: grid !important;
-    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
-    gap: 8px !important;
-    margin-top: 0 !important;
-}
-
-.sb-disk-settings-checks label {
-    display: flex !important;
-    align-items: center !important;
-    gap: 8px !important;
-    min-height: 38px !important;
-    margin: 0 !important;
-    padding: 9px 10px !important;
-    border: 1px solid #e5e7eb !important;
-    border-radius: 13px !important;
-    background: #f8fafc !important;
-    color: #374151 !important;
-    font-size: 12px !important;
-    font-weight: 700 !important;
-    line-height: 1.3 !important;
-}
-
-.sb-disk-settings-checks label:hover {
-    border-color: #c7d2fe !important;
-    background: #f8fbff !important;
-}
-
-.sb-disk-settings-checks input[type="checkbox"] {
-    width: 16px !important;
-    height: 16px !important;
-    margin: 0 !important;
-    flex: 0 0 16px !important;
-    accent-color: var(--disk-accent, #2563eb);
-}
-
-/* Footer */
-
-.sb-disk-settings-footer {
-    display: flex !important;
-    align-items: center !important;
-    justify-content: flex-end !important;
-    gap: 10px !important;
-    margin-top: 22px !important;
-    padding-top: 18px !important;
-    border-top: 1px solid #eef2f7 !important;
-}
-
-.sb-disk-settings-footer button {
-    min-height: 40px !important;
-    padding: 0 16px !important;
-    border-radius: 12px !important;
-    font-size: 13px !important;
-    font-weight: 800 !important;
-}
-
-.sb-disk-settings-footer [data-action="save-settings"] {
-    border-color: var(--disk-accent, #2563eb) !important;
-    background: var(--disk-accent, #2563eb) !important;
-    color: #fff !important;
-}
-
-.sb-disk-settings-footer [data-action="save-settings"]:hover {
-    background: var(--disk-accent-hover, #3f5de9) !important;
-    border-color: var(--disk-accent-hover, #3f5de9) !important;
-    color: #fff !important;
-}
-
-.sb-disk-settings-modal [data-role="settings-message"] {
-    margin-top: 12px !important;
-    color: #6b7280 !important;
-    font-size: 13px !important;
-}
-
-/* =========================================================
-   RESPONSIVE
-   ========================================================= */
-
-@media (max-width: 1100px) {
-    .sb-disk__smart-header,
-    .sb-disk__smart-toolbar {
-        align-items: flex-start;
-        flex-direction: column;
-    }
-
-    .sb-disk__smart-header-right,
-    .sb-disk__smart-toolbar-right {
-        justify-content: flex-start;
-    }
-
-    .sb-disk__smart-toolbar-left,
-    .sb-disk__smart-toolbar-right {
-        width: 100%;
-    }
-
-    .sb-disk [data-role="search-input"] {
-        width: 100% !important;
-        min-width: 0 !important;
-    }
-
-    .sb-disk [data-role="sort-select"] {
-        width: 100% !important;
-    }
-
-    .sb-disk__actions {
-        justify-content: flex-start;
+if (!function_exists('mvc_route')) {
+    /**
+     * Собрать URL по имени маршрута.
+     *
+     * Пример:
+     * mvc_route('admin.users.show', ['id' => 5])
+     */
+    function mvc_route(string $name, array $params = [], array $query = []): string
+    {
+        return App::route($name, $params, $query);
     }
 }
 
-@media (max-width: 900px) {
-    .sb-public-disk-head {
-        flex-direction: column;
-        align-items: stretch;
-    }
+if (!function_exists('mvc_e')) {
+    /**
+     * Безопасный вывод текста.
+     *
+     * Это короткая замена htmlspecialcharsbx().
+     */
+    function mvc_e(mixed $value): string
+    {
+        if (function_exists('htmlspecialcharsbx')) {
+            return htmlspecialcharsbx((string)$value);
+        }
 
-    .sb-disk__grid,
-    .sb-disk [data-view-container="grid"] {
-        grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
-    }
-
-    .sb-disk table {
-        min-width: 700px;
-    }
-}
-
-@media (max-width: 760px) {
-    .sb-disk-settings-modal {
-        align-items: flex-start !important;
-        padding: 12px !important;
-    }
-
-    .sb-disk-settings-shell {
-        width: 100% !important;
-        max-height: none !important;
-        padding: 18px !important;
-        border-radius: 20px !important;
-    }
-
-    .sb-disk-settings-modal [data-role="settings-form"] {
-        grid-template-columns: 1fr !important;
-        gap: 8px !important;
-    }
-
-    .sb-disk-settings-modal [data-role="settings-form"] small,
-    .sb-disk-settings-modal [data-role="settings-form"] .hint,
-    .sb-disk-settings-modal [data-role="settings-form"] .help {
-        grid-column: auto !important;
-        margin: -2px 0 4px !important;
-    }
-
-    .sb-disk-settings-checks {
-        grid-template-columns: 1fr !important;
-    }
-
-    .sb-disk-settings-footer {
-        align-items: stretch !important;
-        flex-direction: column-reverse !important;
-    }
-
-    .sb-disk-settings-footer button {
-        width: 100% !important;
+        return htmlspecialchars((string)$value, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
     }
 }
 
-@media (max-width: 700px) {
-    .sb-disk__smart-toolbar {
-        padding: 12px;
-    }
 
-    .sb-disk button,
-    .sb-disk .sb-disk__view-btn,
-    .sb-disk [data-action="upload"],
-    .sb-disk [data-action="create-folder"],
-    .sb-disk [data-action="refresh"],
-    .sb-disk [data-action="settings"] {
-        width: 100%;
-    }
+---
 
-    .sb-disk__actions,
-    .sb-disk__card-actions {
-        align-items: stretch;
-        flex-direction: column;
-    }
+2. Подключи helper в /local/mvc/bootstrap.php
 
-    .sb-disk__actions .sb-disk__row-btn,
-    .sb-disk__card-actions .sb-disk__row-btn {
-        width: 100%;
-    }
+Открой:
+
+/local/mvc/bootstrap.php
+
+После автозагрузчика добавь:
+
+$helpersFile = $_SERVER['DOCUMENT_ROOT'] . '/local/mvc/helpers.php';
+
+if (is_file($helpersFile)) {
+    require_once $helpersFile;
 }
 
-В public_page.php обнови версию CSS:
+Полностью конец файла должен выглядеть примерно так:
 
-<link rel="stylesheet" href="<?= sb_public_h($basePath) ?>/components/disk/styles.css?v=11">
+spl_autoload_register(function ($class) {
+    $map = [
+        'Local\\Mvc\\' => $_SERVER['DOCUMENT_ROOT'] . '/local/mvc/',
+    ];
 
-После замены сделай Ctrl + F5.
+    if (
+        defined('LOCAL_MVC_PROJECT_NAMESPACE')
+        && defined('LOCAL_MVC_PROJECT_ROOT')
+    ) {
+        $projectNamespace = rtrim((string)LOCAL_MVC_PROJECT_NAMESPACE, '\\') . '\\';
+        $projectRoot = rtrim((string)LOCAL_MVC_PROJECT_ROOT, '/');
+
+        $map[$projectNamespace] = $projectRoot . '/';
+    }
+
+    foreach ($map as $prefix => $baseDir) {
+        if (strncmp($prefix, $class, strlen($prefix)) !== 0) {
+            continue;
+        }
+
+        $relativeClass = substr($class, strlen($prefix));
+        $file = rtrim($baseDir, '/') . '/' . str_replace('\\', '/', $relativeClass) . '.php';
+
+        if (is_file($file)) {
+            require_once $file;
+        }
+
+        return;
+    }
+});
+
+$helpersFile = $_SERVER['DOCUMENT_ROOT'] . '/local/mvc/helpers.php';
+
+if (is_file($helpersFile)) {
+    require_once $helpersFile;
+}
+
+
+---
+
+3. Обнови ссылки в /local/mvc_demo/Views/admin/users.php
+
+Найди ссылку:
+
+<a href="<?= htmlspecialcharsbx(\Local\Mvc\Core\App::route('admin.users.show', [
+    'id' => (int)($user['id'] ?? 0),
+])) ?>">
+    Открыть
+</a>
+
+Замени на короткую:
+
+<a href="<?= mvc_e(mvc_route('admin.users.show', [
+    'id' => (int)($user['id'] ?? 0),
+])) ?>">
+    Открыть
+</a>
+
+
+---
+
+4. Обнови ссылку назад в /local/mvc_demo/Views/admin/user_detail.php
+
+Найди:
+
+<a href="<?= htmlspecialcharsbx(\Local\Mvc\Core\App::route('admin.users.index')) ?>">
+    ← Назад к списку
+</a>
+
+Замени на:
+
+<a href="<?= mvc_e(mvc_route('admin.users.index')) ?>">
+    ← Назад к списку
+</a>
+
+
+---
+
+5. Обнови форму /local/mvc_demo/Views/form/index.php
+
+Найди:
+
+<form method="post" action="/local/mvc_demo/form/send" style="margin-top: 24px;">
+
+Замени на:
+
+<form method="post" action="<?= mvc_e(mvc_route('form.send')) ?>" style="margin-top: 24px;">
+
+Теперь форма тоже не знает точный URL.
+
+
+---
+
+6. Проверь, что маршруты названы
+
+В /local/mvc_demo/routes.php должно быть:
+
+$router->get('/form', [FormController::class, 'index'], [], 'form.index');
+
+$router->post('/form/send', [FormController::class, 'send'], ['csrf'], 'form.send');
+
+И в админской группе:
+
+$router->get('/users', [AdminController::class, 'users'], [], 'admin.users.index');
+
+$router->get('/users/{id:\d+}', [AdminController::class, 'userDetail'], [], 'admin.users.show');
+
+
+---
+
+7. Проверяем
+
+Сбрось OPcache:
+
+opcache_reset();
+echo 'OPcache reset OK';
+
+Проверь:
+
+/local/mvc_demo/form
+/local/mvc_demo/admin/users
+/local/mvc_demo/admin/users/1
+/local/mvc_demo/debug/routes
+
+
+---
+
+Что мы сделали
+
+Теперь во view можно писать коротко:
+
+mvc_route('admin.users.show', ['id' => 5])
+
+вместо длинного:
+
+\Local\Mvc\Core\App::route('admin.users.show', ['id' => 5])
+
+И можно безопасно выводить текст так:
+
+mvc_e($value)
+
+вместо:
+
+htmlspecialcharsbx($value)
+
+Главная мысль:
+
+App::route() — ядро фреймворка.
+mvc_route() — удобная короткая функция для views.
+
+Дальше логично сделать named route group prefix, чтобы маршруты внутри /admin автоматически получали имена типа admin.users.index, а не писать полное имя руками каждый раз.
