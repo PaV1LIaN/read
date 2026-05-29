@@ -1,138 +1,68 @@
-Да, идём дальше. Делаем FormRequest, как в Laravel.
+Идём дальше по Laravel-подходу.
 
-Сейчас в FormController валидация выглядит так:
+Сейчас у нас FormRequest уже есть, но контроллер всё ещё сам проверяет:
 
-$validator = Validator::make($data)
-    ->required('name', 'Введите имя.')
-    ->min('name', 2, 'Имя должно быть не короче 2 символов.')
-    ->max('name', 100, 'Имя должно быть не длиннее 100 символов.');
+if ($request->fails()) {
+    ...
+}
 
-А в Laravel обычно делают отдельный request-класс:
+А в Laravel обычно контроллеру уже приходит проверенный request. Если данные плохие — Laravel сам редиректит назад с ошибками.
+
+Мы сделаем так же.
+
+Хотим получить в FormController вот такой чистый код:
 
 public function send(StoreMessageRequest $request): Response
 {
     $data = $request->validated();
-}
 
-То есть контроллер становится чище.
+    Flash::success('Форма успешно отправлена. Имя: ' . $data['name']);
+
+    return $this->redirectRoute('form.index');
+}
 
 
 ---
 
-1. Обнови /local/mvc/Core/Validator.php
-
-Полностью замени файл:
+1. Создай /local/mvc/Core/ValidationException.php
 
 <?php
 
 namespace Local\Mvc\Core;
 
+use RuntimeException;
+
 /**
- * Validator
+ * ValidationException
  *
- * Помощник для проверки данных.
+ * Исключение ошибки валидации.
  *
- * Поддерживает два стиля:
- *
- * 1. Старый fluent-стиль:
- * Validator::make($data)->required(...)->min(...)
- *
- * 2. Laravel-like rules:
- * Validator::validate($data, [
- *     'name' => ['required', 'min:2', 'max:100']
- * ]);
+ * Если FormRequest не прошёл проверку,
+ * он выбрасывает это исключение.
  */
-class Validator
+class ValidationException extends RuntimeException
 {
-    private array $data;
-    private array $errors = [];
-
-    public function __construct(array $data)
-    {
-        $this->data = $data;
-    }
-
-    public static function make(array $data): self
-    {
-        return new self($data);
-    }
-
-    /**
-     * Laravel-like валидация по правилам.
-     */
-    public static function validate(array $data, array $rules, array $messages = []): self
-    {
-        $validator = new self($data);
-
-        foreach ($rules as $field => $fieldRules) {
-            if (is_string($fieldRules)) {
-                $fieldRules = explode('|', $fieldRules);
-            }
-
-            if (!is_array($fieldRules)) {
-                continue;
-            }
-
-            foreach ($fieldRules as $rule) {
-                $rule = trim((string)$rule);
-
-                if ($rule === '') {
-                    continue;
-                }
-
-                $validator->applyRule((string)$field, $rule, $messages);
-            }
-        }
-
-        return $validator;
-    }
-
-    public function required(string $field, string $message): self
-    {
-        $value = $this->data[$field] ?? null;
-
-        if ($value === null || trim((string)$value) === '') {
-            $this->errors[$field][] = $message;
-        }
-
-        return $this;
-    }
-
-    public function min(string $field, int $length, string $message): self
-    {
-        $value = trim((string)($this->data[$field] ?? ''));
-
-        if ($value !== '' && mb_strlen($value) < $length) {
-            $this->errors[$field][] = $message;
-        }
-
-        return $this;
-    }
-
-    public function max(string $field, int $length, string $message): self
-    {
-        $value = trim((string)($this->data[$field] ?? ''));
-
-        if ($value !== '' && mb_strlen($value) > $length) {
-            $this->errors[$field][] = $message;
-        }
-
-        return $this;
-    }
-
-    public function fails(): bool
-    {
-        return !empty($this->errors);
-    }
-
-    public function passes(): bool
-    {
-        return !$this->fails();
+    public function __construct(
+        private array $errors = [],
+        private array $old = [],
+        private string $redirectTo = ''
+    ) {
+        parent::__construct('Ошибка валидации');
     }
 
     public function errors(): array
     {
         return $this->errors;
+    }
+
+    public function old(): array
+    {
+        return $this->old;
+    }
+
+    public function redirectTo(): string
+    {
+        return $this->redirectTo;
     }
 
     public function errorList(): array
@@ -147,86 +77,12 @@ class Validator
 
         return $list;
     }
-
-    private function applyRule(string $field, string $rule, array $messages): void
-    {
-        $value = $this->data[$field] ?? null;
-        $valueString = trim((string)$value);
-
-        [$ruleName, $ruleValue] = $this->parseRule($rule);
-
-        if ($ruleName === 'required') {
-            if ($value === null || $valueString === '') {
-                $this->addError($field, $this->message($field, 'required', $messages, 'Поле обязательно для заполнения.'));
-            }
-
-            return;
-        }
-
-        if ($ruleName === 'min') {
-            $min = (int)$ruleValue;
-
-            if ($valueString !== '' && mb_strlen($valueString) < $min) {
-                $this->addError($field, $this->message($field, 'min', $messages, 'Минимальная длина: ' . $min . '.'));
-            }
-
-            return;
-        }
-
-        if ($ruleName === 'max') {
-            $max = (int)$ruleValue;
-
-            if ($valueString !== '' && mb_strlen($valueString) > $max) {
-                $this->addError($field, $this->message($field, 'max', $messages, 'Максимальная длина: ' . $max . '.'));
-            }
-
-            return;
-        }
-
-        if ($ruleName === 'integer') {
-            if ($valueString !== '' && filter_var($valueString, FILTER_VALIDATE_INT) === false) {
-                $this->addError($field, $this->message($field, 'integer', $messages, 'Поле должно быть целым числом.'));
-            }
-
-            return;
-        }
-
-        if ($ruleName === 'email') {
-            if ($valueString !== '' && filter_var($valueString, FILTER_VALIDATE_EMAIL) === false) {
-                $this->addError($field, $this->message($field, 'email', $messages, 'Некорректный email.'));
-            }
-
-            return;
-        }
-    }
-
-    private function parseRule(string $rule): array
-    {
-        $parts = explode(':', $rule, 2);
-
-        return [
-            trim($parts[0]),
-            trim($parts[1] ?? ''),
-        ];
-    }
-
-    private function message(string $field, string $rule, array $messages, string $default): string
-    {
-        $key = $field . '.' . $rule;
-
-        return (string)($messages[$key] ?? $default);
-    }
-
-    private function addError(string $field, string $message): void
-    {
-        $this->errors[$field][] = $message;
-    }
 }
 
 
 ---
 
-2. Создай /local/mvc/Core/FormRequest.php
+2. Замени /local/mvc/Core/FormRequest.php
 
 <?php
 
@@ -236,18 +92,6 @@ namespace Local\Mvc\Core;
  * FormRequest
  *
  * Laravel-like request для валидации форм.
- *
- * Пример:
- *
- * class StoreMessageRequest extends FormRequest
- * {
- *     public function rules(): array
- *     {
- *         return [
- *             'name' => ['required', 'min:2']
- *         ];
- *     }
- * }
  */
 abstract class FormRequest
 {
@@ -260,30 +104,28 @@ abstract class FormRequest
         $this->request = $request;
     }
 
-    /**
-     * Правила валидации.
-     */
     abstract public function rules(): array;
 
-    /**
-     * Сообщения ошибок.
-     */
     public function messages(): array
     {
         return [];
     }
 
-    /**
-     * Можно ли пользователю выполнять этот запрос.
-     */
     public function authorize(): bool
     {
         return true;
     }
 
     /**
-     * Все данные формы.
+     * Имя маршрута, куда редиректить при ошибке.
+     *
+     * Если null — фреймворк попробует вернуть назад.
      */
+    public function redirectRoute(): ?string
+    {
+        return null;
+    }
+
     public function all(): array
     {
         return array_merge(
@@ -292,9 +134,6 @@ abstract class FormRequest
         );
     }
 
-    /**
-     * Одно поле.
-     */
     public function input(string $key, mixed $default = null): mixed
     {
         $data = $this->all();
@@ -346,58 +185,211 @@ abstract class FormRequest
         return $this->validator()->errorList();
     }
 
-    /**
-     * Проверенные данные.
-     *
-     * Пока возвращаем только поля, которые есть в rules().
-     */
     public function validated(): array
     {
         $data = $this->all();
         $validated = [];
 
         foreach (array_keys($this->rules()) as $field) {
-            $validated[$field] = $data[$field] ?? null;
+            $value = $data[$field] ?? null;
+
+            if (is_string($value)) {
+                $value = trim($value);
+            }
+
+            $validated[$field] = $value;
         }
 
         return $validated;
+    }
+
+    /**
+     * Автоматическая проверка.
+     *
+     * Container вызовет этот метод сам.
+     */
+    public function validateResolved(): void
+    {
+        if (!$this->fails()) {
+            return;
+        }
+
+        $redirectTo = '';
+
+        if ($this->redirectRoute()) {
+            $redirectTo = App::route($this->redirectRoute());
+        }
+
+        throw new ValidationException(
+            $this->errors(),
+            $this->all(),
+            $redirectTo
+        );
     }
 }
 
 
 ---
 
-3. Нужно добавить postAll() в Request.php
+3. Обнови /local/mvc/Core/Container.php
 
-Открой:
+Найди в методе resolveParameters() вот этот кусок:
 
-/local/mvc/Core/Request.php
-
-Добавь метод внутрь класса:
-
-/**
- * Все POST-данные.
- */
-public function postAll(): array
-{
-    return $this->post;
+if ($type instanceof ReflectionNamedType && !$type->isBuiltin()) {
+    $dependencies[] = $this->make($type->getName());
+    continue;
 }
 
-Если хочешь, рядом с методом:
+Замени на:
 
-public function post(string $key, mixed $default = null): mixed
+if ($type instanceof ReflectionNamedType && !$type->isBuiltin()) {
+    $object = $this->make($type->getName());
+
+    /**
+     * Laravel-like поведение:
+     * если в метод контроллера пришёл FormRequest,
+     * валидируем его автоматически ДО запуска контроллера.
+     */
+    if ($object instanceof FormRequest) {
+        $object->validateResolved();
+    }
+
+    $dependencies[] = $object;
+    continue;
+}
+
+Теперь, если метод контроллера принимает StoreMessageRequest, контейнер сам его проверит.
 
 
 ---
 
-4. Создай папку Requests в demo-проекте
+4. Обнови /local/mvc/Core/ErrorHandler.php
 
-/local/mvc_demo/Requests/
+Найди метод:
+
+public static function renderThrowable(Throwable $e): void
+
+В самое начало метода, сразу после открывающей {, добавь:
+
+if ($e instanceof ValidationException) {
+    self::renderValidationException($e);
+    return;
+}
+
+Должно стать так:
+
+public static function renderThrowable(Throwable $e): void
+{
+    if ($e instanceof ValidationException) {
+        self::renderValidationException($e);
+        return;
+    }
+
+    self::log($e->getMessage(), $e->getFile(), $e->getLine());
+
+    ...
+}
+
+Теперь в этот же файл, перед методом debugEnabled(), добавь новые методы:
+
+private static function renderValidationException(ValidationException $e): void
+{
+    self::log($e->getMessage(), $e->getFile(), $e->getLine());
+
+    /**
+     * Для API отдаём JSON, как в Laravel.
+     */
+    if (self::wantsJson()) {
+        Response::json([
+            'ok' => false,
+            'error' => 'VALIDATION_ERROR',
+            'details' => [
+                'message' => 'Ошибка валидации',
+                'errors' => $e->errors(),
+            ],
+        ], 422)->send();
+
+        return;
+    }
+
+    /**
+     * Для обычной формы:
+     * 1. сохраняем старые значения
+     * 2. сохраняем ошибки
+     * 3. редиректим назад
+     */
+    Flash::old($e->old());
+
+    foreach ($e->errorList() as $error) {
+        Flash::error($error);
+    }
+
+    Response::redirect(self::validationRedirectUrl($e))->send();
+}
+
+private static function validationRedirectUrl(ValidationException $e): string
+{
+    if ($e->redirectTo() !== '') {
+        return $e->redirectTo();
+    }
+
+    if (self::$request instanceof Request) {
+        $referer = (string)self::$request->server('HTTP_REFERER', '');
+
+        if (self::isSafeRedirectUrl($referer)) {
+            return $referer;
+        }
+    }
+
+    return App::projectUrl() . '/';
+}
+
+private static function isSafeRedirectUrl(string $url): bool
+{
+    $url = trim($url);
+
+    if ($url === '') {
+        return false;
+    }
+
+    if (str_starts_with($url, '/')) {
+        return true;
+    }
+
+    if (!(self::$request instanceof Request)) {
+        return false;
+    }
+
+    $currentHost = (string)self::$request->server('HTTP_HOST', '');
+
+    $parts = parse_url($url);
+
+    if (!is_array($parts)) {
+        return false;
+    }
+
+    $urlHost = (string)($parts['host'] ?? '');
+
+    if ($urlHost === '' || $currentHost === '') {
+        return false;
+    }
+
+    return strcasecmp($urlHost, $currentHost) === 0;
+}
 
 
 ---
 
-5. Создай /local/mvc_demo/Requests/StoreMessageRequest.php
+5. Обнови /local/mvc_demo/Requests/StoreMessageRequest.php
+
+Добавь метод redirectRoute():
+
+public function redirectRoute(): ?string
+{
+    return 'form.index';
+}
+
+Полный файл:
 
 <?php
 
@@ -405,13 +397,6 @@ namespace Local\MvcDemo\Requests;
 
 use Local\Mvc\Core\FormRequest;
 
-/**
- * StoreMessageRequest
- *
- * Проверка тестовой формы.
- *
- * Это очень похоже на Laravel FormRequest.
- */
 class StoreMessageRequest extends FormRequest
 {
     public function rules(): array
@@ -434,12 +419,19 @@ class StoreMessageRequest extends FormRequest
             'message.max' => 'Сообщение должно быть не длиннее 1000 символов.',
         ];
     }
+
+    public function redirectRoute(): ?string
+    {
+        return 'form.index';
+    }
 }
 
 
 ---
 
-6. Обнови /local/mvc_demo/Controllers/FormController.php
+6. Упрости /local/mvc_demo/Controllers/FormController.php
+
+Теперь контроллеру не нужно проверять ошибки.
 
 Полностью замени файл:
 
@@ -469,16 +461,6 @@ class FormController extends Controller
 
     public function send(StoreMessageRequest $request): Response
     {
-        if ($request->fails()) {
-            Flash::old($request->all());
-
-            foreach ($request->errorList() as $error) {
-                Flash::error($error);
-            }
-
-            return $this->redirectRoute('form.index');
-        }
-
         $data = $request->validated();
 
         Flash::success('Форма успешно отправлена. Имя: ' . $data['name']);
@@ -487,98 +469,67 @@ class FormController extends Controller
     }
 }
 
-Смотри, насколько стало похоже на Laravel:
-
-public function send(StoreMessageRequest $request): Response
-{
-    $data = $request->validated();
-}
+Вот теперь это уже прям Laravel-like.
 
 
 ---
 
-7. Проверяем форму
+7. Проверяем
 
 Сбрось OPcache:
 
 opcache_reset();
 echo 'OPcache reset OK';
 
-Открой:
+Проверь форму:
 
 /local/mvc_demo/form
 
-Проверь:
+Сценарии:
 
 1. Отправь пустую форму.
-2. Введи имя из одной буквы.
-3. Введи короткое сообщение.
-4. Отправь нормальные данные.
+   Должны появиться ошибки, поля должны сохраниться.
 
-Всё должно работать как раньше.
+2. Введи имя из 1 буквы и короткое сообщение.
+   Должны появиться ошибки.
+
+3. Введи нормальные данные.
+   Должно появиться зелёное сообщение, поля очистятся.
 
 
 ---
 
 Что мы сделали
 
-Раньше FormController сам знал правила:
+Раньше контроллер сам проверял:
 
-Validator::make($data)
-    ->required(...)
-    ->min(...)
+if ($request->fails()) {
+    ...
+}
 
-Теперь правила лежат отдельно:
-
-/local/mvc_demo/Requests/StoreMessageRequest.php
-
-Контроллер стал тоньше:
+Теперь контроллер получает уже валидный request:
 
 public function send(StoreMessageRequest $request): Response
 {
-    if ($request->fails()) {
-        ...
-    }
-
     $data = $request->validated();
 }
 
-Это уже очень похоже на Laravel.
+Если данные плохие, контроллер вообще не запускается.
 
+Цепочка теперь такая:
 
----
+POST /form/send
+  ↓
+Router
+  ↓
+Container видит StoreMessageRequest
+  ↓
+FormRequest автоматически валидируется
+  ↓
+если ошибка — ValidationException
+  ↓
+ErrorHandler сохраняет Flash и редиректит обратно
+  ↓
+если всё хорошо — запускается FormController::send()
 
-Как это будет выглядеть в будущих проектах
-
-Например, для sitebuilder:
-
-public function store(StoreSiteRequest $request, SiteService $sites): Response
-{
-    $site = $sites->create($request->validated());
-
-    return $this->redirectRoute('sites.edit', [
-        'siteId' => $site['id'],
-    ]);
-}
-
-А правила будут отдельно:
-
-class StoreSiteRequest extends FormRequest
-{
-    public function rules(): array
-    {
-        return [
-            'title' => ['required', 'min:3', 'max:255'],
-            'code' => ['required', 'max:100'],
-        ];
-    }
-}
-
-Главная мысль:
-
-Controller — принимает решение.
-FormRequest — проверяет входные данные.
-Service — выполняет бизнес-логику.
-Model — работает с данными.
-
-Это прям Laravel-подход.
+Это очень похоже на Laravel.
