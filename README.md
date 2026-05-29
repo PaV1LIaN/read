@@ -1,387 +1,382 @@
-Идём дальше. Раз у нас появились миграции, следующий Laravel-like шаг — сделать Schema Builder.
+Идём дальше. После миграций в Laravel обычно идут Seeders.
 
-В Laravel миграция обычно выглядит не так:
+Простыми словами:
 
-$this->statement("CREATE TABLE ...");
+Migration — создаёт таблицу.
+Seeder — заполняет таблицу тестовыми данными.
 
-А красиво:
+Например:
 
-Schema::create('notes', function (Blueprint $table) {
-    $table->id();
-    $table->string('title');
-    $table->text('body')->nullable();
-    $table->timestamps();
-});
-
-Сейчас сделаем похожее.
+Создать таблицу notes
+↓
+Добавить 3 тестовые заметки
 
 
 ---
 
-1. Создай /local/mvc/Core/ColumnDefinition.php
-
-<?php
-
-namespace Local\Mvc\Core;
-
-class ColumnDefinition
-{
-    private bool $nullable = false;
-
-    public function __construct(
-        private string $name,
-        private string $type,
-        private bool $primary = false
-    ) {}
-
-    public function nullable(): self
-    {
-        $this->nullable = true;
-
-        return $this;
-    }
-
-    public function toSql(): string
-    {
-        $sql = $this->safeColumn($this->name) . ' ' . $this->type;
-
-        if ($this->primary) {
-            return $sql . ' PRIMARY KEY';
-        }
-
-        $sql .= $this->nullable ? ' NULL' : ' NOT NULL';
-
-        return $sql;
-    }
-
-    private function safeColumn(string $column): string
-    {
-        $column = trim($column);
-
-        if (!preg_match('/^[a-zA-Z_][a-zA-Z0-9_]*$/', $column)) {
-            throw new \InvalidArgumentException('BAD_COLUMN_NAME: ' . $column);
-        }
-
-        return $column;
-    }
-}
-
-
----
-
-2. Создай /local/mvc/Core/Blueprint.php
+1. Создай /local/mvc/Core/Seeder.php
 
 <?php
 
 namespace Local\Mvc\Core;
 
 /**
- * Blueprint
+ * Seeder
  *
- * Laravel-like описание таблицы.
- *
- * Пример:
- * $table->id();
- * $table->string('title');
- * $table->text('body')->nullable();
- * $table->timestamps();
+ * Laravel-like наполнитель базы тестовыми данными.
  */
-class Blueprint
+abstract class Seeder
 {
-    private array $columns = [];
+    abstract public function run(): void;
 
-    public function id(string $name = 'id'): ColumnDefinition
+    /**
+     * Запустить другие seeder-классы.
+     *
+     * Пример:
+     * $this->call([
+     *     DemoNotesSeeder::class,
+     * ]);
+     */
+    protected function call(array|string $seeders): void
     {
-        return $this->addColumn(new ColumnDefinition($name, 'BIGSERIAL', true));
-    }
+        if (!is_array($seeders)) {
+            $seeders = [$seeders];
+        }
 
-    public function string(string $name, int $length = 255): ColumnDefinition
-    {
-        $length = max(1, min($length, 1000));
+        foreach ($seeders as $seederClass) {
+            $seeder = App::make((string)$seederClass);
 
-        return $this->addColumn(new ColumnDefinition($name, 'VARCHAR(' . $length . ')'));
-    }
+            if (!$seeder instanceof Seeder) {
+                throw new \RuntimeException('SEEDER_MUST_EXTEND_SEEDER: ' . $seederClass);
+            }
 
-    public function text(string $name): ColumnDefinition
-    {
-        return $this->addColumn(new ColumnDefinition($name, 'TEXT'));
-    }
-
-    public function integer(string $name): ColumnDefinition
-    {
-        return $this->addColumn(new ColumnDefinition($name, 'INTEGER'));
-    }
-
-    public function bigInteger(string $name): ColumnDefinition
-    {
-        return $this->addColumn(new ColumnDefinition($name, 'BIGINT'));
-    }
-
-    public function timestamp(string $name): ColumnDefinition
-    {
-        return $this->addColumn(new ColumnDefinition($name, 'TIMESTAMP'));
-    }
-
-    public function timestamps(): void
-    {
-        $this->timestamp('created_at')->nullable();
-        $this->timestamp('updated_at')->nullable();
-    }
-
-    public function toSqlColumns(): array
-    {
-        return array_map(
-            static fn (ColumnDefinition $column) => $column->toSql(),
-            $this->columns
-        );
-    }
-
-    private function addColumn(ColumnDefinition $column): ColumnDefinition
-    {
-        $this->columns[] = $column;
-
-        return $column;
+            $seeder->run();
+        }
     }
 }
 
 
 ---
 
-3. Создай /local/mvc/Core/SchemaBuilder.php
+2. Создай /local/mvc/Core/SeederRunner.php
 
 <?php
 
 namespace Local\Mvc\Core;
 
-use Closure;
-use RuntimeException;
-
 /**
- * SchemaBuilder
+ * SeederRunner
  *
- * Laravel-like создание/удаление таблиц.
+ * Запускает seeders из config.php.
  */
-class SchemaBuilder
+class SeederRunner
 {
-    public function __construct(
-        private ?string $connection = null
-    ) {}
-
-    public function connection(string $connection): self
+    public function run(?array $seeders = null): array
     {
-        return new self($connection);
-    }
-
-    public function create(string $table, callable $callback): void
-    {
-        $connection = $this->connectionName();
-
-        $this->ensureSchemaExists($connection);
-
-        $blueprint = new Blueprint();
-
-        $callback($blueprint);
-
-        $columns = $blueprint->toSqlColumns();
-
-        if (empty($columns)) {
-            throw new RuntimeException('SCHEMA_CREATE_NO_COLUMNS: ' . $table);
+        if ($seeders === null) {
+            $seeders = Config::get('database.seeders', []);
         }
 
-        $sql = 'CREATE TABLE IF NOT EXISTS '
-            . $this->qualifiedTable($table, $connection)
-            . " (\n    "
-            . implode(",\n    ", $columns)
-            . "\n)";
+        if (!is_array($seeders)) {
+            $seeders = [];
+        }
 
-        Db::execute($sql, [], $connection);
+        $results = [];
+
+        foreach ($seeders as $seederClass) {
+            $seeder = App::make((string)$seederClass);
+
+            if (!$seeder instanceof Seeder) {
+                throw new \RuntimeException('SEEDER_MUST_EXTEND_SEEDER: ' . $seederClass);
+            }
+
+            $seeder->run();
+
+            $results[] = [
+                'seeder' => (string)$seederClass,
+                'status' => 'done',
+                'message' => 'Seeder выполнен',
+            ];
+        }
+
+        return $results;
     }
+}
 
-    public function dropIfExists(string $table): void
+
+---
+
+3. Зарегистрируй SeederRunner в /local/mvc/Core/App.php
+
+Найди блок:
+
+$container->singleton(\Local\Mvc\Core\SchemaBuilder::class, \Local\Mvc\Core\SchemaBuilder::class);
+
+Ниже добавь:
+
+$container->singleton(\Local\Mvc\Core\SeederRunner::class, \Local\Mvc\Core\SeederRunner::class);
+
+
+---
+
+4. Создай папку seeders
+
+/local/mvc_demo/Database/Seeders/
+
+
+---
+
+5. Создай /local/mvc_demo/Database/Seeders/DemoNotesSeeder.php
+
+<?php
+
+namespace Local\MvcDemo\Database\Seeders;
+
+use Local\Mvc\Core\Seeder;
+use Local\MvcDemo\Models\Note;
+
+class DemoNotesSeeder extends Seeder
+{
+    public function run(): void
     {
-        $connection = $this->connectionName();
-
-        Db::execute(
-            'DROP TABLE IF EXISTS ' . $this->qualifiedTable($table, $connection),
-            [],
-            $connection
-        );
-    }
-
-    private function connectionName(): string
-    {
-        return $this->connection ?: (string)Config::get('database.default', 'bitrix');
-    }
-
-    private function ensureSchemaExists(string $connection): void
-    {
-        $schema = $this->schemaForConnection($connection);
-
-        if ($schema === '') {
+        /**
+         * Чтобы не плодить одинаковые записи каждый раз,
+         * добавляем тестовые заметки только если таблица пустая.
+         */
+        if (Note::count() > 0) {
             return;
         }
 
-        Db::execute(
-            'CREATE SCHEMA IF NOT EXISTS ' . $this->safeIdentifier($schema),
-            [],
-            $connection
-        );
-    }
+        Note::create([
+            'title' => 'Первая тестовая заметка',
+            'body' => 'Эту запись добавил DemoNotesSeeder.',
+        ]);
 
-    private function qualifiedTable(string $table, string $connection): string
-    {
-        $table = trim($table);
+        Note::create([
+            'title' => 'Вторая тестовая заметка',
+            'body' => 'Seeder нужен, чтобы быстро заполнить таблицу начальными данными.',
+        ]);
 
-        /**
-         * Если уже передали schema.table — оставляем как есть после проверки.
-         */
-        if (str_contains($table, '.')) {
-            return $this->safeQualifiedTable($table);
-        }
-
-        $schema = $this->schemaForConnection($connection);
-
-        if ($schema !== '') {
-            return $this->safeIdentifier($schema) . '.' . $this->safeIdentifier($table);
-        }
-
-        return $this->safeIdentifier($table);
-    }
-
-    private function schemaForConnection(string $connection): string
-    {
-        return trim((string)Config::get('database.connections.' . $connection . '.schema', ''));
-    }
-
-    private function safeQualifiedTable(string $table): string
-    {
-        $parts = explode('.', $table, 2);
-
-        if (count($parts) !== 2) {
-            throw new RuntimeException('BAD_TABLE_NAME: ' . $table);
-        }
-
-        return $this->safeIdentifier($parts[0]) . '.' . $this->safeIdentifier($parts[1]);
-    }
-
-    private function safeIdentifier(string $value): string
-    {
-        $value = trim($value);
-
-        if (!preg_match('/^[a-zA-Z_][a-zA-Z0-9_]*$/', $value)) {
-            throw new RuntimeException('BAD_IDENTIFIER: ' . $value);
-        }
-
-        return $value;
+        Note::create([
+            'title' => 'Laravel-like подход',
+            'body' => 'Migration создаёт таблицу, Seeder заполняет её данными.',
+        ]);
     }
 }
 
 
 ---
 
-4. Создай facade /local/mvc/Support/Facades/Schema.php
+6. Создай /local/mvc_demo/Database/Seeders/DatabaseSeeder.php
 
 <?php
 
-namespace Local\Mvc\Support\Facades;
+namespace Local\MvcDemo\Database\Seeders;
 
-use Local\Mvc\Core\SchemaBuilder;
+use Local\Mvc\Core\Seeder;
 
-/**
- * Schema
- *
- * Laravel-like facade для миграций.
- *
- * Пример:
- * Schema::connection('projects')->create(...)
- */
-class Schema extends Facade
+class DatabaseSeeder extends Seeder
 {
-    protected static function accessor(): string
+    public function run(): void
     {
-        return SchemaBuilder::class;
+        $this->call([
+            DemoNotesSeeder::class,
+        ]);
     }
 }
 
+Это как в Laravel:
 
----
-
-5. Зарегистрируй SchemaBuilder в /local/mvc/Core/App.php
-
-Открой:
-
-/local/mvc/Core/App.php
-
-Найди блок, где регистрируются сервисы:
-
-$container->singleton(\Local\Mvc\Core\LogManager::class, \Local\Mvc\Core\LogManager::class);
-$container->singleton(\Local\Mvc\Core\ConfigManager::class, \Local\Mvc\Core\ConfigManager::class);
-$container->singleton(\Local\Mvc\Core\ResponseFactory::class, \Local\Mvc\Core\ResponseFactory::class);
-$container->singleton(\Local\Mvc\Core\Redirector::class, \Local\Mvc\Core\Redirector::class);
-
-Добавь ниже:
-
-$container->singleton(\Local\Mvc\Core\SchemaBuilder::class, \Local\Mvc\Core\SchemaBuilder::class);
-
-Итог:
-
-$container->singleton(\Local\Mvc\Core\LogManager::class, \Local\Mvc\Core\LogManager::class);
-$container->singleton(\Local\Mvc\Core\ConfigManager::class, \Local\Mvc\Core\ConfigManager::class);
-$container->singleton(\Local\Mvc\Core\ResponseFactory::class, \Local\Mvc\Core\ResponseFactory::class);
-$container->singleton(\Local\Mvc\Core\Redirector::class, \Local\Mvc\Core\Redirector::class);
-$container->singleton(\Local\Mvc\Core\SchemaBuilder::class, \Local\Mvc\Core\SchemaBuilder::class);
+DatabaseSeeder
+  ↓
+вызывает другие seeders
 
 
 ---
 
-6. Обнови миграцию заметок
+7. Обнови /local/mvc_demo/config.php
 
-Файл:
+В блок database добавь seeders.
 
-/local/mvc_demo/Database/Migrations/2026_05_29_000001_create_mvc_demo_notes_table.php
+Должно быть примерно так:
 
-Полностью замени:
+'database' => [
+    'default' => 'bitrix',
 
-<?php
+    'connections' => [
+        'bitrix' => [
+            'driver' => 'bitrix',
+        ],
 
-use Local\Mvc\Core\Blueprint;
-use Local\Mvc\Core\Migration;
-use Local\Mvc\Support\Facades\Schema;
+        'projects' => [
+            'driver' => 'pg_master',
+            'schema' => 'mvc',
+        ],
+    ],
 
-return new class extends Migration {
-    protected string $connection = 'projects';
+    'migrations' => [
+        'connection' => 'projects',
+        'table' => 'mvc.migrations',
+    ],
 
-    public function up(): void
-    {
-        Schema::connection('projects')->create('mvc_demo_notes', function (Blueprint $table) {
-            $table->id();
-            $table->string('title');
-            $table->text('body')->nullable();
-            $table->timestamps();
-        });
-    }
-
-    public function down(): void
-    {
-        Schema::connection('projects')->dropIfExists('mvc_demo_notes');
-    }
-};
-
-Обрати внимание:
-
-Schema::connection('projects')->create('mvc_demo_notes', ...)
-
-Мы не пишем mvc.mvc_demo_notes, потому что схема mvc уже указана в config:
-
-'projects' => [
-    'driver' => 'pg_master',
-    'schema' => 'mvc',
+    'seeders' => [
+        \Local\MvcDemo\Database\Seeders\DatabaseSeeder::class,
+    ],
 ],
 
 
 ---
 
-7. Проверка
+8. Создай /local/mvc_demo/Controllers/SeederController.php
+
+<?php
+
+namespace Local\MvcDemo\Controllers;
+
+use Local\Mvc\Core\Controller;
+use Local\Mvc\Core\Flash;
+use Local\Mvc\Core\Response;
+use Local\Mvc\Core\SeederRunner;
+
+class SeederController extends Controller
+{
+    public function index(): Response
+    {
+        return $this->render('seeders/index', [
+            'title' => 'Seeders',
+            'seeders' => config('database.seeders', []),
+        ]);
+    }
+
+    public function run(SeederRunner $runner): Response
+    {
+        $results = $runner->run();
+
+        Flash::success('Seeders выполнены: ' . count($results));
+
+        return redirect()->route('seeders.index');
+    }
+}
+
+
+---
+
+9. Создай view /local/mvc_demo/Views/seeders/index.php
+
+Сначала папка:
+
+/local/mvc_demo/Views/seeders/
+
+Файл:
+
+<?php
+
+if (!defined('B_PROLOG_INCLUDED') || B_PROLOG_INCLUDED !== true) {
+    die();
+}
+
+?>
+
+<div class="mvc-card">
+    <h1 class="mvc-page-title">
+        <?= e($title ?? 'Seeders') ?>
+    </h1>
+
+    <p class="mvc-page-text">
+        Seeder заполняет таблицы начальными или тестовыми данными.
+        Это похоже на Laravel <span class="mvc-code">php artisan db:seed</span>.
+    </p>
+
+    <?php if (!empty($flash)): ?>
+        <?php foreach ($flash as $item): ?>
+            <div class="mvc-info" style="border-color:#bbf7d0;background:#f0fdf4;color:#166534;">
+                <?= e($item['message'] ?? '') ?>
+            </div>
+        <?php endforeach; ?>
+    <?php endif; ?>
+
+    <div class="mvc-info">
+        <form method="post" action="<?= e(route('seeders.run')) ?>">
+            <?= csrf_field() ?>
+
+            <button
+                type="submit"
+                style="min-height:42px;padding:0 18px;border:0;border-radius:10px;background:#2563eb;color:#fff;font-weight:600;cursor:pointer;"
+            >
+                Запустить seeders
+            </button>
+        </form>
+    </div>
+
+    <div class="mvc-info">
+        <?php if (empty($seeders)): ?>
+            <p style="margin:0;">Seeders не настроены.</p>
+        <?php else: ?>
+            <table style="width:100%;border-collapse:collapse;">
+                <thead>
+                    <tr>
+                        <th style="text-align:left;padding:8px;border-bottom:1px solid #e5e7eb;">Seeder</th>
+                    </tr>
+                </thead>
+
+                <tbody>
+                    <?php foreach ($seeders as $seeder): ?>
+                        <tr>
+                            <td style="padding:8px;border-bottom:1px solid #e5e7eb;">
+                                <span class="mvc-code">
+                                    <?= e($seeder) ?>
+                                </span>
+                            </td>
+                        </tr>
+                    <?php endforeach; ?>
+                </tbody>
+            </table>
+        <?php endif; ?>
+    </div>
+
+    <div class="mvc-info" style="border-color:#fde68a;background:#fffbeb;color:#92400e;">
+        <b>Важно:</b>
+        перед запуском seeders таблицы должны быть созданы миграциями.
+        Сначала проверь страницу <span class="mvc-code">/migrations</span>.
+    </div>
+</div>
+
+
+---
+
+10. Добавь маршруты в /local/mvc_demo/routes.php
+
+Вверху добавь:
+
+use Local\MvcDemo\Controllers\SeederController;
+
+Ниже добавь:
+
+Route::get('/seeders', [SeederController::class, 'index'])
+    ->middleware(['auth', 'admin'])
+    ->name('seeders.index');
+
+Route::post('/seeders/run', [SeederController::class, 'run'])
+    ->middleware(['auth', 'admin', 'csrf'])
+    ->name('seeders.run');
+
+
+---
+
+11. Добавь ссылку в меню
+
+Файл:
+
+/local/mvc_demo/Views/layouts/app.php
+
+Добавь:
+
+<a href="<?= e(route('seeders.index')) ?>">Seeders</a>
+
+
+---
+
+12. Проверка
 
 Сбрось OPcache:
 
@@ -390,43 +385,43 @@ echo 'OPcache reset OK';
 
 Открой:
 
-/local/mvc_demo/migrations
+/local/mvc_demo/seeders
 
-Если миграция уже применена, она останется в статусе Применена.
+Нажми:
 
-Чтобы проверить новый Schema Builder, можно сделать так:
+Запустить seeders
 
-1. Нажми "Откатить последнюю пачку".
-2. Таблица mvc_demo_notes удалится.
-3. Нажми "Запустить миграции".
-4. Таблица создастся уже через Schema Builder.
+Потом открой:
 
-Важно: rollback удалит заметки, потому что down() делает DROP TABLE.
+/local/mvc_demo/notes
+
+Если таблица была пустая, должны появиться 3 тестовые заметки.
 
 
 ---
 
 Что мы сделали
 
-Раньше миграция была с сырым SQL:
+Теперь у нас есть Laravel-like seeders:
 
-$this->statement("
-    CREATE TABLE IF NOT EXISTS mvc.mvc_demo_notes (...)
-");
+Database/Migrations — структура базы
+Database/Seeders    — тестовые данные
 
-Теперь Laravel-like:
+Пример:
 
-Schema::connection('projects')->create('mvc_demo_notes', function (Blueprint $table) {
-    $table->id();
-    $table->string('title');
-    $table->text('body')->nullable();
-    $table->timestamps();
-});
+class DatabaseSeeder extends Seeder
+{
+    public function run(): void
+    {
+        $this->call([
+            DemoNotesSeeder::class,
+        ]);
+    }
+}
 
 Главная мысль:
 
-Migration — говорит, что сделать.
-Schema — создаёт или удаляет таблицу.
-Blueprint — описывает колонки таблицы.
+Migration отвечает за таблицы.
+Seeder отвечает за данные.
 
-Это уже очень похоже на Laravel migration system.
+Это ещё один важный кирпич Laravel.
