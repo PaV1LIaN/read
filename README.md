@@ -1,121 +1,247 @@
-Идём дальше. Сейчас сделаем Resource routes, как в Laravel.
+Идём дальше. Сейчас сделаем Laravel-like автоматические timestamps.
 
-В Laravel для CRUD обычно не пишут 5 маршрутов руками. Пишут примерно так:
+В Laravel модель сама умеет заполнять поля:
 
-Route::resource('notes', NoteController::class);
+created_at
+updated_at
 
-И Laravel сам создаёт маршруты:
+То есть в контроллере не надо каждый раз писать:
 
-GET     /notes              notes.index
-POST    /notes              notes.store
-GET     /notes/{id}/edit    notes.edit
-PUT     /notes/{id}         notes.update
-DELETE  /notes/{id}         notes.destroy
+'created_at' => date('Y-m-d H:i:s'),
+'updated_at' => date('Y-m-d H:i:s'),
 
-Мы сделаем похожее.
+Хотим так:
+
+Note::create([
+    'title' => $data['title'],
+    'body' => $data['body'],
+]);
+
+А модель сама добавит даты.
 
 
 ---
 
-1. Обнови /local/mvc/Core/Router.php
+1. Замени /local/mvc/Core/Model.php
 
-Внутрь класса Router, рядом с методами get, post, put, delete, добавь метод:
+<?php
 
-public function resource(string $path, string $controller, array $options = []): void
+namespace Local\Mvc\Core;
+
+use RuntimeException;
+
+abstract class Model
 {
-    $path = '/' . trim($path, '/');
+    protected static string $connection = 'bitrix';
 
-    $resourceName = trim($path, '/');
-    $resourceName = str_replace('/', '.', $resourceName);
+    protected static string $table = '';
 
-    $only = $options['only'] ?? [
-        'index',
-        'create',
-        'store',
-        'show',
-        'edit',
-        'update',
-        'destroy',
+    protected static string $primaryKey = 'ID';
+
+    protected static array $fillable = [];
+
+    /**
+     * Laravel-like timestamps.
+     *
+     * Если true, модель сама заполняет:
+     * created_at
+     * updated_at
+     */
+    protected static bool $timestamps = false;
+
+    protected static string $createdAtColumn = 'created_at';
+
+    protected static string $updatedAtColumn = 'updated_at';
+
+    protected static function table(): string
+    {
+        if (static::$table === '') {
+            throw new RuntimeException('У модели не указана таблица: ' . static::class);
+        }
+
+        return static::$table;
+    }
+
+    public static function query(): QueryBuilder
+    {
+        return QueryBuilder::table(static::table(), static::$connection);
+    }
+
+    public static function all(int $limit = 100): array
+    {
+        return static::query()
+            ->orderBy(static::$primaryKey, 'desc')
+            ->limit($limit)
+            ->get();
+    }
+
+    public static function find(int|string $id): ?array
+    {
+        return static::query()
+            ->where(static::$primaryKey, $id)
+            ->first();
+    }
+
+    public static function count(): int
+    {
+        return static::query()->count();
+    }
+
+    public static function create(array $data): bool
+    {
+        $data = static::applyCreateTimestamps($data);
+
+        return static::query()->insert(static::onlyFillable($data));
+    }
+
+    public static function updateById(int|string $id, array $data): bool
+    {
+        $data = static::applyUpdateTimestamps($data);
+
+        return static::query()
+            ->where(static::$primaryKey, $id)
+            ->update(static::onlyFillable($data));
+    }
+
+    public static function deleteById(int|string $id): bool
+    {
+        return static::query()
+            ->where(static::$primaryKey, $id)
+            ->delete();
+    }
+
+    protected static function onlyFillable(array $data): array
+    {
+        if (empty(static::$fillable)) {
+            return $data;
+        }
+
+        $result = [];
+
+        foreach (static::$fillable as $field) {
+            if (array_key_exists($field, $data)) {
+                $result[$field] = $data[$field];
+            }
+        }
+
+        return $result;
+    }
+
+    protected static function applyCreateTimestamps(array $data): array
+    {
+        if (!static::$timestamps) {
+            return $data;
+        }
+
+        $now = static::freshTimestamp();
+
+        if (!array_key_exists(static::$createdAtColumn, $data)) {
+            $data[static::$createdAtColumn] = $now;
+        }
+
+        if (!array_key_exists(static::$updatedAtColumn, $data)) {
+            $data[static::$updatedAtColumn] = $now;
+        }
+
+        return $data;
+    }
+
+    protected static function applyUpdateTimestamps(array $data): array
+    {
+        if (!static::$timestamps) {
+            return $data;
+        }
+
+        $data[static::$updatedAtColumn] = static::freshTimestamp();
+
+        return $data;
+    }
+
+    protected static function freshTimestamp(): string
+    {
+        return date('Y-m-d H:i:s');
+    }
+}
+
+
+---
+
+2. Обнови /local/mvc_demo/Models/Note.php
+
+Тут главное добавить:
+
+protected static bool $timestamps = true;
+
+Полный файл:
+
+<?php
+
+namespace Local\MvcDemo\Models;
+
+use Local\Mvc\Core\Model;
+
+class Note extends Model
+{
+    protected static string $connection = 'projects';
+
+    protected static string $table = 'mvc.mvc_demo_notes';
+
+    protected static string $primaryKey = 'id';
+
+    protected static bool $timestamps = true;
+
+    protected static string $createdAtColumn = 'created_at';
+
+    protected static string $updatedAtColumn = 'updated_at';
+
+    protected static array $fillable = [
+        'title',
+        'body',
+        'created_at',
+        'updated_at',
     ];
 
-    $except = $options['except'] ?? [];
-    $middleware = $options['middleware'] ?? [];
+    public static function latest(int $limit = 20): array
+    {
+        $rows = self::query()
+            ->orderBy('id', 'desc')
+            ->limit($limit)
+            ->get();
 
-    if (!is_array($only)) {
-        $only = [$only];
+        return array_map([self::class, 'normalize'], $rows);
     }
 
-    if (!is_array($except)) {
-        $except = [$except];
+    public static function findNormalized(int $id): ?array
+    {
+        $row = self::find($id);
+
+        if (!$row) {
+            return null;
+        }
+
+        return self::normalize($row);
     }
 
-    if (!is_array($middleware)) {
-        $middleware = [$middleware];
-    }
-
-    $enabled = static function (string $action) use ($only, $except): bool {
-        return in_array($action, $only, true) && !in_array($action, $except, true);
-    };
-
-    if ($enabled('index')) {
-        $this->get($path, [$controller, 'index'], $middleware, $resourceName . '.index');
-    }
-
-    if ($enabled('create')) {
-        $this->get($path . '/create', [$controller, 'create'], $middleware, $resourceName . '.create');
-    }
-
-    if ($enabled('store')) {
-        $this->post($path, [$controller, 'store'], $middleware, $resourceName . '.store');
-    }
-
-    if ($enabled('show')) {
-        $this->get($path . '/{id:\d+}', [$controller, 'show'], $middleware, $resourceName . '.show');
-    }
-
-    if ($enabled('edit')) {
-        $this->get($path . '/{id:\d+}/edit', [$controller, 'edit'], $middleware, $resourceName . '.edit');
-    }
-
-    if ($enabled('update')) {
-        $this->put($path . '/{id:\d+}', [$controller, 'update'], $middleware, $resourceName . '.update');
-    }
-
-    if ($enabled('destroy')) {
-        $this->delete($path . '/{id:\d+}', [$controller, 'destroy'], $middleware, $resourceName . '.destroy');
+    public static function normalize(array $row): array
+    {
+        return [
+            'id' => $row['id'] ?? $row['ID'] ?? null,
+            'title' => $row['title'] ?? $row['TITLE'] ?? '',
+            'body' => $row['body'] ?? $row['BODY'] ?? '',
+            'created_at' => $row['created_at'] ?? $row['CREATED_AT'] ?? '',
+            'updated_at' => $row['updated_at'] ?? $row['UPDATED_AT'] ?? '',
+        ];
     }
 }
-
-
----
-
-2. Обнови /local/mvc/Support/Facades/Route.php
-
-Внутрь класса Route добавь метод:
-
-public static function resource(string $path, string $controller, array $options = []): void
-{
-    self::router()->resource($path, $controller, $options);
-}
-
-Теперь можно будет писать:
-
-Route::resource('/notes', NoteController::class);
 
 
 ---
 
 3. Обнови /local/mvc_demo/Controllers/NoteController.php
 
-У нас сейчас метод удаления называется:
+Теперь убираем ручное заполнение дат.
 
-delete()
-
-В Laravel он называется:
-
-destroy()
-
-Полностью замени файл:
+Полный файл:
 
 <?php
 
@@ -145,8 +271,6 @@ class NoteController extends Controller
         Note::create([
             'title' => $data['title'],
             'body' => $data['body'],
-            'created_at' => date('Y-m-d H:i:s'),
-            'updated_at' => date('Y-m-d H:i:s'),
         ]);
 
         Flash::success('Заметка создана.');
@@ -187,7 +311,6 @@ class NoteController extends Controller
         Note::updateById((int)$id, [
             'title' => $data['title'],
             'body' => $data['body'],
-            'updated_at' => date('Y-m-d H:i:s'),
         ]);
 
         Flash::success('Заметка обновлена.');
@@ -208,84 +331,7 @@ class NoteController extends Controller
 
 ---
 
-4. Обнови маршруты /local/mvc_demo/routes.php
-
-Найди старые маршруты заметок:
-
-Route::get('/notes', [NoteController::class, 'index'])
-    ->name('notes.index');
-
-Route::post('/notes', [NoteController::class, 'store'])
-    ->middleware('csrf')
-    ->name('notes.store');
-
-Route::get('/notes/{id:\d+}/edit', [NoteController::class, 'edit'])
-    ->name('notes.edit');
-
-Route::put('/notes/{id:\d+}', [NoteController::class, 'update'])
-    ->middleware('csrf')
-    ->name('notes.update');
-
-Route::delete('/notes/{id:\d+}', [NoteController::class, 'delete'])
-    ->middleware('csrf')
-    ->name('notes.delete');
-
-Удали их и замени одним блоком:
-
-Route::resource('/notes', NoteController::class, [
-    'only' => [
-        'index',
-        'store',
-        'edit',
-        'update',
-        'destroy',
-    ],
-    'middleware' => ['csrf'],
-]);
-
-Почему csrf можно повесить на все маршруты?
-
-Потому что наш CsrfMiddleware проверяет только опасные методы:
-
-POST
-PUT
-PATCH
-DELETE
-
-А GET он пропускает.
-
-
----
-
-5. Обнови /local/mvc_demo/Views/notes/index.php
-
-Найди маршрут удаления:
-
-route('notes.delete', ['id' => (int)($note['id'] ?? 0)])
-
-Замени на:
-
-route('notes.destroy', ['id' => (int)($note['id'] ?? 0)])
-
-То есть форма удаления должна быть такая:
-
-<form method="post" action="<?= e(route('notes.destroy', ['id' => (int)($note['id'] ?? 0)])) ?>" style="margin:0;">
-    <?= csrf_field() ?>
-    <?= method_field('DELETE') ?>
-
-    <button
-        type="submit"
-        onclick="return confirm('Удалить заметку?')"
-        style="padding:6px 10px;border:0;border-radius:8px;background:#dc2626;color:#fff;cursor:pointer;"
-    >
-        Удалить
-    </button>
-</form>
-
-
----
-
-6. Проверка
+4. Проверяем
 
 Сбрось OPcache:
 
@@ -294,48 +340,32 @@ echo 'OPcache reset OK';
 
 Открой:
 
-/local/mvc_demo/debug/routes
-
-Теперь должны быть маршруты:
-
-GET     /notes              notes.index
-POST    /notes              notes.store
-GET     /notes/{id:\d+}/edit notes.edit
-PUT     /notes/{id:\d+}      notes.update
-DELETE  /notes/{id:\d+}      notes.destroy
-
-Потом проверь:
-
 /local/mvc_demo/notes
 
-И сценарии:
+Проверь:
 
-создать заметку
-изменить заметку
-удалить заметку
+1. Создай новую заметку.
+2. В pgAdmin в ProjectsDB → mvc → mvc_demo_notes должны заполниться created_at и updated_at.
+3. Измени заметку.
+4. updated_at должен обновиться.
 
 
 ---
 
 Что мы сделали
 
-Раньше CRUD-маршруты писались руками:
+Раньше контроллер сам ставил даты:
 
-Route::get('/notes', ...);
-Route::post('/notes', ...);
-Route::get('/notes/{id}/edit', ...);
-Route::put('/notes/{id}', ...);
-Route::delete('/notes/{id}', ...);
+'created_at' => date('Y-m-d H:i:s'),
+'updated_at' => date('Y-m-d H:i:s'),
 
-Теперь Laravel-like:
+Теперь это делает модель:
 
-Route::resource('/notes', NoteController::class, [
-    'only' => ['index', 'store', 'edit', 'update', 'destroy'],
-    'middleware' => ['csrf'],
-]);
+protected static bool $timestamps = true;
 
-Главная мысль:
+Простыми словами:
 
-Resource route — это быстрый способ создать стандартные CRUD-маршруты.
+Controller говорит: "создай заметку".
+Model сама добавляет created_at и updated_at.
 
-Это ещё один шаг к Laravel.
+Это ещё один шаг к Laravel, потому что в Laravel модель тоже сама управляет created_at и updated_at.
