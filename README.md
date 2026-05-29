@@ -1,220 +1,406 @@
-Идём дальше. Сделаем простые helper-функции для views, но без большого View-класса, чтобы не путаться.
+Да, сейчас модалка развалилась из-за того, что форма настроек техническая: поля и чекбоксы идут как попало. Сделаем нормальную структуру:
 
-Зачем:
+сверху заголовок и аккуратная кнопка закрытия;
 
-Сейчас во view приходится писать длинно:
+основные поля в 2 колонки: слева название, справа поле;
 
-\Local\Mvc\Core\App::route('admin.users.show', ['id' => 5])
+чекбоксы отдельным красивым блоком “Возможности”;
 
-А хотим коротко:
+кнопки “Отмена / Сохранить” внизу справа;
 
-mvc_route('admin.users.show', ['id' => 5])
-
-
----
-
-1. Создай файл /local/mvc/helpers.php
-
-<?php
-
-use Local\Mvc\Core\App;
-
-if (!function_exists('mvc_route')) {
-    /**
-     * Собрать URL по имени маршрута.
-     *
-     * Пример:
-     * mvc_route('admin.users.show', ['id' => 5])
-     */
-    function mvc_route(string $name, array $params = [], array $query = []): string
-    {
-        return App::route($name, $params, $query);
-    }
-}
-
-if (!function_exists('mvc_e')) {
-    /**
-     * Безопасный вывод текста.
-     *
-     * Это короткая замена htmlspecialcharsbx().
-     */
-    function mvc_e(mixed $value): string
-    {
-        if (function_exists('htmlspecialcharsbx')) {
-            return htmlspecialcharsbx((string)$value);
-        }
-
-        return htmlspecialchars((string)$value, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
-    }
-}
+модалка меньше по высоте и с нормальными отступами.
 
 
----
+1. Правка script.js
 
-2. Подключи helper в /local/mvc/bootstrap.php
+Файл:
 
-Открой:
+/local/sitebuilder/components/disk/script.js
 
-/local/mvc/bootstrap.php
+Найди в openSettingsModal() вот этот кусок:
 
-После автозагрузчика добавь:
+this.fillSettingsForm(
+  settingsRes.data.settings || {},
+  rootOptionsRes.data || {}
+);
 
-$helpersFile = $_SERVER['DOCUMENT_ROOT'] . '/local/mvc/helpers.php';
-
-if (is_file($helpersFile)) {
-    require_once $helpersFile;
-}
-
-Полностью конец файла должен выглядеть примерно так:
-
-spl_autoload_register(function ($class) {
-    $map = [
-        'Local\\Mvc\\' => $_SERVER['DOCUMENT_ROOT'] . '/local/mvc/',
-    ];
-
-    if (
-        defined('LOCAL_MVC_PROJECT_NAMESPACE')
-        && defined('LOCAL_MVC_PROJECT_ROOT')
-    ) {
-        $projectNamespace = rtrim((string)LOCAL_MVC_PROJECT_NAMESPACE, '\\') . '\\';
-        $projectRoot = rtrim((string)LOCAL_MVC_PROJECT_ROOT, '/');
-
-        $map[$projectNamespace] = $projectRoot . '/';
-    }
-
-    foreach ($map as $prefix => $baseDir) {
-        if (strncmp($prefix, $class, strlen($prefix)) !== 0) {
-            continue;
-        }
-
-        $relativeClass = substr($class, strlen($prefix));
-        $file = rtrim($baseDir, '/') . '/' . str_replace('\\', '/', $relativeClass) . '.php';
-
-        if (is_file($file)) {
-            require_once $file;
-        }
-
-        return;
-    }
-});
-
-$helpersFile = $_SERVER['DOCUMENT_ROOT'] . '/local/mvc/helpers.php';
-
-if (is_file($helpersFile)) {
-    require_once $helpersFile;
-}
-
-
----
-
-3. Обнови ссылки в /local/mvc_demo/Views/admin/users.php
-
-Найди ссылку:
-
-<a href="<?= htmlspecialcharsbx(\Local\Mvc\Core\App::route('admin.users.show', [
-    'id' => (int)($user['id'] ?? 0),
-])) ?>">
-    Открыть
-</a>
-
-Замени на короткую:
-
-<a href="<?= mvc_e(mvc_route('admin.users.show', [
-    'id' => (int)($user['id'] ?? 0),
-])) ?>">
-    Открыть
-</a>
-
-
----
-
-4. Обнови ссылку назад в /local/mvc_demo/Views/admin/user_detail.php
-
-Найди:
-
-<a href="<?= htmlspecialcharsbx(\Local\Mvc\Core\App::route('admin.users.index')) ?>">
-    ← Назад к списку
-</a>
+this.setSettingsMessage('');
 
 Замени на:
 
-<a href="<?= mvc_e(mvc_route('admin.users.index')) ?>">
-    ← Назад к списку
-</a>
+this.fillSettingsForm(
+  settingsRes.data.settings || {},
+  rootOptionsRes.data || {}
+);
+
+this.arrangeSettingsModal();
+
+this.setSettingsMessage('');
+
+Теперь ниже метода openSettingsModal, перед:
+
+DiskComponent.prototype.closeSettingsModal = function () {
+
+вставь новый метод:
+
+DiskComponent.prototype.arrangeSettingsModal = function () {
+  var modal = this.root.querySelector('[data-role="settings-modal"]');
+  var form = this.root.querySelector('[data-role="settings-form"]');
+
+  if (!modal || !form) {
+    return;
+  }
+
+  modal.classList.add('sb-disk-settings-modal');
+
+  var shell = modal.firstElementChild;
+  if (shell) {
+    shell.classList.add('sb-disk-settings-shell');
+  }
+
+  if (!form.querySelector('.sb-disk-settings-section-main')) {
+    var mainTitle = document.createElement('div');
+    mainTitle.className = 'sb-disk-settings-section-main';
+    mainTitle.textContent = 'Основные настройки';
+
+    form.insertBefore(mainTitle, form.firstChild);
+  }
+
+  var checkboxLabels = Array.prototype.slice.call(
+    form.querySelectorAll('label')
+  ).filter(function (label) {
+    return !!label.querySelector('input[type="checkbox"]');
+  });
+
+  if (checkboxLabels.length && !form.querySelector('.sb-disk-settings-checks')) {
+    var checksTitle = document.createElement('div');
+    checksTitle.className = 'sb-disk-settings-section-title';
+    checksTitle.textContent = 'Возможности';
+
+    var checksWrap = document.createElement('div');
+    checksWrap.className = 'sb-disk-settings-checks';
+
+    checkboxLabels.forEach(function (label) {
+      checksWrap.appendChild(label);
+    });
+
+    form.appendChild(checksTitle);
+    form.appendChild(checksWrap);
+  }
+
+  var actionButtons = Array.prototype.slice.call(
+    modal.querySelectorAll('[data-action="save-settings"], [data-action="close-settings"]')
+  ).filter(function (button) {
+    var text = String(button.textContent || '').trim().toLowerCase();
+
+    return text !== '×' && text !== 'x';
+  });
+
+  if (actionButtons.length && !modal.querySelector('.sb-disk-settings-footer')) {
+    var footer = document.createElement('div');
+    footer.className = 'sb-disk-settings-footer';
+
+    actionButtons.forEach(function (button) {
+      footer.appendChild(button);
+    });
+
+    if (shell) {
+      shell.appendChild(footer);
+    } else {
+      modal.appendChild(footer);
+    }
+  }
+};
 
 
 ---
 
-5. Обнови форму /local/mvc_demo/Views/form/index.php
+2. Правка styles.css
 
-Найди:
+Файл:
 
-<form method="post" action="/local/mvc_demo/form/send" style="margin-top: 24px;">
+/local/sitebuilder/components/disk/styles.css
 
-Замени на:
+В самый конец файла добавь этот блок:
 
-<form method="post" action="<?= mvc_e(mvc_route('form.send')) ?>" style="margin-top: 24px;">
+/* =========================================================
+   SETTINGS MODAL FINAL NORMAL VIEW
+   ========================================================= */
 
-Теперь форма тоже не знает точный URL.
+.sb-disk-settings-modal {
+    position: fixed !important;
+    inset: 0 !important;
+    z-index: 10000 !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    padding: 24px !important;
+    background: rgba(15, 23, 42, .50) !important;
+    backdrop-filter: blur(7px);
+    overflow: auto !important;
+}
 
+.sb-disk-settings-modal[hidden] {
+    display: none !important;
+}
 
----
+.sb-disk-settings-shell {
+    position: relative !important;
+    width: min(760px, calc(100vw - 48px)) !important;
+    max-height: calc(100vh - 48px) !important;
+    margin: 0 !important;
+    padding: 26px !important;
+    overflow: auto !important;
+    border: 1px solid rgba(226, 232, 240, .95) !important;
+    border-radius: 24px !important;
+    background: #ffffff !important;
+    box-shadow: 0 34px 90px rgba(15, 23, 42, .30) !important;
+}
 
-6. Проверь, что маршруты названы
+/* Заголовок */
+.sb-disk-settings-modal h1,
+.sb-disk-settings-modal h2,
+.sb-disk-settings-modal h3 {
+    margin: 0 48px 22px 0 !important;
+    color: #111827 !important;
+    font-size: 24px !important;
+    line-height: 1.2 !important;
+    font-weight: 900 !important;
+}
 
-В /local/mvc_demo/routes.php должно быть:
+/* Кнопка закрытия X */
+.sb-disk-settings-modal [data-action="close-settings"] {
+    min-height: 36px !important;
+    height: 36px !important;
+    padding: 0 14px !important;
+    border-radius: 12px !important;
+    border: 1px solid #dbe3ef !important;
+    background: #ffffff !important;
+    color: #374151 !important;
+    font-size: 13px !important;
+    font-weight: 800 !important;
+}
 
-$router->get('/form', [FormController::class, 'index'], [], 'form.index');
+.sb-disk-settings-modal [data-action="close-settings"]:not(.sb-disk-settings-footer [data-action="close-settings"]) {
+    position: absolute !important;
+    top: 20px !important;
+    right: 20px !important;
+    width: 36px !important;
+    min-width: 36px !important;
+    padding: 0 !important;
+    font-size: 0 !important;
+}
 
-$router->post('/form/send', [FormController::class, 'send'], ['csrf'], 'form.send');
+.sb-disk-settings-modal [data-action="close-settings"]:not(.sb-disk-settings-footer [data-action="close-settings"])::before {
+    content: "×";
+    font-size: 20px;
+    line-height: 1;
+}
 
-И в админской группе:
+/* Форма */
+.sb-disk-settings-modal [data-role="settings-form"] {
+    display: grid !important;
+    grid-template-columns: 210px minmax(0, 1fr) !important;
+    gap: 12px 16px !important;
+    align-items: center !important;
+    margin: 0 !important;
+    padding: 0 !important;
+}
 
-$router->get('/users', [AdminController::class, 'users'], [], 'admin.users.index');
+/* Разделы */
+.sb-disk-settings-section-main,
+.sb-disk-settings-section-title {
+    grid-column: 1 / -1 !important;
+    margin-top: 6px !important;
+    padding-top: 6px !important;
+    color: #111827 !important;
+    font-size: 15px !important;
+    font-weight: 900 !important;
+}
 
-$router->get('/users/{id:\d+}', [AdminController::class, 'userDetail'], [], 'admin.users.show');
+.sb-disk-settings-section-title {
+    margin-top: 18px !important;
+    padding-top: 18px !important;
+    border-top: 1px solid #eef2f7 !important;
+}
 
+/* Обычные label */
+.sb-disk-settings-modal [data-role="settings-form"] > label:not(:has(input[type="checkbox"])) {
+    margin: 0 !important;
+    color: #374151 !important;
+    font-size: 13px !important;
+    font-weight: 800 !important;
+    line-height: 1.3 !important;
+}
 
----
+/* Поля */
+.sb-disk-settings-modal [data-role="settings-form"] input[type="text"],
+.sb-disk-settings-modal [data-role="settings-form"] input[type="number"],
+.sb-disk-settings-modal [data-role="settings-form"] select,
+.sb-disk-settings-modal [data-role="settings-form"] textarea {
+    width: 100% !important;
+    min-width: 0 !important;
+    max-width: 100% !important;
+    height: 40px !important;
+    padding: 0 13px !important;
+    border: 1px solid #dbe3ef !important;
+    border-radius: 13px !important;
+    background: #ffffff !important;
+    color: #111827 !important;
+    font-size: 13px !important;
+    outline: none !important;
+    box-shadow: none !important;
+}
 
-7. Проверяем
+.sb-disk-settings-modal [data-role="settings-form"] textarea {
+    height: auto !important;
+    min-height: 84px !important;
+    padding-top: 10px !important;
+    padding-bottom: 10px !important;
+}
 
-Сбрось OPcache:
+.sb-disk-settings-modal [data-role="settings-form"] input:focus,
+.sb-disk-settings-modal [data-role="settings-form"] select:focus,
+.sb-disk-settings-modal [data-role="settings-form"] textarea:focus {
+    border-color: var(--disk-accent, #2563eb) !important;
+    box-shadow: 0 0 0 3px rgba(37, 99, 235, .12) !important;
+}
 
-opcache_reset();
-echo 'OPcache reset OK';
+/* Подсказки */
+.sb-disk-settings-modal [data-role="settings-form"] small,
+.sb-disk-settings-modal [data-role="settings-form"] .hint,
+.sb-disk-settings-modal [data-role="settings-form"] .help {
+    grid-column: 2 / 3 !important;
+    margin: -6px 0 4px !important;
+    color: #6b7280 !important;
+    font-size: 12px !important;
+    line-height: 1.35 !important;
+}
 
-Проверь:
+/* Чекбоксы отдельной красивой сеткой */
+.sb-disk-settings-checks {
+    grid-column: 1 / -1 !important;
+    display: grid !important;
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+    gap: 8px !important;
+    margin-top: 0 !important;
+}
 
-/local/mvc_demo/form
-/local/mvc_demo/admin/users
-/local/mvc_demo/admin/users/1
-/local/mvc_demo/debug/routes
+.sb-disk-settings-checks label {
+    display: flex !important;
+    align-items: center !important;
+    gap: 8px !important;
+    min-height: 38px !important;
+    margin: 0 !important;
+    padding: 9px 10px !important;
+    border: 1px solid #e5e7eb !important;
+    border-radius: 13px !important;
+    background: #f8fafc !important;
+    color: #374151 !important;
+    font-size: 12px !important;
+    font-weight: 700 !important;
+    line-height: 1.3 !important;
+}
 
+.sb-disk-settings-checks label:hover {
+    border-color: #c7d2fe !important;
+    background: #f8fbff !important;
+}
 
----
+.sb-disk-settings-checks input[type="checkbox"] {
+    width: 16px !important;
+    height: 16px !important;
+    margin: 0 !important;
+    flex: 0 0 16px !important;
+    accent-color: var(--disk-accent, #2563eb);
+}
 
-Что мы сделали
+/* Низ модалки */
+.sb-disk-settings-footer {
+    display: flex !important;
+    align-items: center !important;
+    justify-content: flex-end !important;
+    gap: 10px !important;
+    margin-top: 22px !important;
+    padding-top: 18px !important;
+    border-top: 1px solid #eef2f7 !important;
+}
 
-Теперь во view можно писать коротко:
+.sb-disk-settings-footer button {
+    min-height: 40px !important;
+    padding: 0 16px !important;
+    border-radius: 12px !important;
+    font-size: 13px !important;
+    font-weight: 800 !important;
+}
 
-mvc_route('admin.users.show', ['id' => 5])
+.sb-disk-settings-footer [data-action="save-settings"] {
+    border-color: var(--disk-accent, #2563eb) !important;
+    background: var(--disk-accent, #2563eb) !important;
+    color: #fff !important;
+}
 
-вместо длинного:
+.sb-disk-settings-footer [data-action="save-settings"]:hover {
+    background: var(--disk-accent-hover, #3f5de9) !important;
+    border-color: var(--disk-accent-hover, #3f5de9) !important;
+    color: #fff !important;
+}
 
-\Local\Mvc\Core\App::route('admin.users.show', ['id' => 5])
+/* Сообщение */
+.sb-disk-settings-modal [data-role="settings-message"] {
+    margin-top: 12px !important;
+    color: #6b7280 !important;
+    font-size: 13px !important;
+}
 
-И можно безопасно выводить текст так:
+/* Адаптив */
+@media (max-width: 760px) {
+    .sb-disk-settings-modal {
+        align-items: flex-start !important;
+        padding: 12px !important;
+    }
 
-mvc_e($value)
+    .sb-disk-settings-shell {
+        width: 100% !important;
+        max-height: none !important;
+        padding: 18px !important;
+        border-radius: 20px !important;
+    }
 
-вместо:
+    .sb-disk-settings-modal [data-role="settings-form"] {
+        grid-template-columns: 1fr !important;
+        gap: 8px !important;
+    }
 
-htmlspecialcharsbx($value)
+    .sb-disk-settings-modal [data-role="settings-form"] small,
+    .sb-disk-settings-modal [data-role="settings-form"] .hint,
+    .sb-disk-settings-modal [data-role="settings-form"] .help {
+        grid-column: auto !important;
+        margin: -2px 0 4px !important;
+    }
 
-Главная мысль:
+    .sb-disk-settings-checks {
+        grid-template-columns: 1fr !important;
+    }
 
-App::route() — ядро фреймворка.
-mvc_route() — удобная короткая функция для views.
+    .sb-disk-settings-footer {
+        align-items: stretch !important;
+        flex-direction: column-reverse !important;
+    }
 
-Дальше логично сделать named route group prefix, чтобы маршруты внутри /admin автоматически получали имена типа admin.users.index, а не писать полное имя руками каждый раз.
+    .sb-disk-settings-footer button {
+        width: 100% !important;
+    }
+}
+
+3. Обнови версии подключения
+
+В public_page.php поставь новые версии:
+
+<link rel="stylesheet" href="<?= sb_public_h($basePath) ?>/components/disk/styles.css?v=10">
+
+<script src="<?= sb_public_h($basePath) ?>/components/disk/script.js?v=8"></script>
+
+После этого сделай Ctrl + F5.
+
+Настройки должны стать похожи на нормальную админскую форму: поля слева/справа, чекбоксы отдельной сеткой, кнопки снизу, без этой каши посередине.
