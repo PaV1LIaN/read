@@ -1,738 +1,584 @@
-Отлично, тогда с этого момента держим курс: наш MVC должен быть похож на Laravel по подходу и синтаксису, насколько это нормально для Битрикс24.
+Да, держим курс именно на Laravel-like.
 
-То есть будем постепенно двигаться к таким вещам:
+То есть дальше стараемся, чтобы было похоже на Laravel по стилю:
 
-Route::get('/users', [UserController::class, 'index'])
-    ->middleware(['auth'])
-    ->name('users.index');
-
-Route::prefix('/admin')
+Route::get('/users', [AdminController::class, 'users'])
     ->middleware(['auth', 'admin'])
-    ->name('admin.')
-    ->group(function () {
-        Route::get('/users', [AdminController::class, 'users'])
-            ->name('users.index');
-    });
+    ->name('admin.users.index');
 
-Это как в Laravel: маршруты читаются легко, контроллеры тонкие, логика в сервисах, модели отдельно.
+И чтобы в контроллере можно было не писать:
+
+$userService = new UserService();
+
+А писать почти как в Laravel:
+
+public function users(UserService $userService): Response
+{
+    ...
+}
+
+Фреймворк сам создаст UserService и передаст его в метод.
+
+Это называется Service Container.
 
 
 ---
 
 Что делаем сейчас
 
-Сделаем Laravel-like Route facade.
+Добавляем контейнер:
 
-Чтобы вместо:
+/local/mvc/Core/Container.php
 
-$router->get('/form', [FormController::class, 'index'], [], 'form.index');
+Он будет уметь:
 
-можно было писать:
-
-Route::get('/form', [FormController::class, 'index'])
-    ->name('form.index');
+создавать классы
+подставлять зависимости
+передавать Request
+передавать Service в методы контроллера
 
 
 ---
 
-1. Создай /local/mvc/Core/RouteDefinition.php
+1. Создай /local/mvc/Core/Container.php
 
 <?php
 
 namespace Local\Mvc\Core;
 
-/**
- * RouteDefinition
- *
- * Объект одного маршрута.
- *
- * Нужен, чтобы писать почти как в Laravel:
- *
- * Route::get('/users', [UserController::class, 'index'])
- *     ->middleware(['auth'])
- *     ->name('users.index');
- */
-class RouteDefinition
-{
-    public function __construct(
-        private Router $router,
-        private string $method,
-        private int $index
-    ) {}
-
-    public function name(string $name): self
-    {
-        $this->router->setRouteName($this->method, $this->index, $name);
-
-        return $this;
-    }
-
-    public function middleware(array|string $middleware): self
-    {
-        $this->router->addRouteMiddleware($this->method, $this->index, $middleware);
-
-        return $this;
-    }
-}
-
-
----
-
-2. Замени /local/mvc/Core/Router.php
-
-<?php
-
-namespace Local\Mvc\Core;
-
-/**
- * Router
- *
- * Диспетчер маршрутов.
- *
- * Теперь поддерживает Laravel-like синтаксис:
- *
- * Route::get('/path', [Controller::class, 'method'])
- *     ->middleware(['auth'])
- *     ->name('route.name');
- */
-class Router
-{
-    private array $routes = [];
-
-    private array $namedRoutes = [];
-
-    private string $groupPrefix = '';
-
-    private array $groupMiddleware = [];
-
-    private string $groupNamePrefix = '';
-
-    public function get(string $path, array $handler, array $middleware = [], ?string $name = null): RouteDefinition
-    {
-        return $this->add('GET', $path, $handler, $middleware, $name);
-    }
-
-    public function post(string $path, array $handler, array $middleware = [], ?string $name = null): RouteDefinition
-    {
-        return $this->add('POST', $path, $handler, $middleware, $name);
-    }
-
-    public function put(string $path, array $handler, array $middleware = [], ?string $name = null): RouteDefinition
-    {
-        return $this->add('PUT', $path, $handler, $middleware, $name);
-    }
-
-    public function patch(string $path, array $handler, array $middleware = [], ?string $name = null): RouteDefinition
-    {
-        return $this->add('PATCH', $path, $handler, $middleware, $name);
-    }
-
-    public function delete(string $path, array $handler, array $middleware = [], ?string $name = null): RouteDefinition
-    {
-        return $this->add('DELETE', $path, $handler, $middleware, $name);
-    }
-
-    public function routes(): array
-    {
-        $list = [];
-
-        foreach ($this->routes as $method => $routes) {
-            foreach ($routes as $route) {
-                $handler = $route['handler'] ?? [];
-
-                $list[] = [
-                    'method' => $method,
-                    'path' => $route['path'] ?? '',
-                    'name' => $route['name'] ?? '',
-                    'controller' => (string)($handler[0] ?? ''),
-                    'action' => (string)($handler[1] ?? ''),
-                    'middleware' => $route['middleware'] ?? [],
-                ];
-            }
-        }
-
-        return $list;
-    }
-
-    public function group(array $options, callable $callback): void
-    {
-        $oldPrefix = $this->groupPrefix;
-        $oldMiddleware = $this->groupMiddleware;
-        $oldNamePrefix = $this->groupNamePrefix;
-
-        $prefix = (string)($options['prefix'] ?? '');
-        $namePrefix = (string)($options['as'] ?? $options['name'] ?? '');
-        $middleware = $options['middleware'] ?? [];
-
-        if (!is_array($middleware)) {
-            $middleware = [$middleware];
-        }
-
-        if ($prefix !== '') {
-            $this->groupPrefix = $this->joinPaths($this->groupPrefix, $prefix);
-        }
-
-        if ($namePrefix !== '') {
-            $this->groupNamePrefix .= $namePrefix;
-        }
-
-        $this->groupMiddleware = array_values(array_unique(array_filter(array_merge(
-            $this->groupMiddleware,
-            $middleware
-        ))));
-
-        $callback($this);
-
-        $this->groupPrefix = $oldPrefix;
-        $this->groupMiddleware = $oldMiddleware;
-        $this->groupNamePrefix = $oldNamePrefix;
-    }
-
-    private function add(string $method, string $path, array $handler, array $middleware = [], ?string $name = null): RouteDefinition
-    {
-        $method = strtoupper($method);
-
-        $path = $this->joinPaths($this->groupPrefix, $path);
-        $path = $this->normalizePath($path);
-
-        $middleware = array_values(array_unique(array_filter(array_merge(
-            $this->groupMiddleware,
-            $middleware
-        ))));
-
-        $finalName = $this->applyNamePrefix($name);
-
-        $compiled = $this->compilePath($path);
-
-        $route = [
-            'method' => $method,
-            'path' => $path,
-            'pattern' => $compiled['pattern'],
-            'params' => $compiled['params'],
-            'handler' => $handler,
-            'middleware' => $middleware,
-            'name' => $finalName,
-        ];
-
-        $this->routes[$method][] = $route;
-
-        $index = array_key_last($this->routes[$method]);
-
-        if ($finalName !== null && $finalName !== '') {
-            $this->namedRoutes[$finalName] = $this->routes[$method][$index];
-        }
-
-        return new RouteDefinition($this, $method, (int)$index);
-    }
-
-    public function setRouteName(string $method, int $index, string $name): void
-    {
-        $method = strtoupper($method);
-
-        if (!isset($this->routes[$method][$index])) {
-            return;
-        }
-
-        $finalName = $this->applyNamePrefix($name);
-
-        $this->routes[$method][$index]['name'] = $finalName;
-
-        if ($finalName !== null && $finalName !== '') {
-            $this->namedRoutes[$finalName] = $this->routes[$method][$index];
-        }
-    }
-
-    public function addRouteMiddleware(string $method, int $index, array|string $middleware): void
-    {
-        $method = strtoupper($method);
-
-        if (!isset($this->routes[$method][$index])) {
-            return;
-        }
-
-        if (!is_array($middleware)) {
-            $middleware = [$middleware];
-        }
-
-        $this->routes[$method][$index]['middleware'] = array_values(array_unique(array_filter(array_merge(
-            $this->routes[$method][$index]['middleware'] ?? [],
-            $middleware
-        ))));
-    }
-
-    public function url(string $name, array $params = [], array $query = []): string
-    {
-        if (!isset($this->namedRoutes[$name])) {
-            return '#route-not-found-' . rawurlencode($name);
-        }
-
-        $route = $this->namedRoutes[$name];
-
-        $path = (string)($route['path'] ?? '/');
-
-        $path = preg_replace_callback(
-            '#\{([a-zA-Z_][a-zA-Z0-9_]*)(?::[^}]+)?\}#',
-            static function ($matches) use ($params) {
-                $key = $matches[1];
-
-                return rawurlencode((string)($params[$key] ?? ''));
-            },
-            $path
-        );
-
-        $url = rtrim(App::projectUrl(), '/') . $path;
-
-        if (!empty($query)) {
-            $url .= '?' . http_build_query($query);
-        }
-
-        return $url;
-    }
-
-    public function dispatch(Request $request): void
-    {
-        $method = $request->method();
-        $path = $this->normalizePath($request->path());
-
-        $matched = $this->match($method, $path);
-
-        if ($matched === null) {
-            $this->notFound($method, $path);
-            return;
-        }
-
-        $route = $matched['route'];
-        $routeParams = $matched['params'];
-
-        $request->setRouteParams($routeParams);
-
-        $handler = $route['handler'] ?? [];
-        $middlewares = $route['middleware'] ?? [];
-
-        $middlewareResponse = Middleware::handle($middlewares, $request);
-
-        if ($middlewareResponse instanceof Response) {
-            $middlewareResponse->send();
-            return;
-        }
-
-        $controllerClass = $handler[0] ?? null;
-        $controllerMethod = $handler[1] ?? null;
-
-        if (!$controllerClass || !class_exists($controllerClass)) {
-            $this->serverError('Контроллер не найден: ' . (string)$controllerClass);
-            return;
-        }
-
-        $controller = new $controllerClass($request);
-
-        if (!$controllerMethod || !method_exists($controller, $controllerMethod)) {
-            $methods = get_class_methods($controller);
-
-            $this->serverError(
-                'Метод контроллера не найден: ' . $controllerClass . '::' . (string)$controllerMethod
-                . "\n\nPHP видит такие методы:\n"
-                . implode("\n", $methods)
-            );
-
-            return;
-        }
-
-        $result = $controller->{$controllerMethod}(...array_values($routeParams));
-
-        if ($result instanceof Response) {
-            $result->send();
-            return;
-        }
-    }
-
-    private function match(string $method, string $path): ?array
-    {
-        $routes = $this->routes[$method] ?? [];
-
-        foreach ($routes as $route) {
-            $matches = [];
-
-            if (!preg_match($route['pattern'], $path, $matches)) {
-                continue;
-            }
-
-            $params = [];
-
-            foreach (($route['params'] ?? []) as $paramName) {
-                $params[$paramName] = $matches[$paramName] ?? null;
-            }
-
-            return [
-                'route' => $route,
-                'params' => $params,
-            ];
-        }
-
-        return null;
-    }
-
-    private function compilePath(string $path): array
-    {
-        $params = [];
-        $pattern = '';
-        $offset = 0;
-
-        preg_match_all(
-            '#\{([a-zA-Z_][a-zA-Z0-9_]*)(?::([^}]+))?\}#',
-            $path,
-            $matches,
-            PREG_OFFSET_CAPTURE
-        );
-
-        foreach ($matches[0] as $index => $match) {
-            $full = $match[0];
-            $position = $match[1];
-
-            $staticPart = substr($path, $offset, $position - $offset);
-            $pattern .= preg_quote($staticPart, '#');
-
-            $name = $matches[1][$index][0];
-            $rule = $matches[2][$index][0] ?? '[^/]+';
-            $rule = str_replace('#', '\#', $rule);
-
-            $params[] = $name;
-
-            $pattern .= '(?P<' . $name . '>' . $rule . ')';
-
-            $offset = $position + strlen($full);
-        }
-
-        $pattern .= preg_quote(substr($path, $offset), '#');
-
-        return [
-            'pattern' => '#^' . $pattern . '$#u',
-            'params' => $params,
-        ];
-    }
-
-    private function applyNamePrefix(?string $name): ?string
-    {
-        if ($name === null || $name === '') {
-            return null;
-        }
-
-        if ($this->groupNamePrefix !== '' && !str_starts_with($name, $this->groupNamePrefix)) {
-            return $this->groupNamePrefix . $name;
-        }
-
-        return $name;
-    }
-
-    private function joinPaths(string $left, string $right): string
-    {
-        $left = trim($left);
-        $right = trim($right);
-
-        if ($left === '' && $right === '') {
-            return '/';
-        }
-
-        if ($left === '') {
-            return $this->normalizePath($right);
-        }
-
-        if ($right === '') {
-            return $this->normalizePath($left);
-        }
-
-        return $this->normalizePath(trim($left, '/') . '/' . trim($right, '/'));
-    }
-
-    private function normalizePath(string $path): string
-    {
-        $path = trim($path);
-
-        if ($path === '') {
-            return '/';
-        }
-
-        $path = '/' . trim($path, '/');
-
-        if ($path !== '/') {
-            $path = rtrim($path, '/');
-        }
-
-        return $path;
-    }
-
-    private function notFound(string $method, string $path): void
-    {
-        Response::html(
-            '<h1>404</h1>'
-            . '<p>Маршрут не найден.</p>'
-            . '<pre>'
-            . 'Method: ' . htmlspecialchars($method) . "\n"
-            . 'Path: ' . htmlspecialchars($path) . "\n"
-            . '</pre>',
-            404
-        )->send();
-
-        exit;
-    }
-
-    private function serverError(string $message): void
-    {
-        Response::html(
-            '<h1>500</h1>'
-            . '<p>Ошибка MVC.</p>'
-            . '<pre>' . htmlspecialchars($message) . '</pre>',
-            500
-        )->send();
-
-        exit;
-    }
-}
-
-
----
-
-3. Создай /local/mvc/Support/RouteGroup.php
-
-Создай папку:
-
-/local/mvc/Support/
-
-Файл:
-
-/local/mvc/Support/RouteGroup.php
-
-Код:
-
-<?php
-
-namespace Local\Mvc\Support;
-
-use Local\Mvc\Support\Facades\Route;
-
-/**
- * RouteGroup
- *
- * Нужен для Laravel-like синтаксиса:
- *
- * Route::prefix('/admin')
- *     ->middleware(['auth', 'admin'])
- *     ->name('admin.')
- *     ->group(function () {
- *         Route::get('/users', [Controller::class, 'index']);
- *     });
- */
-class RouteGroup
-{
-    public function __construct(
-        private array $options = []
-    ) {}
-
-    public function prefix(string $prefix): self
-    {
-        $new = clone $this;
-        $new->options['prefix'] = $prefix;
-
-        return $new;
-    }
-
-    public function middleware(array|string $middleware): self
-    {
-        $new = clone $this;
-
-        if (!is_array($middleware)) {
-            $middleware = [$middleware];
-        }
-
-        $current = $new->options['middleware'] ?? [];
-
-        if (!is_array($current)) {
-            $current = [$current];
-        }
-
-        $new->options['middleware'] = array_values(array_unique(array_filter(array_merge(
-            $current,
-            $middleware
-        ))));
-
-        return $new;
-    }
-
-    public function name(string $prefix): self
-    {
-        return $this->as($prefix);
-    }
-
-    public function as(string $prefix): self
-    {
-        $new = clone $this;
-        $new->options['as'] = $prefix;
-
-        return $new;
-    }
-
-    public function group(callable $callback): void
-    {
-        Route::router()->group($this->options, $callback);
-    }
-}
-
-
----
-
-4. Создай /local/mvc/Support/Facades/Route.php
-
-Создай папку:
-
-/local/mvc/Support/Facades/
-
-Файл:
-
-/local/mvc/Support/Facades/Route.php
-
-Код:
-
-<?php
-
-namespace Local\Mvc\Support\Facades;
-
-use Local\Mvc\Core\RouteDefinition;
-use Local\Mvc\Core\Router;
-use Local\Mvc\Support\RouteGroup;
+use ReflectionClass;
+use ReflectionFunction;
+use ReflectionMethod;
+use ReflectionNamedType;
 use RuntimeException;
 
 /**
- * Route
+ * Container
  *
- * Laravel-like facade для маршрутов.
+ * Laravel-like service container.
+ *
+ * Простыми словами:
+ * это коробка, которая умеет сама создавать классы
+ * и подставлять им нужные зависимости.
  */
-class Route
+class Container
 {
-    private static ?Router $router = null;
+    private array $bindings = [];
 
-    public static function setRouter(Router $router): void
+    private array $instances = [];
+
+    /**
+     * Зарегистрировать готовый объект.
+     *
+     * Например:
+     * Request::class => $request
+     */
+    public function instance(string $abstract, object $instance): void
     {
-        self::$router = $router;
+        $this->instances[$abstract] = $instance;
     }
 
-    public static function router(): Router
+    /**
+     * Зарегистрировать связь.
+     *
+     * Например:
+     * LoggerInterface::class => FileLogger::class
+     */
+    public function bind(string $abstract, string|callable $concrete): void
     {
-        if (!(self::$router instanceof Router)) {
-            throw new RuntimeException('ROUTER_NOT_INITIALIZED');
+        $this->bindings[$abstract] = $concrete;
+    }
+
+    /**
+     * Получить объект.
+     */
+    public function make(string $class, array $parameters = []): object
+    {
+        if (isset($this->instances[$class])) {
+            return $this->instances[$class];
         }
 
-        return self::$router;
+        if (isset($this->bindings[$class])) {
+            $concrete = $this->bindings[$class];
+
+            if (is_callable($concrete)) {
+                return $concrete($this);
+            }
+
+            $class = $concrete;
+        }
+
+        if (!class_exists($class)) {
+            throw new RuntimeException('CONTAINER_CLASS_NOT_FOUND: ' . $class);
+        }
+
+        $reflection = new ReflectionClass($class);
+
+        if (!$reflection->isInstantiable()) {
+            throw new RuntimeException('CONTAINER_CLASS_NOT_INSTANTIABLE: ' . $class);
+        }
+
+        $constructor = $reflection->getConstructor();
+
+        if ($constructor === null) {
+            return new $class();
+        }
+
+        $dependencies = $this->resolveParameters($constructor, $parameters);
+
+        return $reflection->newInstanceArgs($dependencies);
     }
 
-    public static function get(string $path, array $handler): RouteDefinition
+    /**
+     * Вызвать метод и автоматически подставить зависимости.
+     *
+     * Например:
+     * public function users(UserService $service)
+     *
+     * Container сам создаст UserService.
+     */
+    public function call(array $callable, array $parameters = []): mixed
     {
-        return self::router()->get($path, $handler);
+        [$object, $method] = $callable;
+
+        $reflection = new ReflectionMethod($object, $method);
+
+        $dependencies = $this->resolveParameters($reflection, $parameters);
+
+        return $reflection->invokeArgs($object, $dependencies);
     }
 
-    public static function post(string $path, array $handler): RouteDefinition
+    private function resolveParameters(ReflectionMethod|\ReflectionFunctionAbstract $reflection, array $parameters = []): array
     {
-        return self::router()->post($path, $handler);
-    }
+        $dependencies = [];
 
-    public static function put(string $path, array $handler): RouteDefinition
-    {
-        return self::router()->put($path, $handler);
-    }
+        foreach ($reflection->getParameters() as $parameter) {
+            $name = $parameter->getName();
+            $type = $parameter->getType();
 
-    public static function patch(string $path, array $handler): RouteDefinition
-    {
-        return self::router()->patch($path, $handler);
-    }
+            /**
+             * 1. Если есть параметр маршрута с таким именем — используем его.
+             *
+             * Например маршрут:
+             * /users/{id}
+             *
+             * Метод:
+             * userDetail(string $id)
+             */
+            if (array_key_exists($name, $parameters)) {
+                $dependencies[] = $parameters[$name];
+                continue;
+            }
 
-    public static function delete(string $path, array $handler): RouteDefinition
-    {
-        return self::router()->delete($path, $handler);
-    }
+            /**
+             * 2. Если параметр — класс, создаём его через контейнер.
+             *
+             * Например:
+             * UserService $userService
+             */
+            if ($type instanceof ReflectionNamedType && !$type->isBuiltin()) {
+                $dependencies[] = $this->make($type->getName());
+                continue;
+            }
 
-    public static function prefix(string $prefix): RouteGroup
-    {
-        return (new RouteGroup())->prefix($prefix);
-    }
+            /**
+             * 3. Если есть значение по умолчанию — используем его.
+             */
+            if ($parameter->isDefaultValueAvailable()) {
+                $dependencies[] = $parameter->getDefaultValue();
+                continue;
+            }
 
-    public static function middleware(array|string $middleware): RouteGroup
-    {
-        return (new RouteGroup())->middleware($middleware);
-    }
+            throw new RuntimeException(
+                'CONTAINER_CANNOT_RESOLVE_PARAMETER: $' . $name . ' in ' . $reflection->getName()
+            );
+        }
 
-    public static function name(string $prefix): RouteGroup
-    {
-        return (new RouteGroup())->name($prefix);
-    }
-
-    public static function group(array $options, callable $callback): void
-    {
-        self::router()->group($options, $callback);
+        return $dependencies;
     }
 }
 
 
 ---
 
-5. Обнови /local/mvc/Core/App.php
+2. Обнови /local/mvc/Core/App.php
 
-Найди место, где создаётся router:
+Нужно, чтобы App создал контейнер и положил туда Request и Router.
 
-$router = new Router();
-self::$router = $router;
+Замени файл полностью:
 
-Сразу после этого добавь:
+<?php
 
-\Local\Mvc\Support\Facades\Route::setRouter($router);
+namespace Local\Mvc\Core;
 
-Должно быть так:
+/**
+ * App
+ *
+ * Запускатель MVC-приложения.
+ */
+class App
+{
+    private static ?Router $router = null;
 
-$router = new Router();
-self::$router = $router;
+    private static ?Container $container = null;
 
-\Local\Mvc\Support\Facades\Route::setRouter($router);
+    public static function run(?string $routesFile = null): void
+    {
+        $projectRoot = self::projectRoot();
 
-require $routesFile;
+        self::loadConfig($projectRoot);
 
-$router->dispatch($request);
+        if ($routesFile === null) {
+            $routesFile = $projectRoot . '/routes.php';
+        }
+
+        $request = Request::createFromGlobals();
+
+        ErrorHandler::register($request);
+
+        try {
+            if (!is_file($routesFile)) {
+                Response::html(
+                    '<h1>500</h1><p>Файл маршрутов не найден.</p><pre>'
+                    . htmlspecialchars($routesFile)
+                    . '</pre>',
+                    500
+                )->send();
+
+                return;
+            }
+
+            $container = new Container();
+            self::$container = $container;
+
+            $router = new Router();
+            self::$router = $router;
+
+            /**
+             * Кладём важные объекты в контейнер.
+             *
+             * Теперь если какому-то классу нужен Request,
+             * контейнер отдаст текущий Request.
+             */
+            $container->instance(Request::class, $request);
+            $container->instance(Router::class, $router);
+            $container->instance(Container::class, $container);
+
+            \Local\Mvc\Support\Facades\Route::setRouter($router);
+
+            require $routesFile;
+
+            $router->dispatch($request);
+        } catch (\Throwable $e) {
+            ErrorHandler::renderThrowable($e);
+        }
+    }
+
+    public static function router(): ?Router
+    {
+        return self::$router;
+    }
+
+    public static function container(): Container
+    {
+        if (!(self::$container instanceof Container)) {
+            self::$container = new Container();
+        }
+
+        return self::$container;
+    }
+
+    public static function make(string $class, array $parameters = []): object
+    {
+        return self::container()->make($class, $parameters);
+    }
+
+    public static function route(string $name, array $params = [], array $query = []): string
+    {
+        if (!(self::$router instanceof Router)) {
+            return '#router-not-ready';
+        }
+
+        return self::$router->url($name, $params, $query);
+    }
+
+    private static function loadConfig(string $projectRoot): void
+    {
+        $configFile = rtrim($projectRoot, '/') . '/config.php';
+
+        $config = [];
+
+        if (is_file($configFile)) {
+            $loaded = require $configFile;
+
+            if (is_array($loaded)) {
+                $config = $loaded;
+            }
+        }
+
+        Config::load([
+            'app' => [
+                'name' => 'Local MVC App',
+                'description' => '',
+            ],
+            'debug' => defined('LOCAL_MVC_DEBUG') && LOCAL_MVC_DEBUG === true,
+            'log' => [
+                'file' => rtrim($projectRoot, '/') . '/logs/app.log',
+            ],
+        ]);
+
+        Config::load($config);
+    }
+
+    public static function projectRoot(): string
+    {
+        if (!defined('LOCAL_MVC_PROJECT_ROOT')) {
+            return $_SERVER['DOCUMENT_ROOT'] . '/local/mvc';
+        }
+
+        return rtrim((string)LOCAL_MVC_PROJECT_ROOT, '/');
+    }
+
+    public static function projectUrl(): string
+    {
+        if (!defined('LOCAL_MVC_PROJECT_URL')) {
+            return '/local/mvc';
+        }
+
+        return rtrim((string)LOCAL_MVC_PROJECT_URL, '/');
+    }
+
+    public static function projectNamespace(): string
+    {
+        if (!defined('LOCAL_MVC_PROJECT_NAMESPACE')) {
+            return 'Local\\Mvc\\';
+        }
+
+        return rtrim((string)LOCAL_MVC_PROJECT_NAMESPACE, '\\') . '\\';
+    }
+}
 
 
 ---
 
-6. Добавь Laravel-like тест в /local/mvc_demo/routes.php
+3. Обнови dispatch() в /local/mvc/Core/Router.php
 
-Вверху файла добавь:
+В файле:
 
-use Local\Mvc\Support\Facades\Route;
+/local/mvc/Core/Router.php
 
-Потом рядом с публичными маршрутами добавь:
+найди кусок:
 
-Route::get('/laravel-like-ping', [HomeController::class, 'ping'])
-    ->name('laravel.ping');
+$controller = new $controllerClass($request);
 
-И добавь пример группы:
+Замени на:
 
-Route::prefix('/laravel-admin')
-    ->middleware(['auth', 'admin'])
-    ->name('laravel.admin.')
-    ->group(function () {
-        Route::get('/dashboard', [\Local\MvcDemo\Controllers\AdminController::class, 'dashboard'])
-            ->name('dashboard');
-    });
+$controller = App::container()->make($controllerClass);
 
-После этого будут работать маршруты:
+Потом найди:
 
-/local/mvc_demo/laravel-like-ping
-/local/mvc_demo/laravel-admin/dashboard
+$result = $controller->{$controllerMethod}(...array_values($routeParams));
 
-И в debug/routes появятся имена:
+Замени на:
 
-laravel.ping
-laravel.admin.dashboard
+$result = App::container()->call([$controller, $controllerMethod], $routeParams);
+
+Итоговый важный кусок в dispatch() должен быть таким:
+
+$controller = App::container()->make($controllerClass);
+
+if (!$controllerMethod || !method_exists($controller, $controllerMethod)) {
+    $methods = get_class_methods($controller);
+
+    $this->serverError(
+        'Метод контроллера не найден: ' . $controllerClass . '::' . (string)$controllerMethod
+        . "\n\nPHP видит такие методы:\n"
+        . implode("\n", $methods)
+    );
+
+    return;
+}
+
+$result = App::container()->call([$controller, $controllerMethod], $routeParams);
+
+if ($result instanceof Response) {
+    $result->send();
+    return;
+}
 
 
 ---
 
-7. Проверка
+4. Проверяем, что Controller принимает Request
+
+В /local/mvc/Core/Controller.php должно быть так:
+
+public function __construct(?Request $request = null)
+{
+    $this->request = $request ?? Request::createFromGlobals();
+}
+
+Оставь как есть. Контейнер сам подставит текущий Request.
+
+
+---
+
+5. Теперь перепишем AdminController в Laravel-like стиле
+
+Открой:
+
+/local/mvc_demo/Controllers/AdminController.php
+
+Замени файл полностью:
+
+<?php
+
+namespace Local\MvcDemo\Controllers;
+
+use Local\Mvc\Core\Auth;
+use Local\Mvc\Core\Controller;
+use Local\Mvc\Core\Response;
+use Local\MvcDemo\Services\UserService;
+
+class AdminController extends Controller
+{
+    public function dashboard(UserService $userService): Response
+    {
+        return $this->render('admin/dashboard', [
+            'title' => 'Админ-панель',
+            'message' => 'Это защищённая админская страница. Сюда может зайти только администратор.',
+            'user' => [
+                'id' => Auth::id(),
+                'login' => Auth::login(),
+                'name' => Auth::name(),
+                'email' => Auth::email(),
+            ],
+            'stats' => $userService->dashboardStats(),
+        ]);
+    }
+
+    public function users(UserService $userService): Response
+    {
+        $page = (int)$this->request->get('page', 1);
+        $search = trim((string)$this->request->get('q', ''));
+
+        $result = $userService->paginateForTable($page, 10, $search);
+
+        return $this->render('admin/users', [
+            'title' => 'Пользователи',
+            'users' => $result['items'],
+            'pagination' => $result['pagination'],
+            'search' => $result['search'],
+        ]);
+    }
+
+    public function userDetail(string $id, UserService $userService): Response
+    {
+        $user = $userService->findForDetail((int)$id);
+
+        if (!$user) {
+            return Response::html(
+                '<h1>404</h1><p>Пользователь не найден.</p>',
+                404
+            );
+        }
+
+        return $this->render('admin/user_detail', [
+            'title' => 'Карточка пользователя',
+            'user' => $user,
+        ]);
+    }
+}
+
+Обрати внимание:
+
+public function users(UserService $userService): Response
+
+Мы больше не пишем:
+
+$userService = new UserService();
+
+Это делает контейнер.
+
+
+---
+
+6. Перепишем UserApiController
+
+Файл:
+
+/local/mvc_demo/Controllers/UserApiController.php
+
+Замени полностью:
+
+<?php
+
+namespace Local\MvcDemo\Controllers;
+
+use Local\Mvc\Core\ApiController;
+use Local\Mvc\Core\Response;
+use Local\MvcDemo\Services\UserService;
+
+class UserApiController extends ApiController
+{
+    public function index(UserService $userService): Response
+    {
+        $page = (int)$this->request->get('page', 1);
+        $search = trim((string)$this->request->get('q', ''));
+
+        $result = $userService->paginateForTable($page, 10, $search);
+
+        return $this->ok([
+            'items' => $result['items'],
+            'pagination' => $result['pagination'],
+            'search' => $result['search'],
+        ]);
+    }
+
+    public function show(string $id, UserService $userService): Response
+    {
+        $user = $userService->findForDetail((int)$id);
+
+        if (!$user) {
+            $this->abortNotFound('Пользователь не найден', [
+                'id' => (int)$id,
+            ]);
+        }
+
+        return $this->ok([
+            'user' => $user,
+        ]);
+    }
+}
+
+
+---
+
+7. Добавим тест контейнера
+
+В HomeController добавь метод:
+
+public function containerTest(UserService $userService): Response
+{
+    return $this->success([
+        'message' => 'Container работает. UserService был создан автоматически.',
+        'stats' => $userService->dashboardStats(),
+    ]);
+}
+
+И сверху добавь:
+
+use Local\MvcDemo\Services\UserService;
+
+В /local/mvc_demo/routes.php добавь маршрут:
+
+Route::get('/container-test', [HomeController::class, 'containerTest'])
+    ->name('container.test');
+
+
+---
+
+8. Проверяем
 
 Сбрось OPcache:
 
@@ -741,55 +587,56 @@ echo 'OPcache reset OK';
 
 Открой:
 
-https://bitrix24-stage.gaz.ru/local/mvc_demo/laravel-like-ping
+/local/mvc_demo/container-test
 
-Потом:
+Должен быть JSON:
 
-https://bitrix24-stage.gaz.ru/local/mvc_demo/laravel-admin/dashboard
+{
+  "ok": true,
+  "data": {
+    "message": "Container работает. UserService был создан автоматически.",
+    "stats": {
+      "users_count": 123
+    }
+  }
+}
 
-И затем:
+Проверь ещё:
 
-https://bitrix24-stage.gaz.ru/local/mvc_demo/debug/routes
+/local/mvc_demo/admin/dashboard
+/local/mvc_demo/admin/users
+/local/mvc_demo/api/users
 
 
 ---
 
 Что мы сделали
 
-Теперь у нас есть Laravel-like маршруты:
+Раньше было так:
 
-Route::get('/path', [Controller::class, 'method'])
-    ->middleware(['auth'])
-    ->name('route.name');
+public function users(): Response
+{
+    $userService = new UserService();
+}
 
-И группы:
+Теперь Laravel-like:
 
-Route::prefix('/admin')
-    ->middleware(['auth', 'admin'])
-    ->name('admin.')
-    ->group(function () {
-        Route::get('/dashboard', [AdminController::class, 'dashboard'])
-            ->name('dashboard');
-    });
+public function users(UserService $userService): Response
+{
+    ...
+}
 
-Простыми словами:
+Фреймворк сам:
 
-Router — двигатель маршрутизации.
-Route facade — красивый Laravel-похожий интерфейс.
+видит, что методу нужен UserService
+создаёт UserService
+передаёт его в метод
 
-Дальше будем постепенно приводить фреймворк к Laravel-стилю:
+Это очень похоже на Laravel.
 
-Route facade
-Request object
-Controller
-Middleware
-Service container
-Config
-Logger
-Validation
-Redirect
-Response
-Models
-Services
+Главная мысль:
 
-Следующий очень Laravel-like шаг — сделать service container: чтобы можно было не писать new UserService(), а фреймворк сам создавал нужные классы.
+Container — это мозг, который создаёт зависимости.
+Controller — просто говорит, что ему нужно.
+
+Дальше можно сделать ещё ближе к Laravel: FormRequest — отдельные классы для валидации запросов, например StoreMessageRequest, чтобы в контроллере не писать Validator вручную.
