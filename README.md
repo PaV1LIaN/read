@@ -1,221 +1,35 @@
-Идём дальше в Laravel-стиле. Сейчас сделаем запись данных через Model, почти как в Laravel:
+Отлично, тогда делаем таблицу не в public, а в схеме:
 
-Note::create([
-    'TITLE' => 'Тест',
-    'BODY' => 'Сообщение',
-]);
+mvc
 
-Note::updateById($id, [
-    'TITLE' => 'Новое название',
-]);
+То есть таблица будет:
 
-Note::deleteById($id);
+mvc.mvc_demo_notes
 
-Это уже основа для CRUD: создать, показать, изменить, удалить.
+3. Создай таблицу в PostgreSQL в схеме mvc
 
+В pgAdmin выполни:
 
----
-
-1. Обнови /local/mvc/Core/QueryBuilder.php
-
-Нам нужно добавить методы:
-
-insert()
-update()
-delete()
-
-Внутрь класса QueryBuilder, перед методом get(), добавь:
-
-public function insert(array $data): bool
-{
-    if (empty($data)) {
-        return false;
-    }
-
-    $columns = [];
-    $placeholders = [];
-    $bindings = [];
-
-    foreach ($data as $column => $value) {
-        $safeColumn = $this->safeColumn((string)$column);
-        $binding = $this->nextBindingName();
-
-        $columns[] = $safeColumn;
-        $placeholders[] = ':' . $binding;
-        $bindings[$binding] = $value;
-    }
-
-    $sql = 'INSERT INTO ' . $this->table
-        . ' (' . implode(', ', $columns) . ')'
-        . ' VALUES (' . implode(', ', $placeholders) . ')';
-
-    return Db::execute($sql, $bindings);
-}
-
-public function update(array $data): bool
-{
-    if (empty($data)) {
-        return false;
-    }
-
-    $sets = [];
-    $bindings = $this->bindings;
-
-    foreach ($data as $column => $value) {
-        $safeColumn = $this->safeColumn((string)$column);
-        $binding = $this->nextBindingName();
-
-        $sets[] = $safeColumn . ' = :' . $binding;
-        $bindings[$binding] = $value;
-    }
-
-    $sql = 'UPDATE ' . $this->table
-        . ' SET ' . implode(', ', $sets);
-
-    if (!empty($this->wheres)) {
-        $sql .= ' WHERE ' . $this->compileWheres();
-    }
-
-    return Db::execute($sql, $bindings);
-}
-
-public function delete(): bool
-{
-    $sql = 'DELETE FROM ' . $this->table;
-
-    if (!empty($this->wheres)) {
-        $sql .= ' WHERE ' . $this->compileWheres();
-    }
-
-    return Db::execute($sql, $this->bindings);
-}
-
-
----
-
-2. Обнови /local/mvc/Core/Model.php
-
-Полностью замени файл:
-
-<?php
-
-namespace Local\Mvc\Core;
-
-use RuntimeException;
-
-/**
- * Model
- *
- * Простая Laravel-like модель.
- */
-abstract class Model
-{
-    protected static string $table = '';
-
-    protected static string $primaryKey = 'ID';
-
-    /**
-     * Разрешённые поля для массового заполнения.
-     *
-     * Как $fillable в Laravel.
-     */
-    protected static array $fillable = [];
-
-    protected static function table(): string
-    {
-        if (static::$table === '') {
-            throw new RuntimeException('У модели не указана таблица: ' . static::class);
-        }
-
-        return static::$table;
-    }
-
-    public static function query(): QueryBuilder
-    {
-        return QueryBuilder::table(static::table());
-    }
-
-    public static function all(int $limit = 100): array
-    {
-        return static::query()
-            ->orderBy(static::$primaryKey, 'desc')
-            ->limit($limit)
-            ->get();
-    }
-
-    public static function find(int|string $id): ?array
-    {
-        return static::query()
-            ->where(static::$primaryKey, $id)
-            ->first();
-    }
-
-    public static function count(): int
-    {
-        return static::query()->count();
-    }
-
-    public static function create(array $data): bool
-    {
-        return static::query()->insert(static::onlyFillable($data));
-    }
-
-    public static function updateById(int|string $id, array $data): bool
-    {
-        return static::query()
-            ->where(static::$primaryKey, $id)
-            ->update(static::onlyFillable($data));
-    }
-
-    public static function deleteById(int|string $id): bool
-    {
-        return static::query()
-            ->where(static::$primaryKey, $id)
-            ->delete();
-    }
-
-    protected static function onlyFillable(array $data): array
-    {
-        if (empty(static::$fillable)) {
-            return $data;
-        }
-
-        $result = [];
-
-        foreach (static::$fillable as $field) {
-            if (array_key_exists($field, $data)) {
-                $result[$field] = $data[$field];
-            }
-        }
-
-        return $result;
-    }
-}
-
-
----
-
-3. Создай тестовую таблицу
-
-Чтобы не трогать b_user, сделаем свою таблицу заметок.
-
-В SQL-консоли Битрикса выполни:
-
-CREATE TABLE IF NOT EXISTS mvc_demo_notes (
-    ID INT NOT NULL AUTO_INCREMENT,
-    TITLE VARCHAR(255) NOT NULL,
-    BODY TEXT NULL,
-    CREATED_AT DATETIME NULL,
-    UPDATED_AT DATETIME NULL,
-    PRIMARY KEY (ID)
+CREATE TABLE IF NOT EXISTS mvc.mvc_demo_notes (
+    id BIGSERIAL PRIMARY KEY,
+    title VARCHAR(255) NOT NULL,
+    body TEXT NULL,
+    created_at TIMESTAMP NULL,
+    updated_at TIMESTAMP NULL
 );
 
-Если у тебя PostgreSQL, скажи — дам вариант под PostgreSQL. Но раз b_user и CAST(ID AS CHAR) работают, скорее всего сейчас используется MySQL/MariaDB Битрикса.
+Проверить можно так:
+
+SELECT *
+FROM mvc.mvc_demo_notes
+ORDER BY id DESC;
 
 
 ---
 
 4. Создай модель /local/mvc_demo/Models/Note.php
+
+Так как PostgreSQL обычно отдаёт поля в нижнем регистре (id, title, body), сделаем модель сразу под PostgreSQL.
 
 <?php
 
@@ -225,25 +39,34 @@ use Local\Mvc\Core\Model;
 
 class Note extends Model
 {
-    protected static string $table = 'mvc_demo_notes';
+    protected static string $table = 'mvc.mvc_demo_notes';
 
-    protected static string $primaryKey = 'ID';
+    protected static string $primaryKey = 'id';
 
     protected static array $fillable = [
-        'TITLE',
-        'BODY',
-        'CREATED_AT',
-        'UPDATED_AT',
+        'title',
+        'body',
+        'created_at',
+        'updated_at',
     ];
 
     public static function latest(int $limit = 20): array
     {
         return self::query()
-            ->orderBy('ID', 'desc')
+            ->orderBy('id', 'desc')
             ->limit($limit)
             ->get();
     }
 }
+
+Обрати внимание:
+
+protected static string $table = 'mvc.mvc_demo_notes';
+
+Это значит:
+
+схема mvc
+таблица mvc_demo_notes
 
 
 ---
@@ -276,6 +99,7 @@ class NoteController extends Controller
 
         if ($title === '') {
             Flash::error('Введите название заметки.');
+
             Flash::old([
                 'title' => $title,
                 'body' => $body,
@@ -285,10 +109,10 @@ class NoteController extends Controller
         }
 
         Note::create([
-            'TITLE' => $title,
-            'BODY' => $body,
-            'CREATED_AT' => date('Y-m-d H:i:s'),
-            'UPDATED_AT' => date('Y-m-d H:i:s'),
+            'title' => $title,
+            'body' => $body,
+            'created_at' => date('Y-m-d H:i:s'),
+            'updated_at' => date('Y-m-d H:i:s'),
         ]);
 
         Flash::success('Заметка создана.');
@@ -311,11 +135,15 @@ class NoteController extends Controller
 
 6. Создай view /local/mvc_demo/Views/notes/index.php
 
-Сначала папка:
+Создай папку:
 
 /local/mvc_demo/Views/notes/
 
-Файл:
+Создай файл:
+
+/local/mvc_demo/Views/notes/index.php
+
+Код:
 
 <?php
 
@@ -331,7 +159,8 @@ if (!defined('B_PROLOG_INCLUDED') || B_PROLOG_INCLUDED !== true) {
     </h1>
 
     <p class="mvc-page-text">
-        Это тестовый CRUD через Laravel-like Model и QueryBuilder.
+        Это тестовый CRUD через Laravel-like Model и QueryBuilder. Таблица лежит в PostgreSQL:
+        <span class="mvc-code">mvc.mvc_demo_notes</span>
     </p>
 
     <?php if (!empty($flash)): ?>
@@ -410,23 +239,23 @@ if (!defined('B_PROLOG_INCLUDED') || B_PROLOG_INCLUDED !== true) {
                     <?php foreach ($notes as $note): ?>
                         <tr>
                             <td style="padding:8px;border-bottom:1px solid #e5e7eb;">
-                                <?= e($note['ID'] ?? '') ?>
+                                <?= e($note['id'] ?? '') ?>
                             </td>
 
                             <td style="padding:8px;border-bottom:1px solid #e5e7eb;">
-                                <?= e($note['TITLE'] ?? '') ?>
+                                <?= e($note['title'] ?? '') ?>
                             </td>
 
                             <td style="padding:8px;border-bottom:1px solid #e5e7eb;">
-                                <?= e($note['BODY'] ?? '') ?>
+                                <?= e($note['body'] ?? '') ?>
                             </td>
 
                             <td style="padding:8px;border-bottom:1px solid #e5e7eb;">
-                                <?= e($note['CREATED_AT'] ?? '') ?>
+                                <?= e($note['created_at'] ?? '') ?>
                             </td>
 
                             <td style="padding:8px;border-bottom:1px solid #e5e7eb;">
-                                <form method="post" action="<?= e(route('notes.delete', ['id' => (int)$note['ID']])) ?>">
+                                <form method="post" action="<?= e(route('notes.delete', ['id' => (int)($note['id'] ?? 0)])) ?>">
                                     <?= csrf_field() ?>
                                     <?= method_field('DELETE') ?>
 
@@ -452,11 +281,11 @@ if (!defined('B_PROLOG_INCLUDED') || B_PROLOG_INCLUDED !== true) {
 
 7. Добавь маршруты в /local/mvc_demo/routes.php
 
-Добавь use:
+Вверху добавь:
 
 use Local\MvcDemo\Controllers\NoteController;
 
-И маршруты:
+Ниже добавь маршруты:
 
 Route::get('/notes', [NoteController::class, 'index'])
     ->name('notes.index');
@@ -474,14 +303,18 @@ Route::delete('/notes/{id:\d+}', [NoteController::class, 'delete'])
 
 8. Добавь ссылку в меню
 
-В /local/mvc_demo/Views/layouts/app.php добавь:
+Файл:
+
+/local/mvc_demo/Views/layouts/app.php
+
+В меню добавь:
 
 <a href="<?= e(route('notes.index')) ?>">Notes</a>
 
 
 ---
 
-9. Проверка
+9. Проверь
 
 Сбрось OPcache:
 
@@ -490,39 +323,13 @@ echo 'OPcache reset OK';
 
 Открой:
 
-/local/mvc_demo/notes
+https://bitrix24-stage.gaz.ru/local/mvc_demo/notes
 
 Проверь:
 
 1. Создай заметку.
 2. Она должна появиться в таблице.
-3. Удали заметку.
-4. Она должна исчезнуть.
+3. Проверь в pgAdmin таблицу mvc.mvc_demo_notes.
+4. Удали заметку.
 
-
----
-
-Что мы сделали
-
-Теперь модель умеет Laravel-like CRUD:
-
-Note::create([...]);
-
-Note::updateById($id, [...]);
-
-Note::deleteById($id);
-
-И внутри это работает через QueryBuilder:
-
-QueryBuilder::table('mvc_demo_notes')->insert([...]);
-QueryBuilder::table('mvc_demo_notes')->update([...]);
-QueryBuilder::table('mvc_demo_notes')->delete();
-
-Главная мысль:
-
-QueryBuilder — собирает SQL.
-Model — даёт красивый интерфейс.
-Controller — управляет действием.
-View — показывает данные.
-
-Это уже очень похоже на Laravel-подход к CRUD.
+Главное отличие от прошлого варианта: мы теперь работаем с PostgreSQL-схемой mvc, а не с таблицей в public.
