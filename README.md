@@ -1,606 +1,620 @@
-Идём дальше в Laravel-стиле. Следующий важный шаг — middleware как отдельные классы, а не один большой файл.
+Отлично. Дальше делаем ещё один Laravel-like кирпич — Service Providers.
 
-Сейчас у нас вся логика лежит в одном файле:
+В Laravel есть файлы-поставщики сервисов, например:
 
-/local/mvc/Core/Middleware.php
+AppServiceProvider
+RouteServiceProvider
+AuthServiceProvider
 
-Там сразу всё:
+Простыми словами:
 
-auth
-admin
-csrf
-group
-role
-
-А в Laravel middleware — это отдельные классы:
-
-AuthMiddleware
-AdminMiddleware
-CsrfMiddleware
-RoleMiddleware
-
-Так проще расширять фреймворк.
+ServiceProvider — это место, где проект говорит фреймворку:
+"Вот мои сервисы, вот как их создавать, вот что надо настроить при запуске".
 
 
 ---
 
-Что хотим получить
+1. Обнови /local/mvc/Core/Container.php
 
-В маршрутах оставляем красиво:
-
-Route::get('/admin/users', [AdminController::class, 'users'])
-    ->middleware(['auth', 'admin']);
-
-Но внутри фреймворка auth будет ссылаться на класс:
-
-Local\Mvc\Core\Middlewares\AuthMiddleware::class
-
-То есть:
-
-auth  → AuthMiddleware
-admin → AdminMiddleware
-csrf  → CsrfMiddleware
-role  → RoleMiddleware
-
-
----
-
-1. Создай /local/mvc/Core/MiddlewareInterface.php
+Полностью замени файл:
 
 <?php
 
 namespace Local\Mvc\Core;
 
-/**
- * MiddlewareInterface
- *
- * Интерфейс для middleware-классов.
- *
- * Каждый middleware получает Request
- * и может вернуть Response, если надо остановить запрос.
- *
- * Если вернул null — запрос идёт дальше.
- */
-interface MiddlewareInterface
-{
-    public function handle(Request $request, string $argument = ''): ?Response;
-}
-
-
----
-
-2. Создай папку /local/mvc/Core/Middlewares/
-
-/local/mvc/Core/Middlewares/
-
-
----
-
-3. Создай /local/mvc/Core/Middlewares/AuthMiddleware.php
-
-<?php
-
-namespace Local\Mvc\Core\Middlewares;
-
-use Local\Mvc\Core\Auth;
-use Local\Mvc\Core\MiddlewareInterface;
-use Local\Mvc\Core\Request;
-use Local\Mvc\Core\Response;
-
-class AuthMiddleware implements MiddlewareInterface
-{
-    public function handle(Request $request, string $argument = ''): ?Response
-    {
-        if (Auth::check()) {
-            return null;
-        }
-
-        return Response::json([
-            'ok' => false,
-            'error' => 'AUTH_REQUIRED',
-            'details' => [
-                'message' => 'Нужно авторизоваться',
-            ],
-        ], 401);
-    }
-}
-
-
----
-
-4. Создай /local/mvc/Core/Middlewares/AdminMiddleware.php
-
-<?php
-
-namespace Local\Mvc\Core\Middlewares;
-
-use Local\Mvc\Core\Auth;
-use Local\Mvc\Core\MiddlewareInterface;
-use Local\Mvc\Core\Request;
-use Local\Mvc\Core\Response;
-
-class AdminMiddleware implements MiddlewareInterface
-{
-    public function handle(Request $request, string $argument = ''): ?Response
-    {
-        if (Auth::isAdmin()) {
-            return null;
-        }
-
-        return Response::json([
-            'ok' => false,
-            'error' => 'ADMIN_REQUIRED',
-            'details' => [
-                'message' => 'Нужны права администратора',
-            ],
-        ], 403);
-    }
-}
-
-
----
-
-5. Создай /local/mvc/Core/Middlewares/CsrfMiddleware.php
-
-<?php
-
-namespace Local\Mvc\Core\Middlewares;
-
-use Local\Mvc\Core\MiddlewareInterface;
-use Local\Mvc\Core\Request;
-use Local\Mvc\Core\Response;
-
-class CsrfMiddleware implements MiddlewareInterface
-{
-    public function handle(Request $request, string $argument = ''): ?Response
-    {
-        /**
-         * Безопасные методы не проверяем.
-         */
-        if (in_array($request->method(), ['GET', 'HEAD', 'OPTIONS'], true)) {
-            return null;
-        }
-
-        /**
-         * Обычная форма Битрикса через bitrix_sessid_post().
-         */
-        if (function_exists('check_bitrix_sessid') && check_bitrix_sessid()) {
-            return null;
-        }
-
-        /**
-         * AJAX/JSON-запрос через заголовок.
-         */
-        $headerSessid = (string)$request->header('X-Bitrix-Sessid', '');
-
-        if (
-            $headerSessid !== ''
-            && function_exists('bitrix_sessid')
-            && hash_equals((string)bitrix_sessid(), $headerSessid)
-        ) {
-            return null;
-        }
-
-        return Response::json([
-            'ok' => false,
-            'error' => 'BAD_SESSID',
-            'details' => [
-                'message' => 'Неверный sessid. Обновите страницу и попробуйте снова.',
-            ],
-        ], 403);
-    }
-}
-
-
----
-
-6. Создай /local/mvc/Core/Middlewares/GroupMiddleware.php
-
-<?php
-
-namespace Local\Mvc\Core\Middlewares;
-
-use Local\Mvc\Core\Auth;
-use Local\Mvc\Core\MiddlewareInterface;
-use Local\Mvc\Core\Request;
-use Local\Mvc\Core\Response;
-
-class GroupMiddleware implements MiddlewareInterface
-{
-    public function handle(Request $request, string $argument = ''): ?Response
-    {
-        $groupId = (int)$argument;
-
-        if ($groupId > 0 && Auth::inGroup($groupId)) {
-            return null;
-        }
-
-        return Response::json([
-            'ok' => false,
-            'error' => 'GROUP_REQUIRED',
-            'details' => [
-                'message' => 'Недостаточно прав. Требуется группа: ' . $groupId,
-                'required_group' => $groupId,
-                'user_groups' => Auth::groups(),
-            ],
-        ], 403);
-    }
-}
-
-
----
-
-7. Создай /local/mvc/Core/Middlewares/GroupsMiddleware.php
-
-<?php
-
-namespace Local\Mvc\Core\Middlewares;
-
-use Local\Mvc\Core\Auth;
-use Local\Mvc\Core\MiddlewareInterface;
-use Local\Mvc\Core\Request;
-use Local\Mvc\Core\Response;
-
-class GroupsMiddleware implements MiddlewareInterface
-{
-    public function handle(Request $request, string $argument = ''): ?Response
-    {
-        $requiredGroups = $this->parseGroupList($argument);
-        $userGroups = Auth::groups();
-
-        foreach ($requiredGroups as $groupId) {
-            if (in_array($groupId, $userGroups, true)) {
-                return null;
-            }
-        }
-
-        return Response::json([
-            'ok' => false,
-            'error' => 'GROUPS_REQUIRED',
-            'details' => [
-                'message' => 'Недостаточно прав. Требуется одна из групп.',
-                'required_groups' => $requiredGroups,
-                'user_groups' => $userGroups,
-            ],
-        ], 403);
-    }
-
-    private function parseGroupList(string $argument): array
-    {
-        $items = explode(',', $argument);
-        $groups = [];
-
-        foreach ($items as $item) {
-            $groupId = (int)trim($item);
-
-            if ($groupId > 0) {
-                $groups[] = $groupId;
-            }
-        }
-
-        return array_values(array_unique($groups));
-    }
-}
-
-
----
-
-8. Создай /local/mvc/Core/Middlewares/RoleMiddleware.php
-
-<?php
-
-namespace Local\Mvc\Core\Middlewares;
-
-use Local\Mvc\Core\MiddlewareInterface;
-use Local\Mvc\Core\Request;
-use Local\Mvc\Core\Response;
-use Local\Mvc\Core\Role;
-
-class RoleMiddleware implements MiddlewareInterface
-{
-    public function handle(Request $request, string $argument = ''): ?Response
-    {
-        $context = $this->contextFromRequest($request);
-
-        if ($argument !== '' && Role::has($argument, null, $context)) {
-            return null;
-        }
-
-        return Response::json([
-            'ok' => false,
-            'error' => 'ROLE_REQUIRED',
-            'details' => [
-                'message' => 'Недостаточно прав. Требуется роль: ' . $argument,
-                'required_role' => $argument,
-                'user_roles' => Role::all(null, $context),
-                'context' => $context,
-            ],
-        ], 403);
-    }
-
-    private function contextFromRequest(Request $request): array
-    {
-        return [
-            'route' => $request->routeParams(),
-            'method' => $request->method(),
-            'path' => $request->path(),
-        ];
-    }
-}
-
-
----
-
-9. Создай /local/mvc/Core/Middlewares/RolesMiddleware.php
-
-<?php
-
-namespace Local\Mvc\Core\Middlewares;
-
-use Local\Mvc\Core\MiddlewareInterface;
-use Local\Mvc\Core\Request;
-use Local\Mvc\Core\Response;
-use Local\Mvc\Core\Role;
-
-class RolesMiddleware implements MiddlewareInterface
-{
-    public function handle(Request $request, string $argument = ''): ?Response
-    {
-        $context = $this->contextFromRequest($request);
-        $requiredRoles = $this->parseRoleList($argument);
-
-        if (Role::hasAny($requiredRoles, null, $context)) {
-            return null;
-        }
-
-        return Response::json([
-            'ok' => false,
-            'error' => 'ROLES_REQUIRED',
-            'details' => [
-                'message' => 'Недостаточно прав. Требуется одна из ролей.',
-                'required_roles' => $requiredRoles,
-                'user_roles' => Role::all(null, $context),
-                'context' => $context,
-            ],
-        ], 403);
-    }
-
-    private function parseRoleList(string $argument): array
-    {
-        $items = explode(',', $argument);
-        $roles = [];
-
-        foreach ($items as $item) {
-            $role = trim((string)$item);
-
-            if ($role !== '') {
-                $roles[] = $role;
-            }
-        }
-
-        return array_values(array_unique($roles));
-    }
-
-    private function contextFromRequest(Request $request): array
-    {
-        return [
-            'route' => $request->routeParams(),
-            'method' => $request->method(),
-            'path' => $request->path(),
-        ];
-    }
-}
-
-
----
-
-10. Обнови /local/mvc/Core/App.php
-
-В методе loadConfig() найди блок:
-
-Config::load([
-    'app' => [
-        'name' => 'Local MVC App',
-        'description' => '',
-    ],
-    'debug' => defined('LOCAL_MVC_DEBUG') && LOCAL_MVC_DEBUG === true,
-    'log' => [
-        'file' => rtrim($projectRoot, '/') . '/logs/app.log',
-    ],
-]);
-
-Замени на:
-
-Config::load([
-    'app' => [
-        'name' => 'Local MVC App',
-        'description' => '',
-    ],
-
-    'debug' => defined('LOCAL_MVC_DEBUG') && LOCAL_MVC_DEBUG === true,
-
-    'log' => [
-        'file' => rtrim($projectRoot, '/') . '/logs/app.log',
-    ],
-
-    /**
-     * Laravel-like aliases middleware.
-     */
-    'middleware' => [
-        'auth' => \Local\Mvc\Core\Middlewares\AuthMiddleware::class,
-        'admin' => \Local\Mvc\Core\Middlewares\AdminMiddleware::class,
-        'csrf' => \Local\Mvc\Core\Middlewares\CsrfMiddleware::class,
-
-        'group' => \Local\Mvc\Core\Middlewares\GroupMiddleware::class,
-        'groups' => \Local\Mvc\Core\Middlewares\GroupsMiddleware::class,
-
-        'role' => \Local\Mvc\Core\Middlewares\RoleMiddleware::class,
-        'roles' => \Local\Mvc\Core\Middlewares\RolesMiddleware::class,
-    ],
-]);
-
-
----
-
-11. Замени /local/mvc/Core/Middleware.php
-
-Теперь этот файл будет не хранить всю логику, а только запускать нужные middleware-классы.
-
-<?php
-
-namespace Local\Mvc\Core;
+use ReflectionClass;
+use ReflectionFunctionAbstract;
+use ReflectionMethod;
+use ReflectionNamedType;
+use RuntimeException;
 
 /**
- * Middleware
+ * Container
  *
- * Dispatcher middleware.
- *
- * Простыми словами:
- * принимает строки:
- *
- * auth
- * admin
- * role:editor
- *
- * находит нужный класс
- * и запускает его.
+ * Laravel-like service container.
  */
-class Middleware
+class Container
 {
-    public static function handle(array $middlewares, Request $request): ?Response
-    {
-        foreach ($middlewares as $middleware) {
-            $middleware = trim((string)$middleware);
+    private array $bindings = [];
 
-            if ($middleware === '') {
+    private array $instances = [];
+
+    private array $singletons = [];
+
+    public function instance(string $abstract, object $instance): void
+    {
+        $this->instances[$abstract] = $instance;
+    }
+
+    public function bind(string $abstract, string|callable $concrete): void
+    {
+        $this->bindings[$abstract] = $concrete;
+    }
+
+    public function singleton(string $abstract, string|callable $concrete): void
+    {
+        $this->bindings[$abstract] = $concrete;
+        $this->singletons[$abstract] = true;
+    }
+
+    public function make(string $class, array $parameters = []): object
+    {
+        if (isset($this->instances[$class])) {
+            return $this->instances[$class];
+        }
+
+        $abstract = $class;
+
+        if (isset($this->bindings[$class])) {
+            $concrete = $this->bindings[$class];
+
+            if (is_callable($concrete)) {
+                $object = $concrete($this);
+
+                if (!is_object($object)) {
+                    throw new RuntimeException('CONTAINER_BINDING_DID_NOT_RETURN_OBJECT: ' . $class);
+                }
+
+                if (!empty($this->singletons[$abstract])) {
+                    $this->instances[$abstract] = $object;
+                }
+
+                return $object;
+            }
+
+            $class = $concrete;
+        }
+
+        if (!class_exists($class)) {
+            throw new RuntimeException('CONTAINER_CLASS_NOT_FOUND: ' . $class);
+        }
+
+        $reflection = new ReflectionClass($class);
+
+        if (!$reflection->isInstantiable()) {
+            throw new RuntimeException('CONTAINER_CLASS_NOT_INSTANTIABLE: ' . $class);
+        }
+
+        $constructor = $reflection->getConstructor();
+
+        if ($constructor === null) {
+            $object = new $class();
+
+            if (!empty($this->singletons[$abstract])) {
+                $this->instances[$abstract] = $object;
+            }
+
+            return $object;
+        }
+
+        $dependencies = $this->resolveParameters($constructor, $parameters);
+
+        $object = $reflection->newInstanceArgs($dependencies);
+
+        if (!empty($this->singletons[$abstract])) {
+            $this->instances[$abstract] = $object;
+        }
+
+        return $object;
+    }
+
+    public function call(array $callable, array $parameters = []): mixed
+    {
+        [$object, $method] = $callable;
+
+        $reflection = new ReflectionMethod($object, $method);
+
+        $dependencies = $this->resolveParameters($reflection, $parameters);
+
+        return $reflection->invokeArgs($object, $dependencies);
+    }
+
+    private function resolveParameters(ReflectionMethod|ReflectionFunctionAbstract $reflection, array $parameters = []): array
+    {
+        $dependencies = [];
+
+        foreach ($reflection->getParameters() as $parameter) {
+            $name = $parameter->getName();
+            $type = $parameter->getType();
+
+            if (array_key_exists($name, $parameters)) {
+                $dependencies[] = $parameters[$name];
                 continue;
             }
 
-            $response = self::handleOne($middleware, $request);
+            if ($type instanceof ReflectionNamedType && !$type->isBuiltin()) {
+                $object = $this->make($type->getName());
 
-            if ($response instanceof Response) {
-                return $response;
+                if ($object instanceof FormRequest) {
+                    $object->validateResolved();
+                }
+
+                $dependencies[] = $object;
+                continue;
             }
+
+            if ($parameter->isDefaultValueAvailable()) {
+                $dependencies[] = $parameter->getDefaultValue();
+                continue;
+            }
+
+            throw new RuntimeException(
+                'CONTAINER_CANNOT_RESOLVE_PARAMETER: $' . $name . ' in ' . $reflection->getName()
+            );
         }
 
-        return null;
-    }
-
-    private static function handleOne(string $middleware, Request $request): ?Response
-    {
-        [$name, $argument] = self::parse($middleware);
-
-        $class = self::resolveMiddlewareClass($name);
-
-        if ($class === '') {
-            return Response::json([
-                'ok' => false,
-                'error' => 'UNKNOWN_MIDDLEWARE',
-                'details' => [
-                    'middleware' => $middleware,
-                    'name' => $name,
-                ],
-            ], 500);
-        }
-
-        $instance = App::container()->make($class);
-
-        if (!$instance instanceof MiddlewareInterface) {
-            return Response::json([
-                'ok' => false,
-                'error' => 'INVALID_MIDDLEWARE',
-                'details' => [
-                    'middleware' => $middleware,
-                    'class' => $class,
-                    'message' => 'Middleware должен реализовывать MiddlewareInterface.',
-                ],
-            ], 500);
-        }
-
-        return $instance->handle($request, $argument);
-    }
-
-    private static function resolveMiddlewareClass(string $name): string
-    {
-        $aliases = Config::get('middleware', []);
-
-        if (!is_array($aliases)) {
-            return '';
-        }
-
-        return (string)($aliases[$name] ?? '');
-    }
-
-    private static function parse(string $middleware): array
-    {
-        $parts = explode(':', $middleware, 2);
-
-        $name = trim((string)($parts[0] ?? ''));
-        $argument = trim((string)($parts[1] ?? ''));
-
-        return [$name, $argument];
+        return $dependencies;
     }
 }
 
 
 ---
 
-12. Проверяем
+2. Создай /local/mvc/Core/ServiceProvider.php
+
+<?php
+
+namespace Local\Mvc\Core;
+
+/**
+ * ServiceProvider
+ *
+ * Laravel-like поставщик сервисов.
+ *
+ * register() — регистрируем сервисы в контейнере.
+ * boot()     — действия после регистрации.
+ */
+abstract class ServiceProvider
+{
+    public function __construct(
+        protected Container $app
+    ) {}
+
+    public function register(): void
+    {
+        //
+    }
+
+    public function boot(): void
+    {
+        //
+    }
+}
+
+
+---
+
+3. Обнови /local/mvc/Core/App.php
+
+Полностью замени файл:
+
+<?php
+
+namespace Local\Mvc\Core;
+
+/**
+ * App
+ *
+ * Запускатель MVC-приложения.
+ */
+class App
+{
+    private static ?Router $router = null;
+
+    private static ?Container $container = null;
+
+    public static function run(?string $routesFile = null): void
+    {
+        $projectRoot = self::projectRoot();
+
+        self::loadConfig($projectRoot);
+
+        if ($routesFile === null) {
+            $routesFile = $projectRoot . '/routes.php';
+        }
+
+        $request = Request::createFromGlobals();
+
+        ErrorHandler::register($request);
+
+        try {
+            if (!is_file($routesFile)) {
+                Response::html(
+                    '<h1>500</h1><p>Файл маршрутов не найден.</p><pre>'
+                    . htmlspecialchars($routesFile)
+                    . '</pre>',
+                    500
+                )->send();
+
+                return;
+            }
+
+            $container = new Container();
+            self::$container = $container;
+
+            $router = new Router();
+            self::$router = $router;
+
+            $container->instance(Request::class, $request);
+            $container->instance(Router::class, $router);
+            $container->instance(Container::class, $container);
+
+            /**
+             * Регистрируем service providers проекта.
+             */
+            self::registerProviders($container);
+
+            \Local\Mvc\Support\Facades\Route::setRouter($router);
+
+            require $routesFile;
+
+            $router->dispatch($request);
+        } catch (\Throwable $e) {
+            ErrorHandler::renderThrowable($e);
+        }
+    }
+
+    public static function router(): ?Router
+    {
+        return self::$router;
+    }
+
+    public static function container(): Container
+    {
+        if (!(self::$container instanceof Container)) {
+            self::$container = new Container();
+        }
+
+        return self::$container;
+    }
+
+    public static function make(string $class, array $parameters = []): object
+    {
+        return self::container()->make($class, $parameters);
+    }
+
+    public static function route(string $name, array $params = [], array $query = []): string
+    {
+        if (!(self::$router instanceof Router)) {
+            return '#router-not-ready';
+        }
+
+        return self::$router->url($name, $params, $query);
+    }
+
+    private static function loadConfig(string $projectRoot): void
+    {
+        $configFile = rtrim($projectRoot, '/') . '/config.php';
+
+        $config = [];
+
+        if (is_file($configFile)) {
+            $loaded = require $configFile;
+
+            if (is_array($loaded)) {
+                $config = $loaded;
+            }
+        }
+
+        Config::load([
+            'app' => [
+                'name' => 'Local MVC App',
+                'description' => '',
+            ],
+
+            'debug' => defined('LOCAL_MVC_DEBUG') && LOCAL_MVC_DEBUG === true,
+
+            'log' => [
+                'file' => rtrim($projectRoot, '/') . '/logs/app.log',
+            ],
+
+            'providers' => [],
+
+            'middleware' => [
+                'auth' => \Local\Mvc\Core\Middlewares\AuthMiddleware::class,
+                'admin' => \Local\Mvc\Core\Middlewares\AdminMiddleware::class,
+                'csrf' => \Local\Mvc\Core\Middlewares\CsrfMiddleware::class,
+
+                'group' => \Local\Mvc\Core\Middlewares\GroupMiddleware::class,
+                'groups' => \Local\Mvc\Core\Middlewares\GroupsMiddleware::class,
+
+                'role' => \Local\Mvc\Core\Middlewares\RoleMiddleware::class,
+                'roles' => \Local\Mvc\Core\Middlewares\RolesMiddleware::class,
+            ],
+        ]);
+
+        Config::load($config);
+    }
+
+    private static function registerProviders(Container $container): void
+    {
+        $providerClasses = Config::get('providers', []);
+
+        if (!is_array($providerClasses)) {
+            return;
+        }
+
+        $providers = [];
+
+        foreach ($providerClasses as $providerClass) {
+            if (!is_string($providerClass) || $providerClass === '') {
+                continue;
+            }
+
+            $provider = new $providerClass($container);
+
+            if (!$provider instanceof ServiceProvider) {
+                throw new \RuntimeException('SERVICE_PROVIDER_INVALID: ' . $providerClass);
+            }
+
+            $provider->register();
+
+            $providers[] = $provider;
+        }
+
+        foreach ($providers as $provider) {
+            $provider->boot();
+        }
+    }
+
+    public static function projectRoot(): string
+    {
+        if (!defined('LOCAL_MVC_PROJECT_ROOT')) {
+            return $_SERVER['DOCUMENT_ROOT'] . '/local/mvc';
+        }
+
+        return rtrim((string)LOCAL_MVC_PROJECT_ROOT, '/');
+    }
+
+    public static function projectUrl(): string
+    {
+        if (!defined('LOCAL_MVC_PROJECT_URL')) {
+            return '/local/mvc';
+        }
+
+        return rtrim((string)LOCAL_MVC_PROJECT_URL, '/');
+    }
+
+    public static function projectNamespace(): string
+    {
+        if (!defined('LOCAL_MVC_PROJECT_NAMESPACE')) {
+            return 'Local\\Mvc\\';
+        }
+
+        return rtrim((string)LOCAL_MVC_PROJECT_NAMESPACE, '\\') . '\\';
+    }
+}
+
+
+---
+
+4. Добавь helper app() в /local/mvc/helpers.php
+
+В конец файла добавь:
+
+if (!function_exists('app')) {
+    /**
+     * Laravel-like app()
+     *
+     * app() вернёт контейнер.
+     * app(UserService::class) создаст сервис.
+     */
+    function app(?string $abstract = null): mixed
+    {
+        if ($abstract === null) {
+            return App::container();
+        }
+
+        return App::make($abstract);
+    }
+}
+
+
+---
+
+5. Создай demo-сервис /local/mvc_demo/Services/DemoGreetingService.php
+
+<?php
+
+namespace Local\MvcDemo\Services;
+
+class DemoGreetingService
+{
+    public function __construct(
+        private string $appName
+    ) {}
+
+    public function message(): string
+    {
+        return 'Привет из ServiceProvider. Приложение: ' . $this->appName;
+    }
+}
+
+
+---
+
+6. Создай provider /local/mvc_demo/Providers/AppServiceProvider.php
+
+Сначала папка:
+
+/local/mvc_demo/Providers/
+
+Файл:
+
+<?php
+
+namespace Local\MvcDemo\Providers;
+
+use Local\Mvc\Core\Config;
+use Local\Mvc\Core\ServiceProvider;
+use Local\MvcDemo\Services\DemoGreetingService;
+use Local\MvcDemo\Services\UserService;
+
+class AppServiceProvider extends ServiceProvider
+{
+    public function register(): void
+    {
+        /**
+         * singleton — один объект на запрос.
+         */
+        $this->app->singleton(DemoGreetingService::class, function () {
+            return new DemoGreetingService(
+                (string)Config::get('app.name', 'MVC Demo')
+            );
+        });
+
+        /**
+         * Можно явно зарегистрировать сервис.
+         * Сейчас это не обязательно, но это Laravel-like подход.
+         */
+        $this->app->bind(UserService::class, UserService::class);
+    }
+
+    public function boot(): void
+    {
+        //
+    }
+}
+
+
+---
+
+7. Подключи provider в /local/mvc_demo/config.php
+
+Добавь блок:
+
+'providers' => [
+    \Local\MvcDemo\Providers\AppServiceProvider::class,
+],
+
+Полный файл должен быть примерно таким:
+
+<?php
+
+return [
+    'app' => [
+        'name' => 'MVC Demo',
+        'description' => 'Тестовый проект на общем MVC-фреймворке',
+    ],
+
+    'debug' => true,
+
+    'log' => [
+        'file' => __DIR__ . '/logs/app.log',
+    ],
+
+    'providers' => [
+        \Local\MvcDemo\Providers\AppServiceProvider::class,
+    ],
+
+    'roles' => [
+        'resolver' => \Local\MvcDemo\Services\DemoRoleResolver::class,
+
+        'hierarchy' => [
+            'viewer' => 10,
+            'editor' => 20,
+            'admin' => 30,
+            'owner' => 40,
+        ],
+    ],
+];
+
+
+---
+
+8. Добавь тест в HomeController
+
+Вверху файла добавь:
+
+use Local\MvcDemo\Services\DemoGreetingService;
+
+Внутрь класса добавь метод:
+
+public function providerTest(DemoGreetingService $greeting): Response
+{
+    return $this->success([
+        'message' => $greeting->message(),
+        'service' => DemoGreetingService::class,
+    ]);
+}
+
+
+---
+
+9. Добавь маршрут в /local/mvc_demo/routes.php
+
+Route::get('/provider-test', [HomeController::class, 'providerTest'])
+    ->name('provider.test');
+
+
+---
+
+10. Проверка
 
 Сбрось OPcache:
 
 opcache_reset();
 echo 'OPcache reset OK';
 
-Проверь всё, где используются middleware:
+Открой:
 
-/local/mvc_demo/admin/dashboard
-/local/mvc_demo/admin/users
-/local/mvc_demo/form
-/local/mvc_demo/method-demo
-/local/mvc_demo/role-info
-/local/mvc_demo/role-editor-test
-/local/mvc_demo/site-role-test/2
-/local/mvc_demo/api/users
-/local/mvc_demo/debug/routes
+/local/mvc_demo/provider-test
+
+Должен быть JSON примерно такой:
+
+{
+  "ok": true,
+  "data": {
+    "message": "Привет из ServiceProvider. Приложение: MVC Demo",
+    "service": "Local\\MvcDemo\\Services\\DemoGreetingService"
+  }
+}
 
 
 ---
 
 Что мы сделали
 
-Раньше Middleware.php был большим файлом со всей логикой.
+Теперь у нас есть Laravel-like ServiceProvider.
 
-Теперь стало Laravel-like:
+Было:
 
-auth   → AuthMiddleware
-admin  → AdminMiddleware
-csrf   → CsrfMiddleware
-role   → RoleMiddleware
-group  → GroupMiddleware
+Container сам создаёт классы как умеет.
 
-В маршрутах ничего не изменилось:
+Стало:
 
-Route::get('/users', [AdminController::class, 'users'])
-    ->middleware(['auth', 'admin']);
+Проект может явно сказать контейнеру:
+"Вот этот сервис создавай вот так".
 
-Но внутри теперь архитектура ближе к Laravel.
+Пример:
 
+$this->app->singleton(DemoGreetingService::class, function () {
+    return new DemoGreetingService('MVC Demo');
+});
 
----
+Главная мысль:
 
-Почему это важно
+Container — создаёт зависимости.
+ServiceProvider — настраивает Container.
 
-Теперь в любом проекте можно добавить свой middleware.
-
-Например для sitebuilder:
-
-'can.edit.site' => \Local\Sitebuilder\Middlewares\CanEditSiteMiddleware::class,
-
-И потом в маршруте:
-
-Route::get('/sites/{siteId:\d+}/edit', [SiteController::class, 'edit'])
-    ->middleware(['auth', 'can.edit.site'])
-    ->name('sites.edit');
-
-То есть фреймворк становится расширяемым, как Laravel.
+Это очень похоже на Laravel.
