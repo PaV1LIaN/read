@@ -1,331 +1,606 @@
-Да, идём дальше в сторону Laravel.
+Идём дальше в Laravel-стиле. Следующий важный шаг — middleware как отдельные классы, а не один большой файл.
 
-Сейчас сделаем Laravel-like helper-функции для шаблонов:
+Сейчас у нас вся логика лежит в одном файле:
 
-route('form.send')
-old('name')
-csrf_field()
-method_field('DELETE')
-e($value)
+/local/mvc/Core/Middleware.php
 
-То есть во view будет почти как в Laravel.
+Там сразу всё:
+
+auth
+admin
+csrf
+group
+role
+
+А в Laravel middleware — это отдельные классы:
+
+AuthMiddleware
+AdminMiddleware
+CsrfMiddleware
+RoleMiddleware
+
+Так проще расширять фреймворк.
 
 
 ---
 
-1. Создай /local/mvc/Core/ViewData.php
+Что хотим получить
 
-Это маленькое хранилище данных текущего view.
+В маршрутах оставляем красиво:
+
+Route::get('/admin/users', [AdminController::class, 'users'])
+    ->middleware(['auth', 'admin']);
+
+Но внутри фреймворка auth будет ссылаться на класс:
+
+Local\Mvc\Core\Middlewares\AuthMiddleware::class
+
+То есть:
+
+auth  → AuthMiddleware
+admin → AdminMiddleware
+csrf  → CsrfMiddleware
+role  → RoleMiddleware
+
+
+---
+
+1. Создай /local/mvc/Core/MiddlewareInterface.php
 
 <?php
 
 namespace Local\Mvc\Core;
 
 /**
- * ViewData
+ * MiddlewareInterface
  *
- * Хранилище данных текущего шаблона.
+ * Интерфейс для middleware-классов.
  *
- * Нужно, чтобы helper old('name') мог достать старое значение формы.
+ * Каждый middleware получает Request
+ * и может вернуть Response, если надо остановить запрос.
+ *
+ * Если вернул null — запрос идёт дальше.
  */
-class ViewData
+interface MiddlewareInterface
 {
-    private static array $data = [];
-
-    public static function set(array $data): void
-    {
-        self::$data = $data;
-    }
-
-    public static function get(string $key, mixed $default = null): mixed
-    {
-        return self::$data[$key] ?? $default;
-    }
-
-    public static function old(string $key, mixed $default = null): mixed
-    {
-        $old = self::get('old', []);
-
-        if (!is_array($old)) {
-            return $default;
-        }
-
-        return $old[$key] ?? $default;
-    }
+    public function handle(Request $request, string $argument = ''): ?Response;
 }
 
 
 ---
 
-2. Обнови /local/mvc/Core/Controller.php
+2. Создай папку /local/mvc/Core/Middlewares/
 
-В методе render() найди место, где у тебя уже есть:
-
-extract($params);
-
-$flash = Flash::all();
-
-$oldFromFlash = Flash::getOld();
-
-if (!isset($old) || !is_array($old)) {
-    $old = [];
-}
-
-$old = array_replace($old, $oldFromFlash);
-
-Сразу после этого добавь:
-
-ViewData::set(array_merge($params, [
-    'flash' => $flash,
-    'old' => $old,
-]));
-
-Должно получиться так:
-
-extract($params);
-
-/**
- * Flash-сообщения.
- */
-$flash = Flash::all();
-
-/**
- * Старые значения формы.
- */
-$oldFromFlash = Flash::getOld();
-
-if (!isset($old) || !is_array($old)) {
-    $old = [];
-}
-
-$old = array_replace($old, $oldFromFlash);
-
-/**
- * Данные для Laravel-like helper-функций:
- * old('name')
- */
-ViewData::set(array_merge($params, [
-    'flash' => $flash,
-    'old' => $old,
-]));
+/local/mvc/Core/Middlewares/
 
 
 ---
 
-3. Замени /local/mvc/helpers.php
-
-Полностью замени файл:
+3. Создай /local/mvc/Core/Middlewares/AuthMiddleware.php
 
 <?php
 
-use Local\Mvc\Core\App;
-use Local\Mvc\Core\ViewData;
+namespace Local\Mvc\Core\Middlewares;
 
-if (!function_exists('mvc_route')) {
-    function mvc_route(string $name, array $params = [], array $query = []): string
-    {
-        return App::route($name, $params, $query);
-    }
-}
+use Local\Mvc\Core\Auth;
+use Local\Mvc\Core\MiddlewareInterface;
+use Local\Mvc\Core\Request;
+use Local\Mvc\Core\Response;
 
-if (!function_exists('mvc_e')) {
-    function mvc_e(mixed $value): string
+class AuthMiddleware implements MiddlewareInterface
+{
+    public function handle(Request $request, string $argument = ''): ?Response
     {
-        if (function_exists('htmlspecialcharsbx')) {
-            return htmlspecialcharsbx((string)$value);
+        if (Auth::check()) {
+            return null;
         }
 
-        return htmlspecialchars((string)$value, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
+        return Response::json([
+            'ok' => false,
+            'error' => 'AUTH_REQUIRED',
+            'details' => [
+                'message' => 'Нужно авторизоваться',
+            ],
+        ], 401);
     }
 }
 
-/**
- * Laravel-like route()
- *
- * Пример:
- * route('admin.users.show', ['id' => 5])
- */
-if (!function_exists('route')) {
-    function route(string $name, array $params = [], array $query = []): string
-    {
-        return mvc_route($name, $params, $query);
-    }
-}
 
-/**
- * Laravel-like e()
- *
- * Пример:
- * e($title)
- */
-if (!function_exists('e')) {
-    function e(mixed $value): string
-    {
-        return mvc_e($value);
-    }
-}
+---
 
-/**
- * Laravel-like old()
- *
- * Пример:
- * old('name')
- */
-if (!function_exists('old')) {
-    function old(string $key, mixed $default = ''): mixed
-    {
-        return ViewData::old($key, $default);
-    }
-}
+4. Создай /local/mvc/Core/Middlewares/AdminMiddleware.php
 
-/**
- * Laravel-like csrf_field()
- *
- * Пример:
- * <?= csrf_field() ?>
- */
-if (!function_exists('csrf_field')) {
-    function csrf_field(): string
+<?php
+
+namespace Local\Mvc\Core\Middlewares;
+
+use Local\Mvc\Core\Auth;
+use Local\Mvc\Core\MiddlewareInterface;
+use Local\Mvc\Core\Request;
+use Local\Mvc\Core\Response;
+
+class AdminMiddleware implements MiddlewareInterface
+{
+    public function handle(Request $request, string $argument = ''): ?Response
     {
-        if (function_exists('bitrix_sessid_post')) {
-            return bitrix_sessid_post();
+        if (Auth::isAdmin()) {
+            return null;
         }
 
-        return '';
+        return Response::json([
+            'ok' => false,
+            'error' => 'ADMIN_REQUIRED',
+            'details' => [
+                'message' => 'Нужны права администратора',
+            ],
+        ], 403);
     }
 }
+
+
+---
+
+5. Создай /local/mvc/Core/Middlewares/CsrfMiddleware.php
+
+<?php
+
+namespace Local\Mvc\Core\Middlewares;
+
+use Local\Mvc\Core\MiddlewareInterface;
+use Local\Mvc\Core\Request;
+use Local\Mvc\Core\Response;
+
+class CsrfMiddleware implements MiddlewareInterface
+{
+    public function handle(Request $request, string $argument = ''): ?Response
+    {
+        /**
+         * Безопасные методы не проверяем.
+         */
+        if (in_array($request->method(), ['GET', 'HEAD', 'OPTIONS'], true)) {
+            return null;
+        }
+
+        /**
+         * Обычная форма Битрикса через bitrix_sessid_post().
+         */
+        if (function_exists('check_bitrix_sessid') && check_bitrix_sessid()) {
+            return null;
+        }
+
+        /**
+         * AJAX/JSON-запрос через заголовок.
+         */
+        $headerSessid = (string)$request->header('X-Bitrix-Sessid', '');
+
+        if (
+            $headerSessid !== ''
+            && function_exists('bitrix_sessid')
+            && hash_equals((string)bitrix_sessid(), $headerSessid)
+        ) {
+            return null;
+        }
+
+        return Response::json([
+            'ok' => false,
+            'error' => 'BAD_SESSID',
+            'details' => [
+                'message' => 'Неверный sessid. Обновите страницу и попробуйте снова.',
+            ],
+        ], 403);
+    }
+}
+
+
+---
+
+6. Создай /local/mvc/Core/Middlewares/GroupMiddleware.php
+
+<?php
+
+namespace Local\Mvc\Core\Middlewares;
+
+use Local\Mvc\Core\Auth;
+use Local\Mvc\Core\MiddlewareInterface;
+use Local\Mvc\Core\Request;
+use Local\Mvc\Core\Response;
+
+class GroupMiddleware implements MiddlewareInterface
+{
+    public function handle(Request $request, string $argument = ''): ?Response
+    {
+        $groupId = (int)$argument;
+
+        if ($groupId > 0 && Auth::inGroup($groupId)) {
+            return null;
+        }
+
+        return Response::json([
+            'ok' => false,
+            'error' => 'GROUP_REQUIRED',
+            'details' => [
+                'message' => 'Недостаточно прав. Требуется группа: ' . $groupId,
+                'required_group' => $groupId,
+                'user_groups' => Auth::groups(),
+            ],
+        ], 403);
+    }
+}
+
+
+---
+
+7. Создай /local/mvc/Core/Middlewares/GroupsMiddleware.php
+
+<?php
+
+namespace Local\Mvc\Core\Middlewares;
+
+use Local\Mvc\Core\Auth;
+use Local\Mvc\Core\MiddlewareInterface;
+use Local\Mvc\Core\Request;
+use Local\Mvc\Core\Response;
+
+class GroupsMiddleware implements MiddlewareInterface
+{
+    public function handle(Request $request, string $argument = ''): ?Response
+    {
+        $requiredGroups = $this->parseGroupList($argument);
+        $userGroups = Auth::groups();
+
+        foreach ($requiredGroups as $groupId) {
+            if (in_array($groupId, $userGroups, true)) {
+                return null;
+            }
+        }
+
+        return Response::json([
+            'ok' => false,
+            'error' => 'GROUPS_REQUIRED',
+            'details' => [
+                'message' => 'Недостаточно прав. Требуется одна из групп.',
+                'required_groups' => $requiredGroups,
+                'user_groups' => $userGroups,
+            ],
+        ], 403);
+    }
+
+    private function parseGroupList(string $argument): array
+    {
+        $items = explode(',', $argument);
+        $groups = [];
+
+        foreach ($items as $item) {
+            $groupId = (int)trim($item);
+
+            if ($groupId > 0) {
+                $groups[] = $groupId;
+            }
+        }
+
+        return array_values(array_unique($groups));
+    }
+}
+
+
+---
+
+8. Создай /local/mvc/Core/Middlewares/RoleMiddleware.php
+
+<?php
+
+namespace Local\Mvc\Core\Middlewares;
+
+use Local\Mvc\Core\MiddlewareInterface;
+use Local\Mvc\Core\Request;
+use Local\Mvc\Core\Response;
+use Local\Mvc\Core\Role;
+
+class RoleMiddleware implements MiddlewareInterface
+{
+    public function handle(Request $request, string $argument = ''): ?Response
+    {
+        $context = $this->contextFromRequest($request);
+
+        if ($argument !== '' && Role::has($argument, null, $context)) {
+            return null;
+        }
+
+        return Response::json([
+            'ok' => false,
+            'error' => 'ROLE_REQUIRED',
+            'details' => [
+                'message' => 'Недостаточно прав. Требуется роль: ' . $argument,
+                'required_role' => $argument,
+                'user_roles' => Role::all(null, $context),
+                'context' => $context,
+            ],
+        ], 403);
+    }
+
+    private function contextFromRequest(Request $request): array
+    {
+        return [
+            'route' => $request->routeParams(),
+            'method' => $request->method(),
+            'path' => $request->path(),
+        ];
+    }
+}
+
+
+---
+
+9. Создай /local/mvc/Core/Middlewares/RolesMiddleware.php
+
+<?php
+
+namespace Local\Mvc\Core\Middlewares;
+
+use Local\Mvc\Core\MiddlewareInterface;
+use Local\Mvc\Core\Request;
+use Local\Mvc\Core\Response;
+use Local\Mvc\Core\Role;
+
+class RolesMiddleware implements MiddlewareInterface
+{
+    public function handle(Request $request, string $argument = ''): ?Response
+    {
+        $context = $this->contextFromRequest($request);
+        $requiredRoles = $this->parseRoleList($argument);
+
+        if (Role::hasAny($requiredRoles, null, $context)) {
+            return null;
+        }
+
+        return Response::json([
+            'ok' => false,
+            'error' => 'ROLES_REQUIRED',
+            'details' => [
+                'message' => 'Недостаточно прав. Требуется одна из ролей.',
+                'required_roles' => $requiredRoles,
+                'user_roles' => Role::all(null, $context),
+                'context' => $context,
+            ],
+        ], 403);
+    }
+
+    private function parseRoleList(string $argument): array
+    {
+        $items = explode(',', $argument);
+        $roles = [];
+
+        foreach ($items as $item) {
+            $role = trim((string)$item);
+
+            if ($role !== '') {
+                $roles[] = $role;
+            }
+        }
+
+        return array_values(array_unique($roles));
+    }
+
+    private function contextFromRequest(Request $request): array
+    {
+        return [
+            'route' => $request->routeParams(),
+            'method' => $request->method(),
+            'path' => $request->path(),
+        ];
+    }
+}
+
+
+---
+
+10. Обнови /local/mvc/Core/App.php
+
+В методе loadConfig() найди блок:
+
+Config::load([
+    'app' => [
+        'name' => 'Local MVC App',
+        'description' => '',
+    ],
+    'debug' => defined('LOCAL_MVC_DEBUG') && LOCAL_MVC_DEBUG === true,
+    'log' => [
+        'file' => rtrim($projectRoot, '/') . '/logs/app.log',
+    ],
+]);
+
+Замени на:
+
+Config::load([
+    'app' => [
+        'name' => 'Local MVC App',
+        'description' => '',
+    ],
+
+    'debug' => defined('LOCAL_MVC_DEBUG') && LOCAL_MVC_DEBUG === true,
+
+    'log' => [
+        'file' => rtrim($projectRoot, '/') . '/logs/app.log',
+    ],
+
+    /**
+     * Laravel-like aliases middleware.
+     */
+    'middleware' => [
+        'auth' => \Local\Mvc\Core\Middlewares\AuthMiddleware::class,
+        'admin' => \Local\Mvc\Core\Middlewares\AdminMiddleware::class,
+        'csrf' => \Local\Mvc\Core\Middlewares\CsrfMiddleware::class,
+
+        'group' => \Local\Mvc\Core\Middlewares\GroupMiddleware::class,
+        'groups' => \Local\Mvc\Core\Middlewares\GroupsMiddleware::class,
+
+        'role' => \Local\Mvc\Core\Middlewares\RoleMiddleware::class,
+        'roles' => \Local\Mvc\Core\Middlewares\RolesMiddleware::class,
+    ],
+]);
+
+
+---
+
+11. Замени /local/mvc/Core/Middleware.php
+
+Теперь этот файл будет не хранить всю логику, а только запускать нужные middleware-классы.
+
+<?php
+
+namespace Local\Mvc\Core;
 
 /**
- * Laravel-like method_field()
+ * Middleware
  *
- * Пример:
- * <?= method_field('DELETE') ?>
+ * Dispatcher middleware.
+ *
+ * Простыми словами:
+ * принимает строки:
+ *
+ * auth
+ * admin
+ * role:editor
+ *
+ * находит нужный класс
+ * и запускает его.
  */
-if (!function_exists('method_field')) {
-    function method_field(string $method): string
+class Middleware
+{
+    public static function handle(array $middlewares, Request $request): ?Response
     {
-        return '<input type="hidden" name="_method" value="' . e(strtoupper($method)) . '">';
+        foreach ($middlewares as $middleware) {
+            $middleware = trim((string)$middleware);
+
+            if ($middleware === '') {
+                continue;
+            }
+
+            $response = self::handleOne($middleware, $request);
+
+            if ($response instanceof Response) {
+                return $response;
+            }
+        }
+
+        return null;
+    }
+
+    private static function handleOne(string $middleware, Request $request): ?Response
+    {
+        [$name, $argument] = self::parse($middleware);
+
+        $class = self::resolveMiddlewareClass($name);
+
+        if ($class === '') {
+            return Response::json([
+                'ok' => false,
+                'error' => 'UNKNOWN_MIDDLEWARE',
+                'details' => [
+                    'middleware' => $middleware,
+                    'name' => $name,
+                ],
+            ], 500);
+        }
+
+        $instance = App::container()->make($class);
+
+        if (!$instance instanceof MiddlewareInterface) {
+            return Response::json([
+                'ok' => false,
+                'error' => 'INVALID_MIDDLEWARE',
+                'details' => [
+                    'middleware' => $middleware,
+                    'class' => $class,
+                    'message' => 'Middleware должен реализовывать MiddlewareInterface.',
+                ],
+            ], 500);
+        }
+
+        return $instance->handle($request, $argument);
+    }
+
+    private static function resolveMiddlewareClass(string $name): string
+    {
+        $aliases = Config::get('middleware', []);
+
+        if (!is_array($aliases)) {
+            return '';
+        }
+
+        return (string)($aliases[$name] ?? '');
+    }
+
+    private static function parse(string $middleware): array
+    {
+        $parts = explode(':', $middleware, 2);
+
+        $name = trim((string)($parts[0] ?? ''));
+        $argument = trim((string)($parts[1] ?? ''));
+
+        return [$name, $argument];
     }
 }
 
 
 ---
 
-4. Обнови /local/mvc_demo/Views/form/index.php
-
-Найди форму.
-
-Было примерно так:
-
-<form method="post" action="<?= mvc_e(mvc_route('form.send')) ?>" style="margin-top: 24px;">
-    <?php if (function_exists('bitrix_sessid_post')): ?>
-        <?= bitrix_sessid_post() ?>
-    <?php endif; ?>
-
-Замени на Laravel-like вариант:
-
-<form method="post" action="<?= e(route('form.send')) ?>" style="margin-top: 24px;">
-    <?= csrf_field() ?>
-
-Теперь найди поле name.
-
-Было:
-
-value="<?= htmlspecialcharsbx($formName) ?>"
-
-Замени на:
-
-value="<?= e(old('name')) ?>"
-
-Найди textarea.
-
-Было:
-
-><?= htmlspecialcharsbx($formMessage) ?></textarea>
-
-Замени на:
-
-><?= e(old('message')) ?></textarea>
-
-
----
-
-5. Обнови /local/mvc_demo/Views/method/index.php
-
-Найди форму DELETE.
-
-Было:
-
-<form method="post" action="<?= mvc_e(mvc_route('method.delete')) ?>" style="margin-top: 24px;">
-    <?php if (function_exists('bitrix_sessid_post')): ?>
-        <?= bitrix_sessid_post() ?>
-    <?php endif; ?>
-
-    <input type="hidden" name="_method" value="DELETE">
-
-Замени на:
-
-<form method="post" action="<?= e(route('method.delete')) ?>" style="margin-top: 24px;">
-    <?= csrf_field() ?>
-    <?= method_field('DELETE') ?>
-
-
----
-
-6. Проверяем
+12. Проверяем
 
 Сбрось OPcache:
 
 opcache_reset();
 echo 'OPcache reset OK';
 
-Проверь форму:
+Проверь всё, где используются middleware:
 
+/local/mvc_demo/admin/dashboard
+/local/mvc_demo/admin/users
 /local/mvc_demo/form
-
-Проверь:
-
-1. Отправь пустую форму.
-2. Ошибки должны появиться.
-3. Введённые значения должны сохраняться.
-4. Отправь нормальные данные.
-
-Проверь method demo:
-
 /local/mvc_demo/method-demo
-
-Нажми:
-
-Проверить DELETE
+/local/mvc_demo/role-info
+/local/mvc_demo/role-editor-test
+/local/mvc_demo/site-role-test/2
+/local/mvc_demo/api/users
+/local/mvc_demo/debug/routes
 
 
 ---
 
 Что мы сделали
 
-Теперь шаблоны можно писать ближе к Laravel:
+Раньше Middleware.php был большим файлом со всей логикой.
 
-<form method="post" action="<?= e(route('form.send')) ?>">
-    <?= csrf_field() ?>
+Теперь стало Laravel-like:
 
-    <input name="name" value="<?= e(old('name')) ?>">
-</form>
+auth   → AuthMiddleware
+admin  → AdminMiddleware
+csrf   → CsrfMiddleware
+role   → RoleMiddleware
+group  → GroupMiddleware
 
-И DELETE-форма:
+В маршрутах ничего не изменилось:
 
-<form method="post" action="<?= e(route('method.delete')) ?>">
-    <?= csrf_field() ?>
-    <?= method_field('DELETE') ?>
+Route::get('/users', [AdminController::class, 'users'])
+    ->middleware(['auth', 'admin']);
 
-    <button>Удалить</button>
-</form>
+Но внутри теперь архитектура ближе к Laravel.
 
-Главная мысль:
 
-route()        — собрать URL по имени маршрута
-old()          — вернуть старое значение поля после ошибки
-csrf_field()   — вставить sessid Битрикса
-method_field() — подменить POST на DELETE / PUT / PATCH
-e()            — безопасно вывести текст
+---
 
-Это уже очень похоже на Laravel, но адаптировано под Битрикс24.
+Почему это важно
+
+Теперь в любом проекте можно добавить свой middleware.
+
+Например для sitebuilder:
+
+'can.edit.site' => \Local\Sitebuilder\Middlewares\CanEditSiteMiddleware::class,
+
+И потом в маршруте:
+
+Route::get('/sites/{siteId:\d+}/edit', [SiteController::class, 'edit'])
+    ->middleware(['auth', 'can.edit.site'])
+    ->name('sites.edit');
+
+То есть фреймворк становится расширяемым, как Laravel.
