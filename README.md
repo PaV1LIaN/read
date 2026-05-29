@@ -1,274 +1,217 @@
-Идём дальше в сторону Laravel. Следующий кирпич — Facades.
+Идём дальше. Сделаем Laravel-like helper-функции:
 
-В Laravel ты часто видишь:
+request()
+response()
+redirect()
 
-Route::get(...)
-Log::info(...)
-Config::get(...)
+Чтобы можно было писать почти как в Laravel:
 
-То есть мы не пишем:
+$name = request('name');
 
-\Local\Mvc\Core\Logger::info(...)
-\Local\Mvc\Core\Config::get(...)
+return response()->json([
+    'ok' => true,
+]);
 
-А пишем короче и похоже на Laravel:
-
-Log::info('Сообщение');
-ConfigFacade::get('app.name');
-
-У нас Route facade уже есть. Сейчас добавим ещё:
-
-Log
-ConfigFacade
-AppFacade
+return redirect()->route('form.index');
 
 
 ---
 
-1. Создай базовый facade /local/mvc/Support/Facades/Facade.php
-
-<?php
-
-namespace Local\Mvc\Support\Facades;
-
-use Local\Mvc\Core\App;
-use RuntimeException;
-
-/**
- * Facade
- *
- * Базовый Laravel-like facade.
- *
- * Простыми словами:
- * facade — это короткая статическая обёртка
- * над объектом из Container.
- */
-abstract class Facade
-{
-    /**
-     * Имя класса/сервиса, который нужно взять из контейнера.
-     */
-    abstract protected static function accessor(): string;
-
-    public static function __callStatic(string $method, array $arguments): mixed
-    {
-        $accessor = static::accessor();
-
-        if ($accessor === '') {
-            throw new RuntimeException('FACADE_ACCESSOR_EMPTY: ' . static::class);
-        }
-
-        $instance = App::make($accessor);
-
-        if (!method_exists($instance, $method)) {
-            throw new RuntimeException(
-                'FACADE_METHOD_NOT_FOUND: ' . static::class . '::' . $method
-            );
-        }
-
-        return $instance->{$method}(...$arguments);
-    }
-}
-
-
----
-
-2. Сделаем объектный логгер
-
-Сейчас Logger у нас статический. Для facade лучше сделать обычный сервис.
-
-Создай файл:
-
-/local/mvc/Core/LogManager.php
+1. Создай /local/mvc/Core/ResponseFactory.php
 
 <?php
 
 namespace Local\Mvc\Core;
 
 /**
- * LogManager
+ * ResponseFactory
  *
- * Объектная обёртка над Logger.
+ * Laravel-like фабрика ответов.
  *
- * Нужна, чтобы использовать Laravel-like facade:
- * Log::info(...)
+ * Позволяет писать:
+ * response()->json(...)
+ * response()->html(...)
+ * response()->redirect(...)
  */
-class LogManager
+class ResponseFactory
 {
-    public function info(string $message, array $context = []): void
+    public function html(string $content = '', int $status = 200): Response
     {
-        Logger::info($message, $context);
+        return Response::html($content, $status);
     }
 
-    public function warning(string $message, array $context = []): void
+    public function json(array $data = [], int $status = 200): Response
     {
-        Logger::warning($message, $context);
+        return Response::json($data, $status);
     }
 
-    public function error(string $message, array $context = []): void
+    public function redirect(string $url, int $status = 302): Response
     {
-        Logger::error($message, $context);
+        return Response::redirect($url, $status);
     }
 
-    public function debug(string $message, array $context = []): void
+    public function noContent(int $status = 204): Response
     {
-        Logger::debug($message, $context);
+        return new Response('', $status);
     }
 }
 
 
 ---
 
-3. Создай facade /local/mvc/Support/Facades/Log.php
-
-<?php
-
-namespace Local\Mvc\Support\Facades;
-
-use Local\Mvc\Core\LogManager;
-
-/**
- * Log
- *
- * Laravel-like facade для логов.
- *
- * Пример:
- * Log::info('Текст');
- */
-class Log extends Facade
-{
-    protected static function accessor(): string
-    {
-        return LogManager::class;
-    }
-}
-
-Теперь можно будет писать:
-
-Log::info('Что-то произошло');
-
-
----
-
-4. Создай facade /local/mvc/Support/Facades/Config.php
-
-<?php
-
-namespace Local\Mvc\Support\Facades;
-
-/**
- * Config
- *
- * Laravel-like facade для config.
- *
- * Чтобы не конфликтовать с Core\Config,
- * использовать будем так:
- *
- * use Local\Mvc\Support\Facades\Config as ConfigFacade;
- */
-class Config extends Facade
-{
-    protected static function accessor(): string
-    {
-        return \Local\Mvc\Core\Config::class;
-    }
-}
-
-Но у нас Core\Config пока статический класс, а facade ожидает объект. Поэтому сделаем маленький manager.
-
-
----
-
-5. Создай /local/mvc/Core/ConfigManager.php
+2. Создай /local/mvc/Core/Redirector.php
 
 <?php
 
 namespace Local\Mvc\Core;
 
 /**
- * ConfigManager
+ * Redirector
  *
- * Объектная обёртка над Config.
- */
-class ConfigManager
-{
-    public function get(string $key, mixed $default = null): mixed
-    {
-        return Config::get($key, $default);
-    }
-
-    public function debug(): bool
-    {
-        return Config::debug();
-    }
-
-    public function all(): array
-    {
-        return Config::all();
-    }
-}
-
-Теперь поправь facade Config.
-
-Полностью замени:
-
-/local/mvc/Support/Facades/Config.php
-
-на:
-
-<?php
-
-namespace Local\Mvc\Support\Facades;
-
-use Local\Mvc\Core\ConfigManager;
-
-/**
- * Config
+ * Laravel-like помощник для редиректов.
  *
- * Laravel-like facade для config.
+ * Позволяет писать:
+ * redirect()->to('/some/url')
+ * redirect()->route('form.index')
+ * redirect()->back()
  */
-class Config extends Facade
+class Redirector
 {
-    protected static function accessor(): string
+    public function __construct(
+        private Request $request
+    ) {}
+
+    public function to(string $url, int $status = 302): Response
     {
-        return ConfigManager::class;
+        return Response::redirect($url, $status);
+    }
+
+    public function route(string $name, array $params = [], array $query = [], int $status = 302): Response
+    {
+        return Response::redirect(App::route($name, $params, $query), $status);
+    }
+
+    public function back(string $fallback = '/', int $status = 302): Response
+    {
+        $referer = (string)$this->request->server('HTTP_REFERER', '');
+
+        if ($this->isSafeRedirectUrl($referer)) {
+            return Response::redirect($referer, $status);
+        }
+
+        return Response::redirect($this->projectUrlPath($fallback), $status);
+    }
+
+    private function projectUrlPath(string $path = '/'): string
+    {
+        $base = App::projectUrl();
+
+        $path = trim($path);
+
+        if ($path === '' || $path === '/') {
+            return $base . '/';
+        }
+
+        return $base . '/' . trim($path, '/');
+    }
+
+    private function isSafeRedirectUrl(string $url): bool
+    {
+        $url = trim($url);
+
+        if ($url === '') {
+            return false;
+        }
+
+        if (str_starts_with($url, '/')) {
+            return true;
+        }
+
+        $currentHost = (string)$this->request->server('HTTP_HOST', '');
+
+        $parts = parse_url($url);
+
+        if (!is_array($parts)) {
+            return false;
+        }
+
+        $urlHost = (string)($parts['host'] ?? '');
+
+        if ($urlHost === '' || $currentHost === '') {
+            return false;
+        }
+
+        return strcasecmp($urlHost, $currentHost) === 0;
     }
 }
 
 
 ---
 
-6. Создай facade /local/mvc/Support/Facades/App.php
+3. Обнови /local/mvc/Core/Request.php
 
-<?php
+Добавим Laravel-like методы input() и all().
 
-namespace Local\Mvc\Support\Facades;
+Внутрь класса Request добавь:
 
 /**
- * App
+ * Получить значение из запроса.
  *
- * Laravel-like facade для приложения/container.
+ * Порядок:
+ * 1. POST
+ * 2. JSON body
+ * 3. GET
  */
-class App extends Facade
+public function input(string $key, mixed $default = null): mixed
 {
-    protected static function accessor(): string
-    {
-        return \Local\Mvc\Core\Container::class;
+    if (array_key_exists($key, $this->postAll())) {
+        return $this->postAll()[$key];
     }
+
+    if (array_key_exists($key, $this->jsonAll())) {
+        return $this->jsonAll()[$key];
+    }
+
+    if (array_key_exists($key, $this->getAll())) {
+        return $this->getAll()[$key];
+    }
+
+    return $default;
 }
 
-Теперь можно будет писать:
+/**
+ * Все GET-данные.
+ */
+public function getAll(): array
+{
+    return $this->get;
+}
 
-App::make(UserService::class);
+/**
+ * Все данные запроса.
+ */
+public function all(): array
+{
+    return array_merge(
+        $this->getAll(),
+        $this->postAll(),
+        $this->jsonAll()
+    );
+}
+
+У тебя уже должен быть метод:
+
+public function postAll(): array
+{
+    return $this->post;
+}
+
+Если его нет — тоже добавь.
 
 
 ---
 
-7. Зарегистрируй эти сервисы в Container
-
-Открой:
-
-/local/mvc/Core/App.php
+4. Обнови /local/mvc/Core/App.php
 
 В методе run() найди место:
 
@@ -276,12 +219,15 @@ $container->instance(Request::class, $request);
 $container->instance(Router::class, $router);
 $container->instance(Container::class, $container);
 
-Сразу после этого добавь:
-
 $container->singleton(\Local\Mvc\Core\LogManager::class, \Local\Mvc\Core\LogManager::class);
 $container->singleton(\Local\Mvc\Core\ConfigManager::class, \Local\Mvc\Core\ConfigManager::class);
 
-Должно быть так:
+Сразу после этого добавь:
+
+$container->singleton(\Local\Mvc\Core\ResponseFactory::class, \Local\Mvc\Core\ResponseFactory::class);
+$container->singleton(\Local\Mvc\Core\Redirector::class, \Local\Mvc\Core\Redirector::class);
+
+Итог:
 
 $container->instance(Request::class, $request);
 $container->instance(Router::class, $router);
@@ -289,77 +235,109 @@ $container->instance(Container::class, $container);
 
 $container->singleton(\Local\Mvc\Core\LogManager::class, \Local\Mvc\Core\LogManager::class);
 $container->singleton(\Local\Mvc\Core\ConfigManager::class, \Local\Mvc\Core\ConfigManager::class);
+$container->singleton(\Local\Mvc\Core\ResponseFactory::class, \Local\Mvc\Core\ResponseFactory::class);
+$container->singleton(\Local\Mvc\Core\Redirector::class, \Local\Mvc\Core\Redirector::class);
 
 
 ---
 
-8. Добавь Laravel-like helper config()
+5. Обнови /local/mvc/helpers.php
 
-Открой:
+В конец файла добавь:
 
-/local/mvc/helpers.php
-
-В конец добавь:
-
-if (!function_exists('config')) {
+if (!function_exists('request')) {
     /**
-     * Laravel-like config()
+     * Laravel-like request()
      *
-     * config('app.name')
+     * request() вернёт объект Request.
+     * request('name') вернёт значение поля name.
      */
-    function config(string $key, mixed $default = null): mixed
+    function request(?string $key = null, mixed $default = null): mixed
     {
-        return \Local\Mvc\Core\Config::get($key, $default);
+        $request = \Local\Mvc\Core\App::make(\Local\Mvc\Core\Request::class);
+
+        if ($key === null) {
+            return $request;
+        }
+
+        return $request->input($key, $default);
     }
 }
 
-Теперь во views/контроллерах можно писать:
+if (!function_exists('response')) {
+    /**
+     * Laravel-like response()
+     *
+     * response() вернёт ResponseFactory.
+     * response('text') вернёт HTML response.
+     */
+    function response(?string $content = null, int $status = 200): mixed
+    {
+        $factory = \Local\Mvc\Core\App::make(\Local\Mvc\Core\ResponseFactory::class);
 
-config('app.name')
+        if ($content === null) {
+            return $factory;
+        }
+
+        return $factory->html($content, $status);
+    }
+}
+
+if (!function_exists('redirect')) {
+    /**
+     * Laravel-like redirect()
+     *
+     * redirect() вернёт Redirector.
+     * redirect('/url') сразу сделает redirect.
+     */
+    function redirect(?string $to = null): mixed
+    {
+        $redirector = \Local\Mvc\Core\App::make(\Local\Mvc\Core\Redirector::class);
+
+        if ($to === null) {
+            return $redirector;
+        }
+
+        return $redirector->to($to);
+    }
+}
 
 
 ---
 
-9. Добавь тест в HomeController
+6. Добавь тест в HomeController
 
 Открой:
 
 /local/mvc_demo/Controllers/HomeController.php
 
-Сверху добавь:
+Добавь метод:
 
-use Local\Mvc\Support\Facades\Log;
-use Local\Mvc\Support\Facades\Config as ConfigFacade;
-
-Внутрь класса добавь метод:
-
-public function facadeTest(): Response
+public function helperTest(): Response
 {
-    Log::info('Открыт facade-test', [
-        'user_id' => \Local\Mvc\Core\Auth::id(),
-    ]);
-
-    return $this->success([
-        'message' => 'Facades работают',
-        'app_name_from_facade' => ConfigFacade::get('app.name'),
-        'app_name_from_helper' => config('app.name'),
+    return response()->json([
+        'ok' => true,
+        'data' => [
+            'message' => 'Laravel-like helpers работают',
+            'app_name' => config('app.name'),
+            'request_path' => request()->path(),
+            'q' => request('q', ''),
+        ],
     ]);
 }
 
 
 ---
 
-10. Добавь маршрут
+7. Добавь маршрут в /local/mvc_demo/routes.php
 
-В /local/mvc_demo/routes.php добавь:
-
-Route::get('/facade-test', [HomeController::class, 'facadeTest'])
-    ->name('facade.test');
+Route::get('/helper-test', [HomeController::class, 'helperTest'])
+    ->name('helper.test');
 
 
 ---
 
-11. Проверяем
+8. Проверяем
 
 Сбрось OPcache:
 
@@ -368,45 +346,60 @@ echo 'OPcache reset OK';
 
 Открой:
 
-/local/mvc_demo/facade-test
+/local/mvc_demo/helper-test?q=hello
 
 Должен быть JSON:
 
 {
   "ok": true,
   "data": {
-    "message": "Facades работают",
-    "app_name_from_facade": "MVC Demo",
-    "app_name_from_helper": "MVC Demo"
+    "message": "Laravel-like helpers работают",
+    "app_name": "MVC Demo",
+    "request_path": "/helper-test",
+    "q": "hello"
   }
 }
-
-И в логе:
-
-/local/mvc_demo/logs/app.log
-
-должна появиться запись:
-
-[INFO] Открыт facade-test ...
 
 
 ---
 
 Что мы сделали
 
-Теперь у нас есть Laravel-like facades:
+Теперь можно писать ближе к Laravel:
 
-Route::get(...)
-Log::info(...)
-ConfigFacade::get(...)
-
-И helper:
-
+request()
+request('q')
+response()->json([...])
+redirect()->route('form.index')
+redirect()->back()
 config('app.name')
+route('form.index')
+old('name')
+csrf_field()
+method_field('DELETE')
+
+Раньше было так:
+
+return $this->success([
+    'message' => 'ok',
+]);
+
+Теперь можно и так:
+
+return response()->json([
+    'ok' => true,
+    'data' => [
+        'message' => 'ok',
+    ],
+]);
 
 Главная мысль:
 
-Container хранит сервисы.
-Facade даёт красивый статический доступ к сервисам.
+helpers — это короткий Laravel-like доступ к основным частям фреймворка.
 
-В Laravel это работает похожим образом: ты пишешь красиво Log::info(), а внутри Laravel достаёт нужный сервис из контейнера.
+Дальше логичный Laravel-like шаг — сделать Model query builder, чтобы вместо ручного SQL постепенно прийти к стилю:
+
+User::query()
+    ->where('ACTIVE', 'Y')
+    ->orderBy('ID', 'desc')
+    ->paginate(10);
