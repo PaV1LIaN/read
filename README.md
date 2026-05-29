@@ -1,90 +1,121 @@
-Ошибка говорит не про код, а про базу:
+Такая же ошибка значит таблица создана не в той базе, куда сейчас ходит Битрикс.
 
-relation "mvc.mvc_demo_notes" does not exist
+По trace видно важное:
 
-Простыми словами:
+/local/mvc/Core/Db.php
+→ Bitrix\Main\DB\PgsqlConnection
 
-Схема mvc есть.
-А таблицы mvc_demo_notes внутри неё нет.
+То есть наш Db.php сейчас работает через основное подключение Битрикса, а не через тот ProjectsDB, который ты видишь в pgAdmin.
 
-Нужно создать таблицу именно здесь:
-
-ProjectsDB → Schemas → mvc → Tables → mvc_demo_notes
+Нужно создать таблицу именно в той БД, которую использует Битрикс.
 
 
 ---
 
-1. Выполни в pgAdmin этот SQL
+1. Сначала узнаем, куда реально подключён Битрикс
 
-CREATE TABLE IF NOT EXISTS mvc.mvc_demo_notes (
-    id BIGSERIAL PRIMARY KEY,
-    title VARCHAR(255) NOT NULL,
-    body TEXT NULL,
-    created_at TIMESTAMP NULL,
-    updated_at TIMESTAMP NULL
-);
+В админке Битрикса открой PHP-командную строку и выполни:
 
-Потом сразу выполни проверку:
+use Bitrix\Main\Application;
 
-SELECT *
-FROM mvc.mvc_demo_notes
-ORDER BY id DESC;
+$conn = Application::getConnection();
 
-Если таблица создана правильно, будет пустая таблица без ошибки.
+$row = $conn->query("
+    SELECT
+        current_database() AS db_name,
+        current_schema() AS schema_name,
+        current_user AS db_user,
+        inet_server_addr() AS server_ip,
+        inet_server_port() AS server_port
+")->fetch();
 
+echo '<pre>';
+print_r($row);
+echo '</pre>';
 
----
+$row2 = $conn->query("
+    SELECT to_regclass('mvc.mvc_demo_notes') AS table_name
+")->fetch();
 
-2. На всякий случай выдай права пользователю bx_user
+echo '<pre>';
+print_r($row2);
+echo '</pre>';
 
-Так как сайт ходит в БД от пользователя bx_user, выполни ещё:
+Если увидишь:
 
-GRANT USAGE ON SCHEMA mvc TO bx_user;
+table_name =>
 
-GRANT SELECT, INSERT, UPDATE, DELETE
-ON ALL TABLES IN SCHEMA mvc
-TO bx_user;
-
-GRANT USAGE, SELECT, UPDATE
-ON ALL SEQUENCES IN SCHEMA mvc
-TO bx_user;
-
-И для будущих таблиц в этой схеме:
-
-ALTER DEFAULT PRIVILEGES IN SCHEMA mvc
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO bx_user;
-
-ALTER DEFAULT PRIVILEGES IN SCHEMA mvc
-GRANT USAGE, SELECT, UPDATE ON SEQUENCES TO bx_user;
+пустое значение, значит для Битрикса таблицы реально нет.
 
 
 ---
 
-3. Проверь, что таблица реально появилась
+2. Создадим таблицу прямо через подключение Битрикса
 
-В pgAdmin раскрой:
+В той же PHP-командной строке выполни:
 
-Schemas
-  → mvc
-    → Tables
-      → mvc_demo_notes
+use Bitrix\Main\Application;
 
-Если таблицы нет — значит SQL выполнился не в той базе или не выполнился вообще.
+$conn = Application::getConnection();
+
+$conn->queryExecute("
+    CREATE SCHEMA IF NOT EXISTS mvc
+");
+
+$conn->queryExecute("
+    CREATE TABLE IF NOT EXISTS mvc.mvc_demo_notes (
+        id BIGSERIAL PRIMARY KEY,
+        title VARCHAR(255) NOT NULL,
+        body TEXT NULL,
+        created_at TIMESTAMP NULL,
+        updated_at TIMESTAMP NULL
+    )
+");
+
+$row = $conn->query("
+    SELECT to_regclass('mvc.mvc_demo_notes') AS table_name
+")->fetch();
+
+echo '<pre>';
+print_r($row);
+echo '</pre>';
+
+Должно вывести:
+
+table_name => mvc.mvc_demo_notes
 
 
 ---
 
-4. Потом сбрось OPcache
+3. Проверь страницу
+
+Сбрось OPcache:
 
 opcache_reset();
 echo 'OPcache reset OK';
 
-И снова открой:
+Открой:
 
-/local/mvc_demo/notes
+https://bitrix24-stage.gaz.ru/local/mvc_demo/notes
 
-После этого страница должна открыться. Сейчас код уже правильно ищет таблицу:
 
-protected static string $table = 'mvc.mvc_demo_notes';
+---
 
-Проблема только в том, что самой таблицы пока нет в базе.
+Почему так произошло
+
+Ты создал схему mvc в pgAdmin, скорее всего здесь:
+
+ProjectsDB → Schemas → mvc
+
+А Битрикс, возможно, подключён к другой базе, например:
+
+bx
+
+Поэтому pgAdmin показывает схему, но сайт её не видит.
+
+Главное правило:
+
+Таблицы для нашего MVC должны быть созданы в той базе,
+которую показывает current_database() из подключения Bitrix\Main\Application::getConnection().
+
+Сделай пункт 1 и пришли результат db_name, если после создания через PHP-командную строку ошибка останется.
