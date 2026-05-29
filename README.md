@@ -1,584 +1,503 @@
-Да, держим курс именно на Laravel-like.
+Да, идём дальше. Делаем FormRequest, как в Laravel.
 
-То есть дальше стараемся, чтобы было похоже на Laravel по стилю:
+Сейчас в FormController валидация выглядит так:
 
-Route::get('/users', [AdminController::class, 'users'])
-    ->middleware(['auth', 'admin'])
-    ->name('admin.users.index');
+$validator = Validator::make($data)
+    ->required('name', 'Введите имя.')
+    ->min('name', 2, 'Имя должно быть не короче 2 символов.')
+    ->max('name', 100, 'Имя должно быть не длиннее 100 символов.');
 
-И чтобы в контроллере можно было не писать:
+А в Laravel обычно делают отдельный request-класс:
 
-$userService = new UserService();
-
-А писать почти как в Laravel:
-
-public function users(UserService $userService): Response
+public function send(StoreMessageRequest $request): Response
 {
-    ...
+    $data = $request->validated();
 }
 
-Фреймворк сам создаст UserService и передаст его в метод.
-
-Это называется Service Container.
+То есть контроллер становится чище.
 
 
 ---
 
-Что делаем сейчас
+1. Обнови /local/mvc/Core/Validator.php
 
-Добавляем контейнер:
-
-/local/mvc/Core/Container.php
-
-Он будет уметь:
-
-создавать классы
-подставлять зависимости
-передавать Request
-передавать Service в методы контроллера
-
-
----
-
-1. Создай /local/mvc/Core/Container.php
-
-<?php
-
-namespace Local\Mvc\Core;
-
-use ReflectionClass;
-use ReflectionFunction;
-use ReflectionMethod;
-use ReflectionNamedType;
-use RuntimeException;
-
-/**
- * Container
- *
- * Laravel-like service container.
- *
- * Простыми словами:
- * это коробка, которая умеет сама создавать классы
- * и подставлять им нужные зависимости.
- */
-class Container
-{
-    private array $bindings = [];
-
-    private array $instances = [];
-
-    /**
-     * Зарегистрировать готовый объект.
-     *
-     * Например:
-     * Request::class => $request
-     */
-    public function instance(string $abstract, object $instance): void
-    {
-        $this->instances[$abstract] = $instance;
-    }
-
-    /**
-     * Зарегистрировать связь.
-     *
-     * Например:
-     * LoggerInterface::class => FileLogger::class
-     */
-    public function bind(string $abstract, string|callable $concrete): void
-    {
-        $this->bindings[$abstract] = $concrete;
-    }
-
-    /**
-     * Получить объект.
-     */
-    public function make(string $class, array $parameters = []): object
-    {
-        if (isset($this->instances[$class])) {
-            return $this->instances[$class];
-        }
-
-        if (isset($this->bindings[$class])) {
-            $concrete = $this->bindings[$class];
-
-            if (is_callable($concrete)) {
-                return $concrete($this);
-            }
-
-            $class = $concrete;
-        }
-
-        if (!class_exists($class)) {
-            throw new RuntimeException('CONTAINER_CLASS_NOT_FOUND: ' . $class);
-        }
-
-        $reflection = new ReflectionClass($class);
-
-        if (!$reflection->isInstantiable()) {
-            throw new RuntimeException('CONTAINER_CLASS_NOT_INSTANTIABLE: ' . $class);
-        }
-
-        $constructor = $reflection->getConstructor();
-
-        if ($constructor === null) {
-            return new $class();
-        }
-
-        $dependencies = $this->resolveParameters($constructor, $parameters);
-
-        return $reflection->newInstanceArgs($dependencies);
-    }
-
-    /**
-     * Вызвать метод и автоматически подставить зависимости.
-     *
-     * Например:
-     * public function users(UserService $service)
-     *
-     * Container сам создаст UserService.
-     */
-    public function call(array $callable, array $parameters = []): mixed
-    {
-        [$object, $method] = $callable;
-
-        $reflection = new ReflectionMethod($object, $method);
-
-        $dependencies = $this->resolveParameters($reflection, $parameters);
-
-        return $reflection->invokeArgs($object, $dependencies);
-    }
-
-    private function resolveParameters(ReflectionMethod|\ReflectionFunctionAbstract $reflection, array $parameters = []): array
-    {
-        $dependencies = [];
-
-        foreach ($reflection->getParameters() as $parameter) {
-            $name = $parameter->getName();
-            $type = $parameter->getType();
-
-            /**
-             * 1. Если есть параметр маршрута с таким именем — используем его.
-             *
-             * Например маршрут:
-             * /users/{id}
-             *
-             * Метод:
-             * userDetail(string $id)
-             */
-            if (array_key_exists($name, $parameters)) {
-                $dependencies[] = $parameters[$name];
-                continue;
-            }
-
-            /**
-             * 2. Если параметр — класс, создаём его через контейнер.
-             *
-             * Например:
-             * UserService $userService
-             */
-            if ($type instanceof ReflectionNamedType && !$type->isBuiltin()) {
-                $dependencies[] = $this->make($type->getName());
-                continue;
-            }
-
-            /**
-             * 3. Если есть значение по умолчанию — используем его.
-             */
-            if ($parameter->isDefaultValueAvailable()) {
-                $dependencies[] = $parameter->getDefaultValue();
-                continue;
-            }
-
-            throw new RuntimeException(
-                'CONTAINER_CANNOT_RESOLVE_PARAMETER: $' . $name . ' in ' . $reflection->getName()
-            );
-        }
-
-        return $dependencies;
-    }
-}
-
-
----
-
-2. Обнови /local/mvc/Core/App.php
-
-Нужно, чтобы App создал контейнер и положил туда Request и Router.
-
-Замени файл полностью:
+Полностью замени файл:
 
 <?php
 
 namespace Local\Mvc\Core;
 
 /**
- * App
+ * Validator
  *
- * Запускатель MVC-приложения.
+ * Помощник для проверки данных.
+ *
+ * Поддерживает два стиля:
+ *
+ * 1. Старый fluent-стиль:
+ * Validator::make($data)->required(...)->min(...)
+ *
+ * 2. Laravel-like rules:
+ * Validator::validate($data, [
+ *     'name' => ['required', 'min:2', 'max:100']
+ * ]);
  */
-class App
+class Validator
 {
-    private static ?Router $router = null;
+    private array $data;
+    private array $errors = [];
 
-    private static ?Container $container = null;
-
-    public static function run(?string $routesFile = null): void
+    public function __construct(array $data)
     {
-        $projectRoot = self::projectRoot();
+        $this->data = $data;
+    }
 
-        self::loadConfig($projectRoot);
+    public static function make(array $data): self
+    {
+        return new self($data);
+    }
 
-        if ($routesFile === null) {
-            $routesFile = $projectRoot . '/routes.php';
-        }
+    /**
+     * Laravel-like валидация по правилам.
+     */
+    public static function validate(array $data, array $rules, array $messages = []): self
+    {
+        $validator = new self($data);
 
-        $request = Request::createFromGlobals();
-
-        ErrorHandler::register($request);
-
-        try {
-            if (!is_file($routesFile)) {
-                Response::html(
-                    '<h1>500</h1><p>Файл маршрутов не найден.</p><pre>'
-                    . htmlspecialchars($routesFile)
-                    . '</pre>',
-                    500
-                )->send();
-
-                return;
+        foreach ($rules as $field => $fieldRules) {
+            if (is_string($fieldRules)) {
+                $fieldRules = explode('|', $fieldRules);
             }
 
-            $container = new Container();
-            self::$container = $container;
+            if (!is_array($fieldRules)) {
+                continue;
+            }
 
-            $router = new Router();
-            self::$router = $router;
+            foreach ($fieldRules as $rule) {
+                $rule = trim((string)$rule);
 
-            /**
-             * Кладём важные объекты в контейнер.
-             *
-             * Теперь если какому-то классу нужен Request,
-             * контейнер отдаст текущий Request.
-             */
-            $container->instance(Request::class, $request);
-            $container->instance(Router::class, $router);
-            $container->instance(Container::class, $container);
+                if ($rule === '') {
+                    continue;
+                }
 
-            \Local\Mvc\Support\Facades\Route::setRouter($router);
-
-            require $routesFile;
-
-            $router->dispatch($request);
-        } catch (\Throwable $e) {
-            ErrorHandler::renderThrowable($e);
-        }
-    }
-
-    public static function router(): ?Router
-    {
-        return self::$router;
-    }
-
-    public static function container(): Container
-    {
-        if (!(self::$container instanceof Container)) {
-            self::$container = new Container();
-        }
-
-        return self::$container;
-    }
-
-    public static function make(string $class, array $parameters = []): object
-    {
-        return self::container()->make($class, $parameters);
-    }
-
-    public static function route(string $name, array $params = [], array $query = []): string
-    {
-        if (!(self::$router instanceof Router)) {
-            return '#router-not-ready';
-        }
-
-        return self::$router->url($name, $params, $query);
-    }
-
-    private static function loadConfig(string $projectRoot): void
-    {
-        $configFile = rtrim($projectRoot, '/') . '/config.php';
-
-        $config = [];
-
-        if (is_file($configFile)) {
-            $loaded = require $configFile;
-
-            if (is_array($loaded)) {
-                $config = $loaded;
+                $validator->applyRule((string)$field, $rule, $messages);
             }
         }
 
-        Config::load([
-            'app' => [
-                'name' => 'Local MVC App',
-                'description' => '',
-            ],
-            'debug' => defined('LOCAL_MVC_DEBUG') && LOCAL_MVC_DEBUG === true,
-            'log' => [
-                'file' => rtrim($projectRoot, '/') . '/logs/app.log',
-            ],
-        ]);
-
-        Config::load($config);
+        return $validator;
     }
 
-    public static function projectRoot(): string
+    public function required(string $field, string $message): self
     {
-        if (!defined('LOCAL_MVC_PROJECT_ROOT')) {
-            return $_SERVER['DOCUMENT_ROOT'] . '/local/mvc';
+        $value = $this->data[$field] ?? null;
+
+        if ($value === null || trim((string)$value) === '') {
+            $this->errors[$field][] = $message;
         }
 
-        return rtrim((string)LOCAL_MVC_PROJECT_ROOT, '/');
+        return $this;
     }
 
-    public static function projectUrl(): string
+    public function min(string $field, int $length, string $message): self
     {
-        if (!defined('LOCAL_MVC_PROJECT_URL')) {
-            return '/local/mvc';
+        $value = trim((string)($this->data[$field] ?? ''));
+
+        if ($value !== '' && mb_strlen($value) < $length) {
+            $this->errors[$field][] = $message;
         }
 
-        return rtrim((string)LOCAL_MVC_PROJECT_URL, '/');
+        return $this;
     }
 
-    public static function projectNamespace(): string
+    public function max(string $field, int $length, string $message): self
     {
-        if (!defined('LOCAL_MVC_PROJECT_NAMESPACE')) {
-            return 'Local\\Mvc\\';
+        $value = trim((string)($this->data[$field] ?? ''));
+
+        if ($value !== '' && mb_strlen($value) > $length) {
+            $this->errors[$field][] = $message;
         }
 
-        return rtrim((string)LOCAL_MVC_PROJECT_NAMESPACE, '\\') . '\\';
+        return $this;
+    }
+
+    public function fails(): bool
+    {
+        return !empty($this->errors);
+    }
+
+    public function passes(): bool
+    {
+        return !$this->fails();
+    }
+
+    public function errors(): array
+    {
+        return $this->errors;
+    }
+
+    public function errorList(): array
+    {
+        $list = [];
+
+        foreach ($this->errors as $fieldErrors) {
+            foreach ($fieldErrors as $error) {
+                $list[] = $error;
+            }
+        }
+
+        return $list;
+    }
+
+    private function applyRule(string $field, string $rule, array $messages): void
+    {
+        $value = $this->data[$field] ?? null;
+        $valueString = trim((string)$value);
+
+        [$ruleName, $ruleValue] = $this->parseRule($rule);
+
+        if ($ruleName === 'required') {
+            if ($value === null || $valueString === '') {
+                $this->addError($field, $this->message($field, 'required', $messages, 'Поле обязательно для заполнения.'));
+            }
+
+            return;
+        }
+
+        if ($ruleName === 'min') {
+            $min = (int)$ruleValue;
+
+            if ($valueString !== '' && mb_strlen($valueString) < $min) {
+                $this->addError($field, $this->message($field, 'min', $messages, 'Минимальная длина: ' . $min . '.'));
+            }
+
+            return;
+        }
+
+        if ($ruleName === 'max') {
+            $max = (int)$ruleValue;
+
+            if ($valueString !== '' && mb_strlen($valueString) > $max) {
+                $this->addError($field, $this->message($field, 'max', $messages, 'Максимальная длина: ' . $max . '.'));
+            }
+
+            return;
+        }
+
+        if ($ruleName === 'integer') {
+            if ($valueString !== '' && filter_var($valueString, FILTER_VALIDATE_INT) === false) {
+                $this->addError($field, $this->message($field, 'integer', $messages, 'Поле должно быть целым числом.'));
+            }
+
+            return;
+        }
+
+        if ($ruleName === 'email') {
+            if ($valueString !== '' && filter_var($valueString, FILTER_VALIDATE_EMAIL) === false) {
+                $this->addError($field, $this->message($field, 'email', $messages, 'Некорректный email.'));
+            }
+
+            return;
+        }
+    }
+
+    private function parseRule(string $rule): array
+    {
+        $parts = explode(':', $rule, 2);
+
+        return [
+            trim($parts[0]),
+            trim($parts[1] ?? ''),
+        ];
+    }
+
+    private function message(string $field, string $rule, array $messages, string $default): string
+    {
+        $key = $field . '.' . $rule;
+
+        return (string)($messages[$key] ?? $default);
+    }
+
+    private function addError(string $field, string $message): void
+    {
+        $this->errors[$field][] = $message;
     }
 }
 
 
 ---
 
-3. Обнови dispatch() в /local/mvc/Core/Router.php
+2. Создай /local/mvc/Core/FormRequest.php
 
-В файле:
+<?php
 
-/local/mvc/Core/Router.php
+namespace Local\Mvc\Core;
 
-найди кусок:
-
-$controller = new $controllerClass($request);
-
-Замени на:
-
-$controller = App::container()->make($controllerClass);
-
-Потом найди:
-
-$result = $controller->{$controllerMethod}(...array_values($routeParams));
-
-Замени на:
-
-$result = App::container()->call([$controller, $controllerMethod], $routeParams);
-
-Итоговый важный кусок в dispatch() должен быть таким:
-
-$controller = App::container()->make($controllerClass);
-
-if (!$controllerMethod || !method_exists($controller, $controllerMethod)) {
-    $methods = get_class_methods($controller);
-
-    $this->serverError(
-        'Метод контроллера не найден: ' . $controllerClass . '::' . (string)$controllerMethod
-        . "\n\nPHP видит такие методы:\n"
-        . implode("\n", $methods)
-    );
-
-    return;
-}
-
-$result = App::container()->call([$controller, $controllerMethod], $routeParams);
-
-if ($result instanceof Response) {
-    $result->send();
-    return;
-}
-
-
----
-
-4. Проверяем, что Controller принимает Request
-
-В /local/mvc/Core/Controller.php должно быть так:
-
-public function __construct(?Request $request = null)
+/**
+ * FormRequest
+ *
+ * Laravel-like request для валидации форм.
+ *
+ * Пример:
+ *
+ * class StoreMessageRequest extends FormRequest
+ * {
+ *     public function rules(): array
+ *     {
+ *         return [
+ *             'name' => ['required', 'min:2']
+ *         ];
+ *     }
+ * }
+ */
+abstract class FormRequest
 {
-    $this->request = $request ?? Request::createFromGlobals();
-}
+    protected Request $request;
 
-Оставь как есть. Контейнер сам подставит текущий Request.
+    private ?Validator $validator = null;
+
+    public function __construct(Request $request)
+    {
+        $this->request = $request;
+    }
+
+    /**
+     * Правила валидации.
+     */
+    abstract public function rules(): array;
+
+    /**
+     * Сообщения ошибок.
+     */
+    public function messages(): array
+    {
+        return [];
+    }
+
+    /**
+     * Можно ли пользователю выполнять этот запрос.
+     */
+    public function authorize(): bool
+    {
+        return true;
+    }
+
+    /**
+     * Все данные формы.
+     */
+    public function all(): array
+    {
+        return array_merge(
+            $this->request->postAll(),
+            $this->request->jsonAll()
+        );
+    }
+
+    /**
+     * Одно поле.
+     */
+    public function input(string $key, mixed $default = null): mixed
+    {
+        $data = $this->all();
+
+        return $data[$key] ?? $default;
+    }
+
+    public function validator(): Validator
+    {
+        if ($this->validator instanceof Validator) {
+            return $this->validator;
+        }
+
+        $this->validator = Validator::validate(
+            $this->all(),
+            $this->rules(),
+            $this->messages()
+        );
+
+        return $this->validator;
+    }
+
+    public function fails(): bool
+    {
+        return !$this->authorize() || $this->validator()->fails();
+    }
+
+    public function errors(): array
+    {
+        if (!$this->authorize()) {
+            return [
+                'auth' => [
+                    'Недостаточно прав для выполнения действия.',
+                ],
+            ];
+        }
+
+        return $this->validator()->errors();
+    }
+
+    public function errorList(): array
+    {
+        if (!$this->authorize()) {
+            return [
+                'Недостаточно прав для выполнения действия.',
+            ];
+        }
+
+        return $this->validator()->errorList();
+    }
+
+    /**
+     * Проверенные данные.
+     *
+     * Пока возвращаем только поля, которые есть в rules().
+     */
+    public function validated(): array
+    {
+        $data = $this->all();
+        $validated = [];
+
+        foreach (array_keys($this->rules()) as $field) {
+            $validated[$field] = $data[$field] ?? null;
+        }
+
+        return $validated;
+    }
+}
 
 
 ---
 
-5. Теперь перепишем AdminController в Laravel-like стиле
+3. Нужно добавить postAll() в Request.php
 
 Открой:
 
-/local/mvc_demo/Controllers/AdminController.php
+/local/mvc/Core/Request.php
 
-Замени файл полностью:
+Добавь метод внутрь класса:
+
+/**
+ * Все POST-данные.
+ */
+public function postAll(): array
+{
+    return $this->post;
+}
+
+Если хочешь, рядом с методом:
+
+public function post(string $key, mixed $default = null): mixed
+
+
+---
+
+4. Создай папку Requests в demo-проекте
+
+/local/mvc_demo/Requests/
+
+
+---
+
+5. Создай /local/mvc_demo/Requests/StoreMessageRequest.php
+
+<?php
+
+namespace Local\MvcDemo\Requests;
+
+use Local\Mvc\Core\FormRequest;
+
+/**
+ * StoreMessageRequest
+ *
+ * Проверка тестовой формы.
+ *
+ * Это очень похоже на Laravel FormRequest.
+ */
+class StoreMessageRequest extends FormRequest
+{
+    public function rules(): array
+    {
+        return [
+            'name' => ['required', 'min:2', 'max:100'],
+            'message' => ['required', 'min:5', 'max:1000'],
+        ];
+    }
+
+    public function messages(): array
+    {
+        return [
+            'name.required' => 'Введите имя.',
+            'name.min' => 'Имя должно быть не короче 2 символов.',
+            'name.max' => 'Имя должно быть не длиннее 100 символов.',
+
+            'message.required' => 'Введите сообщение.',
+            'message.min' => 'Сообщение должно быть не короче 5 символов.',
+            'message.max' => 'Сообщение должно быть не длиннее 1000 символов.',
+        ];
+    }
+}
+
+
+---
+
+6. Обнови /local/mvc_demo/Controllers/FormController.php
+
+Полностью замени файл:
 
 <?php
 
 namespace Local\MvcDemo\Controllers;
 
-use Local\Mvc\Core\Auth;
 use Local\Mvc\Core\Controller;
+use Local\Mvc\Core\Flash;
 use Local\Mvc\Core\Response;
-use Local\MvcDemo\Services\UserService;
+use Local\MvcDemo\Requests\StoreMessageRequest;
 
-class AdminController extends Controller
+class FormController extends Controller
 {
-    public function dashboard(UserService $userService): Response
+    public function index(): Response
     {
-        return $this->render('admin/dashboard', [
-            'title' => 'Админ-панель',
-            'message' => 'Это защищённая админская страница. Сюда может зайти только администратор.',
-            'user' => [
-                'id' => Auth::id(),
-                'login' => Auth::login(),
-                'name' => Auth::name(),
-                'email' => Auth::email(),
+        return $this->render('form/index', [
+            'title' => 'Тестовая форма',
+            'errors' => [],
+            'success' => '',
+            'old' => [
+                'name' => '',
+                'message' => '',
             ],
-            'stats' => $userService->dashboardStats(),
         ]);
     }
 
-    public function users(UserService $userService): Response
+    public function send(StoreMessageRequest $request): Response
     {
-        $page = (int)$this->request->get('page', 1);
-        $search = trim((string)$this->request->get('q', ''));
+        if ($request->fails()) {
+            Flash::old($request->all());
 
-        $result = $userService->paginateForTable($page, 10, $search);
+            foreach ($request->errorList() as $error) {
+                Flash::error($error);
+            }
 
-        return $this->render('admin/users', [
-            'title' => 'Пользователи',
-            'users' => $result['items'],
-            'pagination' => $result['pagination'],
-            'search' => $result['search'],
-        ]);
-    }
-
-    public function userDetail(string $id, UserService $userService): Response
-    {
-        $user = $userService->findForDetail((int)$id);
-
-        if (!$user) {
-            return Response::html(
-                '<h1>404</h1><p>Пользователь не найден.</p>',
-                404
-            );
+            return $this->redirectRoute('form.index');
         }
 
-        return $this->render('admin/user_detail', [
-            'title' => 'Карточка пользователя',
-            'user' => $user,
-        ]);
+        $data = $request->validated();
+
+        Flash::success('Форма успешно отправлена. Имя: ' . $data['name']);
+
+        return $this->redirectRoute('form.index');
     }
 }
 
-Обрати внимание:
+Смотри, насколько стало похоже на Laravel:
 
-public function users(UserService $userService): Response
-
-Мы больше не пишем:
-
-$userService = new UserService();
-
-Это делает контейнер.
-
-
----
-
-6. Перепишем UserApiController
-
-Файл:
-
-/local/mvc_demo/Controllers/UserApiController.php
-
-Замени полностью:
-
-<?php
-
-namespace Local\MvcDemo\Controllers;
-
-use Local\Mvc\Core\ApiController;
-use Local\Mvc\Core\Response;
-use Local\MvcDemo\Services\UserService;
-
-class UserApiController extends ApiController
+public function send(StoreMessageRequest $request): Response
 {
-    public function index(UserService $userService): Response
-    {
-        $page = (int)$this->request->get('page', 1);
-        $search = trim((string)$this->request->get('q', ''));
-
-        $result = $userService->paginateForTable($page, 10, $search);
-
-        return $this->ok([
-            'items' => $result['items'],
-            'pagination' => $result['pagination'],
-            'search' => $result['search'],
-        ]);
-    }
-
-    public function show(string $id, UserService $userService): Response
-    {
-        $user = $userService->findForDetail((int)$id);
-
-        if (!$user) {
-            $this->abortNotFound('Пользователь не найден', [
-                'id' => (int)$id,
-            ]);
-        }
-
-        return $this->ok([
-            'user' => $user,
-        ]);
-    }
+    $data = $request->validated();
 }
 
 
 ---
 
-7. Добавим тест контейнера
-
-В HomeController добавь метод:
-
-public function containerTest(UserService $userService): Response
-{
-    return $this->success([
-        'message' => 'Container работает. UserService был создан автоматически.',
-        'stats' => $userService->dashboardStats(),
-    ]);
-}
-
-И сверху добавь:
-
-use Local\MvcDemo\Services\UserService;
-
-В /local/mvc_demo/routes.php добавь маршрут:
-
-Route::get('/container-test', [HomeController::class, 'containerTest'])
-    ->name('container.test');
-
-
----
-
-8. Проверяем
+7. Проверяем форму
 
 Сбрось OPcache:
 
@@ -587,56 +506,79 @@ echo 'OPcache reset OK';
 
 Открой:
 
-/local/mvc_demo/container-test
+/local/mvc_demo/form
 
-Должен быть JSON:
+Проверь:
 
-{
-  "ok": true,
-  "data": {
-    "message": "Container работает. UserService был создан автоматически.",
-    "stats": {
-      "users_count": 123
-    }
-  }
-}
+1. Отправь пустую форму.
+2. Введи имя из одной буквы.
+3. Введи короткое сообщение.
+4. Отправь нормальные данные.
 
-Проверь ещё:
-
-/local/mvc_demo/admin/dashboard
-/local/mvc_demo/admin/users
-/local/mvc_demo/api/users
+Всё должно работать как раньше.
 
 
 ---
 
 Что мы сделали
 
-Раньше было так:
+Раньше FormController сам знал правила:
 
-public function users(): Response
+Validator::make($data)
+    ->required(...)
+    ->min(...)
+
+Теперь правила лежат отдельно:
+
+/local/mvc_demo/Requests/StoreMessageRequest.php
+
+Контроллер стал тоньше:
+
+public function send(StoreMessageRequest $request): Response
 {
-    $userService = new UserService();
+    if ($request->fails()) {
+        ...
+    }
+
+    $data = $request->validated();
 }
 
-Теперь Laravel-like:
+Это уже очень похоже на Laravel.
 
-public function users(UserService $userService): Response
+
+---
+
+Как это будет выглядеть в будущих проектах
+
+Например, для sitebuilder:
+
+public function store(StoreSiteRequest $request, SiteService $sites): Response
 {
-    ...
+    $site = $sites->create($request->validated());
+
+    return $this->redirectRoute('sites.edit', [
+        'siteId' => $site['id'],
+    ]);
 }
 
-Фреймворк сам:
+А правила будут отдельно:
 
-видит, что методу нужен UserService
-создаёт UserService
-передаёт его в метод
-
-Это очень похоже на Laravel.
+class StoreSiteRequest extends FormRequest
+{
+    public function rules(): array
+    {
+        return [
+            'title' => ['required', 'min:3', 'max:255'],
+            'code' => ['required', 'max:100'],
+        ];
+    }
+}
 
 Главная мысль:
 
-Container — это мозг, который создаёт зависимости.
-Controller — просто говорит, что ему нужно.
+Controller — принимает решение.
+FormRequest — проверяет входные данные.
+Service — выполняет бизнес-логику.
+Model — работает с данными.
 
-Дальше можно сделать ещё ближе к Laravel: FormRequest — отдельные классы для валидации запросов, например StoreMessageRequest, чтобы в контроллере не писать Validator вручную.
+Это прям Laravel-подход.
