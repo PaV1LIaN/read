@@ -1,462 +1,387 @@
-Идём дальше. Раз у нас появились миграции, следующий Laravel-like шаг — rollback миграций.
+Идём дальше. Раз у нас появились миграции, следующий Laravel-like шаг — сделать Schema Builder.
 
-В Laravel есть:
+В Laravel миграция обычно выглядит не так:
 
-php artisan migrate:rollback
+$this->statement("CREATE TABLE ...");
 
-Это значит:
+А красиво:
 
-Откатить последнюю применённую пачку миграций.
+Schema::create('notes', function (Blueprint $table) {
+    $table->id();
+    $table->string('title');
+    $table->text('body')->nullable();
+    $table->timestamps();
+});
 
-У нас будет кнопка:
-
-Откатить последнюю пачку
-
-Важно: наша миграция down() удаляет таблицу mvc.mvc_demo_notes, поэтому rollback удалит таблицу заметок. Это учебный механизм, на боевых таблицах нажимать аккуратно.
+Сейчас сделаем похожее.
 
 
 ---
 
-1. Замени /local/mvc/Core/Migrator.php
+1. Создай /local/mvc/Core/ColumnDefinition.php
 
 <?php
 
 namespace Local\Mvc\Core;
 
+class ColumnDefinition
+{
+    private bool $nullable = false;
+
+    public function __construct(
+        private string $name,
+        private string $type,
+        private bool $primary = false
+    ) {}
+
+    public function nullable(): self
+    {
+        $this->nullable = true;
+
+        return $this;
+    }
+
+    public function toSql(): string
+    {
+        $sql = $this->safeColumn($this->name) . ' ' . $this->type;
+
+        if ($this->primary) {
+            return $sql . ' PRIMARY KEY';
+        }
+
+        $sql .= $this->nullable ? ' NULL' : ' NOT NULL';
+
+        return $sql;
+    }
+
+    private function safeColumn(string $column): string
+    {
+        $column = trim($column);
+
+        if (!preg_match('/^[a-zA-Z_][a-zA-Z0-9_]*$/', $column)) {
+            throw new \InvalidArgumentException('BAD_COLUMN_NAME: ' . $column);
+        }
+
+        return $column;
+    }
+}
+
+
+---
+
+2. Создай /local/mvc/Core/Blueprint.php
+
+<?php
+
+namespace Local\Mvc\Core;
+
+/**
+ * Blueprint
+ *
+ * Laravel-like описание таблицы.
+ *
+ * Пример:
+ * $table->id();
+ * $table->string('title');
+ * $table->text('body')->nullable();
+ * $table->timestamps();
+ */
+class Blueprint
+{
+    private array $columns = [];
+
+    public function id(string $name = 'id'): ColumnDefinition
+    {
+        return $this->addColumn(new ColumnDefinition($name, 'BIGSERIAL', true));
+    }
+
+    public function string(string $name, int $length = 255): ColumnDefinition
+    {
+        $length = max(1, min($length, 1000));
+
+        return $this->addColumn(new ColumnDefinition($name, 'VARCHAR(' . $length . ')'));
+    }
+
+    public function text(string $name): ColumnDefinition
+    {
+        return $this->addColumn(new ColumnDefinition($name, 'TEXT'));
+    }
+
+    public function integer(string $name): ColumnDefinition
+    {
+        return $this->addColumn(new ColumnDefinition($name, 'INTEGER'));
+    }
+
+    public function bigInteger(string $name): ColumnDefinition
+    {
+        return $this->addColumn(new ColumnDefinition($name, 'BIGINT'));
+    }
+
+    public function timestamp(string $name): ColumnDefinition
+    {
+        return $this->addColumn(new ColumnDefinition($name, 'TIMESTAMP'));
+    }
+
+    public function timestamps(): void
+    {
+        $this->timestamp('created_at')->nullable();
+        $this->timestamp('updated_at')->nullable();
+    }
+
+    public function toSqlColumns(): array
+    {
+        return array_map(
+            static fn (ColumnDefinition $column) => $column->toSql(),
+            $this->columns
+        );
+    }
+
+    private function addColumn(ColumnDefinition $column): ColumnDefinition
+    {
+        $this->columns[] = $column;
+
+        return $column;
+    }
+}
+
+
+---
+
+3. Создай /local/mvc/Core/SchemaBuilder.php
+
+<?php
+
+namespace Local\Mvc\Core;
+
+use Closure;
 use RuntimeException;
 
-class Migrator
+/**
+ * SchemaBuilder
+ *
+ * Laravel-like создание/удаление таблиц.
+ */
+class SchemaBuilder
 {
-    private string $connection;
-    private string $table;
+    public function __construct(
+        private ?string $connection = null
+    ) {}
 
-    public function __construct()
+    public function connection(string $connection): self
     {
-        $this->connection = (string)Config::get('database.migrations.connection', 'projects');
-        $this->table = (string)Config::get('database.migrations.table', 'mvc.migrations');
+        return new self($connection);
     }
 
-    public function run(string $path): array
+    public function create(string $table, callable $callback): void
     {
-        $this->ensureMigrationTable();
+        $connection = $this->connectionName();
 
-        $ran = $this->ranMigrations();
-        $files = $this->migrationFiles($path);
+        $this->ensureSchemaExists($connection);
 
-        $batch = $this->nextBatch();
-        $results = [];
+        $blueprint = new Blueprint();
 
-        foreach ($files as $file) {
-            $name = basename($file, '.php');
+        $callback($blueprint);
 
-            if (in_array($name, $ran, true)) {
-                $results[] = [
-                    'migration' => $name,
-                    'status' => 'skipped',
-                    'message' => 'Уже применена',
-                ];
+        $columns = $blueprint->toSqlColumns();
 
-                continue;
-            }
-
-            $migration = require $file;
-
-            if (!$migration instanceof Migration) {
-                throw new RuntimeException('MIGRATION_MUST_RETURN_MIGRATION_OBJECT: ' . $file);
-            }
-
-            $migration->up();
-
-            $this->recordMigration($name, $batch);
-
-            $results[] = [
-                'migration' => $name,
-                'status' => 'done',
-                'message' => 'Применена',
-            ];
+        if (empty($columns)) {
+            throw new RuntimeException('SCHEMA_CREATE_NO_COLUMNS: ' . $table);
         }
 
-        return $results;
+        $sql = 'CREATE TABLE IF NOT EXISTS '
+            . $this->qualifiedTable($table, $connection)
+            . " (\n    "
+            . implode(",\n    ", $columns)
+            . "\n)";
+
+        Db::execute($sql, [], $connection);
     }
 
-    public function rollback(string $path): array
+    public function dropIfExists(string $table): void
     {
-        $this->ensureMigrationTable();
+        $connection = $this->connectionName();
 
-        $lastBatch = $this->lastBatch();
+        Db::execute(
+            'DROP TABLE IF EXISTS ' . $this->qualifiedTable($table, $connection),
+            [],
+            $connection
+        );
+    }
 
-        if ($lastBatch <= 0) {
-            return [
-                [
-                    'migration' => '',
-                    'status' => 'empty',
-                    'message' => 'Нет миграций для отката',
-                ],
-            ];
+    private function connectionName(): string
+    {
+        return $this->connection ?: (string)Config::get('database.default', 'bitrix');
+    }
+
+    private function ensureSchemaExists(string $connection): void
+    {
+        $schema = $this->schemaForConnection($connection);
+
+        if ($schema === '') {
+            return;
         }
 
-        $rows = Db::fetchAll("
-            SELECT migration
-            FROM {$this->table}
-            WHERE batch = :batch
-            ORDER BY id DESC
-        ", [
-            'batch' => $lastBatch,
-        ], $this->connection);
+        Db::execute(
+            'CREATE SCHEMA IF NOT EXISTS ' . $this->safeIdentifier($schema),
+            [],
+            $connection
+        );
+    }
 
-        $files = $this->migrationFilesByName($path);
-        $results = [];
+    private function qualifiedTable(string $table, string $connection): string
+    {
+        $table = trim($table);
 
-        foreach ($rows as $row) {
-            $name = (string)($row['migration'] ?? $row['MIGRATION'] ?? '');
-
-            if ($name === '') {
-                continue;
-            }
-
-            if (empty($files[$name])) {
-                $results[] = [
-                    'migration' => $name,
-                    'status' => 'file_missing',
-                    'message' => 'Файл миграции не найден',
-                ];
-
-                continue;
-            }
-
-            $migration = require $files[$name];
-
-            if (!$migration instanceof Migration) {
-                throw new RuntimeException('MIGRATION_MUST_RETURN_MIGRATION_OBJECT: ' . $files[$name]);
-            }
-
-            $migration->down();
-
-            $this->deleteMigration($name);
-
-            $results[] = [
-                'migration' => $name,
-                'status' => 'rolled_back',
-                'message' => 'Откат выполнен',
-            ];
+        /**
+         * Если уже передали schema.table — оставляем как есть после проверки.
+         */
+        if (str_contains($table, '.')) {
+            return $this->safeQualifiedTable($table);
         }
 
-        return $results;
-    }
+        $schema = $this->schemaForConnection($connection);
 
-    public function status(string $path): array
-    {
-        $this->ensureMigrationTable();
-
-        $ran = $this->ranMigrations();
-        $files = $this->migrationFiles($path);
-
-        $rows = [];
-
-        foreach ($files as $file) {
-            $name = basename($file, '.php');
-
-            $rows[] = [
-                'migration' => $name,
-                'ran' => in_array($name, $ran, true),
-            ];
+        if ($schema !== '') {
+            return $this->safeIdentifier($schema) . '.' . $this->safeIdentifier($table);
         }
 
-        return $rows;
+        return $this->safeIdentifier($table);
     }
 
-    private function ensureMigrationTable(): void
+    private function schemaForConnection(string $connection): string
     {
-        Db::execute("
-            CREATE SCHEMA IF NOT EXISTS mvc
-        ", [], $this->connection);
-
-        Db::execute("
-            CREATE TABLE IF NOT EXISTS {$this->table} (
-                id BIGSERIAL PRIMARY KEY,
-                migration VARCHAR(255) NOT NULL UNIQUE,
-                batch INTEGER NOT NULL,
-                ran_at TIMESTAMP NOT NULL DEFAULT NOW()
-            )
-        ", [], $this->connection);
+        return trim((string)Config::get('database.connections.' . $connection . '.schema', ''));
     }
 
-    private function ranMigrations(): array
+    private function safeQualifiedTable(string $table): string
     {
-        $rows = Db::fetchAll("
-            SELECT migration
-            FROM {$this->table}
-            ORDER BY id ASC
-        ", [], $this->connection);
+        $parts = explode('.', $table, 2);
 
-        return array_map(static fn ($row) => (string)($row['migration'] ?? $row['MIGRATION'] ?? ''), $rows);
-    }
-
-    private function nextBatch(): int
-    {
-        return $this->lastBatch() + 1;
-    }
-
-    private function lastBatch(): int
-    {
-        $max = Db::value("
-            SELECT COALESCE(MAX(batch), 0)
-            FROM {$this->table}
-        ", [], $this->connection);
-
-        return (int)$max;
-    }
-
-    private function recordMigration(string $name, int $batch): void
-    {
-        Db::execute("
-            INSERT INTO {$this->table} (migration, batch, ran_at)
-            VALUES (:migration, :batch, NOW())
-        ", [
-            'migration' => $name,
-            'batch' => $batch,
-        ], $this->connection);
-    }
-
-    private function deleteMigration(string $name): void
-    {
-        Db::execute("
-            DELETE FROM {$this->table}
-            WHERE migration = :migration
-        ", [
-            'migration' => $name,
-        ], $this->connection);
-    }
-
-    private function migrationFiles(string $path): array
-    {
-        if (!is_dir($path)) {
-            return [];
+        if (count($parts) !== 2) {
+            throw new RuntimeException('BAD_TABLE_NAME: ' . $table);
         }
 
-        $files = glob(rtrim($path, '/') . '/*.php');
-
-        if (!is_array($files)) {
-            return [];
-        }
-
-        sort($files);
-
-        return $files;
+        return $this->safeIdentifier($parts[0]) . '.' . $this->safeIdentifier($parts[1]);
     }
 
-    private function migrationFilesByName(string $path): array
+    private function safeIdentifier(string $value): string
     {
-        $result = [];
+        $value = trim($value);
 
-        foreach ($this->migrationFiles($path) as $file) {
-            $result[basename($file, '.php')] = $file;
+        if (!preg_match('/^[a-zA-Z_][a-zA-Z0-9_]*$/', $value)) {
+            throw new RuntimeException('BAD_IDENTIFIER: ' . $value);
         }
 
-        return $result;
+        return $value;
     }
 }
 
 
 ---
 
-2. Обнови /local/mvc_demo/Controllers/MigrationController.php
-
-Полностью замени файл:
+4. Создай facade /local/mvc/Support/Facades/Schema.php
 
 <?php
 
-namespace Local\MvcDemo\Controllers;
+namespace Local\Mvc\Support\Facades;
 
-use Local\Mvc\Core\Controller;
-use Local\Mvc\Core\Flash;
-use Local\Mvc\Core\Migrator;
-use Local\Mvc\Core\Response;
+use Local\Mvc\Core\SchemaBuilder;
 
-class MigrationController extends Controller
+/**
+ * Schema
+ *
+ * Laravel-like facade для миграций.
+ *
+ * Пример:
+ * Schema::connection('projects')->create(...)
+ */
+class Schema extends Facade
 {
-    private function migrationsPath(): string
+    protected static function accessor(): string
     {
-        return $_SERVER['DOCUMENT_ROOT'] . '/local/mvc_demo/Database/Migrations';
-    }
-
-    public function index(Migrator $migrator): Response
-    {
-        return $this->render('migrations/index', [
-            'title' => 'Миграции',
-            'migrations' => $migrator->status($this->migrationsPath()),
-        ]);
-    }
-
-    public function run(Migrator $migrator): Response
-    {
-        $results = $migrator->run($this->migrationsPath());
-
-        $done = 0;
-
-        foreach ($results as $result) {
-            if (($result['status'] ?? '') === 'done') {
-                $done++;
-            }
-        }
-
-        if ($done > 0) {
-            Flash::success('Миграции применены: ' . $done);
-        } else {
-            Flash::success('Новых миграций нет.');
-        }
-
-        return redirect()->route('migrations.index');
-    }
-
-    public function rollback(Migrator $migrator): Response
-    {
-        $results = $migrator->rollback($this->migrationsPath());
-
-        $rolledBack = 0;
-
-        foreach ($results as $result) {
-            if (($result['status'] ?? '') === 'rolled_back') {
-                $rolledBack++;
-            }
-        }
-
-        if ($rolledBack > 0) {
-            Flash::success('Откат выполнен. Миграций откатили: ' . $rolledBack);
-        } else {
-            Flash::success('Откатывать нечего.');
-        }
-
-        return redirect()->route('migrations.index');
+        return SchemaBuilder::class;
     }
 }
 
 
 ---
 
-3. Обнови /local/mvc_demo/Views/migrations/index.php
+5. Зарегистрируй SchemaBuilder в /local/mvc/Core/App.php
 
-Полностью замени файл:
+Открой:
 
-<?php
+/local/mvc/Core/App.php
 
-if (!defined('B_PROLOG_INCLUDED') || B_PROLOG_INCLUDED !== true) {
-    die();
-}
+Найди блок, где регистрируются сервисы:
 
-?>
-
-<div class="mvc-card">
-    <h1 class="mvc-page-title">
-        <?= e($title ?? 'Миграции') ?>
-    </h1>
-
-    <p class="mvc-page-text">
-        Это Laravel-like миграции. Они создают и откатывают таблицы без ручной работы в pgAdmin.
-    </p>
-
-    <?php if (!empty($flash)): ?>
-        <?php foreach ($flash as $item): ?>
-            <div class="mvc-info" style="border-color:#bbf7d0;background:#f0fdf4;color:#166534;">
-                <?= e($item['message'] ?? '') ?>
-            </div>
-        <?php endforeach; ?>
-    <?php endif; ?>
-
-    <div class="mvc-info">
-        <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
-            <form method="post" action="<?= e(route('migrations.run')) ?>" style="margin:0;">
-                <?= csrf_field() ?>
-
-                <button
-                    type="submit"
-                    style="min-height:42px;padding:0 18px;border:0;border-radius:10px;background:#2563eb;color:#fff;font-weight:600;cursor:pointer;"
-                >
-                    Запустить миграции
-                </button>
-            </form>
-
-            <form method="post" action="<?= e(route('migrations.rollback')) ?>" style="margin:0;">
-                <?= csrf_field() ?>
-
-                <button
-                    type="submit"
-                    onclick="return confirm('Откатить последнюю пачку миграций? Это может удалить таблицы и данные.')"
-                    style="min-height:42px;padding:0 18px;border:0;border-radius:10px;background:#dc2626;color:#fff;font-weight:600;cursor:pointer;"
-                >
-                    Откатить последнюю пачку
-                </button>
-            </form>
-        </div>
-    </div>
-
-    <div class="mvc-info" style="border-color:#fde68a;background:#fffbeb;color:#92400e;">
-        <b>Важно:</b>
-        rollback запускает метод <span class="mvc-code">down()</span> у миграции.
-        В нашей demo-миграции он удаляет таблицу <span class="mvc-code">mvc.mvc_demo_notes</span>.
-    </div>
-
-    <div class="mvc-info">
-        <?php if (empty($migrations)): ?>
-            <p style="margin:0;">Файлы миграций не найдены.</p>
-        <?php else: ?>
-            <table style="width:100%;border-collapse:collapse;">
-                <thead>
-                    <tr>
-                        <th style="text-align:left;padding:8px;border-bottom:1px solid #e5e7eb;">Миграция</th>
-                        <th style="text-align:left;padding:8px;border-bottom:1px solid #e5e7eb;">Статус</th>
-                    </tr>
-                </thead>
-
-                <tbody>
-                    <?php foreach ($migrations as $migration): ?>
-                        <tr>
-                            <td style="padding:8px;border-bottom:1px solid #e5e7eb;">
-                                <span class="mvc-code">
-                                    <?= e($migration['migration'] ?? '') ?>
-                                </span>
-                            </td>
-
-                            <td style="padding:8px;border-bottom:1px solid #e5e7eb;">
-                                <?php if (!empty($migration['ran'])): ?>
-                                    <span style="color:#166534;font-weight:600;">Применена</span>
-                                <?php else: ?>
-                                    <span style="color:#92400e;font-weight:600;">Не применена</span>
-                                <?php endif; ?>
-                            </td>
-                        </tr>
-                    <?php endforeach; ?>
-                </tbody>
-            </table>
-        <?php endif; ?>
-    </div>
-</div>
-
-
----
-
-4. Добавь маршрут rollback в /local/mvc_demo/routes.php
-
-Рядом с миграциями у тебя есть:
-
-Route::get('/migrations', [MigrationController::class, 'index'])
-    ->middleware(['auth', 'admin'])
-    ->name('migrations.index');
-
-Route::post('/migrations/run', [MigrationController::class, 'run'])
-    ->middleware(['auth', 'admin', 'csrf'])
-    ->name('migrations.run');
+$container->singleton(\Local\Mvc\Core\LogManager::class, \Local\Mvc\Core\LogManager::class);
+$container->singleton(\Local\Mvc\Core\ConfigManager::class, \Local\Mvc\Core\ConfigManager::class);
+$container->singleton(\Local\Mvc\Core\ResponseFactory::class, \Local\Mvc\Core\ResponseFactory::class);
+$container->singleton(\Local\Mvc\Core\Redirector::class, \Local\Mvc\Core\Redirector::class);
 
 Добавь ниже:
 
-Route::post('/migrations/rollback', [MigrationController::class, 'rollback'])
-    ->middleware(['auth', 'admin', 'csrf'])
-    ->name('migrations.rollback');
+$container->singleton(\Local\Mvc\Core\SchemaBuilder::class, \Local\Mvc\Core\SchemaBuilder::class);
+
+Итог:
+
+$container->singleton(\Local\Mvc\Core\LogManager::class, \Local\Mvc\Core\LogManager::class);
+$container->singleton(\Local\Mvc\Core\ConfigManager::class, \Local\Mvc\Core\ConfigManager::class);
+$container->singleton(\Local\Mvc\Core\ResponseFactory::class, \Local\Mvc\Core\ResponseFactory::class);
+$container->singleton(\Local\Mvc\Core\Redirector::class, \Local\Mvc\Core\Redirector::class);
+$container->singleton(\Local\Mvc\Core\SchemaBuilder::class, \Local\Mvc\Core\SchemaBuilder::class);
 
 
 ---
 
-5. Проверка
+6. Обнови миграцию заметок
+
+Файл:
+
+/local/mvc_demo/Database/Migrations/2026_05_29_000001_create_mvc_demo_notes_table.php
+
+Полностью замени:
+
+<?php
+
+use Local\Mvc\Core\Blueprint;
+use Local\Mvc\Core\Migration;
+use Local\Mvc\Support\Facades\Schema;
+
+return new class extends Migration {
+    protected string $connection = 'projects';
+
+    public function up(): void
+    {
+        Schema::connection('projects')->create('mvc_demo_notes', function (Blueprint $table) {
+            $table->id();
+            $table->string('title');
+            $table->text('body')->nullable();
+            $table->timestamps();
+        });
+    }
+
+    public function down(): void
+    {
+        Schema::connection('projects')->dropIfExists('mvc_demo_notes');
+    }
+};
+
+Обрати внимание:
+
+Schema::connection('projects')->create('mvc_demo_notes', ...)
+
+Мы не пишем mvc.mvc_demo_notes, потому что схема mvc уже указана в config:
+
+'projects' => [
+    'driver' => 'pg_master',
+    'schema' => 'mvc',
+],
+
+
+---
+
+7. Проверка
 
 Сбрось OPcache:
 
@@ -467,36 +392,41 @@ echo 'OPcache reset OK';
 
 /local/mvc_demo/migrations
 
-Проверь:
+Если миграция уже применена, она останется в статусе Применена.
 
-1. Если миграция применена — будет статус "Применена".
-2. Нажми "Откатить последнюю пачку".
-3. Статус должен стать "Не применена".
-4. Нажми "Запустить миграции".
-5. Статус снова должен стать "Применена".
+Чтобы проверить новый Schema Builder, можно сделать так:
 
-После rollback страница /notes может сломаться, потому что таблица будет удалена. После повторного запуска миграций /notes снова заработает, но старые заметки будут удалены.
+1. Нажми "Откатить последнюю пачку".
+2. Таблица mvc_demo_notes удалится.
+3. Нажми "Запустить миграции".
+4. Таблица создастся уже через Schema Builder.
+
+Важно: rollback удалит заметки, потому что down() делает DROP TABLE.
 
 
 ---
 
 Что мы сделали
 
-Теперь у нас есть Laravel-like команды, только через веб-страницу:
+Раньше миграция была с сырым SQL:
 
-migrate          → Запустить миграции
-migrate:rollback → Откатить последнюю пачку
+$this->statement("
+    CREATE TABLE IF NOT EXISTS mvc.mvc_demo_notes (...)
+");
 
-И миграция теперь работает полноценно:
+Теперь Laravel-like:
 
-public function up(): void
-{
-    // создать таблицу
-}
+Schema::connection('projects')->create('mvc_demo_notes', function (Blueprint $table) {
+    $table->id();
+    $table->string('title');
+    $table->text('body')->nullable();
+    $table->timestamps();
+});
 
-public function down(): void
-{
-    // удалить таблицу
-}
+Главная мысль:
 
-Это ещё один большой шаг к пониманию Laravel.
+Migration — говорит, что сделать.
+Schema — создаёт или удаляет таблицу.
+Blueprint — описывает колонки таблицы.
+
+Это уже очень похоже на Laravel migration system.
