@@ -1,57 +1,23 @@
-Отлично. Дальше делаем очень важную Laravel-like часть — migrations.
+Идём дальше. Раз у нас появились миграции, следующий Laravel-like шаг — rollback миграций.
 
-В Laravel таблицы создаются не руками в pgAdmin, а через миграции:
+В Laravel есть:
 
-php artisan migrate
+php artisan migrate:rollback
 
-У нас artisan пока нет, поэтому сделаем проще:
+Это значит:
 
-/local/mvc_demo/migrations
+Откатить последнюю применённую пачку миграций.
 
-И страницу:
+У нас будет кнопка:
 
-/local/mvc_demo/migrations
+Откатить последнюю пачку
 
-Там можно будет нажать кнопку Запустить миграции.
-
-
----
-
-1. Создай /local/mvc/Core/Migration.php
-
-<?php
-
-namespace Local\Mvc\Core;
-
-/**
- * Migration
- *
- * Laravel-like миграция.
- *
- * up()   — применить миграцию
- * down() — откатить миграцию
- */
-abstract class Migration
-{
-    protected string $connection = 'projects';
-
-    abstract public function up(): void;
-
-    public function down(): void
-    {
-        //
-    }
-
-    protected function statement(string $sql): void
-    {
-        Db::execute($sql, [], $this->connection);
-    }
-}
+Важно: наша миграция down() удаляет таблицу mvc.mvc_demo_notes, поэтому rollback удалит таблицу заметок. Это учебный механизм, на боевых таблицах нажимать аккуратно.
 
 
 ---
 
-2. Создай /local/mvc/Core/Migrator.php
+1. Замени /local/mvc/Core/Migrator.php
 
 <?php
 
@@ -113,6 +79,71 @@ class Migrator
         return $results;
     }
 
+    public function rollback(string $path): array
+    {
+        $this->ensureMigrationTable();
+
+        $lastBatch = $this->lastBatch();
+
+        if ($lastBatch <= 0) {
+            return [
+                [
+                    'migration' => '',
+                    'status' => 'empty',
+                    'message' => 'Нет миграций для отката',
+                ],
+            ];
+        }
+
+        $rows = Db::fetchAll("
+            SELECT migration
+            FROM {$this->table}
+            WHERE batch = :batch
+            ORDER BY id DESC
+        ", [
+            'batch' => $lastBatch,
+        ], $this->connection);
+
+        $files = $this->migrationFilesByName($path);
+        $results = [];
+
+        foreach ($rows as $row) {
+            $name = (string)($row['migration'] ?? $row['MIGRATION'] ?? '');
+
+            if ($name === '') {
+                continue;
+            }
+
+            if (empty($files[$name])) {
+                $results[] = [
+                    'migration' => $name,
+                    'status' => 'file_missing',
+                    'message' => 'Файл миграции не найден',
+                ];
+
+                continue;
+            }
+
+            $migration = require $files[$name];
+
+            if (!$migration instanceof Migration) {
+                throw new RuntimeException('MIGRATION_MUST_RETURN_MIGRATION_OBJECT: ' . $files[$name]);
+            }
+
+            $migration->down();
+
+            $this->deleteMigration($name);
+
+            $results[] = [
+                'migration' => $name,
+                'status' => 'rolled_back',
+                'message' => 'Откат выполнен',
+            ];
+        }
+
+        return $results;
+    }
+
     public function status(string $path): array
     {
         $this->ensureMigrationTable();
@@ -163,12 +194,17 @@ class Migrator
 
     private function nextBatch(): int
     {
+        return $this->lastBatch() + 1;
+    }
+
+    private function lastBatch(): int
+    {
         $max = Db::value("
             SELECT COALESCE(MAX(batch), 0)
             FROM {$this->table}
         ", [], $this->connection);
 
-        return ((int)$max) + 1;
+        return (int)$max;
     }
 
     private function recordMigration(string $name, int $batch): void
@@ -179,6 +215,16 @@ class Migrator
         ", [
             'migration' => $name,
             'batch' => $batch,
+        ], $this->connection);
+    }
+
+    private function deleteMigration(string $name): void
+    {
+        Db::execute("
+            DELETE FROM {$this->table}
+            WHERE migration = :migration
+        ", [
+            'migration' => $name,
         ], $this->connection);
     }
 
@@ -198,91 +244,25 @@ class Migrator
 
         return $files;
     }
+
+    private function migrationFilesByName(string $path): array
+    {
+        $result = [];
+
+        foreach ($this->migrationFiles($path) as $file) {
+            $result[basename($file, '.php')] = $file;
+        }
+
+        return $result;
+    }
 }
 
 
 ---
 
-3. Обнови /local/mvc_demo/config.php
+2. Обнови /local/mvc_demo/Controllers/MigrationController.php
 
-В блок database добавь migrations.
-
-Должно быть примерно так:
-
-'database' => [
-    'default' => 'bitrix',
-
-    'connections' => [
-        'bitrix' => [
-            'driver' => 'bitrix',
-        ],
-
-        'projects' => [
-            'driver' => 'pg_master',
-            'schema' => 'mvc',
-        ],
-    ],
-
-    'migrations' => [
-        'connection' => 'projects',
-        'table' => 'mvc.migrations',
-    ],
-],
-
-
----
-
-4. Создай папку миграций
-
-/local/mvc_demo/Database/Migrations/
-
-
----
-
-5. Создай миграцию заметок
-
-Файл:
-
-/local/mvc_demo/Database/Migrations/2026_05_29_000001_create_mvc_demo_notes_table.php
-
-Код:
-
-<?php
-
-use Local\Mvc\Core\Migration;
-
-return new class extends Migration {
-    protected string $connection = 'projects';
-
-    public function up(): void
-    {
-        $this->statement("
-            CREATE SCHEMA IF NOT EXISTS mvc
-        ");
-
-        $this->statement("
-            CREATE TABLE IF NOT EXISTS mvc.mvc_demo_notes (
-                id BIGSERIAL PRIMARY KEY,
-                title VARCHAR(255) NOT NULL,
-                body TEXT NULL,
-                created_at TIMESTAMP NULL,
-                updated_at TIMESTAMP NULL
-            )
-        ");
-    }
-
-    public function down(): void
-    {
-        $this->statement("
-            DROP TABLE IF EXISTS mvc.mvc_demo_notes
-        ");
-    }
-};
-
-
----
-
-6. Создай /local/mvc_demo/Controllers/MigrationController.php
+Полностью замени файл:
 
 <?php
 
@@ -295,21 +275,22 @@ use Local\Mvc\Core\Response;
 
 class MigrationController extends Controller
 {
+    private function migrationsPath(): string
+    {
+        return $_SERVER['DOCUMENT_ROOT'] . '/local/mvc_demo/Database/Migrations';
+    }
+
     public function index(Migrator $migrator): Response
     {
-        $path = $_SERVER['DOCUMENT_ROOT'] . '/local/mvc_demo/Database/Migrations';
-
         return $this->render('migrations/index', [
             'title' => 'Миграции',
-            'migrations' => $migrator->status($path),
+            'migrations' => $migrator->status($this->migrationsPath()),
         ]);
     }
 
     public function run(Migrator $migrator): Response
     {
-        $path = $_SERVER['DOCUMENT_ROOT'] . '/local/mvc_demo/Database/Migrations';
-
-        $results = $migrator->run($path);
+        $results = $migrator->run($this->migrationsPath());
 
         $done = 0;
 
@@ -327,18 +308,35 @@ class MigrationController extends Controller
 
         return redirect()->route('migrations.index');
     }
+
+    public function rollback(Migrator $migrator): Response
+    {
+        $results = $migrator->rollback($this->migrationsPath());
+
+        $rolledBack = 0;
+
+        foreach ($results as $result) {
+            if (($result['status'] ?? '') === 'rolled_back') {
+                $rolledBack++;
+            }
+        }
+
+        if ($rolledBack > 0) {
+            Flash::success('Откат выполнен. Миграций откатили: ' . $rolledBack);
+        } else {
+            Flash::success('Откатывать нечего.');
+        }
+
+        return redirect()->route('migrations.index');
+    }
 }
 
 
 ---
 
-7. Создай view /local/mvc_demo/Views/migrations/index.php
+3. Обнови /local/mvc_demo/Views/migrations/index.php
 
-Создай папку:
-
-/local/mvc_demo/Views/migrations/
-
-Файл:
+Полностью замени файл:
 
 <?php
 
@@ -354,7 +352,7 @@ if (!defined('B_PROLOG_INCLUDED') || B_PROLOG_INCLUDED !== true) {
     </h1>
 
     <p class="mvc-page-text">
-        Это Laravel-like миграции. Они создают таблицы в базе без ручного создания через pgAdmin.
+        Это Laravel-like миграции. Они создают и откатывают таблицы без ручной работы в pgAdmin.
     </p>
 
     <?php if (!empty($flash)): ?>
@@ -366,16 +364,36 @@ if (!defined('B_PROLOG_INCLUDED') || B_PROLOG_INCLUDED !== true) {
     <?php endif; ?>
 
     <div class="mvc-info">
-        <form method="post" action="<?= e(route('migrations.run')) ?>">
-            <?= csrf_field() ?>
+        <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
+            <form method="post" action="<?= e(route('migrations.run')) ?>" style="margin:0;">
+                <?= csrf_field() ?>
 
-            <button
-                type="submit"
-                style="min-height:42px;padding:0 18px;border:0;border-radius:10px;background:#2563eb;color:#fff;font-weight:600;cursor:pointer;"
-            >
-                Запустить миграции
-            </button>
-        </form>
+                <button
+                    type="submit"
+                    style="min-height:42px;padding:0 18px;border:0;border-radius:10px;background:#2563eb;color:#fff;font-weight:600;cursor:pointer;"
+                >
+                    Запустить миграции
+                </button>
+            </form>
+
+            <form method="post" action="<?= e(route('migrations.rollback')) ?>" style="margin:0;">
+                <?= csrf_field() ?>
+
+                <button
+                    type="submit"
+                    onclick="return confirm('Откатить последнюю пачку миграций? Это может удалить таблицы и данные.')"
+                    style="min-height:42px;padding:0 18px;border:0;border-radius:10px;background:#dc2626;color:#fff;font-weight:600;cursor:pointer;"
+                >
+                    Откатить последнюю пачку
+                </button>
+            </form>
+        </div>
+    </div>
+
+    <div class="mvc-info" style="border-color:#fde68a;background:#fffbeb;color:#92400e;">
+        <b>Важно:</b>
+        rollback запускает метод <span class="mvc-code">down()</span> у миграции.
+        В нашей demo-миграции он удаляет таблицу <span class="mvc-code">mvc.mvc_demo_notes</span>.
     </div>
 
     <div class="mvc-info">
@@ -417,13 +435,9 @@ if (!defined('B_PROLOG_INCLUDED') || B_PROLOG_INCLUDED !== true) {
 
 ---
 
-8. Добавь маршруты в /local/mvc_demo/routes.php
+4. Добавь маршрут rollback в /local/mvc_demo/routes.php
 
-Вверху добавь:
-
-use Local\MvcDemo\Controllers\MigrationController;
-
-Ниже добавь:
+Рядом с миграциями у тебя есть:
 
 Route::get('/migrations', [MigrationController::class, 'index'])
     ->middleware(['auth', 'admin'])
@@ -433,19 +447,16 @@ Route::post('/migrations/run', [MigrationController::class, 'run'])
     ->middleware(['auth', 'admin', 'csrf'])
     ->name('migrations.run');
 
+Добавь ниже:
 
----
-
-9. Добавь ссылку в меню
-
-В /local/mvc_demo/Views/layouts/app.php добавь:
-
-<a href="<?= e(route('migrations.index')) ?>">Migrations</a>
+Route::post('/migrations/rollback', [MigrationController::class, 'rollback'])
+    ->middleware(['auth', 'admin', 'csrf'])
+    ->name('migrations.rollback');
 
 
 ---
 
-10. Проверка
+5. Проверка
 
 Сбрось OPcache:
 
@@ -456,36 +467,36 @@ echo 'OPcache reset OK';
 
 /local/mvc_demo/migrations
 
-Нажми:
+Проверь:
 
-Запустить миграции
+1. Если миграция применена — будет статус "Применена".
+2. Нажми "Откатить последнюю пачку".
+3. Статус должен стать "Не применена".
+4. Нажми "Запустить миграции".
+5. Статус снова должен стать "Применена".
 
-После этого в ProjectsDB должны быть:
-
-mvc.mvc_demo_notes
-mvc.migrations
+После rollback страница /notes может сломаться, потому что таблица будет удалена. После повторного запуска миграций /notes снова заработает, но старые заметки будут удалены.
 
 
 ---
 
 Что мы сделали
 
-Раньше таблицу создавали руками:
+Теперь у нас есть Laravel-like команды, только через веб-страницу:
 
-CREATE TABLE ...
+migrate          → Запустить миграции
+migrate:rollback → Откатить последнюю пачку
 
-Теперь Laravel-like:
+И миграция теперь работает полноценно:
 
-Database/Migrations/2026_05_29_000001_create_mvc_demo_notes_table.php
+public function up(): void
+{
+    // создать таблицу
+}
 
-И фреймворк сам запоминает, какие миграции уже применены, в таблице:
+public function down(): void
+{
+    // удалить таблицу
+}
 
-mvc.migrations
-
-Главная мысль:
-
-Migration — файл изменения базы.
-Migrator — механизм, который применяет эти файлы.
-migrations table — журнал уже применённых миграций.
-
-Это очень важная часть Laravel-мышления.
+Это ещё один большой шаг к пониманию Laravel.
