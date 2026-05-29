@@ -1,121 +1,119 @@
-Отлично. Теперь сделаем редактирование заметки, то есть полноценный CRUD ближе к Laravel:
+Идём дальше. Сейчас сделаем Resource routes, как в Laravel.
 
-Create  — создать заметку
-Read    — показать список
-Update  — изменить заметку
-Delete  — удалить заметку
+В Laravel для CRUD обычно не пишут 5 маршрутов руками. Пишут примерно так:
 
-Сейчас у нас есть создание и удаление. Добавим:
+Route::resource('notes', NoteController::class);
 
-GET /notes/{id}/edit
-PUT /notes/{id}
+И Laravel сам создаёт маршруты:
+
+GET     /notes              notes.index
+POST    /notes              notes.store
+GET     /notes/{id}/edit    notes.edit
+PUT     /notes/{id}         notes.update
+DELETE  /notes/{id}         notes.destroy
+
+Мы сделаем похожее.
 
 
 ---
 
-1. Обнови /local/mvc_demo/Models/Note.php
+1. Обнови /local/mvc/Core/Router.php
 
-Полностью замени файл:
+Внутрь класса Router, рядом с методами get, post, put, delete, добавь метод:
 
-<?php
-
-namespace Local\MvcDemo\Models;
-
-use Local\Mvc\Core\Model;
-
-class Note extends Model
+public function resource(string $path, string $controller, array $options = []): void
 {
-    protected static string $connection = 'projects';
+    $path = '/' . trim($path, '/');
 
-    protected static string $table = 'mvc.mvc_demo_notes';
+    $resourceName = trim($path, '/');
+    $resourceName = str_replace('/', '.', $resourceName);
 
-    protected static string $primaryKey = 'id';
-
-    protected static array $fillable = [
-        'title',
-        'body',
-        'created_at',
-        'updated_at',
+    $only = $options['only'] ?? [
+        'index',
+        'create',
+        'store',
+        'show',
+        'edit',
+        'update',
+        'destroy',
     ];
 
-    public static function latest(int $limit = 20): array
-    {
-        $rows = self::query()
-            ->orderBy('id', 'desc')
-            ->limit($limit)
-            ->get();
+    $except = $options['except'] ?? [];
+    $middleware = $options['middleware'] ?? [];
 
-        return array_map([self::class, 'normalize'], $rows);
+    if (!is_array($only)) {
+        $only = [$only];
     }
 
-    public static function findNormalized(int $id): ?array
-    {
-        $row = self::find($id);
-
-        if (!$row) {
-            return null;
-        }
-
-        return self::normalize($row);
+    if (!is_array($except)) {
+        $except = [$except];
     }
 
-    public static function normalize(array $row): array
-    {
-        return [
-            'id' => $row['id'] ?? $row['ID'] ?? null,
-            'title' => $row['title'] ?? $row['TITLE'] ?? '',
-            'body' => $row['body'] ?? $row['BODY'] ?? '',
-            'created_at' => $row['created_at'] ?? $row['CREATED_AT'] ?? '',
-            'updated_at' => $row['updated_at'] ?? $row['UPDATED_AT'] ?? '',
-        ];
+    if (!is_array($middleware)) {
+        $middleware = [$middleware];
+    }
+
+    $enabled = static function (string $action) use ($only, $except): bool {
+        return in_array($action, $only, true) && !in_array($action, $except, true);
+    };
+
+    if ($enabled('index')) {
+        $this->get($path, [$controller, 'index'], $middleware, $resourceName . '.index');
+    }
+
+    if ($enabled('create')) {
+        $this->get($path . '/create', [$controller, 'create'], $middleware, $resourceName . '.create');
+    }
+
+    if ($enabled('store')) {
+        $this->post($path, [$controller, 'store'], $middleware, $resourceName . '.store');
+    }
+
+    if ($enabled('show')) {
+        $this->get($path . '/{id:\d+}', [$controller, 'show'], $middleware, $resourceName . '.show');
+    }
+
+    if ($enabled('edit')) {
+        $this->get($path . '/{id:\d+}/edit', [$controller, 'edit'], $middleware, $resourceName . '.edit');
+    }
+
+    if ($enabled('update')) {
+        $this->put($path . '/{id:\d+}', [$controller, 'update'], $middleware, $resourceName . '.update');
+    }
+
+    if ($enabled('destroy')) {
+        $this->delete($path . '/{id:\d+}', [$controller, 'destroy'], $middleware, $resourceName . '.destroy');
     }
 }
 
 
 ---
 
-2. Создай /local/mvc_demo/Requests/UpdateNoteRequest.php
+2. Обнови /local/mvc/Support/Facades/Route.php
 
-<?php
+Внутрь класса Route добавь метод:
 
-namespace Local\MvcDemo\Requests;
-
-use Local\Mvc\Core\FormRequest;
-
-class UpdateNoteRequest extends FormRequest
+public static function resource(string $path, string $controller, array $options = []): void
 {
-    public function rules(): array
-    {
-        return [
-            'title' => ['required', 'min:2', 'max:255'],
-            'body' => ['max:2000'],
-        ];
-    }
-
-    public function messages(): array
-    {
-        return [
-            'title.required' => 'Введите название заметки.',
-            'title.min' => 'Название должно быть не короче 2 символов.',
-            'title.max' => 'Название должно быть не длиннее 255 символов.',
-            'body.max' => 'Текст заметки должен быть не длиннее 2000 символов.',
-        ];
-    }
-
-    /**
-     * Для редактирования оставляем null.
-     * Тогда при ошибке валидации фреймворк вернёт назад по HTTP_REFERER.
-     */
-    public function redirectRoute(): ?string
-    {
-        return null;
-    }
+    self::router()->resource($path, $controller, $options);
 }
+
+Теперь можно будет писать:
+
+Route::resource('/notes', NoteController::class);
 
 
 ---
 
 3. Обнови /local/mvc_demo/Controllers/NoteController.php
+
+У нас сейчас метод удаления называется:
+
+delete()
+
+В Laravel он называется:
+
+destroy()
 
 Полностью замени файл:
 
@@ -197,7 +195,7 @@ class NoteController extends Controller
         return redirect()->route('notes.index');
     }
 
-    public function delete(string $id): Response
+    public function destroy(string $id): Response
     {
         Note::deleteById((int)$id);
 
@@ -207,205 +205,87 @@ class NoteController extends Controller
     }
 }
 
-Обрати внимание, стало почти как в Laravel:
-
-public function update(string $id, UpdateNoteRequest $request): Response
-{
-    $data = $request->validated();
-}
-
 
 ---
 
-4. Создай view /local/mvc_demo/Views/notes/edit.php
+4. Обнови маршруты /local/mvc_demo/routes.php
 
-<?php
+Найди старые маршруты заметок:
 
-if (!defined('B_PROLOG_INCLUDED') || B_PROLOG_INCLUDED !== true) {
-    die();
-}
+Route::get('/notes', [NoteController::class, 'index'])
+    ->name('notes.index');
 
-$noteId = (int)($note['id'] ?? 0);
+Route::post('/notes', [NoteController::class, 'store'])
+    ->middleware('csrf')
+    ->name('notes.store');
 
-?>
+Route::get('/notes/{id:\d+}/edit', [NoteController::class, 'edit'])
+    ->name('notes.edit');
 
-<div class="mvc-card">
-    <h1 class="mvc-page-title">
-        <?= e($title ?? 'Редактирование заметки') ?>
-    </h1>
+Route::put('/notes/{id:\d+}', [NoteController::class, 'update'])
+    ->middleware('csrf')
+    ->name('notes.update');
 
-    <p class="mvc-page-text">
-        Это форма редактирования. Она отправляет POST, но через
-        <span class="mvc-code">method_field('PUT')</span>
-        фреймворк воспринимает запрос как PUT.
-    </p>
+Route::delete('/notes/{id:\d+}', [NoteController::class, 'delete'])
+    ->middleware('csrf')
+    ->name('notes.delete');
 
-    <?php if (!empty($flash)): ?>
-        <?php foreach ($flash as $item): ?>
-            <?php
-            $type = $item['type'] ?? 'info';
-            $style = 'border-color:#bfdbfe;background:#eff6ff;color:#1d4ed8;';
+Удали их и замени одним блоком:
 
-            if ($type === 'success') {
-                $style = 'border-color:#bbf7d0;background:#f0fdf4;color:#166534;';
-            } elseif ($type === 'error') {
-                $style = 'border-color:#fecaca;background:#fef2f2;color:#991b1b;';
-            }
-            ?>
+Route::resource('/notes', NoteController::class, [
+    'only' => [
+        'index',
+        'store',
+        'edit',
+        'update',
+        'destroy',
+    ],
+    'middleware' => ['csrf'],
+]);
 
-            <div class="mvc-info" style="<?= e($style) ?>">
-                <?= e($item['message'] ?? '') ?>
-            </div>
-        <?php endforeach; ?>
-    <?php endif; ?>
+Почему csrf можно повесить на все маршруты?
 
-    <div class="mvc-info">
-        <form method="post" action="<?= e(route('notes.update', ['id' => $noteId])) ?>">
-            <?= csrf_field() ?>
-            <?= method_field('PUT') ?>
+Потому что наш CsrfMiddleware проверяет только опасные методы:
 
-            <div style="margin-bottom: 14px;">
-                <label style="display:block;margin-bottom:6px;font-weight:600;">
-                    Название
-                </label>
+POST
+PUT
+PATCH
+DELETE
 
-                <input
-                    type="text"
-                    name="title"
-                    value="<?= e(old('title', $note['title'] ?? '')) ?>"
-                    style="width:100%;min-height:42px;padding:8px 12px;border:1px solid #d1d5db;border-radius:10px;"
-                >
-            </div>
-
-            <div style="margin-bottom: 14px;">
-                <label style="display:block;margin-bottom:6px;font-weight:600;">
-                    Текст
-                </label>
-
-                <textarea
-                    name="body"
-                    rows="5"
-                    style="width:100%;padding:8px 12px;border:1px solid #d1d5db;border-radius:10px;"
-                ><?= e(old('body', $note['body'] ?? '')) ?></textarea>
-            </div>
-
-            <div style="display:flex;gap:10px;align-items:center;">
-                <button
-                    type="submit"
-                    style="min-height:42px;padding:0 18px;border:0;border-radius:10px;background:#2563eb;color:#fff;font-weight:600;cursor:pointer;"
-                >
-                    Сохранить
-                </button>
-
-                <a href="<?= e(route('notes.index')) ?>">
-                    ← Назад к списку
-                </a>
-            </div>
-        </form>
-    </div>
-</div>
+А GET он пропускает.
 
 
 ---
 
 5. Обнови /local/mvc_demo/Views/notes/index.php
 
-В таблице в колонке Действие сейчас есть только форма удаления.
+Найди маршрут удаления:
 
-Найди этот кусок:
-
-<td style="padding:8px;border-bottom:1px solid #e5e7eb;">
-    <form method="post" action="<?= e(route('notes.delete', ['id' => (int)($note['id'] ?? 0)])) ?>">
-        <?= csrf_field() ?>
-        <?= method_field('DELETE') ?>
-
-        <button
-            type="submit"
-            onclick="return confirm('Удалить заметку?')"
-            style="padding:6px 10px;border:0;border-radius:8px;background:#dc2626;color:#fff;cursor:pointer;"
-        >
-            Удалить
-        </button>
-    </form>
-</td>
+route('notes.delete', ['id' => (int)($note['id'] ?? 0)])
 
 Замени на:
 
-<td style="padding:8px;border-bottom:1px solid #e5e7eb;">
-    <div style="display:flex;gap:8px;align-items:center;">
-        <a
-            href="<?= e(route('notes.edit', ['id' => (int)($note['id'] ?? 0)])) ?>"
-            style="padding:6px 10px;border-radius:8px;background:#2563eb;color:#fff;text-decoration:none;"
-        >
-            Изменить
-        </a>
+route('notes.destroy', ['id' => (int)($note['id'] ?? 0)])
 
-        <form method="post" action="<?= e(route('notes.delete', ['id' => (int)($note['id'] ?? 0)])) ?>" style="margin:0;">
-            <?= csrf_field() ?>
-            <?= method_field('DELETE') ?>
+То есть форма удаления должна быть такая:
 
-            <button
-                type="submit"
-                onclick="return confirm('Удалить заметку?')"
-                style="padding:6px 10px;border:0;border-radius:8px;background:#dc2626;color:#fff;cursor:pointer;"
-            >
-                Удалить
-            </button>
-        </form>
-    </div>
-</td>
+<form method="post" action="<?= e(route('notes.destroy', ['id' => (int)($note['id'] ?? 0)])) ?>" style="margin:0;">
+    <?= csrf_field() ?>
+    <?= method_field('DELETE') ?>
+
+    <button
+        type="submit"
+        onclick="return confirm('Удалить заметку?')"
+        style="padding:6px 10px;border:0;border-radius:8px;background:#dc2626;color:#fff;cursor:pointer;"
+    >
+        Удалить
+    </button>
+</form>
 
 
 ---
 
-6. Обнови маршруты /local/mvc_demo/routes.php
-
-У тебя уже есть:
-
-Route::get('/notes', [NoteController::class, 'index'])
-    ->name('notes.index');
-
-Route::post('/notes', [NoteController::class, 'store'])
-    ->middleware('csrf')
-    ->name('notes.store');
-
-Route::delete('/notes/{id:\d+}', [NoteController::class, 'delete'])
-    ->middleware('csrf')
-    ->name('notes.delete');
-
-Добавь между store и delete:
-
-Route::get('/notes/{id:\d+}/edit', [NoteController::class, 'edit'])
-    ->name('notes.edit');
-
-Route::put('/notes/{id:\d+}', [NoteController::class, 'update'])
-    ->middleware('csrf')
-    ->name('notes.update');
-
-Итоговый блок:
-
-Route::get('/notes', [NoteController::class, 'index'])
-    ->name('notes.index');
-
-Route::post('/notes', [NoteController::class, 'store'])
-    ->middleware('csrf')
-    ->name('notes.store');
-
-Route::get('/notes/{id:\d+}/edit', [NoteController::class, 'edit'])
-    ->name('notes.edit');
-
-Route::put('/notes/{id:\d+}', [NoteController::class, 'update'])
-    ->middleware('csrf')
-    ->name('notes.update');
-
-Route::delete('/notes/{id:\d+}', [NoteController::class, 'delete'])
-    ->middleware('csrf')
-    ->name('notes.delete');
-
-
----
-
-7. Проверка
+6. Проверка
 
 Сбрось OPcache:
 
@@ -414,33 +294,48 @@ echo 'OPcache reset OK';
 
 Открой:
 
+/local/mvc_demo/debug/routes
+
+Теперь должны быть маршруты:
+
+GET     /notes              notes.index
+POST    /notes              notes.store
+GET     /notes/{id:\d+}/edit notes.edit
+PUT     /notes/{id:\d+}      notes.update
+DELETE  /notes/{id:\d+}      notes.destroy
+
+Потом проверь:
+
 /local/mvc_demo/notes
 
-Проверь:
+И сценарии:
 
-1. Нажми "Изменить".
-2. Измени название или текст.
-3. Нажми "Сохранить".
-4. Должно вернуть на список.
-5. В таблице должна быть обновлённая заметка.
-6. В pgAdmin в ProjectsDB → mvc → mvc_demo_notes тоже должно обновиться.
+создать заметку
+изменить заметку
+удалить заметку
 
 
 ---
 
 Что мы сделали
 
-Теперь у нас Laravel-like CRUD:
+Раньше CRUD-маршруты писались руками:
 
-Route::get('/notes', [NoteController::class, 'index'])->name('notes.index');
-Route::post('/notes', [NoteController::class, 'store'])->name('notes.store');
-Route::get('/notes/{id}/edit', [NoteController::class, 'edit'])->name('notes.edit');
-Route::put('/notes/{id}', [NoteController::class, 'update'])->name('notes.update');
-Route::delete('/notes/{id}', [NoteController::class, 'delete'])->name('notes.delete');
+Route::get('/notes', ...);
+Route::post('/notes', ...);
+Route::get('/notes/{id}/edit', ...);
+Route::put('/notes/{id}', ...);
+Route::delete('/notes/{id}', ...);
 
-И контроллер похож на Laravel:
+Теперь Laravel-like:
 
-public function store(StoreNoteRequest $request): Response
-public function update(string $id, UpdateNoteRequest $request): Response
+Route::resource('/notes', NoteController::class, [
+    'only' => ['index', 'store', 'edit', 'update', 'destroy'],
+    'middleware' => ['csrf'],
+]);
 
-Это уже очень хорошая учебная база для понимания Laravel resource controllers.
+Главная мысль:
+
+Resource route — это быстрый способ создать стандартные CRUD-маршруты.
+
+Это ещё один шаг к Laravel.
