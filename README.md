@@ -1,28 +1,57 @@
-Идём дальше. Сейчас сделаем Laravel-like автоматические timestamps.
+Отлично. Дальше делаем очень важную Laravel-like часть — migrations.
 
-В Laravel модель сама умеет заполнять поля:
+В Laravel таблицы создаются не руками в pgAdmin, а через миграции:
 
-created_at
-updated_at
+php artisan migrate
 
-То есть в контроллере не надо каждый раз писать:
+У нас artisan пока нет, поэтому сделаем проще:
 
-'created_at' => date('Y-m-d H:i:s'),
-'updated_at' => date('Y-m-d H:i:s'),
+/local/mvc_demo/migrations
 
-Хотим так:
+И страницу:
 
-Note::create([
-    'title' => $data['title'],
-    'body' => $data['body'],
-]);
+/local/mvc_demo/migrations
 
-А модель сама добавит даты.
+Там можно будет нажать кнопку Запустить миграции.
 
 
 ---
 
-1. Замени /local/mvc/Core/Model.php
+1. Создай /local/mvc/Core/Migration.php
+
+<?php
+
+namespace Local\Mvc\Core;
+
+/**
+ * Migration
+ *
+ * Laravel-like миграция.
+ *
+ * up()   — применить миграцию
+ * down() — откатить миграцию
+ */
+abstract class Migration
+{
+    protected string $connection = 'projects';
+
+    abstract public function up(): void;
+
+    public function down(): void
+    {
+        //
+    }
+
+    protected function statement(string $sql): void
+    {
+        Db::execute($sql, [], $this->connection);
+    }
+}
+
+
+---
+
+2. Создай /local/mvc/Core/Migrator.php
 
 <?php
 
@@ -30,218 +59,230 @@ namespace Local\Mvc\Core;
 
 use RuntimeException;
 
-abstract class Model
+class Migrator
 {
-    protected static string $connection = 'bitrix';
+    private string $connection;
+    private string $table;
 
-    protected static string $table = '';
-
-    protected static string $primaryKey = 'ID';
-
-    protected static array $fillable = [];
-
-    /**
-     * Laravel-like timestamps.
-     *
-     * Если true, модель сама заполняет:
-     * created_at
-     * updated_at
-     */
-    protected static bool $timestamps = false;
-
-    protected static string $createdAtColumn = 'created_at';
-
-    protected static string $updatedAtColumn = 'updated_at';
-
-    protected static function table(): string
+    public function __construct()
     {
-        if (static::$table === '') {
-            throw new RuntimeException('У модели не указана таблица: ' . static::class);
-        }
-
-        return static::$table;
+        $this->connection = (string)Config::get('database.migrations.connection', 'projects');
+        $this->table = (string)Config::get('database.migrations.table', 'mvc.migrations');
     }
 
-    public static function query(): QueryBuilder
+    public function run(string $path): array
     {
-        return QueryBuilder::table(static::table(), static::$connection);
-    }
+        $this->ensureMigrationTable();
 
-    public static function all(int $limit = 100): array
-    {
-        return static::query()
-            ->orderBy(static::$primaryKey, 'desc')
-            ->limit($limit)
-            ->get();
-    }
+        $ran = $this->ranMigrations();
+        $files = $this->migrationFiles($path);
 
-    public static function find(int|string $id): ?array
-    {
-        return static::query()
-            ->where(static::$primaryKey, $id)
-            ->first();
-    }
+        $batch = $this->nextBatch();
+        $results = [];
 
-    public static function count(): int
-    {
-        return static::query()->count();
-    }
+        foreach ($files as $file) {
+            $name = basename($file, '.php');
 
-    public static function create(array $data): bool
-    {
-        $data = static::applyCreateTimestamps($data);
+            if (in_array($name, $ran, true)) {
+                $results[] = [
+                    'migration' => $name,
+                    'status' => 'skipped',
+                    'message' => 'Уже применена',
+                ];
 
-        return static::query()->insert(static::onlyFillable($data));
-    }
-
-    public static function updateById(int|string $id, array $data): bool
-    {
-        $data = static::applyUpdateTimestamps($data);
-
-        return static::query()
-            ->where(static::$primaryKey, $id)
-            ->update(static::onlyFillable($data));
-    }
-
-    public static function deleteById(int|string $id): bool
-    {
-        return static::query()
-            ->where(static::$primaryKey, $id)
-            ->delete();
-    }
-
-    protected static function onlyFillable(array $data): array
-    {
-        if (empty(static::$fillable)) {
-            return $data;
-        }
-
-        $result = [];
-
-        foreach (static::$fillable as $field) {
-            if (array_key_exists($field, $data)) {
-                $result[$field] = $data[$field];
+                continue;
             }
+
+            $migration = require $file;
+
+            if (!$migration instanceof Migration) {
+                throw new RuntimeException('MIGRATION_MUST_RETURN_MIGRATION_OBJECT: ' . $file);
+            }
+
+            $migration->up();
+
+            $this->recordMigration($name, $batch);
+
+            $results[] = [
+                'migration' => $name,
+                'status' => 'done',
+                'message' => 'Применена',
+            ];
         }
 
-        return $result;
+        return $results;
     }
 
-    protected static function applyCreateTimestamps(array $data): array
+    public function status(string $path): array
     {
-        if (!static::$timestamps) {
-            return $data;
+        $this->ensureMigrationTable();
+
+        $ran = $this->ranMigrations();
+        $files = $this->migrationFiles($path);
+
+        $rows = [];
+
+        foreach ($files as $file) {
+            $name = basename($file, '.php');
+
+            $rows[] = [
+                'migration' => $name,
+                'ran' => in_array($name, $ran, true),
+            ];
         }
 
-        $now = static::freshTimestamp();
-
-        if (!array_key_exists(static::$createdAtColumn, $data)) {
-            $data[static::$createdAtColumn] = $now;
-        }
-
-        if (!array_key_exists(static::$updatedAtColumn, $data)) {
-            $data[static::$updatedAtColumn] = $now;
-        }
-
-        return $data;
+        return $rows;
     }
 
-    protected static function applyUpdateTimestamps(array $data): array
+    private function ensureMigrationTable(): void
     {
-        if (!static::$timestamps) {
-            return $data;
-        }
+        Db::execute("
+            CREATE SCHEMA IF NOT EXISTS mvc
+        ", [], $this->connection);
 
-        $data[static::$updatedAtColumn] = static::freshTimestamp();
-
-        return $data;
+        Db::execute("
+            CREATE TABLE IF NOT EXISTS {$this->table} (
+                id BIGSERIAL PRIMARY KEY,
+                migration VARCHAR(255) NOT NULL UNIQUE,
+                batch INTEGER NOT NULL,
+                ran_at TIMESTAMP NOT NULL DEFAULT NOW()
+            )
+        ", [], $this->connection);
     }
 
-    protected static function freshTimestamp(): string
+    private function ranMigrations(): array
     {
-        return date('Y-m-d H:i:s');
+        $rows = Db::fetchAll("
+            SELECT migration
+            FROM {$this->table}
+            ORDER BY id ASC
+        ", [], $this->connection);
+
+        return array_map(static fn ($row) => (string)($row['migration'] ?? $row['MIGRATION'] ?? ''), $rows);
+    }
+
+    private function nextBatch(): int
+    {
+        $max = Db::value("
+            SELECT COALESCE(MAX(batch), 0)
+            FROM {$this->table}
+        ", [], $this->connection);
+
+        return ((int)$max) + 1;
+    }
+
+    private function recordMigration(string $name, int $batch): void
+    {
+        Db::execute("
+            INSERT INTO {$this->table} (migration, batch, ran_at)
+            VALUES (:migration, :batch, NOW())
+        ", [
+            'migration' => $name,
+            'batch' => $batch,
+        ], $this->connection);
+    }
+
+    private function migrationFiles(string $path): array
+    {
+        if (!is_dir($path)) {
+            return [];
+        }
+
+        $files = glob(rtrim($path, '/') . '/*.php');
+
+        if (!is_array($files)) {
+            return [];
+        }
+
+        sort($files);
+
+        return $files;
     }
 }
 
 
 ---
 
-2. Обнови /local/mvc_demo/Models/Note.php
+3. Обнови /local/mvc_demo/config.php
 
-Тут главное добавить:
+В блок database добавь migrations.
 
-protected static bool $timestamps = true;
+Должно быть примерно так:
 
-Полный файл:
+'database' => [
+    'default' => 'bitrix',
+
+    'connections' => [
+        'bitrix' => [
+            'driver' => 'bitrix',
+        ],
+
+        'projects' => [
+            'driver' => 'pg_master',
+            'schema' => 'mvc',
+        ],
+    ],
+
+    'migrations' => [
+        'connection' => 'projects',
+        'table' => 'mvc.migrations',
+    ],
+],
+
+
+---
+
+4. Создай папку миграций
+
+/local/mvc_demo/Database/Migrations/
+
+
+---
+
+5. Создай миграцию заметок
+
+Файл:
+
+/local/mvc_demo/Database/Migrations/2026_05_29_000001_create_mvc_demo_notes_table.php
+
+Код:
 
 <?php
 
-namespace Local\MvcDemo\Models;
+use Local\Mvc\Core\Migration;
 
-use Local\Mvc\Core\Model;
+return new class extends Migration {
+    protected string $connection = 'projects';
 
-class Note extends Model
-{
-    protected static string $connection = 'projects';
-
-    protected static string $table = 'mvc.mvc_demo_notes';
-
-    protected static string $primaryKey = 'id';
-
-    protected static bool $timestamps = true;
-
-    protected static string $createdAtColumn = 'created_at';
-
-    protected static string $updatedAtColumn = 'updated_at';
-
-    protected static array $fillable = [
-        'title',
-        'body',
-        'created_at',
-        'updated_at',
-    ];
-
-    public static function latest(int $limit = 20): array
+    public function up(): void
     {
-        $rows = self::query()
-            ->orderBy('id', 'desc')
-            ->limit($limit)
-            ->get();
+        $this->statement("
+            CREATE SCHEMA IF NOT EXISTS mvc
+        ");
 
-        return array_map([self::class, 'normalize'], $rows);
+        $this->statement("
+            CREATE TABLE IF NOT EXISTS mvc.mvc_demo_notes (
+                id BIGSERIAL PRIMARY KEY,
+                title VARCHAR(255) NOT NULL,
+                body TEXT NULL,
+                created_at TIMESTAMP NULL,
+                updated_at TIMESTAMP NULL
+            )
+        ");
     }
 
-    public static function findNormalized(int $id): ?array
+    public function down(): void
     {
-        $row = self::find($id);
-
-        if (!$row) {
-            return null;
-        }
-
-        return self::normalize($row);
+        $this->statement("
+            DROP TABLE IF EXISTS mvc.mvc_demo_notes
+        ");
     }
-
-    public static function normalize(array $row): array
-    {
-        return [
-            'id' => $row['id'] ?? $row['ID'] ?? null,
-            'title' => $row['title'] ?? $row['TITLE'] ?? '',
-            'body' => $row['body'] ?? $row['BODY'] ?? '',
-            'created_at' => $row['created_at'] ?? $row['CREATED_AT'] ?? '',
-            'updated_at' => $row['updated_at'] ?? $row['UPDATED_AT'] ?? '',
-        ];
-    }
-}
+};
 
 
 ---
 
-3. Обнови /local/mvc_demo/Controllers/NoteController.php
-
-Теперь убираем ручное заполнение дат.
-
-Полный файл:
+6. Создай /local/mvc_demo/Controllers/MigrationController.php
 
 <?php
 
@@ -249,89 +290,162 @@ namespace Local\MvcDemo\Controllers;
 
 use Local\Mvc\Core\Controller;
 use Local\Mvc\Core\Flash;
+use Local\Mvc\Core\Migrator;
 use Local\Mvc\Core\Response;
-use Local\MvcDemo\Models\Note;
-use Local\MvcDemo\Requests\StoreNoteRequest;
-use Local\MvcDemo\Requests\UpdateNoteRequest;
 
-class NoteController extends Controller
+class MigrationController extends Controller
 {
-    public function index(): Response
+    public function index(Migrator $migrator): Response
     {
-        return $this->render('notes/index', [
-            'title' => 'Заметки',
-            'notes' => Note::latest(20),
+        $path = $_SERVER['DOCUMENT_ROOT'] . '/local/mvc_demo/Database/Migrations';
+
+        return $this->render('migrations/index', [
+            'title' => 'Миграции',
+            'migrations' => $migrator->status($path),
         ]);
     }
 
-    public function store(StoreNoteRequest $request): Response
+    public function run(Migrator $migrator): Response
     {
-        $data = $request->validated();
+        $path = $_SERVER['DOCUMENT_ROOT'] . '/local/mvc_demo/Database/Migrations';
 
-        Note::create([
-            'title' => $data['title'],
-            'body' => $data['body'],
-        ]);
+        $results = $migrator->run($path);
 
-        Flash::success('Заметка создана.');
+        $done = 0;
 
-        return redirect()->route('notes.index');
-    }
-
-    public function edit(string $id): Response
-    {
-        $note = Note::findNormalized((int)$id);
-
-        if (!$note) {
-            return Response::html(
-                '<h1>404</h1><p>Заметка не найдена.</p>',
-                404
-            );
+        foreach ($results as $result) {
+            if (($result['status'] ?? '') === 'done') {
+                $done++;
+            }
         }
 
-        return $this->render('notes/edit', [
-            'title' => 'Редактирование заметки',
-            'note' => $note,
-        ]);
-    }
-
-    public function update(string $id, UpdateNoteRequest $request): Response
-    {
-        $note = Note::findNormalized((int)$id);
-
-        if (!$note) {
-            return Response::html(
-                '<h1>404</h1><p>Заметка не найдена.</p>',
-                404
-            );
+        if ($done > 0) {
+            Flash::success('Миграции применены: ' . $done);
+        } else {
+            Flash::success('Новых миграций нет.');
         }
 
-        $data = $request->validated();
-
-        Note::updateById((int)$id, [
-            'title' => $data['title'],
-            'body' => $data['body'],
-        ]);
-
-        Flash::success('Заметка обновлена.');
-
-        return redirect()->route('notes.index');
-    }
-
-    public function destroy(string $id): Response
-    {
-        Note::deleteById((int)$id);
-
-        Flash::success('Заметка удалена.');
-
-        return redirect()->route('notes.index');
+        return redirect()->route('migrations.index');
     }
 }
 
 
 ---
 
-4. Проверяем
+7. Создай view /local/mvc_demo/Views/migrations/index.php
+
+Создай папку:
+
+/local/mvc_demo/Views/migrations/
+
+Файл:
+
+<?php
+
+if (!defined('B_PROLOG_INCLUDED') || B_PROLOG_INCLUDED !== true) {
+    die();
+}
+
+?>
+
+<div class="mvc-card">
+    <h1 class="mvc-page-title">
+        <?= e($title ?? 'Миграции') ?>
+    </h1>
+
+    <p class="mvc-page-text">
+        Это Laravel-like миграции. Они создают таблицы в базе без ручного создания через pgAdmin.
+    </p>
+
+    <?php if (!empty($flash)): ?>
+        <?php foreach ($flash as $item): ?>
+            <div class="mvc-info" style="border-color:#bbf7d0;background:#f0fdf4;color:#166534;">
+                <?= e($item['message'] ?? '') ?>
+            </div>
+        <?php endforeach; ?>
+    <?php endif; ?>
+
+    <div class="mvc-info">
+        <form method="post" action="<?= e(route('migrations.run')) ?>">
+            <?= csrf_field() ?>
+
+            <button
+                type="submit"
+                style="min-height:42px;padding:0 18px;border:0;border-radius:10px;background:#2563eb;color:#fff;font-weight:600;cursor:pointer;"
+            >
+                Запустить миграции
+            </button>
+        </form>
+    </div>
+
+    <div class="mvc-info">
+        <?php if (empty($migrations)): ?>
+            <p style="margin:0;">Файлы миграций не найдены.</p>
+        <?php else: ?>
+            <table style="width:100%;border-collapse:collapse;">
+                <thead>
+                    <tr>
+                        <th style="text-align:left;padding:8px;border-bottom:1px solid #e5e7eb;">Миграция</th>
+                        <th style="text-align:left;padding:8px;border-bottom:1px solid #e5e7eb;">Статус</th>
+                    </tr>
+                </thead>
+
+                <tbody>
+                    <?php foreach ($migrations as $migration): ?>
+                        <tr>
+                            <td style="padding:8px;border-bottom:1px solid #e5e7eb;">
+                                <span class="mvc-code">
+                                    <?= e($migration['migration'] ?? '') ?>
+                                </span>
+                            </td>
+
+                            <td style="padding:8px;border-bottom:1px solid #e5e7eb;">
+                                <?php if (!empty($migration['ran'])): ?>
+                                    <span style="color:#166534;font-weight:600;">Применена</span>
+                                <?php else: ?>
+                                    <span style="color:#92400e;font-weight:600;">Не применена</span>
+                                <?php endif; ?>
+                            </td>
+                        </tr>
+                    <?php endforeach; ?>
+                </tbody>
+            </table>
+        <?php endif; ?>
+    </div>
+</div>
+
+
+---
+
+8. Добавь маршруты в /local/mvc_demo/routes.php
+
+Вверху добавь:
+
+use Local\MvcDemo\Controllers\MigrationController;
+
+Ниже добавь:
+
+Route::get('/migrations', [MigrationController::class, 'index'])
+    ->middleware(['auth', 'admin'])
+    ->name('migrations.index');
+
+Route::post('/migrations/run', [MigrationController::class, 'run'])
+    ->middleware(['auth', 'admin', 'csrf'])
+    ->name('migrations.run');
+
+
+---
+
+9. Добавь ссылку в меню
+
+В /local/mvc_demo/Views/layouts/app.php добавь:
+
+<a href="<?= e(route('migrations.index')) ?>">Migrations</a>
+
+
+---
+
+10. Проверка
 
 Сбрось OPcache:
 
@@ -340,32 +454,38 @@ echo 'OPcache reset OK';
 
 Открой:
 
-/local/mvc_demo/notes
+/local/mvc_demo/migrations
 
-Проверь:
+Нажми:
 
-1. Создай новую заметку.
-2. В pgAdmin в ProjectsDB → mvc → mvc_demo_notes должны заполниться created_at и updated_at.
-3. Измени заметку.
-4. updated_at должен обновиться.
+Запустить миграции
+
+После этого в ProjectsDB должны быть:
+
+mvc.mvc_demo_notes
+mvc.migrations
 
 
 ---
 
 Что мы сделали
 
-Раньше контроллер сам ставил даты:
+Раньше таблицу создавали руками:
 
-'created_at' => date('Y-m-d H:i:s'),
-'updated_at' => date('Y-m-d H:i:s'),
+CREATE TABLE ...
 
-Теперь это делает модель:
+Теперь Laravel-like:
 
-protected static bool $timestamps = true;
+Database/Migrations/2026_05_29_000001_create_mvc_demo_notes_table.php
 
-Простыми словами:
+И фреймворк сам запоминает, какие миграции уже применены, в таблице:
 
-Controller говорит: "создай заметку".
-Model сама добавляет created_at и updated_at.
+mvc.migrations
 
-Это ещё один шаг к Laravel, потому что в Laravel модель тоже сама управляет created_at и updated_at.
+Главная мысль:
+
+Migration — файл изменения базы.
+Migrator — механизм, который применяет эти файлы.
+migrations table — журнал уже применённых миграций.
+
+Это очень важная часть Laravel-мышления.
