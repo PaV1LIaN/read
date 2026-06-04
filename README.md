@@ -1,1005 +1,352 @@
-Не буду смешивать все 7 файлов в одно сообщение. Начинаем с backend для шаблонов сайтов. После этого следующим сообщением дам editor.php, index.php и CSS.
+Дальше делаем интерфейс сохранения шаблона в редакторе.
 
-1. /local/sitebuilder/api/index.php
+Сейчас трогаем 2 файла:
 
-Заменяй файл целиком:
-
-<?php
-
-require_once __DIR__ . '/bootstrap.php';
-
-$action = (string)($_POST['action'] ?? '');
-
-if ($action === 'ping') {
-    require __DIR__ . '/handlers/common.php';
-    exit;
-}
-
-if (
-    $action === 'site.list' ||
-    $action === 'site.get' ||
-    $action === 'site.create' ||
-    $action === 'site.update' ||
-    $action === 'site.delete' ||
-    $action === 'site.setHome' ||
-    $action === 'site.syncAccess' ||
-    $action === 'site.ensureGroup' ||
-    $action === 'site.accessList' ||
-    $action === 'site.accessSet' ||
-    $action === 'site.accessRemove' ||
-    $action === 'site.appearanceGet' ||
-    $action === 'site.appearanceUpdate' ||
-    $action === 'site.appearanceUpload' ||
-    $action === 'site.appearanceRemove'
-) {
-    require __DIR__ . '/handlers/site.php';
-    exit;
-}
-
-if (
-    $action === 'page.list' ||
-    $action === 'page.create' ||
-    $action === 'page.delete' ||
-    $action === 'page.duplicate' ||
-    $action === 'page.updateMeta' ||
-    $action === 'page.setStatus' ||
-    $action === 'page.setParent' ||
-    $action === 'page.move'
-) {
-    require __DIR__ . '/handlers/page.php';
-    exit;
-}
-
-if (
-    $action === 'menu.list' ||
-    $action === 'menu.create' ||
-    $action === 'menu.update' ||
-    $action === 'menu.delete' ||
-    $action === 'menu.setTop' ||
-    $action === 'menu.item.add' ||
-    $action === 'menu.item.update' ||
-    $action === 'menu.item.delete' ||
-    $action === 'menu.item.move'
-) {
-    require __DIR__ . '/handlers/menu.php';
-    exit;
-}
-
-if (
-    $action === 'block.list' ||
-    $action === 'block.create' ||
-    $action === 'block.update' ||
-    $action === 'block.delete' ||
-    $action === 'block.duplicate' ||
-    $action === 'block.move' ||
-    $action === 'block.reorder'
-) {
-    require __DIR__ . '/handlers/block.php';
-    exit;
-}
-
-if (
-    $action === 'file.list' ||
-    $action === 'file.upload' ||
-    $action === 'file.delete'
-) {
-    require __DIR__ . '/handlers/file.php';
-    exit;
-}
-
-if (
-    $action === 'layout.get' ||
-    $action === 'layout.updateSettings' ||
-    $action === 'layout.block.list' ||
-    $action === 'layout.block.create' ||
-    $action === 'layout.block.update' ||
-    $action === 'layout.block.delete' ||
-    $action === 'layout.block.move'
-) {
-    require __DIR__ . '/handlers/layout.php';
-    exit;
-}
-
-if (strpos($action, 'page.') === 0) {
-    require __DIR__ . '/handlers/page.php';
-    exit;
-}
-
-if (
-    $action === 'section.list' ||
-    $action === 'section.create' ||
-    $action === 'section.update' ||
-    $action === 'section.delete' ||
-    $action === 'site.setSection'
-) {
-    require __DIR__ . '/handlers/section.php';
-    exit;
-}
-
-if (
-    $action === 'template.list' ||
-    $action === 'template.get' ||
-    $action === 'template.createFromSite' ||
-    $action === 'template.update' ||
-    $action === 'template.delete' ||
-    $action === 'template.createSite'
-) {
-    require __DIR__ . '/handlers/template.php';
-    exit;
-}
-
-if (
-    $action === 'user.search'
-) {
-    require __DIR__ . '/handlers/user.php';
-    exit;
-}
-
-sb_json_error('UNKNOWN_ACTION', 400, [
-    'action' => $action,
-    'file' => __FILE__,
-]);
+/local/sitebuilder/editor.php
+/local/sitebuilder/assets/admin/editor.css
 
 
 ---
 
-2. /local/sitebuilder/api/handlers/template.php
+1. editor.php — кнопка “Сохранить как шаблон”
 
-Заменяй файл целиком:
+Найди в верхней панели ссылку на настройки:
 
-<?php
+<a class="sb-btn sb-btn-light sb-btn-small" href="<?= htmlspecialchars($basePath, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?>/settings.php?siteId=<?= (int)$siteId ?>">
+    Настройки
+</a>
 
-global $USER;
+Сразу после неё вставь:
 
-$servicePath = $_SERVER['DOCUMENT_ROOT'] . '/local/sitebuilder/lib/SiteTemplateService.php';
-if (file_exists($servicePath)) {
-    require_once $servicePath;
-}
-
-if (!class_exists('SiteTemplateService')) {
-    sb_json_error('SiteTemplateService.php не подключен', 500);
-}
-
-if ($action === 'template.list') {
-    sb_json_ok([
-        'templates' => SiteTemplateService::listSiteTemplates(),
-        'handler' => 'template',
-        'action' => $action,
-    ]);
-}
-
-if ($action === 'template.get') {
-    $templateId = (int)($_POST['templateId'] ?? $_POST['id'] ?? 0);
-
-    if ($templateId <= 0) {
-        sb_json_error('TEMPLATE_ID_REQUIRED', 422);
-    }
-
-    $template = SiteTemplateService::getTemplate($templateId);
-    if (!$template || (string)($template['kind'] ?? 'site') !== 'site') {
-        sb_json_error('TEMPLATE_NOT_FOUND', 404);
-    }
-
-    sb_json_ok([
-        'template' => SiteTemplateService::publicTemplateRecord($template),
-        'handler' => 'template',
-        'action' => $action,
-    ]);
-}
-
-if ($action === 'template.createFromSite') {
-    sb_require_bitrix_admin();
-
-    $siteId = (int)($_POST['siteId'] ?? 0);
-    $name = trim((string)($_POST['name'] ?? ''));
-    $description = trim((string)($_POST['description'] ?? ''));
-
-    if ($siteId <= 0) {
-        sb_json_error('SITE_ID_REQUIRED', 422);
-    }
-
-    if ($name === '') {
-        sb_json_error('NAME_REQUIRED', 422);
-    }
-
-    try {
-        $template = SiteTemplateService::createFromSite(
-            $siteId,
-            $name,
-            $description,
-            (int)$USER->GetID()
-        );
-
-        sb_json_ok([
-            'template' => $template,
-            'handler' => 'template',
-            'action' => $action,
-        ]);
-    } catch (Throwable $e) {
-        sb_json_error($e->getMessage(), 500, [
-            'handler' => 'template',
-            'action' => $action,
-        ]);
-    }
-}
-
-if ($action === 'template.update') {
-    sb_require_bitrix_admin();
-
-    $templateId = (int)($_POST['templateId'] ?? $_POST['id'] ?? 0);
-    $name = trim((string)($_POST['name'] ?? ''));
-    $description = trim((string)($_POST['description'] ?? ''));
-
-    if ($templateId <= 0) {
-        sb_json_error('TEMPLATE_ID_REQUIRED', 422);
-    }
-
-    if ($name === '') {
-        sb_json_error('NAME_REQUIRED', 422);
-    }
-
-    try {
-        $template = SiteTemplateService::rename($templateId, $name, $description, (int)$USER->GetID());
-
-        sb_json_ok([
-            'template' => $template,
-            'handler' => 'template',
-            'action' => $action,
-        ]);
-    } catch (Throwable $e) {
-        sb_json_error($e->getMessage(), 500, [
-            'handler' => 'template',
-            'action' => $action,
-        ]);
-    }
-}
-
-if ($action === 'template.delete') {
-    sb_require_bitrix_admin();
-
-    $templateId = (int)($_POST['templateId'] ?? $_POST['id'] ?? 0);
-
-    if ($templateId <= 0) {
-        sb_json_error('TEMPLATE_ID_REQUIRED', 422);
-    }
-
-    try {
-        SiteTemplateService::delete($templateId);
-
-        sb_json_ok([
-            'deleted' => true,
-            'handler' => 'template',
-            'action' => $action,
-        ]);
-    } catch (Throwable $e) {
-        sb_json_error($e->getMessage(), 500, [
-            'handler' => 'template',
-            'action' => $action,
-        ]);
-    }
-}
-
-if ($action === 'template.createSite') {
-    sb_require_bitrix_admin();
-
-    $templateId = (int)($_POST['templateId'] ?? 0);
-    $name = trim((string)($_POST['name'] ?? ''));
-    $slug = trim((string)($_POST['slug'] ?? ''));
-    $sectionId = (int)($_POST['sectionId'] ?? 0);
-
-    if ($templateId <= 0) {
-        sb_json_error('TEMPLATE_ID_REQUIRED', 422);
-    }
-
-    try {
-        $result = SiteTemplateService::createSiteFromTemplate(
-            $templateId,
-            $name,
-            $slug,
-            $sectionId,
-            (int)$USER->GetID()
-        );
-
-        sb_json_ok($result + [
-            'handler' => 'template',
-            'action' => $action,
-        ]);
-    } catch (Throwable $e) {
-        sb_json_error($e->getMessage(), 500, [
-            'handler' => 'template',
-            'action' => $action,
-        ]);
-    }
-}
-
-sb_json_error('NOT_MOVED_YET', 501, [
-    'handler' => 'template',
-    'action' => $action,
-]);
+<?php if ($USER->IsAdmin()): ?>
+    <button class="sb-btn sb-btn-primary sb-btn-small" type="button" id="saveAsTemplateBtn">
+        Сохранить как шаблон
+    </button>
+<?php endif; ?>
 
 
 ---
 
-3. /local/sitebuilder/lib/helpers.php
+2. editor.php — модальное окно
 
-Вставь этот кусок после функции sb_count_site_owners():
+Найди конец основной HTML-разметки перед строками:
 
-if (!function_exists('sb_is_bitrix_admin')) {
-    function sb_is_bitrix_admin(): bool
-    {
-        global $USER;
+<script src="/bitrix/js/main/core/core.js"></script>
+<script>
 
-        return is_object($USER)
-            && method_exists($USER, 'IsAdmin')
-            && $USER->IsAdmin();
+И перед ними вставь:
+
+<?php if ($USER->IsAdmin()): ?>
+    <div class="sb-template-modal" id="saveTemplateModal" hidden>
+        <div class="sb-template-modal__backdrop" data-close-template-modal></div>
+
+        <div class="sb-template-modal__dialog">
+            <div class="sb-template-modal__head">
+                <div>
+                    <h2 class="sb-template-modal__title">Сохранить сайт как шаблон</h2>
+                    <p class="sb-template-modal__subtitle">
+                        Шаблон сохранит страницы, вложенность, блоки, layout, меню и оформление. Файлы диска не копируются.
+                    </p>
+                </div>
+
+                <button class="sb-template-modal__close" type="button" data-close-template-modal>×</button>
+            </div>
+
+            <div class="sb-template-modal__body">
+                <div class="sb-field">
+                    <label for="templateNameInput">Название шаблона</label>
+                    <input class="sb-input" type="text" id="templateNameInput" placeholder="Например: Корпоративный портал">
+                </div>
+
+                <div class="sb-field" style="margin-top:12px;">
+                    <label for="templateDescriptionInput">Описание</label>
+                    <textarea class="sb-input" id="templateDescriptionInput" rows="4" placeholder="Кратко опиши, для каких сайтов подходит этот шаблон"></textarea>
+                </div>
+
+                <div class="sb-template-note">
+                    Создание, изменение и удаление шаблонов доступно только администратору Битрикса.
+                </div>
+
+                <div id="templateMessage" class="sb-template-message" hidden></div>
+            </div>
+
+            <div class="sb-template-modal__footer">
+                <button class="sb-btn sb-btn-light" type="button" data-close-template-modal>Отмена</button>
+                <button class="sb-btn sb-btn-primary" type="button" id="createTemplateBtn">Создать шаблон</button>
+            </div>
+        </div>
+    </div>
+<?php endif; ?>
+
+
+---
+
+3. editor.php — JS-функции
+
+Внутри <script>, ниже функций, но перед функцией deleteSite(), вставь:
+
+function openTemplateModal() {
+    if (!IS_BITRIX_ADMIN) {
+        alert('Создавать шаблоны может только администратор Битрикса');
+        return;
     }
-}
 
-if (!function_exists('sb_require_bitrix_admin')) {
-    function sb_require_bitrix_admin(): void
-    {
-        if (!sb_is_bitrix_admin()) {
-            sb_json_error('BITRIX_ADMIN_REQUIRED', 403, [
-                'message' => 'Создавать и изменять шаблоны может только администратор Битрикса.',
-            ]);
+    var modal = document.getElementById('saveTemplateModal');
+    if (!modal) return;
+
+    var nameInput = document.getElementById('templateNameInput');
+    var descInput = document.getElementById('templateDescriptionInput');
+    var message = document.getElementById('templateMessage');
+
+    if (nameInput && !nameInput.value) {
+        var siteName = state.site && state.site.name ? state.site.name : 'Сайт';
+        nameInput.value = siteName;
+    }
+
+    if (descInput && !descInput.value) {
+        descInput.value = '';
+    }
+
+    if (message) {
+        message.hidden = true;
+        message.textContent = '';
+        message.className = 'sb-template-message';
+    }
+
+    modal.hidden = false;
+
+    setTimeout(function () {
+        if (nameInput) {
+            nameInput.focus();
+            nameInput.select();
         }
-    }
+    }, 50);
 }
 
+function closeTemplateModal() {
+    var modal = document.getElementById('saveTemplateModal');
+    if (!modal) return;
 
----
+    modal.hidden = true;
+}
 
-4. /local/sitebuilder/lib/SiteTemplateService.php
+function setTemplateMessage(text, type) {
+    var message = document.getElementById('templateMessage');
+    if (!message) return;
 
-Создай новый файл:
+    message.hidden = !text;
+    message.textContent = text || '';
+    message.className = 'sb-template-message' + (type ? ' is-' + type : '');
+}
 
-<?php
+async function createTemplateFromSite() {
+    if (!IS_BITRIX_ADMIN) {
+        alert('Создавать шаблоны может только администратор Битрикса');
+        return;
+    }
 
-class SiteTemplateService
-{
-    public static function listSiteTemplates(): array
-    {
-        $items = array_values(array_filter(sb_read_templates(), static function ($template) {
-            return (string)($template['kind'] ?? 'site') === 'site';
-        }));
+    var nameInput = document.getElementById('templateNameInput');
+    var descInput = document.getElementById('templateDescriptionInput');
+    var btn = document.getElementById('createTemplateBtn');
 
-        usort($items, static function ($a, $b) {
-            $aTime = strtotime((string)($a['updatedAt'] ?? $a['createdAt'] ?? '')) ?: 0;
-            $bTime = strtotime((string)($b['updatedAt'] ?? $b['createdAt'] ?? '')) ?: 0;
+    var name = nameInput ? String(nameInput.value || '').trim() : '';
+    var description = descInput ? String(descInput.value || '').trim() : '';
 
-            if ($aTime !== $bTime) {
-                return $bTime <=> $aTime;
-            }
+    if (!name) {
+        alert('Введите название шаблона');
+        if (nameInput) nameInput.focus();
+        return;
+    }
 
-            return (int)($b['id'] ?? 0) <=> (int)($a['id'] ?? 0);
+    if (btn) {
+        btn.disabled = true;
+        btn.textContent = 'Создаю...';
+    }
+
+    setTemplateMessage('Создаю шаблон...', 'info');
+
+    try {
+        await api('template.createFromSite', {
+            siteId: siteId,
+            name: name,
+            description: description
         });
 
-        return array_map([self::class, 'publicTemplateRecord'], $items);
-    }
+        setTemplateMessage('Шаблон создан', 'success');
 
-    public static function getTemplate(int $templateId): ?array
-    {
-        foreach (sb_read_templates() as $template) {
-            if ((int)($template['id'] ?? 0) === $templateId) {
-                return $template;
-            }
+        setTimeout(function () {
+            closeTemplateModal();
+        }, 350);
+    } catch (e) {
+        var message = e && (e.message || e.error) ? (e.message || e.error) : 'UNKNOWN_ERROR';
+        setTemplateMessage('Не удалось создать шаблон: ' + message, 'error');
+    } finally {
+        if (btn) {
+            btn.disabled = false;
+            btn.textContent = 'Создать шаблон';
         }
-
-        return null;
-    }
-
-    public static function createFromSite(int $siteId, string $name, string $description, int $userId): array
-    {
-        $site = sb_find_site($siteId);
-        if (!$site) {
-            throw new RuntimeException('SITE_NOT_FOUND');
-        }
-
-        $name = trim($name);
-        if ($name === '') {
-            throw new RuntimeException('NAME_REQUIRED');
-        }
-
-        $pages = self::pagesForSite($siteId);
-        $pageIds = array_fill_keys(array_map(static function ($page) {
-            return (int)($page['id'] ?? 0);
-        }, $pages), true);
-
-        $blocks = [];
-        foreach (sb_read_blocks() as $block) {
-            $pageId = (int)($block['pageId'] ?? 0);
-            if (!isset($pageIds[$pageId])) {
-                continue;
-            }
-
-            $blocks[] = self::prepareBlockForSnapshot($block);
-        }
-
-        $menus = self::menusForSite($siteId);
-
-        $layout = function_exists('sb_layout_ensure_record')
-            ? sb_layout_ensure_record($siteId)
-            : ['siteId' => $siteId, 'settings' => [], 'zones' => []];
-
-        $layout = self::prepareLayoutForSnapshot($layout);
-
-        $now = date('c');
-        $templates = sb_read_templates();
-
-        $template = [
-            'id' => sb_next_template_id($templates),
-            'kind' => 'site',
-            'name' => $name,
-            'description' => trim($description),
-            'sourceSiteId' => $siteId,
-            'sourceSiteName' => (string)($site['name'] ?? ''),
-            'payload' => [
-                'site' => self::prepareSiteForSnapshot($site),
-                'pages' => array_map([self::class, 'preparePageForSnapshot'], $pages),
-                'blocks' => $blocks,
-                'layout' => $layout,
-                'menus' => array_map([self::class, 'prepareMenuForSnapshot'], $menus),
-            ],
-            'createdBy' => $userId,
-            'createdAt' => $now,
-            'updatedBy' => $userId,
-            'updatedAt' => $now,
-        ];
-
-        $templates[] = $template;
-        sb_write_templates($templates);
-
-        return self::publicTemplateRecord($template);
-    }
-
-    public static function delete(int $templateId): void
-    {
-        $templates = sb_read_templates();
-        $before = count($templates);
-
-        $templates = array_values(array_filter($templates, static function ($template) use ($templateId) {
-            return (int)($template['id'] ?? 0) !== $templateId;
-        }));
-
-        if (count($templates) === $before) {
-            throw new RuntimeException('TEMPLATE_NOT_FOUND');
-        }
-
-        sb_write_templates($templates);
-    }
-
-    public static function rename(int $templateId, string $name, string $description, int $userId): array
-    {
-        $name = trim($name);
-        if ($name === '') {
-            throw new RuntimeException('NAME_REQUIRED');
-        }
-
-        $templates = sb_read_templates();
-        $updated = null;
-
-        foreach ($templates as &$template) {
-            if ((int)($template['id'] ?? 0) !== $templateId) {
-                continue;
-            }
-
-            $template['name'] = $name;
-            $template['description'] = trim($description);
-            $template['updatedBy'] = $userId;
-            $template['updatedAt'] = date('c');
-            $updated = $template;
-            break;
-        }
-        unset($template);
-
-        if (!$updated) {
-            throw new RuntimeException('TEMPLATE_NOT_FOUND');
-        }
-
-        sb_write_templates($templates);
-
-        return self::publicTemplateRecord($updated);
-    }
-
-    public static function createSiteFromTemplate(int $templateId, string $siteName, string $slug, int $sectionId, int $userId): array
-    {
-        $template = self::getTemplate($templateId);
-        if (!$template || (string)($template['kind'] ?? 'site') !== 'site') {
-            throw new RuntimeException('TEMPLATE_NOT_FOUND');
-        }
-
-        $payload = is_array($template['payload'] ?? null) ? $template['payload'] : [];
-        $snapshotSite = is_array($payload['site'] ?? null) ? $payload['site'] : [];
-
-        $siteName = trim($siteName);
-        if ($siteName === '') {
-            $siteName = (string)($snapshotSite['name'] ?? $template['name'] ?? 'Новый сайт');
-        }
-
-        if ($siteName === '') {
-            throw new RuntimeException('NAME_REQUIRED');
-        }
-
-        if (function_exists('sb_site_handler_validate_section')) {
-            sb_site_handler_validate_section($sectionId);
-        } elseif ($sectionId < 0) {
-            $sectionId = 0;
-        }
-
-        $sites = sb_read_sites();
-        $siteId = sb_next_id($sites, 'id');
-        $now = date('c');
-
-        $slug = trim($slug);
-        $slug = $slug === '' ? sb_slugify($siteName) : sb_slugify($slug);
-        $slug = self::uniqueSiteSlug($slug, $sites);
-
-        $site = [
-            'id' => $siteId,
-            'name' => $siteName,
-            'slug' => $slug,
-            'sectionId' => $sectionId,
-            'createdBy' => $userId,
-            'createdAt' => $now,
-            'updatedBy' => $userId,
-            'updatedAt' => $now,
-            'homePageId' => 0,
-            'diskFolderId' => 0,
-            'topMenuId' => 0,
-            'bitrixGroupId' => 0,
-            'bitrixGroupCreatedBy' => 0,
-            'bitrixGroupCreatedAt' => '',
-            'settings' => is_array($snapshotSite['settings'] ?? null) ? $snapshotSite['settings'] : [],
-            'layout' => is_array($snapshotSite['layout'] ?? null) ? $snapshotSite['layout'] : [],
-        ];
-
-        $bitrixGroupId = 0;
-        $bitrixGroupError = '';
-
-        $groupServicePath = $_SERVER['DOCUMENT_ROOT'] . '/local/sitebuilder/lib/SiteBitrixGroupService.php';
-        if (file_exists($groupServicePath)) {
-            require_once $groupServicePath;
-        }
-
-        if (class_exists('SiteBitrixGroupService')) {
-            try {
-                $bitrixGroupId = (int)SiteBitrixGroupService::createForSite($site, $userId);
-
-                if ($bitrixGroupId > 0) {
-                    $site['bitrixGroupId'] = $bitrixGroupId;
-                    $site['bitrixGroupCreatedBy'] = $userId;
-                    $site['bitrixGroupCreatedAt'] = $now;
-                }
-            } catch (Throwable $e) {
-                $bitrixGroupError = $e->getMessage();
-            }
-        }
-
-        $sites[] = $site;
-        sb_write_sites($sites);
-
-        $pageIdMap = self::copyPages($siteId, $payload, $userId);
-        self::copyBlocks($pageIdMap, $payload, $userId);
-
-        $homeOldId = (int)($snapshotSite['homePageId'] ?? 0);
-        if ($homeOldId > 0 && isset($pageIdMap[$homeOldId])) {
-            self::updateSiteField($siteId, 'homePageId', (int)$pageIdMap[$homeOldId], $userId);
-        } else {
-            $firstNewPageId = !empty($pageIdMap) ? (int)reset($pageIdMap) : 0;
-            if ($firstNewPageId > 0) {
-                self::updateSiteField($siteId, 'homePageId', $firstNewPageId, $userId);
-            }
-        }
-
-        self::copyLayout($siteId, $payload, $userId);
-        self::copyMenus($siteId, $pageIdMap, $payload, $userId, $snapshotSite);
-        self::grantOwnerAccess($siteId, $userId, $now);
-
-        return [
-            'site' => sb_find_site($siteId) ?: $site,
-            'template' => self::publicTemplateRecord($template),
-            'bitrixGroupId' => $bitrixGroupId,
-            'bitrixGroupError' => $bitrixGroupError,
-        ];
-    }
-
-    public static function publicTemplateRecord(array $template): array
-    {
-        $payload = is_array($template['payload'] ?? null) ? $template['payload'] : [];
-        $pages = is_array($payload['pages'] ?? null) ? $payload['pages'] : [];
-        $blocks = is_array($payload['blocks'] ?? null) ? $payload['blocks'] : [];
-
-        return [
-            'id' => (int)($template['id'] ?? 0),
-            'kind' => (string)($template['kind'] ?? 'site'),
-            'name' => (string)($template['name'] ?? ''),
-            'description' => (string)($template['description'] ?? ''),
-            'sourceSiteId' => (int)($template['sourceSiteId'] ?? 0),
-            'sourceSiteName' => (string)($template['sourceSiteName'] ?? ''),
-            'pagesCount' => count($pages),
-            'blocksCount' => count($blocks),
-            'createdBy' => (int)($template['createdBy'] ?? 0),
-            'createdAt' => (string)($template['createdAt'] ?? ''),
-            'updatedBy' => (int)($template['updatedBy'] ?? 0),
-            'updatedAt' => (string)($template['updatedAt'] ?? ''),
-        ];
-    }
-
-    protected static function prepareSiteForSnapshot(array $site): array
-    {
-        return [
-            'name' => (string)($site['name'] ?? ''),
-            'slug' => (string)($site['slug'] ?? ''),
-            'homePageId' => (int)($site['homePageId'] ?? 0),
-            'topMenuId' => (int)($site['topMenuId'] ?? 0),
-            'settings' => is_array($site['settings'] ?? null) ? $site['settings'] : [],
-            'layout' => is_array($site['layout'] ?? null) ? $site['layout'] : [],
-        ];
-    }
-
-    protected static function preparePageForSnapshot(array $page): array
-    {
-        return [
-            'oldId' => (int)($page['id'] ?? 0),
-            'title' => (string)($page['title'] ?? ''),
-            'slug' => (string)($page['slug'] ?? ''),
-            'parentId' => (int)($page['parentId'] ?? 0),
-            'sort' => (int)($page['sort'] ?? 500),
-            'status' => (string)($page['status'] ?? 'draft'),
-            'publishedAt' => !empty($page['publishedAt']) ? (string)$page['publishedAt'] : null,
-        ];
-    }
-
-    protected static function prepareBlockForSnapshot(array $block): array
-    {
-        $block = sb_normalize_block_record($block);
-
-        return [
-            'oldId' => (int)($block['id'] ?? 0),
-            'oldPageId' => (int)($block['pageId'] ?? 0),
-            'type' => (string)($block['type'] ?? 'text'),
-            'sort' => (int)($block['sort'] ?? 500),
-            'content' => self::sanitizeDiskData($block['content'] ?? []),
-            'props' => self::sanitizeDiskData($block['props'] ?? []),
-        ];
-    }
-
-    protected static function prepareLayoutForSnapshot(array $layout): array
-    {
-        $layout = sb_normalize_layout_record($layout);
-        $layout['siteId'] = 0;
-
-        foreach (['header', 'footer', 'left', 'right'] as $zone) {
-            $blocks = [];
-
-            foreach (($layout['zones'][$zone] ?? []) as $block) {
-                $block = sb_normalize_block_record($block);
-                $block['content'] = self::sanitizeDiskData($block['content'] ?? []);
-                $block['props'] = self::sanitizeDiskData($block['props'] ?? []);
-                $blocks[] = $block;
-            }
-
-            $layout['zones'][$zone] = $blocks;
-        }
-
-        return $layout;
-    }
-
-    protected static function prepareMenuForSnapshot(array $menu): array
-    {
-        $menu = sb_normalize_menu_record($menu);
-        $menu['oldId'] = (int)($menu['id'] ?? 0);
-
-        unset(
-            $menu['id'],
-            $menu['siteId'],
-            $menu['createdBy'],
-            $menu['createdAt'],
-            $menu['updatedBy'],
-            $menu['updatedAt']
-        );
-
-        return $menu;
-    }
-
-    protected static function sanitizeDiskData($value)
-    {
-        if (!is_array($value)) {
-            return $value;
-        }
-
-        $forbidden = [
-            'rootFolderId' => true,
-            'currentFolderId' => true,
-            'siteRootFolderId' => true,
-            'blockRootFolderId' => true,
-            'diskFolderId' => true,
-            'folderId' => true,
-        ];
-
-        $result = [];
-
-        foreach ($value as $key => $item) {
-            if (is_string($key) && isset($forbidden[$key])) {
-                continue;
-            }
-
-            $result[$key] = is_array($item) ? self::sanitizeDiskData($item) : $item;
-        }
-
-        return $result;
-    }
-
-    protected static function pagesForSite(int $siteId): array
-    {
-        $pages = array_values(array_filter(sb_read_pages(), static function ($page) use ($siteId) {
-            return (int)($page['siteId'] ?? 0) === $siteId;
-        }));
-
-        usort($pages, static function ($a, $b) {
-            $sortCmp = (int)($a['sort'] ?? 500) <=> (int)($b['sort'] ?? 500);
-
-            if ($sortCmp !== 0) {
-                return $sortCmp;
-            }
-
-            return (int)($a['id'] ?? 0) <=> (int)($b['id'] ?? 0);
-        });
-
-        return $pages;
-    }
-
-    protected static function menusForSite(int $siteId): array
-    {
-        return array_values(array_filter(sb_read_menus(), static function ($menu) use ($siteId) {
-            return (int)($menu['siteId'] ?? 0) === $siteId;
-        }));
-    }
-
-    protected static function uniqueSiteSlug(string $slug, array $sites): string
-    {
-        $existing = array_map(static function ($site) {
-            return (string)($site['slug'] ?? '');
-        }, $sites);
-
-        $base = $slug !== '' ? $slug : 'site';
-        $slug = $base;
-        $i = 2;
-
-        while (in_array($slug, $existing, true)) {
-            $slug = $base . '-' . $i;
-            $i++;
-        }
-
-        return $slug;
-    }
-
-    protected static function copyPages(int $siteId, array $payload, int $userId): array
-    {
-        $pages = sb_read_pages();
-        $templatePages = is_array($payload['pages'] ?? null) ? $payload['pages'] : [];
-        $nextPageId = sb_next_id($pages, 'id');
-        $now = date('c');
-        $map = [];
-        $newPages = [];
-
-        foreach ($templatePages as $page) {
-            $oldId = (int)($page['oldId'] ?? 0);
-            $newId = $nextPageId++;
-            $map[$oldId] = $newId;
-
-            $newPages[] = [
-                'id' => $newId,
-                'siteId' => $siteId,
-                'title' => (string)($page['title'] ?? 'Страница'),
-                'slug' => (string)($page['slug'] ?? ('page-' . $newId)),
-                'parentId' => 0,
-                'sort' => (int)($page['sort'] ?? 500),
-                'status' => in_array((string)($page['status'] ?? 'draft'), ['draft', 'published'], true)
-                    ? (string)$page['status']
-                    : 'draft',
-                'publishedAt' => !empty($page['publishedAt']) ? (string)$page['publishedAt'] : null,
-                'createdBy' => $userId,
-                'createdAt' => $now,
-                'updatedBy' => $userId,
-                'updatedAt' => $now,
-                '_oldParentId' => (int)($page['parentId'] ?? 0),
-            ];
-        }
-
-        foreach ($newPages as &$page) {
-            $oldParentId = (int)($page['_oldParentId'] ?? 0);
-            $page['parentId'] = $oldParentId > 0 && isset($map[$oldParentId])
-                ? (int)$map[$oldParentId]
-                : 0;
-
-            unset($page['_oldParentId']);
-
-            $page = sb_normalize_page_record($page);
-        }
-        unset($page);
-
-        $pages = array_merge($pages, $newPages);
-        sb_write_pages($pages);
-
-        return $map;
-    }
-
-    protected static function copyBlocks(array $pageIdMap, array $payload, int $userId): void
-    {
-        $blocks = sb_read_blocks();
-        $templateBlocks = is_array($payload['blocks'] ?? null) ? $payload['blocks'] : [];
-        $nextBlockId = sb_next_block_id($blocks);
-        $now = date('c');
-
-        foreach ($templateBlocks as $block) {
-            $oldPageId = (int)($block['oldPageId'] ?? 0);
-
-            if (!isset($pageIdMap[$oldPageId])) {
-                continue;
-            }
-
-            $blocks[] = sb_normalize_block_record([
-                'id' => $nextBlockId++,
-                'pageId' => (int)$pageIdMap[$oldPageId],
-                'type' => (string)($block['type'] ?? 'text'),
-                'sort' => (int)($block['sort'] ?? 500),
-                'content' => self::sanitizeDiskData($block['content'] ?? []),
-                'props' => self::sanitizeDiskData($block['props'] ?? []),
-                'createdBy' => $userId,
-                'createdAt' => $now,
-                'updatedBy' => $userId,
-                'updatedAt' => $now,
-            ]);
-        }
-
-        sb_write_blocks($blocks);
-    }
-
-    protected static function copyLayout(int $siteId, array $payload, int $userId): void
-    {
-        if (!function_exists('sb_read_layouts') || !function_exists('sb_write_layouts')) {
-            return;
-        }
-
-        $snapshotLayout = is_array($payload['layout'] ?? null) ? $payload['layout'] : [];
-        $layout = sb_normalize_layout_record($snapshotLayout);
-        $layout['siteId'] = $siteId;
-        $layout['createdBy'] = $userId;
-        $layout['createdAt'] = date('c');
-        $layout['updatedBy'] = $userId;
-        $layout['updatedAt'] = date('c');
-
-        foreach (['header', 'footer', 'left', 'right'] as $zone) {
-            foreach (($layout['zones'][$zone] ?? []) as &$block) {
-                $block['content'] = self::sanitizeDiskData($block['content'] ?? []);
-                $block['props'] = self::sanitizeDiskData($block['props'] ?? []);
-                $block['createdBy'] = $userId;
-                $block['createdAt'] = date('c');
-                $block['updatedBy'] = $userId;
-                $block['updatedAt'] = date('c');
-            }
-            unset($block);
-        }
-
-        $layouts = sb_read_layouts();
-
-        $layouts = array_values(array_filter($layouts, static function ($item) use ($siteId) {
-            return (int)($item['siteId'] ?? 0) !== $siteId;
-        }));
-
-        $layouts[] = $layout;
-
-        sb_write_layouts($layouts);
-    }
-
-    protected static function copyMenus(int $siteId, array $pageIdMap, array $payload, int $userId, array $snapshotSite): void
-    {
-        if (!function_exists('sb_read_menus') || !function_exists('sb_write_menus')) {
-            return;
-        }
-
-        $snapshotMenus = is_array($payload['menus'] ?? null) ? $payload['menus'] : [];
-
-        if (empty($snapshotMenus)) {
-            return;
-        }
-
-        $now = date('c');
-        $menus = sb_read_menus();
-        $nextMenuId = function_exists('sb_next_menu_id') ? sb_next_menu_id($menus) : (count($menus) + 1);
-        $oldTopMenuId = (int)($snapshotSite['topMenuId'] ?? 0);
-        $newTopMenuId = 0;
-        $topMenuIndex = null;
-
-        foreach ($snapshotMenus as $index => $menu) {
-            if ((int)($menu['oldId'] ?? 0) === $oldTopMenuId) {
-                $topMenuIndex = $index;
-                break;
-            }
-        }
-
-        foreach ($snapshotMenus as $menuIndex => $menu) {
-            $newMenuId = $nextMenuId++;
-
-            $items = [];
-
-            foreach ((array)($menu['items'] ?? []) as $item) {
-                $type = (string)($item['type'] ?? 'page');
-                $oldPageId = (int)($item['pageId'] ?? 0);
-
-                $newPageId = ($type === 'page' && $oldPageId > 0 && isset($pageIdMap[$oldPageId]))
-                    ? (int)$pageIdMap[$oldPageId]
-                    : 0;
-
-                $item['pageId'] = $newPageId;
-                $items[] = $item;
-            }
-
-            if ($topMenuIndex !== null && $menuIndex === $topMenuIndex) {
-                $newTopMenuId = $newMenuId;
-            }
-
-            $menus[] = [
-                'id' => $newMenuId,
-                'siteId' => $siteId,
-                'name' => (string)($menu['name'] ?? 'Меню'),
-                'items' => $items,
-                'createdBy' => $userId,
-                'createdAt' => $now,
-                'updatedBy' => $userId,
-                'updatedAt' => $now,
-            ];
-        }
-
-        sb_write_menus($menus);
-
-        if ($newTopMenuId > 0) {
-            self::updateSiteField($siteId, 'topMenuId', $newTopMenuId, $userId);
-        }
-    }
-
-    protected static function updateSiteField(int $siteId, string $field, $value, int $userId): void
-    {
-        $allowed = ['homePageId', 'topMenuId'];
-
-        if (!in_array($field, $allowed, true)) {
-            return;
-        }
-
-        $sites = sb_read_sites();
-
-        foreach ($sites as &$site) {
-            if ((int)($site['id'] ?? 0) !== $siteId) {
-                continue;
-            }
-
-            $site[$field] = $value;
-            $site['updatedBy'] = $userId;
-            $site['updatedAt'] = date('c');
-            break;
-        }
-        unset($site);
-
-        sb_write_sites($sites);
-    }
-
-    protected static function grantOwnerAccess(int $siteId, int $userId, string $now): void
-    {
-        $access = sb_read_access();
-
-        $access[] = [
-            'siteId' => $siteId,
-            'accessCode' => 'U' . $userId,
-            'role' => 'OWNER',
-            'createdBy' => $userId,
-            'createdAt' => $now,
-            'updatedBy' => $userId,
-            'updatedAt' => $now,
-        ];
-
-        sb_write_access($access);
     }
 }
 
-Это первая часть кода — backend. Дальше идут editor.php, index.php и стили для интерфейса шаблонов.
+
+---
+
+4. editor.php — обработчики кнопок
+
+Найди место, где подключаются обработчики кнопок, рядом с:
+
+if (deleteSiteBtn) {
+    deleteSiteBtn.addEventListener('click', deleteSite);
+}
+
+Сразу после этого вставь:
+
+var saveAsTemplateBtn = document.getElementById('saveAsTemplateBtn');
+if (saveAsTemplateBtn) {
+    saveAsTemplateBtn.addEventListener('click', openTemplateModal);
+}
+
+var createTemplateBtn = document.getElementById('createTemplateBtn');
+if (createTemplateBtn) {
+    createTemplateBtn.addEventListener('click', createTemplateFromSite);
+}
+
+document.querySelectorAll('[data-close-template-modal]').forEach(function (btn) {
+    btn.addEventListener('click', closeTemplateModal);
+});
+
+
+---
+
+5. editor.css
+
+В конец файла:
+
+/local/sitebuilder/assets/admin/editor.css
+
+добавь:
+
+/* =========================================================
+   SITE TEMPLATES MODAL
+   ========================================================= */
+
+.sb-template-modal[hidden] {
+    display: none !important;
+}
+
+.sb-template-modal {
+    position: fixed;
+    inset: 0;
+    z-index: 10000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+}
+
+.sb-template-modal__backdrop {
+    position: absolute;
+    inset: 0;
+    background: rgba(15, 23, 42, .48);
+    backdrop-filter: blur(5px);
+}
+
+.sb-template-modal__dialog {
+    position: relative;
+    width: min(560px, 100%);
+    overflow: hidden;
+    border: 1px solid #e5e7eb;
+    border-radius: 22px;
+    background: #fff;
+    box-shadow: 0 28px 80px rgba(15, 23, 42, .30);
+}
+
+.sb-template-modal__head {
+    display: flex;
+    justify-content: space-between;
+    gap: 16px;
+    padding: 20px 22px;
+    border-bottom: 1px solid #eef2f7;
+    background: #f9fafb;
+}
+
+.sb-template-modal__title {
+    margin: 0;
+    font-size: 20px;
+    font-weight: 900;
+    color: #111827;
+}
+
+.sb-template-modal__subtitle {
+    margin: 6px 0 0;
+    color: #6b7280;
+    font-size: 13px;
+    line-height: 1.45;
+}
+
+.sb-template-modal__close {
+    width: 34px;
+    height: 34px;
+    border: 1px solid #e5e7eb;
+    border-radius: 11px;
+    background: #fff;
+    color: #6b7280;
+    cursor: pointer;
+    font-size: 22px;
+    line-height: 1;
+}
+
+.sb-template-modal__close:hover {
+    background: #f3f4f6;
+    color: #111827;
+}
+
+.sb-template-modal__body {
+    padding: 22px;
+}
+
+.sb-template-modal__footer {
+    display: flex;
+    justify-content: flex-end;
+    gap: 10px;
+    padding: 16px 22px;
+    border-top: 1px solid #eef2f7;
+    background: #f9fafb;
+}
+
+.sb-template-note {
+    margin-top: 12px;
+    padding: 10px 12px;
+    border: 1px solid #dbeafe;
+    border-radius: 12px;
+    background: #eff6ff;
+    color: #1e40af;
+    font-size: 12px;
+    line-height: 1.45;
+}
+
+.sb-template-message {
+    margin-top: 12px;
+    padding: 10px 12px;
+    border-radius: 12px;
+    background: #f3f4f6;
+    color: #374151;
+    font-size: 13px;
+}
+
+.sb-template-message.is-success {
+    background: #dcfce7;
+    color: #166534;
+}
+
+.sb-template-message.is-error {
+    background: #fee2e2;
+    color: #991b1b;
+}
+
+.sb-template-message.is-info {
+    background: #eef2ff;
+    color: #3730a3;
+}
+
+После этого в редакторе у администратора Битрикса должна появиться кнопка “Сохранить как шаблон”. Следующим шагом дам код для index.php, чтобы на главной странице появился блок шаблонов и создание сайта из шаблона.
