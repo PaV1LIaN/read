@@ -1,286 +1,357 @@
-Да, сделаем загрузку через drag & drop прямо на область диска.
+Да, это как раз правильная архитектура для аналога Тильды.
 
-Логика будет такая:
+Сейчас у нас по сути:
 
-перетащил файл в блок диска
-→ блок подсветился
-→ отпустил файл
-→ если такого файла нет — загрузился
-→ если файл уже есть — появится окно: Заменить / Переименовать / Отмена
+Страница
+└── Блок
+    └── Контент блока
 
+А надо сделать более правильно:
 
----
+Страница
+└── Секция / большой блок страницы
+    └── Контейнер
+        └── Колонки
+            └── Компоненты
 
-1. script.js — добавь метод загрузки файлов
+То есть “блок” в стиле Тильды — это не текст или диск сам по себе, а большая зона страницы. А уже внутри этой зоны лежат компоненты: текст, кнопки, картинки, диск, карточки, меню и так далее.
 
-Файл:
+Как должно выглядеть
 
-/local/sitebuilder/components/disk/script.js
+Например страница:
 
-Найди место перед:
+Главная страница
 
-DiskComponent.prototype.bindStaticEvents = function () {
+Секция 1: Обложка
+├── Заголовок
+├── Описание
+└── Кнопка
 
-и вставь туда:
+Секция 2: О компании
+├── Левая колонка
+│   └── Картинка
+└── Правая колонка
+    ├── Заголовок
+    └── Текст
 
-DiskComponent.prototype.setDragOver = function (active) {
-  this.root.classList.toggle('is-dragover', !!active);
-};
+Секция 3: Документы
+└── Компонент Диск
 
-DiskComponent.prototype.uploadFiles = async function (files) {
-  files = Array.prototype.slice.call(files || []);
+Секция 4: Контакты
+├── Текст
+├── Карта
+└── Кнопка
 
-  if (!files.length) {
-    return;
-  }
-
-  if (!this.state.permissions.canUpload) {
-    alert('У вас нет прав на загрузку файлов');
-    return;
-  }
-
-  var preparedFiles = [];
-
-  try {
-    for (var i = 0; i < files.length; i++) {
-      var file = files[i];
-
-      if (!file || !file.name) {
-        continue;
-      }
-
-      var existingItem = this.findExistingFileByName(file.name);
-
-      if (!existingItem) {
-        preparedFiles.push(file);
-        continue;
-      }
-
-      var decision = await this.askDuplicateUploadAction(file, existingItem);
-
-      if (!decision || decision.action === 'cancel') {
-        continue;
-      }
-
-      if (decision.action === 'replace') {
-        await this.archiveExistingFileToHistory(existingItem);
-
-        preparedFiles.push(file);
-        continue;
-      }
-
-      if (decision.action === 'rename') {
-        preparedFiles.push(this.makeRenamedFile(file, decision.name));
-      }
-    }
-
-    if (!preparedFiles.length) {
-      return;
-    }
-
-    var formData = new FormData();
-
-    formData.append('siteId', this.state.siteId);
-    formData.append('pageId', this.state.pageId);
-    formData.append('blockId', this.state.blockId);
-    formData.append('currentFolderId', this.state.currentFolderId);
-    formData.append('sessid', this.getSessid());
-
-    preparedFiles.forEach(function (file) {
-      formData.append('files[]', file);
-    });
-
-    var res = await this.api('upload', formData, true);
-
-    if (!res || !res.ok) {
-      window.alert((res && (res.message || res.error)) || 'Ошибка загрузки');
-      return;
-    }
-
-    await this.loadFolder(this.state.currentFolderId);
-  } catch (err) {
-    console.error(err);
-    window.alert(err && err.message ? err.message : 'Ошибка загрузки');
-  }
-};
+Вот это уже будет похоже на Tilda.
 
 
 ---
 
-2. script.js — замени обработчик обычной загрузки
+Как я бы назвал сущности
 
-Найди внутри bindStaticEvents() вот этот кусок:
+Чтобы не путаться, я бы разделил так:
 
-uploadInput.addEventListener('change', async function (e) {
+Page — страница
+Section — большой блок страницы
+Component — элемент внутри блока
 
-и замени весь обработчик change на этот:
+То есть:
 
-uploadInput.addEventListener('change', async function (e) {
-  var files = Array.prototype.slice.call(e.target.files || []);
+Страница = Главная
+Секция = Обложка / Документы / Контакты
+Компонент = текст / картинка / кнопка / диск
 
-  try {
-    await self.uploadFiles(files);
-  } finally {
-    uploadInput.value = '';
-  }
-});
+Сейчас у нас block используется как “компонент”. Поэтому лучше не ломать сразу всё, а сделать новый слой:
 
-То есть старую большую логику загрузки из change убираем, потому что теперь она вынесена в общий метод uploadFiles().
+page_blocks / sections — новые большие блоки
+blocks — компоненты внутри section
 
+Или переименовать логически:
 
----
-
-3. script.js — добавь drag & drop обработчики
-
-Внутри bindStaticEvents() найди блок:
-
-var uploadBtn = this.root.querySelector('[data-action="upload"]');
-var uploadInput = this.root.querySelector('[data-role="upload-input"]');
-
-После всего блока:
-
-if (uploadBtn && uploadInput) {
-  ...
-}
-
-сразу вставь:
-
-var dragDepth = 0;
-
-function hasDraggedFiles(e) {
-  var types = e.dataTransfer && e.dataTransfer.types;
-
-  if (!types) {
-    return false;
-  }
-
-  return Array.prototype.indexOf.call(types, 'Files') !== -1;
-}
-
-this.root.addEventListener('dragenter', function (e) {
-  if (!hasDraggedFiles(e)) {
-    return;
-  }
-
-  e.preventDefault();
-  e.stopPropagation();
-
-  dragDepth++;
-  self.setDragOver(true);
-});
-
-this.root.addEventListener('dragover', function (e) {
-  if (!hasDraggedFiles(e)) {
-    return;
-  }
-
-  e.preventDefault();
-  e.stopPropagation();
-
-  if (e.dataTransfer) {
-    e.dataTransfer.dropEffect = self.state.permissions.canUpload ? 'copy' : 'none';
-  }
-
-  self.setDragOver(true);
-});
-
-this.root.addEventListener('dragleave', function (e) {
-  if (!hasDraggedFiles(e)) {
-    return;
-  }
-
-  e.preventDefault();
-  e.stopPropagation();
-
-  dragDepth--;
-
-  if (dragDepth <= 0) {
-    dragDepth = 0;
-    self.setDragOver(false);
-  }
-});
-
-this.root.addEventListener('drop', async function (e) {
-  if (!hasDraggedFiles(e)) {
-    return;
-  }
-
-  e.preventDefault();
-  e.stopPropagation();
-
-  dragDepth = 0;
-  self.setDragOver(false);
-
-  var files = Array.prototype.slice.call(
-    e.dataTransfer && e.dataTransfer.files ? e.dataTransfer.files : []
-  );
-
-  await self.uploadFiles(files);
-});
+section = новый блок страницы
+component = старый block
 
 
 ---
 
-4. styles.css — добавь оформление drag & drop
+Как это хранить
 
-Файл:
+У каждой секции должны быть свои настройки:
 
-/local/sitebuilder/components/disk/styles.css
+id
+pageId
+type
+sort
+title
+layout
+props
 
-В конец добавь:
+Например:
 
-/* =========================================================
-   DRAG AND DROP UPLOAD
-   ========================================================= */
-
-.sb-disk {
-    position: relative;
+{
+  "id": 10,
+  "pageId": 5,
+  "type": "section",
+  "sort": 100,
+  "title": "Обложка",
+  "layout": {
+    "container": "wide",
+    "columns": 1
+  },
+  "props": {
+    "backgroundColor": "#ffffff",
+    "backgroundImage": "",
+    "paddingTop": 80,
+    "paddingBottom": 80,
+    "minHeight": 500
+  }
 }
 
-.sb-disk.is-dragover::before {
-    content: "";
-    position: absolute;
-    inset: -8px;
-    z-index: 50;
-    border: 2px dashed var(--disk-accent, #2563eb);
-    border-radius: 22px;
-    background: rgba(37, 99, 235, .08);
-    pointer-events: none;
-}
+А компоненты внутри секции:
 
-.sb-disk.is-dragover::after {
-    content: "Отпустите файлы для загрузки";
-    position: absolute;
-    left: 50%;
-    top: 50%;
-    z-index: 51;
-    transform: translate(-50%, -50%);
-    min-width: 260px;
-    padding: 16px 22px;
-    border-radius: 18px;
-    background: #ffffff;
-    color: #111827;
-    font-size: 15px;
-    font-weight: 900;
-    text-align: center;
-    box-shadow: 0 20px 60px rgba(15, 23, 42, .25);
-    pointer-events: none;
+{
+  "id": 25,
+  "pageId": 5,
+  "sectionId": 10,
+  "type": "text",
+  "sort": 100,
+  "column": 1,
+  "content": {
+    "text": "Добро пожаловать"
+  },
+  "props": {
+    "fontSize": 42,
+    "align": "center"
+  }
 }
 
 
 ---
 
-5. Обнови версии подключения
+Какие секции нужны сначала
 
-В public_page.php:
+Я бы начал с базовых секций:
 
-<script src="<?= sb_public_h($basePath) ?>/components/disk/script.js?v=22"></script>
+1. Пустая секция
+2. Обложка
+3. Две колонки
+4. Три колонки
+5. Документы / диск
+6. Контакты
 
-<link rel="stylesheet" href="<?= sb_public_h($basePath) ?>/components/disk/styles.css?v=18">
+Но технически можно сделать универсально:
 
-После этого сделай Ctrl + F5.
+Секция
+├── 1 колонка
+├── 2 колонки
+├── 3 колонки
+└── 4 колонки
 
-Теперь файлы можно будет загружать двумя способами:
+А внутрь уже добавлять любые компоненты.
 
-через кнопку “Загрузить”
-перетаскиванием файла с компьютера в блок диска
+
+---
+
+Какие компоненты нужны внутри секций
+
+Базовый набор:
+
+Текст
+Заголовок
+Картинка
+Кнопка
+HTML
+Диск
+Разделитель
+Карточка
+Список
+Видео
+
+Позже можно добавить:
+
+Форма
+Карта
+Галерея
+Слайдер
+Таблица
+FAQ
+Аккордеон
+
+
+---
+
+Как это будет в редакторе
+
+Визуально в editor.php должно быть так:
+
+Страница
+
+[+ Добавить секцию]
+
+Секция: Обложка
+[↑] [↓] [Настройки] [Дублировать] [Удалить]
+
+    [+ Добавить компонент]
+    Заголовок
+    Текст
+    Кнопка
+
+Секция: Документы
+[↑] [↓] [Настройки] [Дублировать] [Удалить]
+
+    Диск
+
+То есть пользователь сначала добавляет секцию, а потом внутрь неё добавляет компоненты.
+
+
+---
+
+Как это будет на сайте
+
+На публичной странице HTML будет примерно такой:
+
+<section class="sb-section">
+    <div class="sb-section-container">
+        <div class="sb-section-grid sb-section-grid--2">
+            <div class="sb-section-column">
+                <!-- компоненты левой колонки -->
+            </div>
+
+            <div class="sb-section-column">
+                <!-- компоненты правой колонки -->
+            </div>
+        </div>
+    </div>
+</section>
+
+И тогда можно будет удобно менять:
+
+фон секции;
+ширину секции;
+количество колонок;
+отступы;
+порядок секций;
+порядок компонентов внутри секции;
+
+
+---
+
+Самый правильный план внедрения
+
+Я бы делал не сразу полную Tilda, а по этапам.
+
+Этап 1. Добавить секции
+
+Создаём новую сущность sections.
+
+section.list
+section.create
+section.update
+section.delete
+section.move
+section.duplicate
+
+Каждая секция принадлежит странице.
+
+
+---
+
+Этап 2. Привязать текущие блоки к секциям
+
+У текущих блоков добавляем поле:
+
+sectionId
+
+Если у старых блоков sectionId = 0, то автоматически создаём секцию “Основной блок” и переносим туда старые блоки.
+
+Так мы не сломаем существующие сайты.
+
+
+---
+
+Этап 3. Добавить колонки
+
+У секции появляется настройка:
+
+columns: 1 / 2 / 3 / 4
+
+А у компонента:
+
+column: 1 / 2 / 3 / 4
+
+Тогда можно распределять компоненты по колонкам.
+
+
+---
+
+Этап 4. Сделать визуальное управление
+
+В редакторе:
+
+добавить секцию;
+добавить компонент в секцию;
+перетащить компонент в другую секцию;
+перетащить компонент в другую колонку;
+двигать секции вверх/вниз.
+
+
+---
+
+Этап 5. Настройки дизайна секции
+
+Для секции добавляем:
+
+фон;
+картинка фона;
+верхний отступ;
+нижний отступ;
+ширина контейнера;
+минимальная высота;
+скругление;
+тень;
+
+
+---
+
+Важный момент
+
+Сейчас у нас уже есть layout зоны:
+
+header
+footer
+left
+right
+
+И есть обычные блоки страницы.
+
+Новая структура должна касаться именно контента страницы:
+
+page content
+└── sections
+    └── components
+
+А header/footer/left/right пока лучше не трогать, чтобы не сломать сайт.
+
+
+---
+
+Что я предлагаю сделать первым
+
+Начать с backend и совместимости:
+
+1. Создать section-хранилище.
+2. Добавить API секций.
+3. Добавить sectionId в блоки.
+4. При открытии старой страницы автоматически создавать секцию “Основная”.
+5. Обновить public_render, чтобы он рисовал секции.
+6. Потом уже обновить editor.php.
+
+Так мы аккуратно перейдём от текущей схемы:
+
+Страница → Блоки
+
+к новой:
+
+Страница → Секции → Компоненты
+
+И это уже будет очень похоже на Тильду.
