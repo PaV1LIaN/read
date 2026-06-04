@@ -1,774 +1,616 @@
-<?php
-    
-require_once __DIR__ . '/json.php';
+php
 
-if (!function_exists('sb_normalize_page_record')) {
-    function sb_normalize_page_record(array $page): array
+class SiteTemplateService
+{
+    public static function listSiteTemplates(): array
+    {
+        $items = array_values(array_filter(sb_read_templates(), static function ($template) {
+            return (string)($template['kind'] ?? 'site') === 'site';
+        }));
+
+        usort($items, static function ($a, $b) {
+            $aTime = strtotime((string)($a['updatedAt'] ?? $a['createdAt'] ?? '')) ?: 0;
+            $bTime = strtotime((string)($b['updatedAt'] ?? $b['createdAt'] ?? '')) ?: 0;
+
+            if ($aTime !== $bTime) {
+                return $bTime <=> $aTime;
+            }
+
+            return (int)($b['id'] ?? 0) <=> (int)($a['id'] ?? 0);
+        });
+
+        return array_map([self::class, 'publicTemplateRecord'], $items);
+    }
+
+    public static function getTemplate(int $templateId): ?array
+    {
+        foreach (sb_read_templates() as $template) {
+            if ((int)($template['id'] ?? 0) === $templateId) {
+                return $template;
+            }
+        }
+
+        return null;
+    }
+
+    public static function createFromSite(int $siteId, string $name, string $description, int $userId): array
+    {
+        $site = sb_find_site($siteId);
+        if (!$site) {
+            throw new RuntimeException('SITE_NOT_FOUND');
+        }
+
+        $name = trim($name);
+        if ($name === '') {
+            throw new RuntimeException('NAME_REQUIRED');
+        }
+
+        $pages = self::pagesForSite($siteId);
+        $pageIds = array_fill_keys(array_map(static function ($page) {
+            return (int)($page['id'] ?? 0);
+        }, $pages), true);
+
+        $blocks = [];
+        foreach (sb_read_blocks() as $block) {
+            $pageId = (int)($block['pageId'] ?? 0);
+            if (!isset($pageIds[$pageId])) {
+                continue;
+            }
+
+            $blocks[] = self::prepareBlockForSnapshot($block);
+        }
+
+        $menus = self::menusForSite($siteId);
+        $layout = function_exists('sb_layout_ensure_record')
+            ? sb_layout_ensure_record($siteId)
+            : ['siteId' => $siteId, 'settings' => [], 'zones' => []];
+
+        $layout = self::prepareLayoutForSnapshot($layout);
+
+        $now = date('c');
+        $templates = sb_read_templates();
+
+        $template = [
+            'id' => sb_next_template_id($templates),
+            'kind' => 'site',
+            'name' => $name,
+            'description' => trim($description),
+            'sourceSiteId' => $siteId,
+            'sourceSiteName' => (string)($site['name'] ?? ''),
+            'payload' => [
+                'site' => self::prepareSiteForSnapshot($site),
+                'pages' => array_map([self::class, 'preparePageForSnapshot'], $pages),
+                'blocks' => $blocks,
+                'layout' => $layout,
+                'menus' => array_map([self::class, 'prepareMenuForSnapshot'], $menus),
+            ],
+            'createdBy' => $userId,
+            'createdAt' => $now,
+            'updatedBy' => $userId,
+            'updatedAt' => $now,
+        ];
+
+        $templates[] = $template;
+        sb_write_templates($templates);
+
+        return self::publicTemplateRecord($template);
+    }
+
+    public static function delete(int $templateId): void
+    {
+        $templates = sb_read_templates();
+        $before = count($templates);
+
+        $templates = array_values(array_filter($templates, static function ($template) use ($templateId) {
+            return (int)($template['id'] ?? 0) !== $templateId;
+        }));
+
+        if (count($templates) === $before) {
+            throw new RuntimeException('TEMPLATE_NOT_FOUND');
+        }
+
+        sb_write_templates($templates);
+    }
+
+    public static function rename(int $templateId, string $name, string $description, int $userId): array
+    {
+        $name = trim($name);
+        if ($name === '') {
+            throw new RuntimeException('NAME_REQUIRED');
+        }
+
+        $templates = sb_read_templates();
+        $updated = null;
+
+        foreach ($templates as &$template) {
+            if ((int)($template['id'] ?? 0) !== $templateId) {
+                continue;
+            }
+
+            $template['name'] = $name;
+            $template['description'] = trim($description);
+            $template['updatedBy'] = $userId;
+            $template['updatedAt'] = date('c');
+            $updated = $template;
+            break;
+        }
+        unset($template);
+
+        if (!$updated) {
+            throw new RuntimeException('TEMPLATE_NOT_FOUND');
+        }
+
+        sb_write_templates($templates);
+
+        return self::publicTemplateRecord($updated);
+    }
+
+    public static function createSiteFromTemplate(int $templateId, string $siteName, string $slug, int $sectionId, int $userId): array
+    {
+        $template = self::getTemplate($templateId);
+        if (!$template || (string)($template['kind'] ?? 'site') !== 'site') {
+            throw new RuntimeException('TEMPLATE_NOT_FOUND');
+        }
+
+        $payload = is_array($template['payload'] ?? null) ? $template['payload'] : [];
+        $snapshotSite = is_array($payload['site'] ?? null) ? $payload['site'] : [];
+
+        $siteName = trim($siteName);
+        if ($siteName === '') {
+            $siteName = (string)($snapshotSite['name'] ?? $template['name'] ?? 'Новый сайт');
+        }
+
+        if ($siteName === '') {
+            throw new RuntimeException('NAME_REQUIRED');
+        }
+
+        if (function_exists('sb_site_handler_validate_section')) {
+            sb_site_handler_validate_section($sectionId);
+        } elseif ($sectionId < 0) {
+            $sectionId = 0;
+        }
+
+        $sites = sb_read_sites();
+        $siteId = sb_next_id($sites, 'id');
+        $now = date('c');
+
+        $slug = trim($slug);
+        $slug = $slug === '' ? sb_slugify($siteName) : sb_slugify($slug);
+        $slug = self::uniqueSiteSlug($slug, $sites);
+
+        $site = [
+            'id' => $siteId,
+            'name' => $siteName,
+            'slug' => $slug,
+            'sectionId' => $sectionId,
+            'createdBy' => $userId,
+            'createdAt' => $now,
+            'updatedBy' => $userId,
+            'updatedAt' => $now,
+            'homePageId' => 0,
+            'diskFolderId' => 0,
+            'topMenuId' => 0,
+            'bitrixGroupId' => 0,
+            'bitrixGroupCreatedBy' => 0,
+            'bitrixGroupCreatedAt' => '',
+            'settings' => is_array($snapshotSite['settings'] ?? null) ? $snapshotSite['settings'] : [],
+            'layout' => is_array($snapshotSite['layout'] ?? null) ? $snapshotSite['layout'] : [],
+        ];
+
+        $bitrixGroupId = 0;
+        $bitrixGroupError = '';
+
+        $groupServicePath = $_SERVER['DOCUMENT_ROOT'] . '/local/sitebuilder/lib/SiteBitrixGroupService.php';
+        if (file_exists($groupServicePath)) {
+            require_once $groupServicePath;
+        }
+
+        if (class_exists('SiteBitrixGroupService')) {
+            try {
+                $bitrixGroupId = (int)SiteBitrixGroupService::createForSite($site, $userId);
+                if ($bitrixGroupId > 0) {
+                    $site['bitrixGroupId'] = $bitrixGroupId;
+                    $site['bitrixGroupCreatedBy'] = $userId;
+                    $site['bitrixGroupCreatedAt'] = $now;
+                }
+            } catch (Throwable $e) {
+                $bitrixGroupError = $e->getMessage();
+            }
+        }
+
+        $sites[] = $site;
+        sb_write_sites($sites);
+
+        $pageIdMap = self::copyPages($siteId, $payload, $userId);
+        self::copyBlocks($pageIdMap, $payload, $userId);
+
+        $homeOldId = (int)($snapshotSite['homePageId'] ?? 0);
+        if ($homeOldId > 0 && isset($pageIdMap[$homeOldId])) {
+            self::updateSiteField($siteId, 'homePageId', (int)$pageIdMap[$homeOldId], $userId);
+        } else {
+            $firstNewPageId = !empty($pageIdMap) ? (int)reset($pageIdMap) : 0;
+            if ($firstNewPageId > 0) {
+                self::updateSiteField($siteId, 'homePageId', $firstNewPageId, $userId);
+            }
+        }
+
+        self::copyLayout($siteId, $payload, $userId);
+        self::copyMenus($siteId, $pageIdMap, $payload, $userId, $snapshotSite);
+        self::grantOwnerAccess($siteId, $userId, $now);
+
+        return [
+            'site' => sb_find_site($siteId) ?: $site,
+            'template' => self::publicTemplateRecord($template),
+            'bitrixGroupId' => $bitrixGroupId,
+            'bitrixGroupError' => $bitrixGroupError,
+        ];
+    }
+
+    public static function publicTemplateRecord(array $template): array
+    {
+        $payload = is_array($template['payload'] ?? null) ? $template['payload'] : [];
+        $pages = is_array($payload['pages'] ?? null) ? $payload['pages'] : [];
+        $blocks = is_array($payload['blocks'] ?? null) ? $payload['blocks'] : [];
+
+        return [
+            'id' => (int)($template['id'] ?? 0),
+            'kind' => (string)($template['kind'] ?? 'site'),
+            'name' => (string)($template['name'] ?? ''),
+            'description' => (string)($template['description'] ?? ''),
+            'sourceSiteId' => (int)($template['sourceSiteId'] ?? 0),
+            'sourceSiteName' => (string)($template['sourceSiteName'] ?? ''),
+            'pagesCount' => count($pages),
+            'blocksCount' => count($blocks),
+            'createdBy' => (int)($template['createdBy'] ?? 0),
+            'createdAt' => (string)($template['createdAt'] ?? ''),
+            'updatedBy' => (int)($template['updatedBy'] ?? 0),
+            'updatedAt' => (string)($template['updatedAt'] ?? ''),
+        ];
+    }
+
+    protected static function prepareSiteForSnapshot(array $site): array
     {
         return [
-            'id' => (int)($page['id'] ?? 0),
-            'siteId' => (int)($page['siteId'] ?? 0),
-            'title' => trim((string)($page['title'] ?? '')),
-            'slug' => trim((string)($page['slug'] ?? '')),
+            'name' => (string)($site['name'] ?? ''),
+            'slug' => (string)($site['slug'] ?? ''),
+            'homePageId' => (int)($site['homePageId'] ?? 0),
+            'topMenuId' => (int)($site['topMenuId'] ?? 0),
+            'settings' => is_array($site['settings'] ?? null) ? $site['settings'] : [],
+            'layout' => is_array($site['layout'] ?? null) ? $site['layout'] : [],
+        ];
+    }
+
+    protected static function preparePageForSnapshot(array $page): array
+    {
+        return [
+            'oldId' => (int)($page['id'] ?? 0),
+            'title' => (string)($page['title'] ?? ''),
+            'slug' => (string)($page['slug'] ?? ''),
             'parentId' => (int)($page['parentId'] ?? 0),
             'sort' => (int)($page['sort'] ?? 500),
-            'status' => in_array((string)($page['status'] ?? 'draft'), ['draft', 'published'], true)
-                ? (string)$page['status']
-                : 'draft',
+            'status' => (string)($page['status'] ?? 'draft'),
             'publishedAt' => !empty($page['publishedAt']) ? (string)$page['publishedAt'] : null,
-            'createdAt' => !empty($page['createdAt']) ? (string)$page['createdAt'] : date('c'),
-            'updatedAt' => !empty($page['updatedAt']) ? (string)$page['updatedAt'] : date('c'),
         ];
     }
-}
 
-if (!function_exists('sb_normalize_block_record')) {
-    function sb_normalize_block_record(array $block): array
+    protected static function prepareBlockForSnapshot(array $block): array
     {
+        $block = sb_normalize_block_record($block);
+
         return [
-            'id' => (int)($block['id'] ?? 0),
-            'pageId' => (int)($block['pageId'] ?? 0),
-            'type' => trim((string)($block['type'] ?? 'text')),
+            'oldId' => (int)($block['id'] ?? 0),
+            'oldPageId' => (int)($block['pageId'] ?? 0),
+            'type' => (string)($block['type'] ?? 'text'),
             'sort' => (int)($block['sort'] ?? 500),
-            'content' => is_array($block['content'] ?? null) ? $block['content'] : [],
-            'props' => is_array($block['props'] ?? null) ? $block['props'] : [],
-            'createdAt' => !empty($block['createdAt']) ? (string)$block['createdAt'] : date('c'),
-            'updatedAt' => !empty($block['updatedAt']) ? (string)$block['updatedAt'] : date('c'),
+            'content' => self::sanitizeDiskData($block['content'] ?? []),
+            'props' => self::sanitizeDiskData($block['props'] ?? []),
         ];
     }
-}
 
-if (!function_exists('sb_normalize_menu_record')) {
-    function sb_normalize_menu_record(array $menu): array
+    protected static function prepareLayoutForSnapshot(array $layout): array
     {
-        return [
-            'id' => (int)($menu['id'] ?? 0),
-            'siteId' => (int)($menu['siteId'] ?? 0),
-            'name' => trim((string)($menu['name'] ?? '')),
-            'items' => is_array($menu['items'] ?? null) ? array_values($menu['items']) : [],
-            'createdAt' => !empty($menu['createdAt']) ? (string)$menu['createdAt'] : date('c'),
-            'updatedAt' => !empty($menu['updatedAt']) ? (string)$menu['updatedAt'] : date('c'),
-        ];
-    }
-}
-
-if (!function_exists('sb_next_id')) {
-    function sb_next_id(array $rows, string $key = 'id'): int
-    {
-        $max = 0;
-
-        foreach ($rows as $row) {
-            $value = (int)($row[$key] ?? 0);
-            if ($value > $max) {
-                $max = $value;
-            }
-        }
-
-        return $max + 1;
-    }
-}
-
-if (!function_exists('sb_slugify')) {
-    function sb_slugify(string $name): string
-    {
-        $slug = \CUtil::translit($name, 'ru', [
-            'replace_space' => '-',
-            'replace_other' => '-',
-            'change_case' => 'L',
-            'delete_repeat_replace' => true,
-            'use_google' => false,
-        ]);
-
-        $slug = trim($slug, '-');
-        return $slug !== '' ? $slug : 'item';
-    }
-}
-
-if (!function_exists('sb_site_exists')) {
-    function sb_site_exists(int $siteId): bool
-    {
-        foreach (sb_read_sites() as $s) {
-            if ((int)($s['id'] ?? 0) === $siteId) {
-                return true;
-            }
-        }
-        return false;
-    }
-}
-
-if (!function_exists('sb_find_site')) {
-    function sb_find_site(int $siteId): ?array
-    {
-        foreach (sb_read_sites() as $s) {
-            if ((int)($s['id'] ?? 0) === $siteId) {
-                return $s;
-            }
-        }
-        return null;
-    }
-}
-
-if (!function_exists('sb_find_page')) {
-    function sb_find_page(int $pageId): ?array
-    {
-        foreach (sb_read_pages() as $p) {
-            if ((int)($p['id'] ?? 0) === $pageId) {
-                return $p;
-            }
-        }
-        return null;
-    }
-}
-
-if (!function_exists('sb_find_block')) {
-    function sb_find_block(int $blockId): ?array
-    {
-        foreach (sb_read_blocks() as $b) {
-            if ((int)($b['id'] ?? 0) === $blockId) {
-                return $b;
-            }
-        }
-        return null;
-    }
-}
-
-if (!function_exists('sb_page_exists_in_site')) {
-    function sb_page_exists_in_site(int $pageId, int $siteId): bool
-    {
-        $page = sb_find_page($pageId);
-        return $page && (int)($page['siteId'] ?? 0) === $siteId;
-    }
-}
-
-if (!function_exists('sb_page_children_ids')) {
-    function sb_page_children_ids(int $siteId, int $parentId): array
-    {
-        $ids = [];
-        foreach (sb_read_pages() as $p) {
-            if (
-                (int)($p['siteId'] ?? 0) === $siteId
-                && (int)($p['parentId'] ?? 0) === $parentId
-            ) {
-                $ids[] = (int)($p['id'] ?? 0);
-            }
-        }
-        return $ids;
-    }
-}
-
-if (!function_exists('sb_page_is_descendant')) {
-    function sb_page_is_descendant(int $siteId, int $candidateId, int $pageId): bool
-    {
-        if ($candidateId <= 0 || $pageId <= 0) {
-            return false;
-        }
-
-        $pages = sb_read_pages();
-
-        $childrenMap = [];
-        foreach ($pages as $p) {
-            if ((int)($p['siteId'] ?? 0) !== $siteId) {
-                continue;
-            }
-
-            $pid = (int)($p['parentId'] ?? 0);
-            $id  = (int)($p['id'] ?? 0);
-
-            if (!isset($childrenMap[$pid])) {
-                $childrenMap[$pid] = [];
-            }
-            $childrenMap[$pid][] = $id;
-        }
-
-        $stack = [$pageId];
-        $seen = [];
-
-        while ($stack) {
-            $current = array_pop($stack);
-            if (isset($seen[$current])) {
-                continue;
-            }
-            $seen[$current] = true;
-
-            foreach (($childrenMap[$current] ?? []) as $childId) {
-                if ($childId === $candidateId) {
-                    return true;
-                }
-                $stack[] = $childId;
-            }
-        }
-
-        return false;
-    }
-}
-
-if (!function_exists('sb_blocks_for_page')) {
-    function sb_blocks_for_page(int $pageId): array
-    {
-        $blocks = array_values(array_filter(sb_read_blocks(), static function ($b) use ($pageId) {
-            return (int)($b['pageId'] ?? 0) === $pageId;
-        }));
-
-        usort($blocks, static function ($a, $b) {
-            $sortCmp = (int)($a['sort'] ?? 500) <=> (int)($b['sort'] ?? 500);
-            if ($sortCmp !== 0) {
-                return $sortCmp;
-            }
-            return (int)($a['id'] ?? 0) <=> (int)($b['id'] ?? 0);
-        });
-
-        return $blocks;
-    }
-}
-
-if (!function_exists('sb_next_block_id')) {
-    function sb_next_block_id(array $blocks = null): int
-    {
-        if ($blocks === null) {
-            $blocks = sb_read_blocks();
-        }
-
-        $maxId = 0;
-        foreach ($blocks as $b) {
-            $maxId = max($maxId, (int)($b['id'] ?? 0));
-        }
-
-        return $maxId + 1;
-    }
-}
-
-if (!function_exists('sb_next_block_sort')) {
-    function sb_next_block_sort(int $pageId, array $blocks = null): int
-    {
-        if ($blocks === null) {
-            $blocks = sb_read_blocks();
-        }
-
-        $maxSort = 0;
-        foreach ($blocks as $b) {
-            if ((int)($b['pageId'] ?? 0) === $pageId) {
-                $maxSort = max($maxSort, (int)($b['sort'] ?? 0));
-            }
-        }
-
-        return $maxSort + 10;
-    }
-}
-
-if (!function_exists('sb_default_block_content')) {
-    function sb_default_block_content(string $type): array
-    {
-        switch ($type) {
-            case 'text':
-                return ['html' => '<p>Новый текст</p>'];
-
-            case 'heading':
-                return [
-                    'text' => 'Новый заголовок',
-                    'level' => 'h2',
-                    'align' => 'left',
-                ];
-
-            case 'image':
-                return [
-                    'fileId' => 0,
-                    'src' => '',
-                    'alt' => '',
-                    'title' => '',
-                    'width' => '',
-                    'height' => '',
-                    'link' => '',
-                ];
-
-            case 'button':
-                return [
-                    'text' => 'Кнопка',
-                    'href' => '#',
-                    'target' => '_self',
-                    'style' => 'primary',
-                    'align' => 'left',
-                ];
-
-            case 'spacer':
-                return [
-                    'height' => 30,
-                ];
-
-            case 'columns2':
-                return [
-                    'leftHtml' => '<p>Левая колонка</p>',
-                    'rightHtml' => '<p>Правая колонка</p>',
-                    'ratio' => '1:1',
-                    'gap' => 24,
-                ];
-
-            case 'gallery':
-                return [
-                    'items' => [],
-                    'columns' => 3,
-                    'gap' => 16,
-                ];
-
-            case 'card':
-                return [
-                    'title' => 'Карточка',
-                    'text' => 'Описание карточки',
-                    'imageFileId' => 0,
-                    'imageSrc' => '',
-                    'buttonText' => '',
-                    'buttonHref' => '',
-                ];
-
-            case 'cards':
-                return [
-                    'items' => [],
-                    'columns' => 3,
-                    'gap' => 24,
-                ];
-
-            case 'html':
-                return [
-                    'html' => '<div>HTML блок</div>',
-                ];
-
-            default:
-                return [];
-        }
-    }
-}
-
-if (!function_exists('sb_normalize_block_record')) {
-    function sb_normalize_block_record(array $block): array
-    {
-        if (!isset($block['content']) || !is_array($block['content'])) {
-            $block['content'] = [];
-        }
-
-        if (!isset($block['props']) || !is_array($block['props'])) {
-            $block['props'] = [];
-        }
-
-        if (!isset($block['type'])) {
-            $block['type'] = 'text';
-        }
-
-        if (!isset($block['sort'])) {
-            $block['sort'] = 500;
-        }
-
-        return $block;
-    }
-}
-
-if (!function_exists('sb_find_menu')) {
-    function sb_find_menu(int $menuId): ?array
-    {
-        foreach (sb_read_menus() as $m) {
-            if ((int)($m['id'] ?? 0) === $menuId) {
-                return $m;
-            }
-        }
-        return null;
-    }
-}
-
-if (!function_exists('sb_next_menu_id')) {
-    function sb_next_menu_id(array $menus = null): int
-    {
-        if ($menus === null) {
-            $menus = sb_read_menus();
-        }
-
-        $maxId = 0;
-        foreach ($menus as $m) {
-            $maxId = max($maxId, (int)($m['id'] ?? 0));
-        }
-
-        return $maxId + 1;
-    }
-}
-
-if (!function_exists('sb_next_menu_item_id')) {
-    function sb_next_menu_item_id(array $items): int
-    {
-        $maxId = 0;
-        foreach ($items as $item) {
-            $maxId = max($maxId, (int)($item['id'] ?? 0));
-        }
-        return $maxId + 1;
-    }
-}
-
-if (!function_exists('sb_normalize_menu_item')) {
-    function sb_normalize_menu_item(array $item): array
-    {
-        if (!isset($item['id'])) {
-            $item['id'] = 0;
-        }
-        if (!isset($item['title'])) {
-            $item['title'] = '';
-        }
-        if (!isset($item['type'])) {
-            $item['type'] = 'page';
-        }
-        if (!isset($item['pageId'])) {
-            $item['pageId'] = 0;
-        }
-        if (!isset($item['url'])) {
-            $item['url'] = '';
-        }
-        if (!isset($item['target'])) {
-            $item['target'] = '_self';
-        }
-        if (!isset($item['sort'])) {
-            $item['sort'] = 500;
-        }
-
-        return $item;
-    }
-}
-
-if (!function_exists('sb_normalize_menu_record')) {
-    function sb_normalize_menu_record(array $menu): array
-    {
-        if (!isset($menu['items']) || !is_array($menu['items'])) {
-            $menu['items'] = [];
-        }
-
-        $menu['items'] = array_map('sb_normalize_menu_item', $menu['items']);
-
-        usort($menu['items'], static function ($a, $b) {
-            $sortCmp = (int)($a['sort'] ?? 500) <=> (int)($b['sort'] ?? 500);
-            if ($sortCmp !== 0) {
-                return $sortCmp;
-            }
-            return (int)($a['id'] ?? 0) <=> (int)($b['id'] ?? 0);
-        });
-
-        if (!isset($menu['name'])) {
-            $menu['name'] = '';
-        }
-        if (!isset($menu['siteId'])) {
-            $menu['siteId'] = 0;
-        }
-
-        return $menu;
-    }
-}
-
-if (!function_exists('sb_menu_next_item_sort')) {
-    function sb_menu_next_item_sort(array $items): int
-    {
-        $maxSort = 0;
-        foreach ($items as $item) {
-            $maxSort = max($maxSort, (int)($item['sort'] ?? 0));
-        }
-        return $maxSort + 10;
-    }
-}
-
-if (!function_exists('sb_find_access_row')) {
-    function sb_find_access_row(int $siteId, string $accessCode): ?array
-    {
-        foreach (sb_read_access() as $row) {
-            if (
-                (int)($row['siteId'] ?? 0) === $siteId
-                && (string)($row['accessCode'] ?? '') === $accessCode
-            ) {
-                return $row;
-            }
-        }
-
-        return null;
-    }
-}
-
-if (!function_exists('sb_access_rows_for_site')) {
-    function sb_access_rows_for_site(int $siteId): array
-    {
-        return array_values(array_filter(sb_read_access(), static function ($row) use ($siteId) {
-            return (int)($row['siteId'] ?? 0) === $siteId;
-        }));
-    }
-}
-
-if (!function_exists('sb_normalize_access_role')) {
-    function sb_normalize_access_role(string $role): string
-    {
-        $role = strtoupper(trim($role));
-
-        if (!in_array($role, ['VIEWER', 'EDITOR', 'ADMIN', 'OWNER'], true)) {
-            return '';
-        }
-
-        return $role;
-    }
-}
-
-if (!function_exists('sb_count_site_owners')) {
-    function sb_count_site_owners(int $siteId): int
-    {
-        $count = 0;
-
-        foreach (sb_read_access() as $row) {
-            if (
-                (int)($row['siteId'] ?? 0) === $siteId
-                && (string)($row['role'] ?? '') === 'OWNER'
-            ) {
-                $count++;
-            }
-        }
-
-        return $count;
-    }
-}
-
-
-
-if (!function_exists('sb_is_bitrix_admin')) {
-    function sb_is_bitrix_admin(): bool
-    {
-        global $USER;
-
-        return is_object($USER)
-            && method_exists($USER, 'IsAdmin')
-            && $USER->IsAdmin();
-    }
-}
-
-if (!function_exists('sb_require_bitrix_admin')) {
-    function sb_require_bitrix_admin(): void
-    {
-        if (!sb_is_bitrix_admin()) {
-            sb_json_error('BITRIX_ADMIN_REQUIRED', 403, [
-                'message' => 'Создавать и изменять шаблоны может только администратор Битрикса.',
-            ]);
-        }
-    }
-}
-
-if (!function_exists('sb_find_template')) {
-    function sb_find_template(int $templateId): ?array
-    {
-        foreach (sb_read_templates() as $tpl) {
-            if ((int)($tpl['id'] ?? 0) === $templateId) {
-                return $tpl;
-            }
-        }
-        return null;
-    }
-}
-
-if (!function_exists('sb_next_template_id')) {
-    function sb_next_template_id(array $templates = null): int
-    {
-        if ($templates === null) {
-            $templates = sb_read_templates();
-        }
-
-        $maxId = 0;
-        foreach ($templates as $tpl) {
-            $maxId = max($maxId, (int)($tpl['id'] ?? 0));
-        }
-
-        return $maxId + 1;
-    }
-}
-
-if (!function_exists('sb_templates_for_site')) {
-    function sb_templates_for_site(int $siteId): array
-    {
-        $templates = array_values(array_filter(sb_read_templates(), static function ($tpl) use ($siteId) {
-            return (int)($tpl['siteId'] ?? 0) === $siteId;
-        }));
-
-        usort($templates, static function ($a, $b) {
-            return (int)($a['id'] ?? 0) <=> (int)($b['id'] ?? 0);
-        });
-
-        return $templates;
-    }
-}
-
-if (!function_exists('sb_normalize_template_record')) {
-    function sb_normalize_template_record(array $tpl): array
-    {
-        if (!isset($tpl['name'])) {
-            $tpl['name'] = '';
-        }
-        if (!isset($tpl['siteId'])) {
-            $tpl['siteId'] = 0;
-        }
-        if (!isset($tpl['blocks']) || !is_array($tpl['blocks'])) {
-            $tpl['blocks'] = [];
-        }
-
-        $tpl['blocks'] = array_map('sb_normalize_block_record', $tpl['blocks']);
-
-        usort($tpl['blocks'], static function ($a, $b) {
-            $sortCmp = (int)($a['sort'] ?? 500) <=> (int)($b['sort'] ?? 500);
-            if ($sortCmp !== 0) {
-                return $sortCmp;
-            }
-            return (int)($a['id'] ?? 0) <=> (int)($b['id'] ?? 0);
-        });
-
-        return $tpl;
-    }
-}
-
-if (!function_exists('sb_layout_default_record')) {
-    function sb_layout_default_record(int $siteId): array
-    {
-        return [
-            'siteId' => $siteId,
-            'settings' => [
-                'showHeader' => true,
-                'showFooter' => true,
-                'showLeft' => false,
-                'showRight' => false,
-                'leftWidth' => 260,
-                'rightWidth' => 260,
-                'leftMode' => 'blocks',
-            ],
-            'zones' => [
-                'header' => [],
-                'footer' => [],
-                'left' => [],
-                'right' => [],
-            ],
-        ];
-    }
-}
-
-if (!function_exists('sb_layout_valid_zone')) {
-    function sb_layout_valid_zone(string $zone): bool
-    {
-        return in_array($zone, ['header', 'footer', 'left', 'right'], true);
-    }
-}
-
-if (!function_exists('sb_find_layout')) {
-    function sb_find_layout(int $siteId): ?array
-    {
-        foreach (sb_read_layouts() as $layout) {
-            if ((int)($layout['siteId'] ?? 0) === $siteId) {
-                return $layout;
-            }
-        }
-        return null;
-    }
-}
-
-if (!function_exists('sb_layout_ensure_record')) {
-    function sb_layout_ensure_record(int $siteId): array
-    {
-        $layout = sb_find_layout($siteId);
-        if ($layout) {
-            return sb_normalize_layout_record($layout);
-        }
-
-        $layouts = sb_read_layouts();
-        $layout = sb_layout_default_record($siteId);
-        $layouts[] = $layout;
-        sb_write_layouts($layouts);
-
-        return sb_normalize_layout_record($layout);
-    }
-}
-
-if (!function_exists('sb_normalize_layout_record')) {
-    function sb_normalize_layout_record(array $layout): array
-    {
-        if (!isset($layout['settings']) || !is_array($layout['settings'])) {
-            $layout['settings'] = [];
-        }
-
-        $layout['settings'] = array_merge([
-            'showHeader' => true,
-            'showFooter' => true,
-            'showLeft' => false,
-            'showRight' => false,
-            'leftWidth' => 260,
-            'rightWidth' => 260,
-            'leftMode' => 'blocks',
-        ], $layout['settings']);
-
-        if (!isset($layout['zones']) || !is_array($layout['zones'])) {
-            $layout['zones'] = [];
-        }
+        $layout = sb_normalize_layout_record($layout);
+        $layout['siteId'] = 0;
 
         foreach (['header', 'footer', 'left', 'right'] as $zone) {
-            if (!isset($layout['zones'][$zone]) || !is_array($layout['zones'][$zone])) {
-                $layout['zones'][$zone] = [];
+            $blocks = [];
+            foreach (($layout['zones'][$zone] ?? []) as $block) {
+                $block = sb_normalize_block_record($block);
+                $block['content'] = self::sanitizeDiskData($block['content'] ?? []);
+                $block['props'] = self::sanitizeDiskData($block['props'] ?? []);
+                $blocks[] = $block;
             }
-
-            $layout['zones'][$zone] = array_map('sb_normalize_block_record', $layout['zones'][$zone]);
-
-            usort($layout['zones'][$zone], static function ($a, $b) {
-                $sortCmp = (int)($a['sort'] ?? 500) <=> (int)($b['sort'] ?? 500);
-                if ($sortCmp !== 0) {
-                    return $sortCmp;
-                }
-                return (int)($a['id'] ?? 0) <=> (int)($b['id'] ?? 0);
-            });
+            $layout['zones'][$zone] = $blocks;
         }
 
         return $layout;
     }
-}
 
-if (!function_exists('sb_layout_next_block_id')) {
-    function sb_layout_next_block_id(array $layout): int
+    protected static function prepareMenuForSnapshot(array $menu): array
     {
-        $maxId = 0;
+        $menu = sb_normalize_menu_record($menu);
+        $menu['oldId'] = (int)($menu['id'] ?? 0);
+        unset($menu['id'], $menu['siteId'], $menu['createdBy'], $menu['createdAt'], $menu['updatedBy'], $menu['updatedAt']);
 
-        $zones = (array)($layout['zones'] ?? []);
-        foreach ($zones as $blocks) {
-            if (!is_array($blocks)) {
+        return $menu;
+    }
+
+    protected static function sanitizeDiskData($value)
+    {
+        if (!is_array($value)) {
+            return $value;
+        }
+
+        $forbidden = [
+            'rootFolderId' => true,
+            'currentFolderId' => true,
+            'siteRootFolderId' => true,
+            'blockRootFolderId' => true,
+            'diskFolderId' => true,
+            'folderId' => true,
+        ];
+
+        $result = [];
+        foreach ($value as $key => $item) {
+            if (is_string($key) && isset($forbidden[$key])) {
                 continue;
             }
 
-            foreach ($blocks as $block) {
-                $maxId = max($maxId, (int)($block['id'] ?? 0));
+            $result[$key] = is_array($item) ? self::sanitizeDiskData($item) : $item;
+        }
+
+        return $result;
+    }
+
+    protected static function pagesForSite(int $siteId): array
+    {
+        $pages = array_values(array_filter(sb_read_pages(), static function ($page) use ($siteId) {
+            return (int)($page['siteId'] ?? 0) === $siteId;
+        }));
+
+        usort($pages, static function ($a, $b) {
+            $sortCmp = (int)($a['sort'] ?? 500) <=> (int)($b['sort'] ?? 500);
+            if ($sortCmp !== 0) {
+                return $sortCmp;
             }
+            return (int)($a['id'] ?? 0) <=> (int)($b['id'] ?? 0);
+        });
+
+        return $pages;
+    }
+
+    protected static function menusForSite(int $siteId): array
+    {
+        return array_values(array_filter(sb_read_menus(), static function ($menu) use ($siteId) {
+            return (int)($menu['siteId'] ?? 0) === $siteId;
+        }));
+    }
+
+    protected static function uniqueSiteSlug(string $slug, array $sites): string
+    {
+        $existing = array_map(static function ($site) {
+            return (string)($site['slug'] ?? '');
+        }, $sites);
+
+        $base = $slug !== '' ? $slug : 'site';
+        $slug = $base;
+        $i = 2;
+
+        while (in_array($slug, $existing, true)) {
+            $slug = $base . '-' . $i;
+            $i++;
         }
 
-        return $maxId + 1;
+        return $slug;
     }
-}
 
-if (!function_exists('sb_layout_next_block_sort')) {
-    function sb_layout_next_block_sort(array $layout, string $zone): int
+    protected static function copyPages(int $siteId, array $payload, int $userId): array
     {
-        $maxSort = 0;
+        $pages = sb_read_pages();
+        $templatePages = is_array($payload['pages'] ?? null) ? $payload['pages'] : [];
+        $nextPageId = sb_next_id($pages, 'id');
+        $now = date('c');
+        $map = [];
+        $newPages = [];
 
-        $blocks = (array)($layout['zones'][$zone] ?? []);
-        foreach ($blocks as $block) {
-            $maxSort = max($maxSort, (int)($block['sort'] ?? 0));
+        foreach ($templatePages as $page) {
+            $oldId = (int)($page['oldId'] ?? 0);
+            $newId = $nextPageId++;
+            $map[$oldId] = $newId;
+
+            $newPages[] = [
+                'id' => $newId,
+                'siteId' => $siteId,
+                'title' => (string)($page['title'] ?? 'Страница'),
+                'slug' => (string)($page['slug'] ?? ('page-' . $newId)),
+                'parentId' => 0,
+                'sort' => (int)($page['sort'] ?? 500),
+                'status' => in_array((string)($page['status'] ?? 'draft'), ['draft', 'published'], true) ? (string)$page['status'] : 'draft',
+                'publishedAt' => !empty($page['publishedAt']) ? (string)$page['publishedAt'] : null,
+                'createdBy' => $userId,
+                'createdAt' => $now,
+                'updatedBy' => $userId,
+                'updatedAt' => $now,
+                '_oldParentId' => (int)($page['parentId'] ?? 0),
+            ];
         }
 
-        return $maxSort + 10;
-    }
-}
+        foreach ($newPages as &$page) {
+            $oldParentId = (int)($page['_oldParentId'] ?? 0);
+            $page['parentId'] = $oldParentId > 0 && isset($map[$oldParentId]) ? (int)$map[$oldParentId] : 0;
+            unset($page['_oldParentId']);
+            $page = sb_normalize_page_record($page);
+        }
+        unset($page);
 
-if (!function_exists('sb_layout_find_block')) {
-    function sb_layout_find_block(array $layout, int $blockId): ?array
+        $pages = array_merge($pages, $newPages);
+        sb_write_pages($pages);
+
+        return $map;
+    }
+
+    protected static function copyBlocks(array $pageIdMap, array $payload, int $userId): void
     {
-        $zones = (array)($layout['zones'] ?? []);
-        foreach ($zones as $zoneName => $blocks) {
-            if (!is_array($blocks)) {
+        $blocks = sb_read_blocks();
+        $templateBlocks = is_array($payload['blocks'] ?? null) ? $payload['blocks'] : [];
+        $nextBlockId = sb_next_block_id($blocks);
+        $now = date('c');
+
+        foreach ($templateBlocks as $block) {
+            $oldPageId = (int)($block['oldPageId'] ?? 0);
+            if (!isset($pageIdMap[$oldPageId])) {
                 continue;
             }
 
-            foreach ($blocks as $block) {
-                if ((int)($block['id'] ?? 0) === $blockId) {
-                    $block['_zone'] = (string)$zoneName;
-                    return $block;
-                }
+            $blocks[] = sb_normalize_block_record([
+                'id' => $nextBlockId++,
+                'pageId' => (int)$pageIdMap[$oldPageId],
+                'type' => (string)($block['type'] ?? 'text'),
+                'sort' => (int)($block['sort'] ?? 500),
+                'content' => self::sanitizeDiskData($block['content'] ?? []),
+                'props' => self::sanitizeDiskData($block['props'] ?? []),
+                'createdBy' => $userId,
+                'createdAt' => $now,
+                'updatedBy' => $userId,
+                'updatedAt' => $now,
+            ]);
+        }
+
+        sb_write_blocks($blocks);
+    }
+
+    protected static function copyLayout(int $siteId, array $payload, int $userId): void
+    {
+        if (!function_exists('sb_read_layouts') || !function_exists('sb_write_layouts')) {
+            return;
+        }
+
+        $snapshotLayout = is_array($payload['layout'] ?? null) ? $payload['layout'] : [];
+        $layout = sb_normalize_layout_record($snapshotLayout);
+        $layout['siteId'] = $siteId;
+        $layout['createdBy'] = $userId;
+        $layout['createdAt'] = date('c');
+        $layout['updatedBy'] = $userId;
+        $layout['updatedAt'] = date('c');
+
+        foreach (['header', 'footer', 'left', 'right'] as $zone) {
+            foreach (($layout['zones'][$zone] ?? []) as &$block) {
+                $block['content'] = self::sanitizeDiskData($block['content'] ?? []);
+                $block['props'] = self::sanitizeDiskData($block['props'] ?? []);
+                $block['createdBy'] = $userId;
+                $block['createdAt'] = date('c');
+                $block['updatedBy'] = $userId;
+                $block['updatedAt'] = date('c');
+            }
+            unset($block);
+        }
+
+        $layouts = sb_read_layouts();
+        $layouts = array_values(array_filter($layouts, static function ($item) use ($siteId) {
+            return (int)($item['siteId'] ?? 0) !== $siteId;
+        }));
+        $layouts[] = $layout;
+
+        sb_write_layouts($layouts);
+    }
+
+    protected static function copyMenus(int $siteId, array $pageIdMap, array $payload, int $userId, array $snapshotSite): void
+    {
+        if (!function_exists('sb_read_menus') || !function_exists('sb_write_menus')) {
+            return;
+        }
+
+        $snapshotMenus = is_array($payload['menus'] ?? null) ? $payload['menus'] : [];
+        if (empty($snapshotMenus)) {
+            return;
+        }
+
+        $now = date('c');
+        $menus = sb_read_menus();
+        $oldTopMenuId = (int)($snapshotSite['topMenuId'] ?? 0);
+        $topMenuIndex = null;
+
+        foreach ($snapshotMenus as $index => $menu) {
+            if ((int)($menu['oldId'] ?? 0) === $oldTopMenuId) {
+                $topMenuIndex = $index;
+                break;
             }
         }
 
-        return null;
+        foreach ($snapshotMenus as $menu) {
+            $items = [];
+            foreach ((array)($menu['items'] ?? []) as $item) {
+                $type = (string)($item['type'] ?? 'page');
+                $oldPageId = (int)($item['pageId'] ?? 0);
+                $newPageId = ($type === 'page' && $oldPageId > 0 && isset($pageIdMap[$oldPageId]))
+                    ? (int)$pageIdMap[$oldPageId]
+                    : 0;
+
+                $item['pageId'] = $newPageId;
+                $items[] = $item;
+            }
+
+            $menus[] = [
+                'id' => 0,
+                'siteId' => $siteId,
+                'name' => (string)($menu['name'] ?? 'Меню'),
+                'items' => $items,
+                'createdBy' => $userId,
+                'createdAt' => $now,
+                'updatedBy' => $userId,
+                'updatedAt' => $now,
+            ];
+        }
+
+        sb_write_menus($menus);
+
+        if ($topMenuIndex !== null) {
+            $newMenus = self::menusForSite($siteId);
+            usort($newMenus, static function ($a, $b) {
+                return (int)($a['id'] ?? 0) <=> (int)($b['id'] ?? 0);
+            });
+
+            if (isset($newMenus[$topMenuIndex])) {
+                self::updateSiteField($siteId, 'topMenuId', (int)($newMenus[$topMenuIndex]['id'] ?? 0), $userId);
+            }
+        }
+    }
+
+    protected static function updateSiteField(int $siteId, string $field, $value, int $userId): void
+    {
+        $allowed = ['homePageId', 'topMenuId'];
+        if (!in_array($field, $allowed, true)) {
+            return;
+        }
+
+        $sites = sb_read_sites();
+        foreach ($sites as &$site) {
+            if ((int)($site['id'] ?? 0) !== $siteId) {
+                continue;
+            }
+
+            $site[$field] = $value;
+            $site['updatedBy'] = $userId;
+            $site['updatedAt'] = date('c');
+            break;
+        }
+        unset($site);
+
+        sb_write_sites($sites);
+    }
+
+    protected static function grantOwnerAccess(int $siteId, int $userId, string $now): void
+    {
+        $access = sb_read_access();
+        $access[] = [
+            'siteId' => $siteId,
+            'accessCode' => 'U' . $userId,
+            'role' => 'OWNER',
+            'createdBy' => $userId,
+            'createdAt' => $now,
+            'updatedBy' => $userId,
+            'updatedAt' => $now,
+        ];
+        sb_write_access($access);
     }
 }
