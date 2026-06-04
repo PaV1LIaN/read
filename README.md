@@ -1,79 +1,146 @@
-Да, это лучше сделать прямо в script.js, чтобы независимо от сортировки API папки всегда отображались первыми.
+Сделаем так: один клик по файлу ничего не открывает, а двойной клик по строке файла или карточке файла открывает файл.
 
-1. Добавь метод getDisplayItems
+Для папок оставим как сейчас: папка открывается одним кликом.
+
+
+---
+
+1. В script.js добавь метод открытия файла
 
 Файл:
 
 /local/sitebuilder/components/disk/script.js
 
-Найди метод:
+Найди место перед методом:
 
-DiskComponent.prototype.renderSubtitle = function () {
+DiskComponent.prototype.bindStaticEvents = function () {
 
-Перед ним вставь:
+И перед ним вставь:
 
-DiskComponent.prototype.getDisplayItems = function () {
-  var folders = [];
-  var files = [];
+DiskComponent.prototype.openFileFromElement = function (element) {
+  if (!element) {
+    return;
+  }
 
-  this.state.items.forEach(function (item) {
-    if (String(item.entityType || '').toLowerCase() === 'folder') {
-      folders.push(item);
-    } else {
-      files.push(item);
+  var entityType = element.getAttribute('data-entity-type') || '';
+
+  if (entityType !== 'file') {
+    return;
+  }
+
+  var previewMode = element.getAttribute('data-preview-mode') || '';
+  var previewUrl = element.getAttribute('data-preview-url') || '';
+  var downloadUrl = element.getAttribute('data-download-url') || '';
+
+  if (previewMode === 'office') {
+    var viewerBtn = element.querySelector('[data-viewer]');
+
+    if (viewerBtn) {
+      viewerBtn.click();
+      return;
     }
-  });
+  }
 
-  return folders.concat(files);
+  if (previewUrl) {
+    window.open(previewUrl, '_blank');
+    return;
+  }
+
+  if (downloadUrl) {
+    window.open(downloadUrl, '_blank');
+  }
 };
 
 
 ---
 
-2. В renderItemsTable() замени вывод
+2. В bindStaticEvents() добавь обработчик двойного клика
 
-Найди:
+Внутри метода:
 
-tbody.innerHTML = this.state.items.map(function (item) {
+DiskComponent.prototype.bindStaticEvents = function () {
+  var self = this;
 
-Замени на:
+Сразу после строки:
 
-tbody.innerHTML = this.getDisplayItems().map(function (item) {
+var self = this;
+
+добавь:
+
+this.root.addEventListener('dblclick', function (e) {
+  var item = e.target.closest(
+    '.sb-disk__row[data-id][data-entity-type="file"], .sb-disk__card[data-id][data-entity-type="file"]'
+  );
+
+  if (!item || !self.root.contains(item)) {
+    return;
+  }
+
+  if (e.target.closest('button, input, label, a, [data-viewer]')) {
+    return;
+  }
+
+  self.openFileFromElement(item);
+});
 
 
 ---
 
-3. В renderItemsGrid() тоже замени вывод
+3. В styles.css добавь визуальную подсказку
 
-Найди:
+Файл:
 
-container.innerHTML = this.state.items.map(function (item) {
+/local/sitebuilder/components/disk/styles.css
 
-Замени на:
+В конец добавь:
 
-container.innerHTML = this.getDisplayItems().map(function (item) {
+/* =========================================================
+   DOUBLE CLICK OPEN FILE
+   ========================================================= */
+
+.sb-disk__row[data-entity-type="file"],
+.sb-disk__card[data-entity-type="file"] {
+    cursor: default;
+}
+
+.sb-disk__row[data-entity-type="file"] .sb-disk__name-cell,
+.sb-disk__card[data-entity-type="file"] .sb-disk__card-name {
+    cursor: pointer;
+}
+
+.sb-disk__row[data-entity-type="file"] .sb-disk__modern-name-title::after {
+    content: " · двойной клик для открытия";
+    color: #9ca3af;
+    font-size: 11px;
+    font-weight: 600;
+}
+
+.sb-disk__card[data-entity-type="file"] .sb-disk__card-name::after {
+    content: "Двойной клик для открытия";
+    display: block;
+    margin-top: 4px;
+    color: #9ca3af;
+    font-size: 11px;
+    font-weight: 600;
+}
 
 
 ---
 
-Что получится
+4. Обнови версию подключения
 
-Теперь в таблице и в плитке порядок будет такой:
+В public_page.php обнови версии:
 
-Папки
-Папки
-Папки
-Файлы
-Файлы
-Файлы
+<script src="<?= sb_public_h($basePath) ?>/components/disk/script.js?v=11"></script>
 
-При этом сортировка Сначала новые / По названию / По типу останется, но внутри двух групп:
+<link rel="stylesheet" href="<?= sb_public_h($basePath) ?>/components/disk/styles.css?v=12">
 
-сначала сортируются папки,
-потом сортируются файлы.
+После этого сделай Ctrl + F5.
 
-После замены обнови подключение скрипта в public_page.php, например:
+Теперь файл будет открываться так:
 
-<script src="<?= sb_public_h($basePath) ?>/components/disk/script.js?v=10"></script>
+двойной клик по строке файла
+двойной клик по карточке файла
+кнопка “Открыть” работает как раньше
 
-И сделай Ctrl + F5.
+Для doc/docx будет пытаться открывать через Bitrix Viewer, для png/pdf — через previewUrl, если он есть, иначе через downloadUrl.
