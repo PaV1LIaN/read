@@ -1,2142 +1,1541 @@
 Заменяй полностью файл:
 
-/local/sitebuilder/components/disk/script.js
+/local/sitebuilder/components/disk/styles.css
 
 на этот:
 
-(function () {
-  function DiskComponent(root) {
-    this.root = root;
-    this.state = this.readInitialState();
-  }
-
-  DiskComponent.prototype.readInitialState = function () {
-    var raw = this.root.getAttribute('data-initial-state') || '{}';
-    var parsed = {};
-
-    try {
-      parsed = JSON.parse(raw);
-    } catch (e) {
-      parsed = {};
-    }
-
-    return {
-      siteId: Number(parsed.siteId || this.root.dataset.siteId || 0),
-      pageId: Number(parsed.pageId || this.root.dataset.pageId || 0),
-      blockId: Number(parsed.blockId || this.root.dataset.blockId || 0),
-      rootFolderId: parsed.rootFolderId || null,
-      currentFolderId: parsed.currentFolderId || null,
-      settings: parsed.settings || {},
-      permissions: parsed.permissions || {},
-      breadcrumbs: [],
-      items: [],
-      selectedIds: [],
-      searchQuery: '',
-      viewMode: (parsed.settings && parsed.settings.viewMode) || 'table',
-      loading: false,
-      error: null
-    };
-  };
-
-  DiskComponent.prototype.init = async function () {
-    this.prepareModernUi();
-    this.bindStaticEvents();
-
-    try {
-      var payload = this.getBasePayload();
-      payload.sessid = this.getSessid();
-
-      var res = await this.api('bootstrap', payload);
-      if (!res || !res.ok) {
-        throw new Error((res && (res.message || res.error)) || 'BOOTSTRAP_ERROR');
-      }
-
-      var data = res.data || {};
-
-      this.state.siteId = Number(data.siteId || this.state.siteId || 0);
-      this.state.pageId = Number(data.pageId || this.state.pageId || 0);
-      this.state.blockId = Number(data.blockId || this.state.blockId || 0);
-      this.state.settings = data.settings || {};
-      this.state.permissions = data.permissions || {};
-      this.state.rootFolderId = data.rootFolderId || null;
-      this.state.currentFolderId = data.currentFolderId || null;
-      this.state.viewMode = (this.state.settings && this.state.settings.viewMode) || 'table';
-
-      this.prepareModernUi();
-      this.applyInitialViewMode();
-
-      if (!this.state.permissions.canView) {
-        this.renderState('no-access');
-        return;
-      }
-
-      if (!this.state.rootFolderId) {
-        this.renderState('no-root');
-        return;
-      }
-
-      await this.loadFolder(this.state.rootFolderId);
-    } catch (e) {
-      console.error(e);
-      this.state.error = e.message || 'BOOTSTRAP_ERROR';
-      this.renderState('error');
-    }
-  };
-
-  DiskComponent.prototype.prepareModernUi = function () {
-    this.root.classList.add('sb-disk--modern');
-
-    var toolbarCandidates = [
-      '[data-role="search-input"]',
-      '[data-role="sort-select"]',
-      '[data-action="upload"]',
-      '[data-action="create-folder"]',
-      '[data-action="refresh"]',
-      '[data-action="settings"]',
-      '.sb-disk__view-btn'
-    ];
-
-    toolbarCandidates.forEach(function (selector) {
-      this.root.querySelectorAll(selector).forEach(function (node) {
-        node.classList.add('sb-disk-modern-control');
-      });
-    }, this);
-
-    var uploadBtn = this.root.querySelector('[data-action="upload"]');
-    if (uploadBtn) {
-      uploadBtn.classList.add('sb-disk-modern-primary');
-    }
-
-    var searchInput = this.root.querySelector('[data-role="search-input"]');
-    if (searchInput && !searchInput.getAttribute('placeholder')) {
-      searchInput.setAttribute('placeholder', 'Поиск файлов и папок');
-    }
-  };
-
-  DiskComponent.prototype.getBasePayload = function () {
-    return {
-      siteId: this.state.siteId,
-      pageId: this.state.pageId,
-      blockId: this.state.blockId
-    };
-  };
-
-  DiskComponent.prototype.getSessid = function () {
-    if (window.BX && typeof BX.bitrix_sessid === 'function') {
-      var bxSessid = BX.bitrix_sessid();
-      if (bxSessid) {
-        return String(bxSessid);
-      }
-    }
-
-    var sessidFromData = this.root.getAttribute('data-sessid');
-    if (sessidFromData) {
-      return String(sessidFromData);
-    }
-
-    return '';
-  };
-
-  DiskComponent.prototype.api = async function (action, payload, isFormData) {
-    if (isFormData) {
-      var responseForm = await fetch('/local/sitebuilder/components/disk/api.php?action=' + encodeURIComponent(action), {
-        method: 'POST',
-        body: payload
-      });
-
-      return await responseForm.json();
-    }
-
-    var response = await fetch('/local/sitebuilder/components/disk/api.php?action=' + encodeURIComponent(action), {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify(payload)
-    });
-
-    return await response.json();
-  };
-
-  DiskComponent.prototype.applyInitialViewMode = function () {
-    this.setViewMode(this.state.viewMode || 'table');
-  };
-
-  DiskComponent.prototype.setViewMode = function (mode) {
-    this.state.viewMode = mode === 'grid' ? 'grid' : 'table';
-
-    var tableContainer = this.root.querySelector('[data-view-container="table"]');
-    var gridContainer = this.root.querySelector('[data-view-container="grid"]');
-    var buttons = this.root.querySelectorAll('.sb-disk__view-btn');
-
-    if (tableContainer) {
-      tableContainer.hidden = this.state.viewMode !== 'table';
-    }
-
-    if (gridContainer) {
-      gridContainer.hidden = this.state.viewMode !== 'grid';
-
-      if (!gridContainer.classList.contains('sb-disk__grid')) {
-        gridContainer.classList.add('sb-disk__grid');
-      }
-    }
-
-    buttons.forEach(function (btn) {
-      btn.classList.toggle('is-active', btn.getAttribute('data-view') === mode);
-    });
-  };
-
-  DiskComponent.prototype.getSortValue = function () {
-    var select = this.root.querySelector('[data-role="sort-select"]');
-    return select && select.value ? String(select.value) : 'updatedAt:desc';
-  };
-
-  DiskComponent.prototype.getSortBy = function () {
-    return this.getSortValue().split(':')[0] || 'updatedAt';
-  };
-
-  DiskComponent.prototype.getSortDir = function () {
-    return this.getSortValue().split(':')[1] || 'desc';
-  };
-
-  DiskComponent.prototype.loadFolder = async function (folderId) {
-    try {
-      this.setLoading(true);
-
-      var payload = this.getBasePayload();
-      payload.currentFolderId = folderId;
-      payload.sortBy = this.getSortBy();
-      payload.sortDir = this.getSortDir();
-      payload.filters = {};
-      payload.sessid = this.getSessid();
-
-      var res = await this.api('list', payload);
-
-      if (!res || !res.ok) {
-        throw new Error((res && (res.message || res.error)) || 'LIST_ERROR');
-      }
-
-      this.state.currentFolderId = folderId;
-      this.state.items = Array.isArray(res.data.items) ? res.data.items : [];
-      this.state.breadcrumbs = Array.isArray(res.data.breadcrumbs) ? res.data.breadcrumbs : [];
-      this.state.selectedIds = [];
-
-      this.renderAll();
-
-      if (res.meta && res.meta.noRoot) {
-        this.renderState('no-root');
-        return;
-      }
-
-      if (!this.state.items.length) {
-        this.renderState('empty');
-      } else {
-        this.renderState(null);
-      }
-    } catch (e) {
-      console.error(e);
-      this.state.error = e.message || 'LIST_ERROR';
-      this.renderState('error');
-    } finally {
-      this.setLoading(false);
-    }
-  };
-
-  DiskComponent.prototype.search = async function (query) {
-    try {
-      var payload = this.getBasePayload();
-      payload.query = query;
-      payload.sessid = this.getSessid();
-
-      var res = await this.api('search', payload);
-
-      if (!res || !res.ok) {
-        throw new Error((res && (res.message || res.error)) || 'SEARCH_ERROR');
-      }
-
-      this.state.items = Array.isArray(res.data.items) ? res.data.items : [];
-      this.state.selectedIds = [];
-      this.renderAll();
-
-      if (!this.state.items.length) {
-        this.renderState('empty');
-      } else {
-        this.renderState(null);
-      }
-    } catch (e) {
-      console.error(e);
-      this.renderState('error');
-    }
-  };
-
-  /* =========================================================
-     DISPLAY ORDER / HISTORY HELPERS
-     ========================================================= */
-
-  DiskComponent.prototype.isHistoryItem = function (item) {
-    return String(item && item.name ? item.name : '').indexOf('_history__') === 0;
-  };
-
-  DiskComponent.prototype.getHistoryOriginalName = function (item) {
-    var name = String(item && item.name ? item.name : '');
-
-    if (name.indexOf('_history__') !== 0) {
-      return name;
-    }
-
-    var rest = name.slice('_history__'.length);
-    var sepIndex = rest.indexOf('__');
-
-    if (sepIndex < 0) {
-      return name;
-    }
-
-    return rest.slice(sepIndex + 2);
-  };
-
-  DiskComponent.prototype.getHistoryTime = function (item) {
-    var name = String(item && item.name ? item.name : '');
-
-    if (name.indexOf('_history__') !== 0) {
-      return 0;
-    }
-
-    var rest = name.slice('_history__'.length);
-    var sepIndex = rest.indexOf('__');
-
-    if (sepIndex < 0) {
-      return 0;
-    }
-
-    var timePart = rest.slice(0, sepIndex);
-    var timestamp = Number(String(timePart).split('_')[0] || 0);
-
-    return timestamp > 0 ? timestamp : 0;
-  };
-
-  DiskComponent.prototype.formatHistoryDate = function (timestamp) {
-    timestamp = Number(timestamp || 0);
-
-    if (!timestamp) {
-      return 'Старая версия';
-    }
-
-    var date = new Date(timestamp);
-
-    return date.toLocaleString('ru-RU');
-  };
-
-  DiskComponent.prototype.buildHistoryFileName = function (originalName) {
-    originalName = String(originalName || '').trim();
-
-    if (!originalName) {
-      originalName = 'file';
-    }
-
-    var stamp = Date.now() + '_' + Math.floor(Math.random() * 100000);
-
-    return '_history__' + stamp + '__' + originalName;
-  };
-
-  DiskComponent.prototype.getHistoryItemsForFile = function (fileName) {
-    fileName = String(fileName || '').trim().toLowerCase();
-
-    if (!fileName) {
-      return [];
-    }
-
-    return this.state.items
-      .filter(function (item) {
-        if (!this.isHistoryItem(item)) {
-          return false;
-        }
-
-        return String(this.getHistoryOriginalName(item) || '').trim().toLowerCase() === fileName;
-      }, this)
-      .sort(function (a, b) {
-        return this.getHistoryTime(b) - this.getHistoryTime(a);
-      }.bind(this));
-  };
-
-  DiskComponent.prototype.getDisplayItems = function () {
-    var folders = [];
-    var files = [];
-
-    this.state.items.forEach(function (item) {
-      if (this.isHistoryItem(item)) {
-        return;
-      }
-
-      if (String(item.entityType || '').toLowerCase() === 'folder') {
-        folders.push(item);
-      } else {
-        files.push(item);
-      }
-    }, this);
-
-    return folders.concat(files);
-  };
-
-  DiskComponent.prototype.renderHistoryControl = function (item) {
-    if (!item || String(item.entityType || '') !== 'file') {
-      return '';
-    }
-
-    if (this.isHistoryItem(item)) {
-      return '';
-    }
-
-    var historyItems = this.getHistoryItemsForFile(item.name);
-
-    if (!historyItems.length) {
-      return '';
-    }
-
-    return '<button type="button" class="sb-disk__row-btn" data-row-action="history">История</button>';
-  };
-
-  DiskComponent.prototype.openHistoryModalForFile = function (fileName) {
-    var self = this;
-    var historyItems = this.getHistoryItemsForFile(fileName);
-
-    if (!historyItems.length) {
-      alert('Истории замен для этого файла пока нет');
-      return;
-    }
-
-    var modal = document.createElement('div');
-    modal.className = 'sb-disk-history-modal';
-
-    modal.innerHTML = ''
-      + '<div class="sb-disk-history-modal__backdrop" data-history-action="close"></div>'
-      + '<div class="sb-disk-history-modal__dialog">'
-      + '  <div class="sb-disk-history-modal__head">'
-      + '    <div>'
-      + '      <div class="sb-disk-history-modal__title">История файла</div>'
-      + '      <div class="sb-disk-history-modal__subtitle">' + escapeHtml(fileName) + '</div>'
-      + '    </div>'
-      + '    <button type="button" class="sb-disk-history-modal__close" data-history-action="close">×</button>'
-      + '  </div>'
-      + '  <div class="sb-disk-history-modal__body">'
-      + historyItems.map(function (item) {
-          var time = self.formatHistoryDate(self.getHistoryTime(item));
-          var size = item.size ? formatBytes(item.size) : '—';
-
-          return ''
-            + '<div class="sb-disk-history-item" data-history-id="' + escapeHtml(item.id) + '">'
-            + '  <div class="sb-disk-history-item__main">'
-            + '    <div class="sb-disk-history-item__name">' + escapeHtml(self.getHistoryOriginalName(item)) + '</div>'
-            + '    <div class="sb-disk-history-item__meta">'
-            + '      <span>' + escapeHtml(time) + '</span>'
-            + '      <span>' + escapeHtml(size) + '</span>'
-            + '    </div>'
-            + '  </div>'
-            + '  <div class="sb-disk-history-item__actions">'
-            + '    <button type="button" class="sb-disk-history-btn is-primary" data-history-action="open" data-history-id="' + escapeHtml(item.id) + '">Открыть</button>'
-            + (item.downloadUrl
-                ? '    <button type="button" class="sb-disk-history-btn" data-history-action="download" data-history-id="' + escapeHtml(item.id) + '">Скачать</button>'
-                : '')
-            + '  </div>'
-            + '</div>';
-        }).join('')
-      + '  </div>'
-      + '</div>';
-
-    function findHistoryItem(id) {
-      id = Number(id || 0);
-
-      for (var i = 0; i < historyItems.length; i++) {
-        if (Number(historyItems[i].id || 0) === id) {
-          return historyItems[i];
-        }
-      }
-
-      return null;
-    }
-
-    function close() {
-      if (modal && modal.parentNode) {
-        modal.parentNode.removeChild(modal);
-      }
-
-      document.removeEventListener('keydown', onKeyDown);
-    }
-
-    function onKeyDown(e) {
-      if (e.key === 'Escape') {
-        close();
-      }
-    }
-
-    modal.addEventListener('click', function (e) {
-      var btn = e.target.closest('[data-history-action]');
-
-      if (!btn) {
-        return;
-      }
-
-      var action = btn.getAttribute('data-history-action');
-
-      if (action === 'close') {
-        close();
-        return;
-      }
-
-      var id = Number(btn.getAttribute('data-history-id') || 0);
-      var item = findHistoryItem(id);
-
-      if (!item) {
-        return;
-      }
-
-      if (action === 'open') {
-        if (item.previewUrl) {
-          window.open(item.previewUrl, '_blank');
-          return;
-        }
-
-        if (item.downloadUrl) {
-          window.open(item.downloadUrl, '_blank');
-        }
-
-        return;
-      }
-
-      if (action === 'download') {
-        if (item.downloadUrl) {
-          window.open(item.downloadUrl, '_blank');
-        }
-      }
-    });
-
-    document.addEventListener('keydown', onKeyDown);
-    document.body.appendChild(modal);
-  };
-
-  DiskComponent.prototype.renameDiskItem = async function (item, newName) {
-    var payload = this.getBasePayload();
-
-    payload.entityType = item.entityType || 'file';
-    payload.entityId = Number(item.id || 0);
-    payload.newName = newName;
-    payload.sessid = this.getSessid();
-
-    var res = await this.api('rename', payload);
-
-    if (!res || !res.ok) {
-      throw new Error((res && (res.message || res.error)) || 'RENAME_ERROR');
-    }
-
-    return res;
-  };
-
-  DiskComponent.prototype.archiveExistingFileToHistory = async function (existingItem) {
-    if (!existingItem || String(existingItem.entityType || '') !== 'file') {
-      return;
-    }
-
-    var oldName = String(existingItem.name || '').trim();
-
-    if (!oldName) {
-      return;
-    }
-
-    var historyName = this.buildHistoryFileName(oldName);
-
-    await this.renameDiskItem(existingItem, historyName);
-
-    existingItem.name = historyName;
-  };
-
-  /* =========================================================
-     DOUBLE CLICK OPEN
-     ========================================================= */
-
-  DiskComponent.prototype.openFileFromElement = function (element) {
-    if (!element) {
-      return;
-    }
-
-    var entityType = element.getAttribute('data-entity-type') || '';
-
-    if (entityType !== 'file') {
-      return;
-    }
-
-    var entityId = Number(element.getAttribute('data-id') || 0);
-    var previewMode = element.getAttribute('data-preview-mode') || '';
-    var previewUrl = element.getAttribute('data-preview-url') || '';
-    var downloadUrl = element.getAttribute('data-download-url') || '';
-
-    var openUrl = previewUrl || downloadUrl || '';
-    var openKey = 'file:' + entityId + ':' + openUrl;
-    var now = Date.now();
-
-    window.__SB_DISK_OPEN_LOCK__ = window.__SB_DISK_OPEN_LOCK__ || {
-      key: '',
-      time: 0
-    };
-
-    if (
-      window.__SB_DISK_OPEN_LOCK__.key === openKey &&
-      now - window.__SB_DISK_OPEN_LOCK__.time < 1200
-    ) {
-      return;
-    }
-
-    window.__SB_DISK_OPEN_LOCK__.key = openKey;
-    window.__SB_DISK_OPEN_LOCK__.time = now;
-
-    if (previewMode === 'office') {
-      var viewerBtn = element.querySelector('[data-viewer]');
-
-      if (viewerBtn) {
-        viewerBtn.click();
-        return;
-      }
-    }
-
-    if (previewUrl) {
-      window.open(previewUrl, '_blank');
-      return;
-    }
-
-    if (downloadUrl) {
-      window.open(downloadUrl, '_blank');
-    }
-  };
-
-  /* =========================================================
-     DUPLICATE FILE UPLOAD
-     ========================================================= */
-
-  DiskComponent.prototype.findExistingFileByName = function (fileName) {
-    fileName = String(fileName || '').trim().toLowerCase();
-
-    if (!fileName) {
-      return null;
-    }
-
-    for (var i = 0; i < this.state.items.length; i++) {
-      var item = this.state.items[i];
-
-      if (this.isHistoryItem(item)) {
-        continue;
-      }
-
-      if (String(item.entityType || '').toLowerCase() !== 'file') {
-        continue;
-      }
-
-      if (String(item.name || '').trim().toLowerCase() === fileName) {
-        return item;
-      }
-    }
-
-    return null;
-  };
-
-  DiskComponent.prototype.splitFileName = function (fileName) {
-    fileName = String(fileName || '').trim();
-
-    var dotIndex = fileName.lastIndexOf('.');
-
-    if (dotIndex <= 0) {
-      return {
-        base: fileName,
-        ext: ''
-      };
-    }
-
-    return {
-      base: fileName.slice(0, dotIndex),
-      ext: fileName.slice(dotIndex)
-    };
-  };
-
-  DiskComponent.prototype.suggestDuplicateFileName = function (fileName) {
-    var parts = this.splitFileName(fileName);
-    var base = parts.base || 'file';
-    var ext = parts.ext || '';
-    var index = 1;
-    var candidate = base + ' (копия)' + ext;
-
-    while (this.findExistingFileByName(candidate)) {
-      index++;
-      candidate = base + ' (копия ' + index + ')' + ext;
-    }
-
-    return candidate;
-  };
-
-  DiskComponent.prototype.makeRenamedFile = function (file, newName) {
-    newName = String(newName || '').trim();
-
-    if (!newName) {
-      throw new Error('EMPTY_FILE_NAME');
-    }
-
-    if (typeof File === 'function') {
-      return new File([file], newName, {
-        type: file.type,
-        lastModified: file.lastModified
-      });
-    }
-
-    throw new Error('Ваш браузер не поддерживает переименование файла перед загрузкой');
-  };
-
-  DiskComponent.prototype.deleteDiskItems = async function (items) {
-    var payload = this.getBasePayload();
-
-    payload.items = items;
-    payload.sessid = this.getSessid();
-
-    var res = await this.api('delete', payload);
-
-    if (!res || !res.ok) {
-      throw new Error((res && (res.message || res.error)) || 'DELETE_ERROR');
-    }
-
-    return res;
-  };
-
-  DiskComponent.prototype.askDuplicateUploadAction = function (file, existingItem) {
-    var self = this;
-
-    return new Promise(function (resolve) {
-      var fileName = String(file && file.name ? file.name : '');
-      var suggestedName = self.suggestDuplicateFileName(fileName);
-
-      var modal = document.createElement('div');
-      modal.className = 'sb-disk-duplicate-modal';
-
-      modal.innerHTML = ''
-        + '<div class="sb-disk-duplicate-modal__backdrop" data-duplicate-action="cancel"></div>'
-        + '<div class="sb-disk-duplicate-modal__dialog">'
-        + '  <div class="sb-disk-duplicate-modal__head">'
-        + '    <div>'
-        + '      <div class="sb-disk-duplicate-modal__title">Файл уже существует</div>'
-        + '      <div class="sb-disk-duplicate-modal__subtitle">В этой папке уже есть файл с таким именем.</div>'
-        + '    </div>'
-        + '    <button type="button" class="sb-disk-duplicate-modal__close" data-duplicate-action="cancel">×</button>'
-        + '  </div>'
-        + ''
-        + '  <div class="sb-disk-duplicate-modal__body">'
-        + '    <div class="sb-disk-duplicate-file">'
-        + '      <div class="sb-disk-duplicate-file__label">Файл:</div>'
-        + '      <div class="sb-disk-duplicate-file__name">' + escapeHtml(fileName) + '</div>'
-        + '    </div>'
-        + ''
-        + '    <div class="sb-disk-duplicate-field">'
-        + '      <label>Новое имя, если выбрать “Переименовать”</label>'
-        + '      <input type="text" class="sb-disk-duplicate-input" value="' + escapeHtml(suggestedName) + '">'
-        + '    </div>'
-        + ''
-        + '    <div class="sb-disk-duplicate-note">'
-        + '      “Заменить” сохранит старый файл в историю и загрузит новый с тем же именем.'
-        + '    </div>'
-        + '  </div>'
-        + ''
-        + '  <div class="sb-disk-duplicate-modal__footer">'
-        + '    <button type="button" class="sb-disk-duplicate-btn" data-duplicate-action="cancel">Отмена</button>'
-        + '    <button type="button" class="sb-disk-duplicate-btn" data-duplicate-action="rename">Переименовать</button>'
-        + '    <button type="button" class="sb-disk-duplicate-btn is-primary" data-duplicate-action="replace">Заменить</button>'
-        + '  </div>'
-        + '</div>';
-
-      function close(result) {
-        if (modal && modal.parentNode) {
-          modal.parentNode.removeChild(modal);
-        }
-
-        document.removeEventListener('keydown', onKeyDown);
-
-        resolve(result);
-      }
-
-      function onKeyDown(e) {
-        if (e.key === 'Escape') {
-          close({
-            action: 'cancel'
-          });
-        }
-      }
-
-      modal.addEventListener('click', function (e) {
-        var btn = e.target.closest('[data-duplicate-action]');
-
-        if (!btn) {
-          return;
-        }
-
-        var action = btn.getAttribute('data-duplicate-action');
-
-        if (action === 'cancel') {
-          close({
-            action: 'cancel'
-          });
-          return;
-        }
-
-        if (action === 'replace') {
-          close({
-            action: 'replace',
-            existingItem: existingItem
-          });
-          return;
-        }
-
-        if (action === 'rename') {
-          var input = modal.querySelector('.sb-disk-duplicate-input');
-          var newName = input ? String(input.value || '').trim() : '';
-
-          if (!newName) {
-            alert('Введите новое имя файла');
-            if (input) input.focus();
-            return;
-          }
-
-          if (self.findExistingFileByName(newName)) {
-            alert('Файл с таким именем уже есть. Укажите другое имя.');
-            if (input) input.focus();
-            return;
-          }
-
-          close({
-            action: 'rename',
-            name: newName
-          });
-        }
-      });
-
-      document.addEventListener('keydown', onKeyDown);
-      document.body.appendChild(modal);
-
-      setTimeout(function () {
-        var input = modal.querySelector('.sb-disk-duplicate-input');
-        if (input) {
-          input.focus();
-          input.select();
-        }
-      }, 50);
-    });
-  };
-
-  /* =========================================================
-     EVENTS
-     ========================================================= */
-
-  DiskComponent.prototype.bindStaticEvents = function () {
-    var self = this;
-
-    this.root.addEventListener('dblclick', async function (e) {
-      var item = e.target.closest(
-        '.sb-disk__row[data-id][data-entity-type], .sb-disk__card[data-id][data-entity-type]'
-      );
-
-      if (!item || !self.root.contains(item)) {
-        return;
-      }
-
-      if (e.target.closest('button, input, label, a')) {
-        return;
-      }
-
-      e.preventDefault();
-      e.stopPropagation();
-
-      if (typeof e.stopImmediatePropagation === 'function') {
-        e.stopImmediatePropagation();
-      }
-
-      var entityType = item.getAttribute('data-entity-type') || '';
-      var entityId = Number(item.getAttribute('data-id') || 0);
-
-      var clickKey = entityType + ':' + entityId;
-      var now = Date.now();
-
-      window.__SB_DISK_DBLCLICK_LOCK__ = window.__SB_DISK_DBLCLICK_LOCK__ || {
-        key: '',
-        time: 0
-      };
-
-      if (
-        window.__SB_DISK_DBLCLICK_LOCK__.key === clickKey &&
-        now - window.__SB_DISK_DBLCLICK_LOCK__.time < 1200
-      ) {
-        return;
-      }
-
-      window.__SB_DISK_DBLCLICK_LOCK__.key = clickKey;
-      window.__SB_DISK_DBLCLICK_LOCK__.time = now;
-
-      if (entityType === 'folder') {
-        if (entityId > 0) {
-          await self.loadFolder(entityId);
-        }
-
-        return;
-      }
-
-      if (entityType === 'file') {
-        self.openFileFromElement(item);
-      }
-    }, true);
-
-    var refreshBtn = this.root.querySelector('[data-action="refresh"]');
-    if (refreshBtn) {
-      refreshBtn.addEventListener('click', function () {
-        self.loadFolder(self.state.currentFolderId || self.state.rootFolderId);
-      });
-    }
-
-    var createFolderBtn = this.root.querySelector('[data-action="create-folder"]');
-    if (createFolderBtn) {
-      createFolderBtn.addEventListener('click', async function () {
-        if (!self.state.permissions.canCreateFolder) {
-          return;
-        }
-
-        var name = window.prompt('Название папки');
-        if (!name) {
-          return;
-        }
-
-        var payload = self.getBasePayload();
-        payload.currentFolderId = self.state.currentFolderId;
-        payload.name = name;
-        payload.sessid = self.getSessid();
-
-        var res = await self.api('createFolder', payload);
-        if (!res || !res.ok) {
-          window.alert((res && (res.message || res.error)) || 'Ошибка создания папки');
-          return;
-        }
-
-        await self.loadFolder(self.state.currentFolderId);
-      });
-    }
-
-    var uploadBtn = this.root.querySelector('[data-action="upload"]');
-    var uploadInput = this.root.querySelector('[data-role="upload-input"]');
-
-    if (uploadBtn && uploadInput) {
-      uploadBtn.addEventListener('click', function () {
-        if (!self.state.permissions.canUpload) {
-          return;
-        }
-
-        uploadInput.click();
-      });
-
-      uploadInput.addEventListener('change', async function (e) {
-        var files = Array.prototype.slice.call(e.target.files || []);
-
-        if (!files.length) {
-          return;
-        }
-
-        if (!self.state.permissions.canUpload) {
-          uploadInput.value = '';
-          return;
-        }
-
-        var preparedFiles = [];
-
-        try {
-          for (var i = 0; i < files.length; i++) {
-            var file = files[i];
-            var existingItem = self.findExistingFileByName(file.name);
-
-            if (!existingItem) {
-              preparedFiles.push(file);
-              continue;
-            }
-
-            var decision = await self.askDuplicateUploadAction(file, existingItem);
-
-            if (!decision || decision.action === 'cancel') {
-              continue;
-            }
-
-            if (decision.action === 'replace') {
-              await self.archiveExistingFileToHistory(existingItem);
-
-              preparedFiles.push(file);
-              continue;
-            }
-
-            if (decision.action === 'rename') {
-              preparedFiles.push(self.makeRenamedFile(file, decision.name));
-            }
-          }
-
-          if (!preparedFiles.length) {
-            uploadInput.value = '';
-            return;
-          }
-
-          var formData = new FormData();
-
-          formData.append('siteId', self.state.siteId);
-          formData.append('pageId', self.state.pageId);
-          formData.append('blockId', self.state.blockId);
-          formData.append('currentFolderId', self.state.currentFolderId);
-          formData.append('sessid', self.getSessid());
-
-          preparedFiles.forEach(function (file) {
-            formData.append('files[]', file);
-          });
-
-          var res = await self.api('upload', formData, true);
-
-          if (!res || !res.ok) {
-            window.alert((res && (res.message || res.error)) || 'Ошибка загрузки');
-            return;
-          }
-
-          uploadInput.value = '';
-          await self.loadFolder(self.state.currentFolderId);
-        } catch (err) {
-          console.error(err);
-          uploadInput.value = '';
-          window.alert(err && err.message ? err.message : 'Ошибка загрузки');
-        }
-      });
-    }
-
-    var sortSelect = this.root.querySelector('[data-role="sort-select"]');
-    if (sortSelect) {
-      sortSelect.addEventListener('change', function () {
-        self.loadFolder(self.state.currentFolderId || self.state.rootFolderId);
-      });
-    }
-
-    var searchInput = this.root.querySelector('[data-role="search-input"]');
-    if (searchInput) {
-      var searchTimer = null;
-
-      searchInput.addEventListener('input', function () {
-        var value = String(searchInput.value || '').trim();
-
-        clearTimeout(searchTimer);
-
-        searchTimer = setTimeout(function () {
-          self.state.searchQuery = value;
-
-          if (value === '') {
-            self.loadFolder(self.state.currentFolderId || self.state.rootFolderId);
-            return;
-          }
-
-          self.search(value);
-        }, 250);
-      });
-    }
-
-    var selectAll = this.root.querySelector('[data-role="select-all"]');
-    if (selectAll) {
-      selectAll.addEventListener('change', function () {
-        var checked = !!selectAll.checked;
-        var checkboxes = self.root.querySelectorAll('.sb-disk__item-check');
-
-        self.state.selectedIds = [];
-
-        checkboxes.forEach(function (checkbox) {
-          checkbox.checked = checked;
-
-          var id = Number(checkbox.getAttribute('data-id') || 0);
-          if (checked && id > 0) {
-            self.state.selectedIds.push(id);
-          }
-        });
-
-        self.syncSelectedState();
-      });
-    }
-
-    var viewButtons = this.root.querySelectorAll('.sb-disk__view-btn');
-    viewButtons.forEach(function (btn) {
-      btn.addEventListener('click', function () {
-        var mode = btn.getAttribute('data-view') || 'table';
-        self.setViewMode(mode);
-      });
-    });
-
-    var settingsBtn = this.root.querySelector('[data-action="settings"]');
-    if (settingsBtn) {
-      settingsBtn.addEventListener('click', async function () {
-        await self.openSettingsModal();
-      });
-    }
-
-    var closeSettingsBtns = this.root.querySelectorAll('[data-action="close-settings"]');
-    closeSettingsBtns.forEach(function (btn) {
-      btn.addEventListener('click', function () {
-        self.closeSettingsModal();
-      });
-    });
-
-    var saveSettingsBtn = this.root.querySelector('[data-action="save-settings"]');
-    if (saveSettingsBtn) {
-      saveSettingsBtn.addEventListener('click', async function () {
-        await self.saveSettings();
-      });
-    }
-
-    var initSiteRootBtn = this.root.querySelector('[data-action="init-site-root"]');
-    if (initSiteRootBtn) {
-      initSiteRootBtn.addEventListener('click', async function () {
-        await self.initSiteRoot();
-      });
-    }
-
-    var initBlockRootBtn = this.root.querySelector('[data-action="init-block-root"]');
-    if (initBlockRootBtn) {
-      initBlockRootBtn.addEventListener('click', async function () {
-        await self.initBlockRoot();
-      });
-    }
-
-    this.root.addEventListener('click', async function (e) {
-      var crumb = e.target.closest('.sb-disk__crumb');
-      if (crumb) {
-        var crumbFolderId = Number(crumb.getAttribute('data-folder-id') || 0);
-
-        if (crumbFolderId > 0) {
-          await self.loadFolder(crumbFolderId);
-        }
-
-        return;
-      }
-
-      var openBtn = e.target.closest('[data-row-action="open"]');
-      if (openBtn) {
-        var row = e.target.closest('[data-id][data-entity-type]');
-        if (!row) {
-          return;
-        }
-
-        var entityType = row.getAttribute('data-entity-type');
-        var entityId = Number(row.getAttribute('data-id') || 0);
-
-        if (entityType === 'folder' && entityId > 0) {
-          await self.loadFolder(entityId);
-          return;
-        }
-
-        if (entityType === 'file') {
-          var previewMode = row.getAttribute('data-preview-mode') || '';
-
-          if (previewMode === 'office') {
-            return;
-          }
-
-          var previewUrl = row.getAttribute('data-preview-url') || '';
-          var downloadUrl = row.getAttribute('data-download-url') || '';
-
-          if (previewUrl) {
-            window.open(previewUrl, '_blank');
-          } else if (downloadUrl) {
-            window.open(downloadUrl, '_blank');
-          }
-
-          return;
-        }
-
-        return;
-      }
-
-      var historyBtn = e.target.closest('[data-row-action="history"]');
-      if (historyBtn) {
-        var historyRow = e.target.closest('[data-id][data-entity-type="file"]');
-
-        if (!historyRow) {
-          return;
-        }
-
-        var fileName = historyRow.getAttribute('data-name') || '';
-
-        self.openHistoryModalForFile(fileName);
-        return;
-      }
-
-      var downloadBtn = e.target.closest('[data-row-action="download"]');
-      if (downloadBtn) {
-        var downloadRow = e.target.closest('[data-id][data-entity-type="file"]');
-        if (!downloadRow) {
-          return;
-        }
-
-        var directDownloadUrl = downloadRow.getAttribute('data-download-url') || '';
-        if (directDownloadUrl) {
-          window.open(directDownloadUrl, '_blank');
-        }
-
-        return;
-      }
-
-      var renameBtn = e.target.closest('[data-row-action="rename"]');
-      if (renameBtn) {
-        var renameRow = e.target.closest('[data-id][data-entity-type]');
-        if (!renameRow) {
-          return;
-        }
-
-        var renameEntityType = renameRow.getAttribute('data-entity-type');
-        var renameEntityId = Number(renameRow.getAttribute('data-id') || 0);
-        var currentName = renameRow.getAttribute('data-name') || '';
-
-        var newName = window.prompt('Новое название', currentName);
-        if (!newName) {
-          return;
-        }
-
-        var renamePayload = self.getBasePayload();
-        renamePayload.entityType = renameEntityType;
-        renamePayload.entityId = renameEntityId;
-        renamePayload.newName = newName;
-        renamePayload.sessid = self.getSessid();
-
-        var renameRes = await self.api('rename', renamePayload);
-        if (!renameRes || !renameRes.ok) {
-          window.alert((renameRes && (renameRes.message || renameRes.error)) || 'Ошибка переименования');
-          return;
-        }
-
-        await self.loadFolder(self.state.currentFolderId);
-        return;
-      }
-
-      var deleteBtn = e.target.closest('[data-row-action="delete"]');
-      if (deleteBtn) {
-        var deleteRow = e.target.closest('[data-id][data-entity-type]');
-        if (!deleteRow) {
-          return;
-        }
-
-        var confirmDelete = window.confirm('Удалить элемент?');
-        if (!confirmDelete) {
-          return;
-        }
-
-        var deletePayload = self.getBasePayload();
-        deletePayload.items = [{
-          id: Number(deleteRow.getAttribute('data-id') || 0),
-          entityType: deleteRow.getAttribute('data-entity-type')
-        }];
-        deletePayload.sessid = self.getSessid();
-
-        var deleteRes = await self.api('delete', deletePayload);
-        if (!deleteRes || !deleteRes.ok) {
-          window.alert((deleteRes && (deleteRes.message || deleteRes.error)) || 'Ошибка удаления');
-          return;
-        }
-
-        await self.loadFolder(self.state.currentFolderId);
-        return;
-      }
-
-      var deleteSelectedBtn = e.target.closest('[data-action="delete-selected"]');
-      if (deleteSelectedBtn) {
-        if (!self.state.selectedIds.length) {
-          return;
-        }
-
-        var confirmBulkDelete = window.confirm('Удалить выбранные элементы?');
-        if (!confirmBulkDelete) {
-          return;
-        }
-
-        var selectedItems = self.collectSelectedItemsPayload();
-        if (!selectedItems.length) {
-          return;
-        }
-
-        var bulkDeletePayload = self.getBasePayload();
-        bulkDeletePayload.items = selectedItems;
-        bulkDeletePayload.sessid = self.getSessid();
-
-        var bulkDeleteRes = await self.api('delete', bulkDeletePayload);
-        if (!bulkDeleteRes || !bulkDeleteRes.ok) {
-          window.alert((bulkDeleteRes && (bulkDeleteRes.message || bulkDeleteRes.error)) || 'Ошибка удаления');
-          return;
-        }
-
-        await self.loadFolder(self.state.currentFolderId);
-        return;
-      }
-
-      var downloadSelectedBtn = e.target.closest('[data-action="download-selected"]');
-      if (downloadSelectedBtn) {
-        var rows = self.root.querySelectorAll('[data-id][data-entity-type="file"]');
-
-        rows.forEach(function (row) {
-          var id = Number(row.getAttribute('data-id') || 0);
-          var downloadUrl = row.getAttribute('data-download-url') || '';
-
-          if (self.state.selectedIds.indexOf(id) !== -1 && downloadUrl) {
-            window.open(downloadUrl, '_blank');
-          }
-        });
-      }
-    });
-
-    this.root.addEventListener('change', function (e) {
-      var checkbox = e.target.closest('.sb-disk__item-check');
-      if (!checkbox) {
-        return;
-      }
-
-      var id = Number(checkbox.getAttribute('data-id') || 0);
-      if (id <= 0) {
-        return;
-      }
-
-      if (checkbox.checked) {
-        if (self.state.selectedIds.indexOf(id) === -1) {
-          self.state.selectedIds.push(id);
-        }
-      } else {
-        self.state.selectedIds = self.state.selectedIds.filter(function (value) {
-          return value !== id;
-        });
-      }
-
-      self.syncSelectedState();
-    });
-  };
-
-  DiskComponent.prototype.collectSelectedItemsPayload = function () {
-    var rows = this.root.querySelectorAll('[data-id][data-entity-type]');
-    var items = [];
-
-    rows.forEach(function (row) {
-      var id = Number(row.getAttribute('data-id') || 0);
-      if (id <= 0) {
-        return;
-      }
-
-      if (this.state.selectedIds.indexOf(id) !== -1) {
-        items.push({
-          id: id,
-          entityType: row.getAttribute('data-entity-type')
-        });
-      }
-    }, this);
-
-    return items;
-  };
-
-  DiskComponent.prototype.syncSelectedState = function () {
-    var rows = this.root.querySelectorAll('[data-id][data-entity-type]');
-
-    rows.forEach(function (row) {
-      var id = Number(row.getAttribute('data-id') || 0);
-      var selected = this.state.selectedIds.indexOf(id) !== -1;
-      row.classList.toggle('is-selected', selected);
-    }, this);
-
-    var cards = this.root.querySelectorAll('.sb-disk__card[data-id]');
-
-    cards.forEach(function (card) {
-      var id = Number(card.getAttribute('data-id') || 0);
-      var selected = this.state.selectedIds.indexOf(id) !== -1;
-      card.classList.toggle('is-selected', selected);
-    }, this);
-
-    var bulkbar = this.root.querySelector('[data-role="bulkbar"]');
-    var bulkbarText = this.root.querySelector('[data-role="bulkbar-text"]');
-
-    if (bulkbar && bulkbarText) {
-      bulkbar.hidden = !this.state.selectedIds.length;
-      bulkbarText.textContent = 'Выбрано: ' + this.state.selectedIds.length;
-    }
-  };
-
-  DiskComponent.prototype.renderAll = function () {
-    this.prepareModernUi();
-    this.renderSubtitle();
-    this.renderBreadcrumbs();
-    this.renderItemsTable();
-    this.renderItemsGrid();
-    this.syncSelectedState();
-    this.arrangeModernLayout();
-  };
-
-  DiskComponent.prototype.arrangeModernLayout = function () {
-    var root = this.root;
-
-    var breadcrumbs = root.querySelector('[data-role="breadcrumbs"]');
-    var refreshBtn = root.querySelector('[data-action="refresh"]');
-    var settingsBtn = root.querySelector('[data-action="settings"]');
-
-    var searchInput = root.querySelector('[data-role="search-input"]');
-    var sortSelect = root.querySelector('[data-role="sort-select"]');
-    var uploadBtn = root.querySelector('[data-action="upload"]');
-    var createFolderBtn = root.querySelector('[data-action="create-folder"]');
-
-    var viewButtons = Array.prototype.slice.call(root.querySelectorAll('.sb-disk__view-btn'));
-
-    var tableContainer = root.querySelector('[data-view-container="table"]');
-    var gridContainer = root.querySelector('[data-view-container="grid"]');
-    var bulkbar = root.querySelector('[data-role="bulkbar"]');
-
-    var anchor = bulkbar || tableContainer || gridContainer || root.firstElementChild;
-
-    if (!anchor) {
-      return;
-    }
-
-    var header = root.querySelector('.sb-disk__smart-header');
-    if (!header) {
-      header = document.createElement('div');
-      header.className = 'sb-disk__smart-header';
-
-      var headerLeft = document.createElement('div');
-      headerLeft.className = 'sb-disk__smart-header-left';
-
-      var headerRight = document.createElement('div');
-      headerRight.className = 'sb-disk__smart-header-right';
-
-      header.appendChild(headerLeft);
-      header.appendChild(headerRight);
-
-      root.insertBefore(header, anchor);
-    }
-
-    var headerLeftNode = header.querySelector('.sb-disk__smart-header-left');
-    var headerRightNode = header.querySelector('.sb-disk__smart-header-right');
-
-    if (breadcrumbs) {
-      headerLeftNode.appendChild(breadcrumbs);
-    }
-
-    if (refreshBtn) {
-      headerRightNode.appendChild(refreshBtn);
-    }
-
-    if (settingsBtn) {
-      headerRightNode.appendChild(settingsBtn);
-    }
-
-    var toolbar = root.querySelector('.sb-disk__smart-toolbar');
-    if (!toolbar) {
-      toolbar = document.createElement('div');
-      toolbar.className = 'sb-disk__smart-toolbar';
-
-      var toolbarLeft = document.createElement('div');
-      toolbarLeft.className = 'sb-disk__smart-toolbar-left';
-
-      var toolbarRight = document.createElement('div');
-      toolbarRight.className = 'sb-disk__smart-toolbar-right';
-
-      toolbar.appendChild(toolbarLeft);
-      toolbar.appendChild(toolbarRight);
-
-      if (header.nextSibling) {
-        root.insertBefore(toolbar, header.nextSibling);
-      } else {
-        root.appendChild(toolbar);
-      }
-    }
-
-    var toolbarLeftNode = toolbar.querySelector('.sb-disk__smart-toolbar-left');
-    var toolbarRightNode = toolbar.querySelector('.sb-disk__smart-toolbar-right');
-
-    if (searchInput) {
-      toolbarLeftNode.appendChild(searchInput);
-    }
-
-    if (sortSelect) {
-      toolbarLeftNode.appendChild(sortSelect);
-    }
-
-    if (uploadBtn) {
-      toolbarRightNode.appendChild(uploadBtn);
-    }
-
-    if (createFolderBtn) {
-      toolbarRightNode.appendChild(createFolderBtn);
-    }
-
-    viewButtons.forEach(function (btn) {
-      toolbarRightNode.appendChild(btn);
-    });
-  };
-
-  DiskComponent.prototype.renderSubtitle = function () {
-    var node = this.root.querySelector('[data-role="subtitle"]');
-    if (!node) {
-      return;
-    }
-
-    var folders = 0;
-    var files = 0;
-
-    this.state.items.forEach(function (item) {
-      if (this.isHistoryItem(item)) {
-        return;
-      }
-
-      if (item.entityType === 'folder') {
-        folders++;
-      } else {
-        files++;
-      }
-    }, this);
-
-    node.textContent = files + ' файлов · ' + folders + ' папок';
-  };
-
-  DiskComponent.prototype.renderBreadcrumbs = function () {
-    var container = this.root.querySelector('[data-role="breadcrumbs"]');
-    if (!container) {
-      return;
-    }
-
-    var crumbs = Array.isArray(this.state.breadcrumbs) ? this.state.breadcrumbs.slice() : [];
-
-    if (this.state.rootFolderId) {
-      var startIndex = crumbs.findIndex(function (item) {
-        return Number(item.id || 0) === Number(this.state.rootFolderId || 0);
-      }, this);
-
-      if (startIndex >= 0) {
-        crumbs = crumbs.slice(startIndex);
-      }
-    }
-
-    if (crumbs.length) {
-      crumbs[0] = {
-        id: crumbs[0].id,
-        name: this.state.settings && this.state.settings.title ? this.state.settings.title : 'Файлы'
-      };
-    }
-
-    container.innerHTML = crumbs.map(function (item) {
-      return '<button type="button" class="sb-disk__crumb" data-folder-id="' + escapeHtml(item.id) + '">' +
-        escapeHtml(item.name) +
-      '</button>';
-    }).join('<span class="sb-disk__crumb-separator">/</span>');
-  };
-
-  DiskComponent.prototype.renderItemsTable = function () {
-    var tbody = this.root.querySelector('[data-role="items-table"]');
-    if (!tbody) {
-      return;
-    }
-
-    var self = this;
-
-    tbody.innerHTML = this.getDisplayItems().map(function (item) {
-      var typeText = getItemTypeText(item);
-      var sizeText = item.entityType === 'folder' ? '—' : (item.size ? formatBytes(item.size) : '—');
-      var iconHtml = renderItemIcon(item);
-      var openControl = renderOpenControl(item);
-      var historyControl = self.renderHistoryControl(item);
-
-      return '' +
-        '<tr class="sb-disk__row ' + (item.entityType === 'folder' ? 'is-clickable' : '') + '" ' +
-          'data-id="' + escapeHtml(item.id) + '" ' +
-          'data-entity-type="' + escapeHtml(item.entityType) + '" ' +
-          'data-name="' + escapeHtml(item.name) + '" ' +
-          'data-download-url="' + escapeHtml(item.downloadUrl || '') + '" ' +
-          'data-preview-url="' + escapeHtml(item.previewUrl || '') + '" ' +
-          'data-preview-mode="' + escapeHtml(item.previewMode || '') + '">' +
-            '<td class="sb-disk__check-cell">' +
-              '<input type="checkbox" class="sb-disk__item-check" data-id="' + escapeHtml(item.id) + '">' +
-            '</td>' +
-            '<td class="sb-disk__name-cell">' +
-              '<div class="sb-disk__modern-name">' +
-                iconHtml +
-                '<div class="sb-disk__modern-name-main">' +
-                  '<div class="sb-disk__modern-name-title">' + escapeHtml(item.name) + '</div>' +
-                  '<div class="sb-disk__modern-name-sub">' + escapeHtml(typeText) + '</div>' +
-                '</div>' +
-              '</div>' +
-            '</td>' +
-            '<td><span class="sb-disk__type-pill">' + escapeHtml(typeText) + '</span></td>' +
-            '<td>' + escapeHtml(sizeText) + '</td>' +
-            '<td>' + escapeHtml(item.updatedAt || '—') + '</td>' +
-            '<td>' +
-              '<div class="sb-disk__actions">' +
-                openControl +
-                (item.entityType === 'file'
-                  ? '<button type="button" class="sb-disk__row-btn" data-row-action="download">Скачать</button>'
-                  : '') +
-                historyControl +
-                '<button type="button" class="sb-disk__row-btn" data-row-action="rename">Переим.</button>' +
-                '<button type="button" class="sb-disk__row-btn is-danger" data-row-action="delete">Удалить</button>' +
-              '</div>' +
-            '</td>' +
-        '</tr>';
-    }).join('');
-  };
-
-  DiskComponent.prototype.renderItemsGrid = function () {
-    var container = this.root.querySelector('[data-view-container="grid"]');
-    if (!container) {
-      return;
-    }
-
-    container.classList.add('sb-disk__grid');
-
-    var self = this;
-
-    container.innerHTML = this.getDisplayItems().map(function (item) {
-      var typeText = getItemTypeText(item);
-      var sizeText = item.entityType === 'folder' ? 'Папка' : (item.size ? formatBytes(item.size) : '—');
-      var openControl = renderOpenControl(item);
-      var historyControl = self.renderHistoryControl(item);
-
-      return '' +
-        '<div class="sb-disk__card ' + (item.entityType === 'folder' ? 'is-clickable' : '') + '" ' +
-             'data-id="' + escapeHtml(item.id) + '" ' +
-             'data-entity-type="' + escapeHtml(item.entityType) + '" ' +
-             'data-name="' + escapeHtml(item.name) + '" ' +
-             'data-download-url="' + escapeHtml(item.downloadUrl || '') + '" ' +
-             'data-preview-url="' + escapeHtml(item.previewUrl || '') + '" ' +
-             'data-preview-mode="' + escapeHtml(item.previewMode || '') + '">' +
-            '<div class="sb-disk__card-top">' +
-              '<label class="sb-disk__card-check">' +
-                '<input type="checkbox" class="sb-disk__item-check" data-id="' + escapeHtml(item.id) + '">' +
-              '</label>' +
-              '<span class="sb-disk__type-pill">' + escapeHtml(typeText) + '</span>' +
-            '</div>' +
-            '<div class="sb-disk__card-preview">' +
-              renderItemIcon(item) +
-            '</div>' +
-            '<div class="sb-disk__card-name">' + escapeHtml(item.name) + '</div>' +
-            '<div class="sb-disk__card-meta">' +
-              '<span class="sb-disk__card-sub">' + escapeHtml(sizeText) + '</span>' +
-            '</div>' +
-            '<div class="sb-disk__card-meta">' +
-              '<span class="sb-disk__card-sub">' + escapeHtml(item.updatedAt || '') + '</span>' +
-            '</div>' +
-            '<div class="sb-disk__card-actions">' +
-              openControl +
-              (item.entityType === 'file'
-                ? '<button type="button" class="sb-disk__row-btn" data-row-action="download">Скачать</button>'
-                : '') +
-              historyControl +
-              '<button type="button" class="sb-disk__row-btn" data-row-action="rename">Переим.</button>' +
-              '<button type="button" class="sb-disk__row-btn is-danger" data-row-action="delete">Удалить</button>' +
-            '</div>' +
-        '</div>';
-    }).join('');
-  };
-
-  DiskComponent.prototype.setLoading = function (loading) {
-    this.state.loading = !!loading;
-
-    var loadingNode = this.root.querySelector('[data-state="loading"]');
-    if (loadingNode) {
-      loadingNode.hidden = !loading;
-    }
-  };
-
-  DiskComponent.prototype.renderState = function (stateName) {
-    var nodes = this.root.querySelectorAll('[data-state]');
-
-    nodes.forEach(function (node) {
-      node.hidden = true;
-
-      if (node.getAttribute('data-state') === 'empty') {
-        node.classList.add('sb-disk-empty-enhanced');
-
-        if (!node.getAttribute('data-modern-empty-ready')) {
-          node.setAttribute('data-modern-empty-ready', '1');
-          node.innerHTML = '' +
-            '<div class="sb-disk-empty-icon">📁</div>' +
-            '<strong>Пока здесь пусто</strong>' +
-            '<span>Загрузите первый файл или создайте новую папку.</span>';
-        }
-      }
-    });
-
-    if (!stateName) {
-      return;
-    }
-
-    var node = this.root.querySelector('[data-state="' + stateName + '"]');
-    if (node) {
-      node.hidden = false;
-    }
-  };
-
-  /* =========================================================
-     SETTINGS
-     ========================================================= */
-
-  DiskComponent.prototype.openSettingsModal = async function () {
-    var modal = this.root.querySelector('[data-role="settings-modal"]');
-    if (!modal) {
-      return;
-    }
-
-    modal.hidden = false;
-    this.setSettingsMessage('Загрузка настроек...');
-
-    try {
-      var settingsPayload = this.getBasePayload();
-      settingsPayload.sessid = this.getSessid();
-
-      var settingsRes = await this.api('getSettings', settingsPayload);
-      if (!settingsRes || !settingsRes.ok) {
-        throw new Error((settingsRes && (settingsRes.message || settingsRes.error)) || 'GET_SETTINGS_ERROR');
-      }
-
-      var rootsPayload = this.getBasePayload();
-      rootsPayload.sessid = this.getSessid();
-
-      var rootOptionsRes = await this.api('getRootOptions', rootsPayload);
-      if (!rootOptionsRes || !rootOptionsRes.ok) {
-        throw new Error((rootOptionsRes && (rootOptionsRes.message || rootOptionsRes.error)) || 'GET_ROOT_OPTIONS_ERROR');
-      }
-
-      this.fillSettingsForm(
-        settingsRes.data.settings || {},
-        rootOptionsRes.data || {}
-      );
-
-      this.arrangeSettingsModal();
-
-      this.setSettingsMessage('');
-    } catch (e) {
-      console.error(e);
-      this.setSettingsMessage('Не удалось загрузить настройки.');
-    }
-  };
-
-  DiskComponent.prototype.arrangeSettingsModal = function () {
-    var modal = this.root.querySelector('[data-role="settings-modal"]');
-    var form = this.root.querySelector('[data-role="settings-form"]');
-
-    if (!modal || !form) {
-      return;
-    }
-
-    modal.classList.add('sb-disk-settings-modal');
-
-    var shell = modal.firstElementChild;
-    if (shell) {
-      shell.classList.add('sb-disk-settings-shell');
-    }
-
-    if (!form.querySelector('.sb-disk-settings-section-main')) {
-      var mainTitle = document.createElement('div');
-      mainTitle.className = 'sb-disk-settings-section-main';
-      mainTitle.textContent = 'Основные настройки';
-      form.insertBefore(mainTitle, form.firstChild);
-    }
-
-    var checkboxLabels = Array.prototype.slice.call(
-      form.querySelectorAll('label')
-    ).filter(function (label) {
-      return !!label.querySelector('input[type="checkbox"]');
-    });
-
-    if (checkboxLabels.length && !form.querySelector('.sb-disk-settings-checks')) {
-      var checksTitle = document.createElement('div');
-      checksTitle.className = 'sb-disk-settings-section-title';
-      checksTitle.textContent = 'Возможности';
-
-      var checksWrap = document.createElement('div');
-      checksWrap.className = 'sb-disk-settings-checks';
-
-      checkboxLabels.forEach(function (label) {
-        checksWrap.appendChild(label);
-      });
-
-      form.appendChild(checksTitle);
-      form.appendChild(checksWrap);
-    }
-
-    var actionButtons = Array.prototype.slice.call(
-      modal.querySelectorAll('[data-action="save-settings"], [data-action="close-settings"]')
-    ).filter(function (button) {
-      var text = String(button.textContent || '').trim().toLowerCase();
-      return text !== '×' && text !== 'x';
-    });
-
-    if (actionButtons.length && !modal.querySelector('.sb-disk-settings-footer')) {
-      var footer = document.createElement('div');
-      footer.className = 'sb-disk-settings-footer';
-
-      actionButtons.forEach(function (button) {
-        footer.appendChild(button);
-      });
-
-      if (shell) {
-        shell.appendChild(footer);
-      } else {
-        modal.appendChild(footer);
-      }
-    }
-  };
-
-  DiskComponent.prototype.closeSettingsModal = function () {
-    var modal = this.root.querySelector('[data-role="settings-modal"]');
-    if (!modal) {
-      return;
-    }
-
-    modal.hidden = true;
-  };
-
-  DiskComponent.prototype.setSettingsMessage = function (message) {
-    var node = this.root.querySelector('[data-role="settings-message"]');
-    if (!node) {
-      return;
-    }
-
-    node.textContent = message || '';
-  };
-
-  DiskComponent.prototype.fillSettingsForm = function (settings, rootData) {
-    var form = this.root.querySelector('[data-role="settings-form"]');
-    if (!form) {
-      return;
-    }
-
-    var rootSelect = form.querySelector('[data-role="root-select"]');
-    if (rootSelect) {
-      var options = Array.isArray(rootData.options) ? rootData.options : [];
-      rootSelect.innerHTML = '';
-
-      if (rootData.siteRootFolderId) {
-        rootSelect.insertAdjacentHTML('beforeend', '<option value="">Использовать корень сайта</option>');
-      } else {
-        rootSelect.insertAdjacentHTML('beforeend', '<option value="">Корень сайта не создан</option>');
-      }
-
-      options.forEach(function (option) {
-        if (option.type === 'block_root' && option.folderId) {
-          rootSelect.insertAdjacentHTML(
-            'beforeend',
-            '<option value="' + escapeHtml(option.folderId) + '">Собственная папка блока #' + escapeHtml(option.folderId) + '</option>'
-          );
-        }
-      });
-    }
-
-    setFormValue(form, 'title', settings.title || 'Файлы');
-    setFormValue(form, 'rootFolderId', settings.rootFolderId || '');
-    setFormValue(form, 'viewMode', settings.viewMode || 'table');
-    setFormValue(form, 'defaultSort', settings.defaultSort || 'updatedAt');
-    setFormValue(form, 'defaultSortDirection', settings.defaultSortDirection || 'desc');
-    setFormValue(form, 'maxFileSize', settings.maxFileSize || 52428800);
-    setFormValue(form, 'permissionMode', settings.permissionMode || 'inherit_site');
-
-    var extValue = Array.isArray(settings.allowedExtensions)
-      ? settings.allowedExtensions.join(' ')
-      : '';
-
-    setFormValue(form, 'allowedExtensions', extValue);
-
-    setFormCheckbox(form, 'allowUpload', !!settings.allowUpload);
-    setFormCheckbox(form, 'allowCreateFolder', !!settings.allowCreateFolder);
-    setFormCheckbox(form, 'allowRename', !!settings.allowRename);
-    setFormCheckbox(form, 'allowDelete', !!settings.allowDelete);
-    setFormCheckbox(form, 'allowDownload', !!settings.allowDownload);
-    setFormCheckbox(form, 'showSearch', !!settings.showSearch);
-    setFormCheckbox(form, 'showBreadcrumbs', !!settings.showBreadcrumbs);
-    setFormCheckbox(form, 'useSiteRootFallback', !!settings.useSiteRootFallback);
-  };
-
-  DiskComponent.prototype.collectSettingsForm = function () {
-    var form = this.root.querySelector('[data-role="settings-form"]');
-    if (!form) {
-      return {};
-    }
-
-    return {
-      title: getFormValue(form, 'title'),
-      rootFolderId: getFormValue(form, 'rootFolderId'),
-      viewMode: getFormValue(form, 'viewMode'),
-      defaultSort: getFormValue(form, 'defaultSort'),
-      defaultSortDirection: getFormValue(form, 'defaultSortDirection'),
-      maxFileSize: Number(getFormValue(form, 'maxFileSize') || 0),
-      allowedExtensions: String(getFormValue(form, 'allowedExtensions') || '')
-        .trim()
-        .split(/\s+/)
-        .filter(Boolean),
-      permissionMode: getFormValue(form, 'permissionMode'),
-      allowUpload: getFormCheckbox(form, 'allowUpload'),
-      allowCreateFolder: getFormCheckbox(form, 'allowCreateFolder'),
-      allowRename: getFormCheckbox(form, 'allowRename'),
-      allowDelete: getFormCheckbox(form, 'allowDelete'),
-      allowDownload: getFormCheckbox(form, 'allowDownload'),
-      showSearch: getFormCheckbox(form, 'showSearch'),
-      showBreadcrumbs: getFormCheckbox(form, 'showBreadcrumbs'),
-      useSiteRootFallback: getFormCheckbox(form, 'useSiteRootFallback')
-    };
-  };
-
-  DiskComponent.prototype.saveSettings = async function () {
-    try {
-      this.setSettingsMessage('Сохранение...');
-
-      var payload = this.getBasePayload();
-      payload.sessid = this.getSessid();
-      payload.settings = this.collectSettingsForm();
-
-      var res = await this.api('saveSettings', payload);
-      if (!res || !res.ok) {
-        throw new Error((res && (res.message || res.error)) || 'SAVE_SETTINGS_ERROR');
-      }
-
-      this.state.settings = res.data.settings || this.state.settings;
-      this.state.viewMode = this.state.settings.viewMode || 'table';
-
-      this.applyInitialViewMode();
-
-      this.setSettingsMessage('Настройки сохранены.');
-      this.closeSettingsModal();
-
-      await this.loadResolvedRoot();
-    } catch (e) {
-      console.error(e);
-      this.setSettingsMessage('Не удалось сохранить настройки.');
-    }
-  };
-
-  DiskComponent.prototype.initSiteRoot = async function () {
-    try {
-      var payload = {
-        siteId: this.state.siteId,
-        sessid: this.getSessid()
-      };
-
-      var res = await this.api('initSiteRoot', payload);
-      if (!res || !res.ok) {
-        throw new Error((res && (res.message || res.error)) || 'INIT_SITE_ROOT_ERROR');
-      }
-
-      await this.loadResolvedRoot();
-    } catch (e) {
-      console.error(e);
-      alert('Не удалось создать корень сайта');
-    }
-  };
-
-  DiskComponent.prototype.initBlockRoot = async function () {
-    try {
-      var payload = this.getBasePayload();
-      payload.sessid = this.getSessid();
-
-      var res = await this.api('initBlockRoot', payload);
-      if (!res || !res.ok) {
-        throw new Error((res && (res.message || res.error)) || 'INIT_BLOCK_ROOT_ERROR');
-      }
-
-      await this.loadResolvedRoot();
-    } catch (e) {
-      console.error(e);
-      alert('Не удалось создать папку блока');
-    }
-  };
-
-  DiskComponent.prototype.loadResolvedRoot = async function () {
-    var payload = this.getBasePayload();
-    payload.sessid = this.getSessid();
-
-    var rootRes = await this.api('resolveRoot', payload);
-    if (!rootRes || !rootRes.ok) {
-      throw new Error((rootRes && (rootRes.message || rootRes.error)) || 'RESOLVE_ROOT_ERROR');
-    }
-
-    var data = getApiData(rootRes);
-
-    this.state.rootFolderId = data.rootFolderId || null;
-    this.state.currentFolderId = this.state.rootFolderId || null;
-
-    if (this.state.rootFolderId) {
-      await this.loadFolder(this.state.rootFolderId);
-    } else {
-      this.renderState('no-root');
-    }
-  };
-
-  /* =========================================================
-     HELPERS
-     ========================================================= */
-
-  function getItemExtension(item) {
-    var ext = String(item.extension || '').trim().toLowerCase();
-
-    if (ext) {
-      return ext.replace(/^\./, '');
-    }
-
-    var name = String(item.name || '');
-    var parts = name.split('.');
-
-    if (parts.length < 2) {
-      return '';
-    }
-
-    return String(parts.pop() || '').toLowerCase();
-  }
-
-  function getItemTypeText(item) {
-    if (item.entityType === 'folder') {
-      return 'Папка';
-    }
-
-    var ext = getItemExtension(item);
-
-    return ext ? ext.toUpperCase() : 'Файл';
-  }
-
-  function getItemIconText(item) {
-    if (item.entityType === 'folder') {
-      return '📁';
-    }
-
-    var ext = getItemExtension(item);
-
-    if (ext === 'pdf') return 'PDF';
-    if (['doc', 'docx', 'rtf'].indexOf(ext) !== -1) return 'DOC';
-    if (['xls', 'xlsx', 'csv'].indexOf(ext) !== -1) return 'XLS';
-    if (['ppt', 'pptx'].indexOf(ext) !== -1) return 'PPT';
-    if (['jpg', 'jpeg', 'png', 'gif', 'webp', 'svg'].indexOf(ext) !== -1) return 'IMG';
-    if (['zip', 'rar', '7z'].indexOf(ext) !== -1) return 'ZIP';
-    if (['txt', 'log'].indexOf(ext) !== -1) return 'TXT';
-
-    return 'FILE';
-  }
-
-  function getItemIconClass(item) {
-    if (item.entityType === 'folder') {
-      return 'sb-disk__modern-icon sb-disk__modern-icon--folder';
-    }
-
-    var ext = getItemExtension(item);
-
-    if (ext === 'pdf') return 'sb-disk__modern-icon sb-disk__modern-icon--pdf';
-    if (['doc', 'docx', 'rtf'].indexOf(ext) !== -1) return 'sb-disk__modern-icon sb-disk__modern-icon--doc';
-    if (['xls', 'xlsx', 'csv'].indexOf(ext) !== -1) return 'sb-disk__modern-icon sb-disk__modern-icon--xls';
-    if (['ppt', 'pptx'].indexOf(ext) !== -1) return 'sb-disk__modern-icon sb-disk__modern-icon--ppt';
-    if (['jpg', 'jpeg', 'png', 'gif', 'webp', 'svg'].indexOf(ext) !== -1) return 'sb-disk__modern-icon sb-disk__modern-icon--img';
-    if (['zip', 'rar', '7z'].indexOf(ext) !== -1) return 'sb-disk__modern-icon sb-disk__modern-icon--zip';
-
-    return 'sb-disk__modern-icon sb-disk__modern-icon--file';
-  }
-
-  function renderItemIcon(item) {
-    return '<span class="' + escapeHtml(getItemIconClass(item)) + '">' + escapeHtml(getItemIconText(item)) + '</span>';
-  }
-
-  function renderOpenControl(item) {
-    if (item.entityType === 'folder') {
-      return '';
-    }
-
-    if (item.previewMode === 'office') {
-      return '' +
-        '<span ' +
-          'class="sb-disk__hidden-viewer disk-detail-sidebar-editor-item disk-detail-sidebar-editor-item-show" ' +
-          'data-viewer="" ' +
-          'data-row-action="open" ' +
-          'data-viewer-type="cloud-document" ' +
-          'data-src="' + escapeHtml(item.previewUrl || '') + '" ' +
-          'data-viewer-type-class="BX.Disk.Viewer.DocumentItem" ' +
-          'data-viewer-extension="disk.viewer.document-item" ' +
-          'data-object-id="' + escapeHtml(item.id) + '" ' +
-          'data-title="' + escapeHtml(item.name) + '" ' +
-          'data-actions="' + escapeHtml(JSON.stringify([{ type: 'download' }])) + '"' +
-        '></span>';
-    }
-
-    return '';
-  }
-
-  function formatBytes(bytes) {
-    bytes = Number(bytes || 0);
-    if (bytes <= 0) {
-      return '0 Б';
-    }
-
-    var units = ['Б', 'КБ', 'МБ', 'ГБ', 'ТБ'];
-    var unitIndex = 0;
-
-    while (bytes >= 1024 && unitIndex < units.length - 1) {
-      bytes /= 1024;
-      unitIndex++;
-    }
-
-    var value = unitIndex === 0 ? Math.round(bytes) : bytes.toFixed(1);
-
-    return String(value) + ' ' + units[unitIndex];
-  }
-
-  function escapeHtml(value) {
-    return String(value == null ? '' : value)
-      .replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;')
-      .replace(/"/g, '&quot;')
-      .replace(/'/g, '&#039;');
-  }
-
-  function setFormValue(form, name, value) {
-    var node = form.querySelector('[name="' + name + '"]');
-    if (!node) {
-      return;
-    }
-
-    node.value = value == null ? '' : value;
-  }
-
-  function getFormValue(form, name) {
-    var node = form.querySelector('[name="' + name + '"]');
-    return node ? String(node.value || '') : '';
-  }
-
-  function setFormCheckbox(form, name, checked) {
-    var node = form.querySelector('[name="' + name + '"]');
-    if (!node) {
-      return;
-    }
-
-    node.checked = !!checked;
-  }
-
-  function getFormCheckbox(form, name) {
-    var node = form.querySelector('[name="' + name + '"]');
-    return !!(node && node.checked);
-  }
-
-  function getApiData(res) {
-    return res && res.data ? res.data : {};
-  }
-
-  function initDisks() {
-    document.querySelectorAll('.sb-disk').forEach(function (root) {
-      if (root.getAttribute('data-disk-component-ready') === '1') {
-        return;
-      }
-
-      root.setAttribute('data-disk-component-ready', '1');
-
-      var component = new DiskComponent(root);
-      root.__diskComponent = component;
-      component.init();
-    });
-  }
-
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', initDisks);
-  } else {
-    initDisks();
-  }
-})();
-
-В public_page.php обнови версию:
-
-<script src="<?= sb_public_h($basePath) ?>/components/disk/script.js?v=17"></script>
+/* =========================================================
+   SITEBUILDER DISK
+   Modern File Manager UI
+   ========================================================= */
+
+.sb-disk {
+    --disk-accent: var(--sb-accent, #2563eb);
+    --disk-accent-hover: #3f5de9;
+    --disk-accent-soft: rgba(37, 99, 235, .08);
+    --disk-bg: #ffffff;
+    --disk-soft: #f8fafc;
+    --disk-soft-2: #f1f5f9;
+    --disk-border: #e5e7eb;
+    --disk-border-2: #dbe3ef;
+    --disk-text: #111827;
+    --disk-muted: #6b7280;
+    --disk-danger: #dc2626;
+    --disk-radius: 18px;
+    --disk-shadow: 0 14px 34px rgba(15, 23, 42, .06);
+
+    width: 100%;
+    min-width: 0;
+    box-sizing: border-box;
+    color: var(--disk-text);
+}
+
+.sb-disk *,
+.sb-disk *::before,
+.sb-disk *::after {
+    box-sizing: border-box;
+}
+
+.sb-disk--modern {
+    width: 100%;
+    min-width: 0;
+}
+
+.sb-disk a {
+    color: var(--disk-accent);
+    text-decoration: none;
+}
+
+.sb-disk a:hover {
+    text-decoration: underline;
+}
+
+.sb-disk button,
+.sb-disk input,
+.sb-disk select,
+.sb-disk textarea {
+    font-family: inherit;
+}
+
+.sb-disk [hidden] {
+    display: none !important;
+}
+
+/* =========================================================
+   HIDE DUPLICATES / COMPACT TOP
+   ========================================================= */
+
+.sb-disk--modern .sb-disk__title,
+.sb-disk--modern .sb-disk-title,
+.sb-disk--modern [data-role="subtitle"],
+.sb-disk--modern .sb-disk__subtitle,
+.sb-disk--modern .sb-disk-subtitle {
+    display: none !important;
+}
+
+.sb-disk--modern .sb-disk__top,
+.sb-disk--modern .sb-disk__header,
+.sb-disk--modern .sb-disk__head,
+.sb-disk--modern .sb-disk-head {
+    min-height: 0 !important;
+    margin: 0 !important;
+    padding: 0 !important;
+}
+
+.sb-disk--modern .sb-disk__toolbar:empty,
+.sb-disk--modern .sb-disk__controls:empty,
+.sb-disk--modern .sb-disk__actions-panel:empty,
+.sb-disk--modern .sb-disk__filter:empty,
+.sb-disk--modern .sb-disk__filters:empty {
+    display: none !important;
+}
+
+/* =========================================================
+   BLOCK HEAD
+   ========================================================= */
+
+.sb-public-block--disk {
+    margin-top: 12px;
+}
+
+.sb-public-disk-head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 16px;
+    margin-bottom: 10px;
+}
+
+.sb-public-block-title,
+.sb-disk h2,
+.sb-disk h3 {
+    margin: 0;
+    font-size: 22px;
+    line-height: 1.25;
+    font-weight: 800;
+    color: var(--disk-text);
+}
+
+/* =========================================================
+   SMART HEADER
+   ========================================================= */
+
+.sb-disk__smart-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    margin: 0 0 10px;
+    padding: 0;
+    width: 100%;
+    min-width: 0;
+}
+
+.sb-disk__smart-header-left {
+    flex: 1 1 auto;
+    min-width: 0;
+    display: flex;
+    align-items: center;
+}
+
+.sb-disk__smart-header-right {
+    flex: 0 0 auto;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+}
+
+/* Breadcrumbs */
+
+.sb-disk [data-role="breadcrumbs"],
+.sb-disk__breadcrumbs {
+    display: flex !important;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+    margin: 0 !important;
+    padding: 0 !important;
+    min-width: 0;
+    color: var(--disk-muted);
+    font-size: 13px;
+}
+
+.sb-disk__crumb {
+    display: inline-flex !important;
+    align-items: center;
+    justify-content: center;
+    min-height: 30px !important;
+    padding: 0 10px !important;
+    border: 1px solid #e3e8f2 !important;
+    border-radius: 999px !important;
+    background: #f8fafc !important;
+    color: #4b5563 !important;
+    font-size: 12px !important;
+    font-weight: 700 !important;
+    line-height: 1 !important;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: background .15s ease, border-color .15s ease, color .15s ease;
+}
+
+.sb-disk__crumb:hover {
+    background: #eef4ff !important;
+    color: var(--disk-accent) !important;
+    border-color: #cfe0ff !important;
+}
+
+.sb-disk__crumb-separator,
+.sb-disk [data-role="breadcrumbs"] > span {
+    color: #9ca3af;
+}
+
+/* =========================================================
+   SMART TOOLBAR
+   ========================================================= */
+
+.sb-disk__smart-toolbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 14px 18px;
+    flex-wrap: wrap;
+    margin: 0 0 14px;
+    padding: 12px 14px;
+    border: 1px solid #e6ebf3;
+    border-radius: 16px;
+    background: #fbfcfe;
+    width: 100%;
+    min-width: 0;
+}
+
+.sb-disk__smart-toolbar-left,
+.sb-disk__smart-toolbar-right {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+    min-width: 0;
+}
+
+.sb-disk__smart-toolbar-left {
+    flex: 1 1 360px;
+}
+
+.sb-disk__smart-toolbar-right {
+    flex: 0 1 auto;
+    justify-content: flex-end;
+}
+
+.sb-disk__toolbar,
+.sb-disk__controls,
+.sb-disk__actions-panel,
+.sb-disk__filter,
+.sb-disk__filters {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+    width: 100%;
+    min-width: 0;
+}
+
+/* =========================================================
+   INPUTS / SELECTS
+   ========================================================= */
+
+.sb-disk input[type="text"],
+.sb-disk input[type="search"],
+.sb-disk input[type="number"],
+.sb-disk select {
+    height: 36px !important;
+    padding: 0 12px !important;
+    border: 1px solid var(--disk-border-2) !important;
+    border-radius: 10px !important;
+    background: #fff !important;
+    color: var(--disk-text) !important;
+    font-size: 13px !important;
+    outline: none !important;
+    transition: border-color .15s ease, box-shadow .15s ease;
+}
+
+.sb-disk input[type="text"]:focus,
+.sb-disk input[type="search"]:focus,
+.sb-disk input[type="number"]:focus,
+.sb-disk select:focus {
+    border-color: var(--disk-accent) !important;
+    box-shadow: 0 0 0 3px rgba(37, 99, 235, .12) !important;
+}
+
+.sb-disk [data-role="search-input"] {
+    min-width: 260px !important;
+    width: 260px !important;
+}
+
+.sb-disk [data-role="sort-select"] {
+    min-width: 150px !important;
+}
+
+/* =========================================================
+   BUTTONS
+   ========================================================= */
+
+.sb-disk button,
+.sb-disk .sb-disk__row-btn,
+.sb-disk .sb-disk__view-btn,
+.sb-disk .sb-disk-modern-control {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 36px;
+    padding: 0 12px;
+    border: 1px solid var(--disk-border-2);
+    border-radius: 10px;
+    background: #ffffff;
+    color: #374151;
+    font-size: 13px;
+    font-weight: 700;
+    line-height: 1;
+    cursor: pointer;
+    white-space: nowrap;
+    text-decoration: none !important;
+    transition:
+        background .15s ease,
+        border-color .15s ease,
+        color .15s ease,
+        box-shadow .15s ease,
+        transform .15s ease;
+}
+
+.sb-disk button:hover,
+.sb-disk .sb-disk__row-btn:hover,
+.sb-disk .sb-disk__view-btn:hover {
+    border-color: #c7d7f3;
+    background: #f8fbff;
+    color: var(--disk-accent);
+}
+
+.sb-disk button:active,
+.sb-disk .sb-disk__row-btn:active,
+.sb-disk .sb-disk__view-btn:active {
+    transform: translateY(1px);
+}
+
+.sb-disk [data-action="upload"],
+.sb-disk .sb-disk-modern-primary,
+.sb-disk .sb-disk__view-btn.is-active,
+.sb-disk .sb-disk__row-btn.is-primary,
+.sb-disk .sb-disk__row-btn--primary {
+    border-color: var(--disk-accent) !important;
+    background: var(--disk-accent) !important;
+    color: #fff !important;
+}
+
+.sb-disk [data-action="upload"]:hover,
+.sb-disk .sb-disk-modern-primary:hover,
+.sb-disk .sb-disk__view-btn.is-active:hover,
+.sb-disk .sb-disk__row-btn.is-primary:hover,
+.sb-disk .sb-disk__row-btn--primary:hover {
+    border-color: var(--disk-accent-hover) !important;
+    background: var(--disk-accent-hover) !important;
+    color: #fff !important;
+    box-shadow: 0 8px 20px rgba(37, 99, 235, .22);
+}
+
+.sb-disk .sb-disk__row-btn.is-danger,
+.sb-disk [data-row-action="delete"] {
+    border-color: #fecaca;
+    background: #fff;
+    color: var(--disk-danger);
+}
+
+.sb-disk .sb-disk__row-btn.is-danger:hover,
+.sb-disk [data-row-action="delete"]:hover {
+    background: #fee2e2;
+    color: #991b1b;
+}
+
+/* =========================================================
+   STATES
+   ========================================================= */
+
+.sb-disk [data-state] {
+    margin-top: 12px;
+}
+
+.sb-disk [data-state="loading"],
+.sb-disk [data-state="error"],
+.sb-disk [data-state="no-root"],
+.sb-disk [data-state="no-access"],
+.sb-disk [data-state="empty"],
+.sb-public-disk-loading {
+    min-height: 150px;
+    padding: 28px;
+    border: 1px dashed #cbd5e1;
+    border-radius: 18px;
+    background:
+        radial-gradient(circle at top left, rgba(37, 99, 235, .08), transparent 35%),
+        #fff;
+    color: var(--disk-muted);
+    text-align: center;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.sb-disk [data-state="error"] {
+    border-color: #fecaca;
+    background:
+        radial-gradient(circle at top left, rgba(220, 38, 38, .08), transparent 35%),
+        #fff;
+    color: #991b1b;
+}
+
+.sb-disk-empty-enhanced {
+    min-height: 150px;
+    padding: 28px;
+    border: 1px dashed #cbd5e1;
+    border-radius: 18px;
+    background:
+        radial-gradient(circle at top left, rgba(37, 99, 235, .08), transparent 35%),
+        #fff;
+    color: var(--disk-muted);
+    text-align: center;
+    display: flex !important;
+    align-items: center;
+    justify-content: center;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.sb-disk-empty-icon {
+    width: 58px;
+    height: 58px;
+    border-radius: 20px;
+    background: #eef2ff;
+    color: var(--disk-accent);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 30px;
+}
+
+.sb-disk-empty-enhanced strong,
+.sb-disk [data-state] strong {
+    color: var(--disk-text);
+    font-size: 16px;
+}
+
+.sb-disk-empty-enhanced span,
+.sb-disk [data-state] span {
+    color: var(--disk-muted);
+    font-size: 13px;
+}
+
+/* =========================================================
+   TABLE VIEW
+   ========================================================= */
+
+.sb-disk__table-wrap,
+.sb-disk__table-container,
+.sb-disk [data-view-container="table"] {
+    width: 100%;
+    min-width: 0;
+    overflow-x: auto;
+    border: 1px solid var(--disk-border);
+    border-radius: 16px;
+    background: #fff;
+}
+
+.sb-disk table {
+    width: 100%;
+    min-width: 760px;
+    border-collapse: separate;
+    border-spacing: 0;
+    background: #fff;
+}
+
+.sb-disk thead th {
+    height: 38px;
+    padding: 8px 14px;
+    border-bottom: 1px solid var(--disk-border);
+    background: #f8fafc;
+    color: #64748b;
+    font-size: 12px;
+    font-weight: 800;
+    text-align: left;
+    text-transform: uppercase;
+    letter-spacing: .03em;
+    vertical-align: middle;
+}
+
+.sb-disk tbody td {
+    height: 50px;
+    padding: 8px 14px;
+    border-bottom: 1px solid #f1f5f9;
+    vertical-align: middle;
+    color: #374151;
+    font-size: 13px;
+}
+
+.sb-disk tbody tr:last-child td {
+    border-bottom: 0;
+}
+
+.sb-disk tbody tr {
+    transition: background .15s ease;
+}
+
+.sb-disk tbody tr:hover {
+    background: #f8fbff;
+}
+
+.sb-disk tbody tr.is-selected {
+    background: #eff6ff;
+}
+
+.sb-disk__check-cell {
+    width: 44px;
+}
+
+.sb-disk__name-cell {
+    min-width: 260px;
+}
+
+/* =========================================================
+   FILE NAME / ICONS
+   ========================================================= */
+
+.sb-disk__modern-name {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    min-width: 0;
+    max-width: 100%;
+}
+
+.sb-disk__modern-name-main {
+    min-width: 0;
+}
+
+.sb-disk__modern-name-title {
+    color: var(--disk-text);
+    font-size: 14px;
+    font-weight: 800;
+    line-height: 1.25;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.sb-disk__modern-name-sub {
+    margin-top: 3px;
+    color: var(--disk-muted);
+    font-size: 12px;
+}
+
+.sb-disk__modern-icon {
+    width: 38px;
+    height: 38px;
+    min-width: 38px;
+    max-width: 38px;
+    min-height: 38px;
+    max-height: 38px;
+    border-radius: 13px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    background: #f1f5f9;
+    color: #475569;
+    font-size: 10px;
+    font-weight: 900;
+    line-height: 1;
+    flex: 0 0 38px;
+}
+
+.sb-disk__modern-icon--folder {
+    background: #fef3c7;
+    color: #92400e;
+    font-size: 20px;
+}
+
+.sb-disk__modern-icon--pdf {
+    background: #fee2e2;
+    color: #991b1b;
+}
+
+.sb-disk__modern-icon--doc {
+    background: #dbeafe;
+    color: #1d4ed8;
+}
+
+.sb-disk__modern-icon--xls {
+    background: #dcfce7;
+    color: #166534;
+}
+
+.sb-disk__modern-icon--ppt {
+    background: #ffedd5;
+    color: #c2410c;
+}
+
+.sb-disk__modern-icon--img {
+    background: #fce7f3;
+    color: #be185d;
+}
+
+.sb-disk__modern-icon--zip {
+    background: #ede9fe;
+    color: #6d28d9;
+}
+
+.sb-disk__modern-icon--file {
+    background: #f1f5f9;
+    color: #475569;
+}
+
+.sb-disk__item-name {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    min-width: 0;
+}
+
+.sb-disk__item-name-label {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-weight: 700;
+    color: #1f2937;
+}
+
+.sb-disk__badge,
+.sb-disk__type-pill {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 24px;
+    padding: 0 9px;
+    border-radius: 999px;
+    background: #f3f4f6;
+    color: #4b5563;
+    font-size: 12px;
+    font-weight: 800;
+    white-space: nowrap;
+}
+
+/* =========================================================
+   ROW ACTIONS
+   ========================================================= */
+
+.sb-disk__actions {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 6px;
+    flex-wrap: wrap;
+}
+
+.sb-disk__actions .sb-disk__row-btn,
+.sb-disk__viewer-btn {
+    min-height: 30px;
+    padding: 0 10px;
+    border-radius: 9px;
+    font-size: 12px;
+}
+
+.sb-disk__viewer-btn {
+    display: inline-flex !important;
+    align-items: center;
+    justify-content: center;
+    border: 1px solid var(--disk-accent) !important;
+    background: var(--disk-accent) !important;
+    color: #fff !important;
+    cursor: pointer;
+    text-decoration: none !important;
+}
+
+.sb-disk__viewer-btn:hover {
+    background: var(--disk-accent-hover) !important;
+    border-color: var(--disk-accent-hover) !important;
+    color: #fff !important;
+}
+
+/* =========================================================
+   HIDDEN OPEN BUTTONS / DOUBLE CLICK CLEAN
+   ========================================================= */
+
+.sb-disk__hidden-viewer {
+    position: absolute !important;
+    width: 1px !important;
+    height: 1px !important;
+    min-width: 1px !important;
+    min-height: 1px !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    border: 0 !important;
+    overflow: hidden !important;
+    opacity: 0 !important;
+    pointer-events: none !important;
+}
+
+.sb-disk__row-btn[data-row-action="open"]:not(.sb-disk__hidden-viewer),
+.sb-disk__viewer-btn[data-row-action="open"]:not(.sb-disk__hidden-viewer) {
+    display: none !important;
+}
+
+.sb-disk__row[data-entity-type="folder"],
+.sb-disk__card[data-entity-type="folder"],
+.sb-disk__row[data-entity-type="file"],
+.sb-disk__card[data-entity-type="file"] {
+    cursor: default;
+}
+
+.sb-disk__row[data-entity-type="folder"] .sb-disk__name-cell,
+.sb-disk__row[data-entity-type="file"] .sb-disk__name-cell,
+.sb-disk__card[data-entity-type="folder"] .sb-disk__card-name,
+.sb-disk__card[data-entity-type="file"] .sb-disk__card-name {
+    cursor: pointer;
+}
+
+.sb-disk__row[data-entity-type="folder"] .sb-disk__modern-name-title::after,
+.sb-disk__row[data-entity-type="file"] .sb-disk__modern-name-title::after,
+.sb-disk__card[data-entity-type="folder"] .sb-disk__card-name::after,
+.sb-disk__card[data-entity-type="file"] .sb-disk__card-name::after {
+    content: none !important;
+    display: none !important;
+}
+
+/* =========================================================
+   GRID VIEW
+   ========================================================= */
+
+.sb-disk__grid,
+.sb-disk [data-view-container="grid"] {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+    gap: 12px;
+    width: 100%;
+    min-width: 0;
+}
+
+.sb-disk__card {
+    min-height: 220px;
+    padding: 14px;
+    border: 1px solid var(--disk-border);
+    border-radius: 18px;
+    background: #fff;
+    transition:
+        border-color .15s ease,
+        box-shadow .15s ease,
+        transform .15s ease,
+        background .15s ease;
+}
+
+.sb-disk__card:hover {
+    border-color: #c7d2fe;
+    background: #f8fbff;
+    box-shadow: 0 12px 26px rgba(37, 99, 235, .10);
+    transform: translateY(-1px);
+}
+
+.sb-disk__card.is-selected {
+    border-color: var(--disk-accent);
+    background: #eff6ff;
+}
+
+.sb-disk__card-top {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+}
+
+.sb-disk__card-check {
+    display: inline-flex;
+    align-items: center;
+}
+
+.sb-disk__card-preview {
+    height: 86px;
+    margin: 12px 0;
+    border-radius: 15px;
+    background: #f8fafc;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.sb-disk__card-preview .sb-disk__modern-icon {
+    width: 48px;
+    height: 48px;
+    min-width: 48px;
+    min-height: 48px;
+    border-radius: 16px;
+}
+
+.sb-disk__card-preview .sb-disk__modern-icon--folder {
+    font-size: 24px;
+}
+
+.sb-disk__card-name {
+    font-size: 14px;
+    font-weight: 800;
+    color: var(--disk-text);
+    line-height: 1.3;
+    word-break: break-word;
+}
+
+.sb-disk__card-meta {
+    margin-top: 5px;
+    color: var(--disk-muted);
+    font-size: 12px;
+}
+
+.sb-disk__card-sub {
+    color: var(--disk-muted);
+}
+
+.sb-disk__card-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-top: 12px;
+}
+
+.sb-disk__card-actions .sb-disk__row-btn {
+    min-height: 32px;
+    padding: 0 10px;
+    border-radius: 10px;
+    font-size: 12px;
+}
+
+/* =========================================================
+   BULK BAR
+   ========================================================= */
+
+.sb-disk [data-role="bulkbar"] {
+    margin: 12px 0;
+    padding: 12px 14px;
+    border: 1px solid #c7d2fe;
+    border-radius: 14px;
+    background: #eef2ff;
+    color: #1e3a8a;
+}
+
+.sb-disk [data-role="bulkbar-text"] {
+    font-weight: 800;
+}
+
+/* =========================================================
+   SETTINGS MODAL FINAL
+   ========================================================= */
+
+.sb-disk-settings-modal {
+    position: fixed !important;
+    inset: 0 !important;
+    z-index: 10000 !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    padding: 24px !important;
+    background: rgba(15, 23, 42, .50) !important;
+    backdrop-filter: blur(7px);
+    overflow: auto !important;
+}
+
+.sb-disk-settings-modal[hidden] {
+    display: none !important;
+}
+
+.sb-disk-settings-shell {
+    position: relative !important;
+    width: min(760px, calc(100vw - 48px)) !important;
+    max-height: calc(100vh - 48px) !important;
+    margin: 0 !important;
+    padding: 26px !important;
+    overflow: auto !important;
+    border: 1px solid rgba(226, 232, 240, .95) !important;
+    border-radius: 24px !important;
+    background: #ffffff !important;
+    box-shadow: 0 34px 90px rgba(15, 23, 42, .30) !important;
+}
+
+.sb-disk-settings-modal h1,
+.sb-disk-settings-modal h2,
+.sb-disk-settings-modal h3 {
+    margin: 0 48px 22px 0 !important;
+    color: #111827 !important;
+    font-size: 24px !important;
+    line-height: 1.2 !important;
+    font-weight: 900 !important;
+}
+
+.sb-disk-settings-modal [data-action="close-settings"] {
+    min-height: 36px !important;
+    height: 36px !important;
+    padding: 0 14px !important;
+    border-radius: 12px !important;
+    border: 1px solid #dbe3ef !important;
+    background: #ffffff !important;
+    color: #374151 !important;
+    font-size: 13px !important;
+    font-weight: 800 !important;
+}
+
+.sb-disk-settings-modal [data-action="close-settings"]:not(.sb-disk-settings-footer [data-action="close-settings"]) {
+    position: absolute !important;
+    top: 20px !important;
+    right: 20px !important;
+    width: 36px !important;
+    min-width: 36px !important;
+    padding: 0 !important;
+    font-size: 0 !important;
+}
+
+.sb-disk-settings-modal [data-action="close-settings"]:not(.sb-disk-settings-footer [data-action="close-settings"])::before {
+    content: "×";
+    font-size: 20px;
+    line-height: 1;
+}
+
+.sb-disk-settings-modal [data-role="settings-form"] {
+    display: grid !important;
+    grid-template-columns: 210px minmax(0, 1fr) !important;
+    gap: 12px 16px !important;
+    align-items: center !important;
+    margin: 0 !important;
+    padding: 0 !important;
+}
+
+.sb-disk-settings-section-main,
+.sb-disk-settings-section-title {
+    grid-column: 1 / -1 !important;
+    margin-top: 6px !important;
+    padding-top: 6px !important;
+    color: #111827 !important;
+    font-size: 15px !important;
+    font-weight: 900 !important;
+}
+
+.sb-disk-settings-section-title {
+    margin-top: 18px !important;
+    padding-top: 18px !important;
+    border-top: 1px solid #eef2f7 !important;
+}
+
+.sb-disk-settings-modal [data-role="settings-form"] > label:not(:has(input[type="checkbox"])) {
+    margin: 0 !important;
+    color: #374151 !important;
+    font-size: 13px !important;
+    font-weight: 800 !important;
+    line-height: 1.3 !important;
+}
+
+.sb-disk-settings-modal [data-role="settings-form"] input[type="text"],
+.sb-disk-settings-modal [data-role="settings-form"] input[type="number"],
+.sb-disk-settings-modal [data-role="settings-form"] select,
+.sb-disk-settings-modal [data-role="settings-form"] textarea {
+    width: 100% !important;
+    min-width: 0 !important;
+    max-width: 100% !important;
+    height: 40px !important;
+    padding: 0 13px !important;
+    border: 1px solid #dbe3ef !important;
+    border-radius: 13px !important;
+    background: #ffffff !important;
+    color: #111827 !important;
+    font-size: 13px !important;
+    outline: none !important;
+    box-shadow: none !important;
+}
+
+.sb-disk-settings-modal [data-role="settings-form"] textarea {
+    height: auto !important;
+    min-height: 84px !important;
+    padding-top: 10px !important;
+    padding-bottom: 10px !important;
+}
+
+.sb-disk-settings-modal [data-role="settings-form"] input:focus,
+.sb-disk-settings-modal [data-role="settings-form"] select:focus,
+.sb-disk-settings-modal [data-role="settings-form"] textarea:focus {
+    border-color: var(--disk-accent, #2563eb) !important;
+    box-shadow: 0 0 0 3px rgba(37, 99, 235, .12) !important;
+}
+
+.sb-disk-settings-modal [data-role="settings-form"] small,
+.sb-disk-settings-modal [data-role="settings-form"] .hint,
+.sb-disk-settings-modal [data-role="settings-form"] .help {
+    grid-column: 2 / 3 !important;
+    margin: -6px 0 4px !important;
+    color: #6b7280 !important;
+    font-size: 12px !important;
+    line-height: 1.35 !important;
+}
+
+.sb-disk-settings-checks {
+    grid-column: 1 / -1 !important;
+    display: grid !important;
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+    gap: 8px !important;
+    margin-top: 0 !important;
+}
+
+.sb-disk-settings-checks label {
+    display: flex !important;
+    align-items: center !important;
+    gap: 8px !important;
+    min-height: 38px !important;
+    margin: 0 !important;
+    padding: 9px 10px !important;
+    border: 1px solid #e5e7eb !important;
+    border-radius: 13px !important;
+    background: #f8fafc !important;
+    color: #374151 !important;
+    font-size: 12px !important;
+    font-weight: 700 !important;
+    line-height: 1.3 !important;
+}
+
+.sb-disk-settings-checks label:hover {
+    border-color: #c7d2fe !important;
+    background: #f8fbff !important;
+}
+
+.sb-disk-settings-checks input[type="checkbox"] {
+    width: 16px !important;
+    height: 16px !important;
+    margin: 0 !important;
+    flex: 0 0 16px !important;
+    accent-color: var(--disk-accent, #2563eb);
+}
+
+.sb-disk-settings-footer {
+    display: flex !important;
+    align-items: center !important;
+    justify-content: flex-end !important;
+    gap: 10px !important;
+    margin-top: 22px !important;
+    padding-top: 18px !important;
+    border-top: 1px solid #eef2f7 !important;
+}
+
+.sb-disk-settings-footer button {
+    min-height: 40px !important;
+    padding: 0 16px !important;
+    border-radius: 12px !important;
+    font-size: 13px !important;
+    font-weight: 800 !important;
+}
+
+.sb-disk-settings-footer [data-action="save-settings"] {
+    border-color: var(--disk-accent, #2563eb) !important;
+    background: var(--disk-accent, #2563eb) !important;
+    color: #fff !important;
+}
+
+.sb-disk-settings-footer [data-action="save-settings"]:hover {
+    background: var(--disk-accent-hover, #3f5de9) !important;
+    border-color: var(--disk-accent-hover, #3f5de9) !important;
+    color: #fff !important;
+}
+
+.sb-disk-settings-modal [data-role="settings-message"] {
+    margin-top: 12px !important;
+    color: #6b7280 !important;
+    font-size: 13px !important;
+}
+
+/* =========================================================
+   DUPLICATE FILE UPLOAD MODAL
+   ========================================================= */
+
+.sb-disk-duplicate-modal {
+    position: fixed;
+    inset: 0;
+    z-index: 20000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+}
+
+.sb-disk-duplicate-modal__backdrop {
+    position: absolute;
+    inset: 0;
+    background: rgba(15, 23, 42, .48);
+    backdrop-filter: blur(5px);
+}
+
+.sb-disk-duplicate-modal__dialog {
+    position: relative;
+    width: min(520px, 100%);
+    overflow: hidden;
+    border: 1px solid #e5e7eb;
+    border-radius: 22px;
+    background: #fff;
+    box-shadow: 0 28px 80px rgba(15, 23, 42, .30);
+}
+
+.sb-disk-duplicate-modal__head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 16px;
+    padding: 20px 22px;
+    border-bottom: 1px solid #eef2f7;
+    background: #f9fafb;
+}
+
+.sb-disk-duplicate-modal__title {
+    color: #111827;
+    font-size: 20px;
+    font-weight: 900;
+    line-height: 1.25;
+}
+
+.sb-disk-duplicate-modal__subtitle {
+    margin-top: 5px;
+    color: #6b7280;
+    font-size: 13px;
+    line-height: 1.45;
+}
+
+.sb-disk-duplicate-modal__close {
+    width: 34px;
+    height: 34px;
+    border: 1px solid #e5e7eb;
+    border-radius: 11px;
+    background: #fff;
+    color: #6b7280;
+    cursor: pointer;
+    font-size: 22px;
+    line-height: 1;
+}
+
+.sb-disk-duplicate-modal__close:hover {
+    background: #f3f4f6;
+    color: #111827;
+}
+
+.sb-disk-duplicate-modal__body {
+    padding: 22px;
+}
+
+.sb-disk-duplicate-file {
+    padding: 12px;
+    border: 1px solid #e5e7eb;
+    border-radius: 14px;
+    background: #f8fafc;
+}
+
+.sb-disk-duplicate-file__label {
+    color: #6b7280;
+    font-size: 12px;
+    font-weight: 700;
+}
+
+.sb-disk-duplicate-file__name {
+    margin-top: 4px;
+    color: #111827;
+    font-size: 14px;
+    font-weight: 900;
+    word-break: break-word;
+}
+
+.sb-disk-duplicate-field {
+    margin-top: 14px;
+}
+
+.sb-disk-duplicate-field label {
+    display: block;
+    margin-bottom: 6px;
+    color: #374151;
+    font-size: 13px;
+    font-weight: 800;
+}
+
+.sb-disk-duplicate-input {
+    width: 100%;
+    height: 40px;
+    padding: 0 13px;
+    border: 1px solid #dbe3ef;
+    border-radius: 13px;
+    background: #fff;
+    color: #111827;
+    font-size: 13px;
+    outline: none;
+}
+
+.sb-disk-duplicate-input:focus {
+    border-color: var(--disk-accent, #2563eb);
+    box-shadow: 0 0 0 3px rgba(37, 99, 235, .12);
+}
+
+.sb-disk-duplicate-note {
+    margin-top: 12px;
+    padding: 10px 12px;
+    border: 1px solid #dbeafe;
+    border-radius: 12px;
+    background: #eff6ff;
+    color: #1e40af;
+    font-size: 12px;
+    line-height: 1.45;
+}
+
+.sb-disk-duplicate-modal__footer {
+    display: flex;
+    justify-content: flex-end;
+    gap: 10px;
+    padding: 16px 22px;
+    border-top: 1px solid #eef2f7;
+    background: #f9fafb;
+}
+
+.sb-disk-duplicate-btn {
+    min-height: 38px;
+    padding: 0 14px;
+    border: 1px solid #dbe3ef;
+    border-radius: 12px;
+    background: #fff;
+    color: #374151;
+    font-size: 13px;
+    font-weight: 800;
+    cursor: pointer;
+}
+
+.sb-disk-duplicate-btn:hover {
+    border-color: #c7d2fe;
+    background: #eef2ff;
+    color: var(--disk-accent, #2563eb);
+}
+
+.sb-disk-duplicate-btn.is-primary {
+    border-color: var(--disk-accent, #2563eb);
+    background: var(--disk-accent, #2563eb);
+    color: #fff;
+}
+
+.sb-disk-duplicate-btn.is-primary:hover {
+    background: var(--disk-accent-hover, #3f5de9);
+    border-color: var(--disk-accent-hover, #3f5de9);
+    color: #fff;
+}
+
+/* =========================================================
+   FILE HISTORY MODAL
+   ========================================================= */
+
+.sb-disk-history-modal {
+    position: fixed;
+    inset: 0;
+    z-index: 21000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+}
+
+.sb-disk-history-modal__backdrop {
+    position: absolute;
+    inset: 0;
+    background: rgba(15, 23, 42, .48);
+    backdrop-filter: blur(5px);
+}
+
+.sb-disk-history-modal__dialog {
+    position: relative;
+    width: min(640px, 100%);
+    max-height: calc(100vh - 48px);
+    overflow: hidden;
+    border: 1px solid #e5e7eb;
+    border-radius: 22px;
+    background: #fff;
+    box-shadow: 0 28px 80px rgba(15, 23, 42, .30);
+}
+
+.sb-disk-history-modal__head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 16px;
+    padding: 20px 22px;
+    border-bottom: 1px solid #eef2f7;
+    background: #f9fafb;
+}
+
+.sb-disk-history-modal__title {
+    color: #111827;
+    font-size: 20px;
+    font-weight: 900;
+    line-height: 1.25;
+}
+
+.sb-disk-history-modal__subtitle {
+    margin-top: 5px;
+    color: #6b7280;
+    font-size: 13px;
+    line-height: 1.45;
+    word-break: break-word;
+}
+
+.sb-disk-history-modal__close {
+    width: 34px;
+    height: 34px;
+    border: 1px solid #e5e7eb;
+    border-radius: 11px;
+    background: #fff;
+    color: #6b7280;
+    cursor: pointer;
+    font-size: 22px;
+    line-height: 1;
+}
+
+.sb-disk-history-modal__close:hover {
+    background: #f3f4f6;
+    color: #111827;
+}
+
+.sb-disk-history-modal__body {
+    max-height: calc(100vh - 170px);
+    overflow: auto;
+    padding: 16px;
+}
+
+.sb-disk-history-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 14px;
+    padding: 12px;
+    border: 1px solid #e5e7eb;
+    border-radius: 14px;
+    background: #fff;
+}
+
+.sb-disk-history-item + .sb-disk-history-item {
+    margin-top: 10px;
+}
+
+.sb-disk-history-item:hover {
+    border-color: #c7d2fe;
+    background: #f8fbff;
+}
+
+.sb-disk-history-item__main {
+    min-width: 0;
+}
+
+.sb-disk-history-item__name {
+    color: #111827;
+    font-size: 14px;
+    font-weight: 900;
+    word-break: break-word;
+}
+
+.sb-disk-history-item__meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-top: 6px;
+}
+
+.sb-disk-history-item__meta span {
+    display: inline-flex;
+    min-height: 22px;
+    align-items: center;
+    padding: 0 8px;
+    border-radius: 999px;
+    background: #f3f4f6;
+    color: #6b7280;
+    font-size: 12px;
+    font-weight: 700;
+}
+
+.sb-disk-history-item__actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex: 0 0 auto;
+}
+
+.sb-disk-history-btn {
+    min-height: 34px;
+    padding: 0 12px;
+    border: 1px solid #dbe3ef;
+    border-radius: 11px;
+    background: #fff;
+    color: #374151;
+    font-size: 13px;
+    font-weight: 800;
+    cursor: pointer;
+}
+
+.sb-disk-history-btn:hover {
+    border-color: #c7d2fe;
+    background: #eef2ff;
+    color: var(--disk-accent, #2563eb);
+}
+
+.sb-disk-history-btn.is-primary {
+    border-color: var(--disk-accent, #2563eb);
+    background: var(--disk-accent, #2563eb);
+    color: #fff;
+}
+
+.sb-disk-history-btn.is-primary:hover {
+    background: var(--disk-accent-hover, #3f5de9);
+    border-color: var(--disk-accent-hover, #3f5de9);
+    color: #fff;
+}
+
+/* =========================================================
+   RESPONSIVE
+   ========================================================= */
+
+@media (max-width: 1100px) {
+    .sb-disk__smart-header,
+    .sb-disk__smart-toolbar {
+        align-items: flex-start;
+        flex-direction: column;
+    }
+
+    .sb-disk__smart-header-right,
+    .sb-disk__smart-toolbar-right {
+        justify-content: flex-start;
+    }
+
+    .sb-disk__smart-toolbar-left,
+    .sb-disk__smart-toolbar-right {
+        width: 100%;
+    }
+
+    .sb-disk [data-role="search-input"] {
+        width: 100% !important;
+        min-width: 0 !important;
+    }
+
+    .sb-disk [data-role="sort-select"] {
+        width: 100% !important;
+    }
+
+    .sb-disk__actions {
+        justify-content: flex-start;
+    }
+}
+
+@media (max-width: 900px) {
+    .sb-public-disk-head {
+        flex-direction: column;
+        align-items: stretch;
+    }
+
+    .sb-disk__grid,
+    .sb-disk [data-view-container="grid"] {
+        grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+    }
+
+    .sb-disk table {
+        min-width: 700px;
+    }
+}
+
+@media (max-width: 760px) {
+    .sb-disk-settings-modal {
+        align-items: flex-start !important;
+        padding: 12px !important;
+    }
+
+    .sb-disk-settings-shell {
+        width: 100% !important;
+        max-height: none !important;
+        padding: 18px !important;
+        border-radius: 20px !important;
+    }
+
+    .sb-disk-settings-modal [data-role="settings-form"] {
+        grid-template-columns: 1fr !important;
+        gap: 8px !important;
+    }
+
+    .sb-disk-settings-modal [data-role="settings-form"] small,
+    .sb-disk-settings-modal [data-role="settings-form"] .hint,
+    .sb-disk-settings-modal [data-role="settings-form"] .help {
+        grid-column: auto !important;
+        margin: -2px 0 4px !important;
+    }
+
+    .sb-disk-settings-checks {
+        grid-template-columns: 1fr !important;
+    }
+
+    .sb-disk-settings-footer {
+        align-items: stretch !important;
+        flex-direction: column-reverse !important;
+    }
+
+    .sb-disk-settings-footer button {
+        width: 100% !important;
+    }
+}
+
+@media (max-width: 700px) {
+    .sb-disk__smart-toolbar {
+        padding: 12px;
+    }
+
+    .sb-disk button,
+    .sb-disk .sb-disk__view-btn,
+    .sb-disk [data-action="upload"],
+    .sb-disk [data-action="create-folder"],
+    .sb-disk [data-action="refresh"],
+    .sb-disk [data-action="settings"] {
+        width: 100%;
+    }
+
+    .sb-disk__actions,
+    .sb-disk__card-actions {
+        align-items: stretch;
+        flex-direction: column;
+    }
+
+    .sb-disk__actions .sb-disk__row-btn,
+    .sb-disk__card-actions .sb-disk__row-btn {
+        width: 100%;
+    }
+
+    .sb-disk-duplicate-modal,
+    .sb-disk-history-modal {
+        align-items: flex-start;
+        padding: 12px;
+    }
+
+    .sb-disk-duplicate-modal__footer {
+        flex-direction: column-reverse;
+    }
+
+    .sb-disk-duplicate-btn {
+        width: 100%;
+    }
+
+    .sb-disk-history-item {
+        align-items: stretch;
+        flex-direction: column;
+    }
+
+    .sb-disk-history-item__actions {
+        justify-content: flex-start;
+        flex-wrap: wrap;
+    }
+}
+
+В public_page.php обнови версию CSS:
+
+<link rel="stylesheet" href="<?= sb_public_h($basePath) ?>/components/disk/styles.css?v=16">
 
 После замены сделай Ctrl + F5.
