@@ -1,97 +1,22 @@
-Проблема почти точно в том, что сейчас в script.js осталось два обработчика dblclick:
+Да, значит дело не просто в двух dblclick внутри файла. Скорее всего компонент диска инициализируется два раза или где-то остался старый обработчик. Сделаем защиту на двух уровнях:
 
-1. первый мы добавляли для файлов;
-
-
-2. второй потом добавили для файлов и папок.
+1. запретим повторную инициализацию .sb-disk;
 
 
+2. поставим глобальный lock на открытие файла, чтобы даже если обработчик сработал дважды, вкладка открылась один раз.
 
-Из-за этого при двойном клике по картинке срабатывают оба обработчика, и открываются 2 вкладки.
 
-Нужно оставить только один обработчик двойного клика.
 
 
 ---
 
-1. В script.js удали все старые dblclick
+1. В script.js замени функцию openFileFromElement
 
-Файл:
+Найди:
 
-/local/sitebuilder/components/disk/script.js
+DiskComponent.prototype.openFileFromElement = function (element) {
 
-Найди внутри bindStaticEvents() все блоки вида:
-
-this.root.addEventListener('dblclick', function (e) {
-
-и удали их полностью.
-
-То есть в файле не должно остаться старых dblclick-обработчиков.
-
-
----
-
-2. Вставь один правильный обработчик
-
-Внутри:
-
-DiskComponent.prototype.bindStaticEvents = function () {
-  var self = this;
-
-сразу после:
-
-var self = this;
-
-вставь:
-
-this.root.addEventListener('dblclick', async function (e) {
-  var item = e.target.closest(
-    '.sb-disk__row[data-id][data-entity-type], .sb-disk__card[data-id][data-entity-type]'
-  );
-
-  if (!item || !self.root.contains(item)) {
-    return;
-  }
-
-  if (e.target.closest('button, input, label, a')) {
-    return;
-  }
-
-  e.preventDefault();
-  e.stopPropagation();
-
-  var entityType = item.getAttribute('data-entity-type') || '';
-  var entityId = Number(item.getAttribute('data-id') || 0);
-
-  var openKey = entityType + ':' + entityId;
-  var now = Date.now();
-
-  if (self._lastDoubleOpenKey === openKey && now - self._lastDoubleOpenAt < 700) {
-    return;
-  }
-
-  self._lastDoubleOpenKey = openKey;
-  self._lastDoubleOpenAt = now;
-
-  if (entityType === 'folder') {
-    if (entityId > 0) {
-      await self.loadFolder(entityId);
-    }
-
-    return;
-  }
-
-  if (entityType === 'file') {
-    self.openFileFromElement(item);
-  }
-});
-
-
----
-
-3. Проверь openFileFromElement
-
-Функция должна быть одна. Если её нет — добавь перед bindStaticEvents():
+и замени всю функцию целиком:
 
 DiskComponent.prototype.openFileFromElement = function (element) {
   if (!element) {
@@ -104,9 +29,29 @@ DiskComponent.prototype.openFileFromElement = function (element) {
     return;
   }
 
+  var entityId = Number(element.getAttribute('data-id') || 0);
   var previewMode = element.getAttribute('data-preview-mode') || '';
   var previewUrl = element.getAttribute('data-preview-url') || '';
   var downloadUrl = element.getAttribute('data-download-url') || '';
+
+  var openUrl = previewUrl || downloadUrl || '';
+  var openKey = 'file:' + entityId + ':' + openUrl;
+  var now = Date.now();
+
+  window.__SB_DISK_OPEN_LOCK__ = window.__SB_DISK_OPEN_LOCK__ || {
+    key: '',
+    time: 0
+  };
+
+  if (
+    window.__SB_DISK_OPEN_LOCK__.key === openKey &&
+    now - window.__SB_DISK_OPEN_LOCK__.time < 1200
+  ) {
+    return;
+  }
+
+  window.__SB_DISK_OPEN_LOCK__.key = openKey;
+  window.__SB_DISK_OPEN_LOCK__.time = now;
 
   if (previewMode === 'office') {
     var viewerBtn = element.querySelector('[data-viewer]');
@@ -130,12 +75,128 @@ DiskComponent.prototype.openFileFromElement = function (element) {
 
 ---
 
-4. Обнови версию скрипта
+2. В bindStaticEvents() оставь один обработчик двойного клика
+
+Внутри:
+
+DiskComponent.prototype.bindStaticEvents = function () {
+  var self = this;
+
+сразу после:
+
+var self = this;
+
+вставь вот этот обработчик:
+
+this.root.addEventListener('dblclick', async function (e) {
+  var item = e.target.closest(
+    '.sb-disk__row[data-id][data-entity-type], .sb-disk__card[data-id][data-entity-type]'
+  );
+
+  if (!item || !self.root.contains(item)) {
+    return;
+  }
+
+  if (e.target.closest('button, input, label, a')) {
+    return;
+  }
+
+  e.preventDefault();
+  e.stopPropagation();
+
+  if (typeof e.stopImmediatePropagation === 'function') {
+    e.stopImmediatePropagation();
+  }
+
+  var entityType = item.getAttribute('data-entity-type') || '';
+  var entityId = Number(item.getAttribute('data-id') || 0);
+
+  var clickKey = entityType + ':' + entityId;
+  var now = Date.now();
+
+  window.__SB_DISK_DBLCLICK_LOCK__ = window.__SB_DISK_DBLCLICK_LOCK__ || {
+    key: '',
+    time: 0
+  };
+
+  if (
+    window.__SB_DISK_DBLCLICK_LOCK__.key === clickKey &&
+    now - window.__SB_DISK_DBLCLICK_LOCK__.time < 1200
+  ) {
+    return;
+  }
+
+  window.__SB_DISK_DBLCLICK_LOCK__.key = clickKey;
+  window.__SB_DISK_DBLCLICK_LOCK__.time = now;
+
+  if (entityType === 'folder') {
+    if (entityId > 0) {
+      await self.loadFolder(entityId);
+    }
+
+    return;
+  }
+
+  if (entityType === 'file') {
+    self.openFileFromElement(item);
+  }
+}, true);
+
+Важно: последний параметр true нужен, чтобы обработчик сработал раньше остальных и остановил лишние открытия.
+
+
+---
+
+3. Удали остальные dblclick
+
+В этом же файле найди все остальные места:
+
+addEventListener('dblclick'
+
+Должен остаться только один обработчик — тот, который выше.
+
+
+---
+
+4. Внизу script.js защити компонент от повторной инициализации
+
+В самом низу файла найди:
+
+document.addEventListener('DOMContentLoaded', function () {
+  document.querySelectorAll('.sb-disk').forEach(function (root) {
+    var component = new DiskComponent(root);
+    component.init();
+  });
+});
+
+Замени на:
+
+document.addEventListener('DOMContentLoaded', function () {
+  document.querySelectorAll('.sb-disk').forEach(function (root) {
+    if (root.getAttribute('data-disk-component-ready') === '1') {
+      return;
+    }
+
+    root.setAttribute('data-disk-component-ready', '1');
+
+    var component = new DiskComponent(root);
+    component.init();
+  });
+});
+
+
+---
+
+5. Обнови версию скрипта
 
 В public_page.php:
 
-<script src="<?= sb_public_h($basePath) ?>/components/disk/script.js?v=14"></script>
+<script src="<?= sb_public_h($basePath) ?>/components/disk/script.js?v=15"></script>
 
-После этого Ctrl + F5.
+После этого сделай Ctrl + F5.
 
-Теперь при двойном клике должна открываться только одна вкладка.
+Если после этого всё равно откроются 2 вкладки, значит script.js подключён на странице два раза. Тогда в исходном коде страницы нужно найти два подключения:
+
+components/disk/script.js
+
+и оставить только одно.
