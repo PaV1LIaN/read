@@ -1,195 +1,774 @@
-В итоге делаем так:
-
-Главная идея
-
-Шаблон сайта — это сохранённая копия структуры сайта:
-
-сайт
-страницы
-вложенность страниц
-блоки
-layout-зоны
-меню
-настройки оформления
-
-Но файлы диска не копируем.
-Если в шаблоне есть блок Диск, то в новом сайте этот блок будет, но папка диска будет новая/пустая.
-
-
----
-
-Главное правило по правам
-
-Создавать / редактировать / удалять шаблоны может только администратор Битрикса:
-
-global $USER;
-$USER->IsAdmin()
-
-Не OWNER, не ADMIN сайта, не EDITOR.
-
-
----
-
-Что нужно сделать по шагам
-
-Шаг 1. Добавить проверку администратора Битрикса
-
-В файл:
-
-/local/sitebuilder/lib/helpers.php
-
-добавить функции:
-
-sb_is_bitrix_admin()
-sb_require_bitrix_admin()
-
-Они будут защищать API шаблонов.
-
-
----
-
-Шаг 2. Создать хранилище шаблонов
-
-Нужен новый файл:
-
-/local/sitebuilder/lib/TemplateRepository.php
-
-Он будет работать с шаблонами:
-
-получить список шаблонов
-получить шаблон по ID
-создать шаблон
-обновить шаблон
-удалить шаблон
-
-Если у тебя сейчас часть проекта уже в PostgreSQL, лучше хранить шаблоны в таблице.
-Если пока часть ещё в JSON, можно временно сделать:
-
-/upload/sitebuilder/templates.json
-
-
----
-
-Шаг 3. Создать сервис шаблонов
-
-Нужен файл:
-
-/local/sitebuilder/lib/SiteTemplateService.php
-
-В нём будет логика:
-
-создать шаблон из текущего сайта
-создать новый сайт из шаблона
-очистить disk-настройки при копировании
-заменить старые pageId на новые pageId
-заменить старые blockId на новые blockId
-
-
----
-
-Шаг 4. Создать API-обработчик шаблонов
-
-Нужен файл:
-
-/local/sitebuilder/api/handlers/template.php
-
-Действия:
-
-template.list
-template.get
-template.create
-template.delete
-template.createSite
-
-Где:
-
-template.create — только Bitrix admin
-template.delete — только Bitrix admin
-template.createSite — можно разрешить пользователям, которые имеют право создавать сайты
-
-
----
-
-Шаг 5. Подключить обработчик в API
-
-В файле:
-
-/local/sitebuilder/api/index.php
-
-надо подключить:
-
-require __DIR__ . '/handlers/template.php';
-
-
----
-
-Шаг 6. Добавить кнопку в редактор сайта
-
-В:
-
-/local/sitebuilder/editor.php
-
-добавить кнопку:
-
-Сохранить как шаблон
-
-Но показывать её только если:
-
-$USER->IsAdmin()
-
-
----
-
-Шаг 7. Добавить интерфейс на главной странице
-
-В:
-
-/local/sitebuilder/index.php
-
-добавить блок:
-
-Шаблоны сайтов
-
-Там будут карточки шаблонов:
-
-Название шаблона
-Описание
-Дата создания
-[Создать сайт]
-
-
----
-
-Что лучше сделать первым
-
-Начинаем с backend, чтобы не ломать интерфейс.
-
-Первым делом нужно сделать:
-
-1. helpers.php — проверка Bitrix admin
-2. TemplateRepository.php
-3. SiteTemplateService.php
-4. api/handlers/template.php
-5. подключение template.php в api/index.php
-
-После этого уже добавим кнопки в интерфейс.
-
-
----
-
-Что мне нужно от тебя сейчас
-
-Пришли текущие файлы:
-
-/local/sitebuilder/api/index.php
-/local/sitebuilder/api/handlers/site.php
-/local/sitebuilder/lib/helpers.php
-/local/sitebuilder/lib/SiteRepository.php
-
-И напиши, есть ли у тебя такие файлы:
-
-/local/sitebuilder/lib/PageRepository.php
-/local/sitebuilder/lib/BlockRepository.php
-/local/sitebuilder/api/handlers/template.php
-
-Если их нет — так и напиши: нет. Тогда я сделаю вариант под твою текущую структуру.
+<?php
+    
+require_once __DIR__ . '/json.php';
+
+if (!function_exists('sb_normalize_page_record')) {
+    function sb_normalize_page_record(array $page): array
+    {
+        return [
+            'id' => (int)($page['id'] ?? 0),
+            'siteId' => (int)($page['siteId'] ?? 0),
+            'title' => trim((string)($page['title'] ?? '')),
+            'slug' => trim((string)($page['slug'] ?? '')),
+            'parentId' => (int)($page['parentId'] ?? 0),
+            'sort' => (int)($page['sort'] ?? 500),
+            'status' => in_array((string)($page['status'] ?? 'draft'), ['draft', 'published'], true)
+                ? (string)$page['status']
+                : 'draft',
+            'publishedAt' => !empty($page['publishedAt']) ? (string)$page['publishedAt'] : null,
+            'createdAt' => !empty($page['createdAt']) ? (string)$page['createdAt'] : date('c'),
+            'updatedAt' => !empty($page['updatedAt']) ? (string)$page['updatedAt'] : date('c'),
+        ];
+    }
+}
+
+if (!function_exists('sb_normalize_block_record')) {
+    function sb_normalize_block_record(array $block): array
+    {
+        return [
+            'id' => (int)($block['id'] ?? 0),
+            'pageId' => (int)($block['pageId'] ?? 0),
+            'type' => trim((string)($block['type'] ?? 'text')),
+            'sort' => (int)($block['sort'] ?? 500),
+            'content' => is_array($block['content'] ?? null) ? $block['content'] : [],
+            'props' => is_array($block['props'] ?? null) ? $block['props'] : [],
+            'createdAt' => !empty($block['createdAt']) ? (string)$block['createdAt'] : date('c'),
+            'updatedAt' => !empty($block['updatedAt']) ? (string)$block['updatedAt'] : date('c'),
+        ];
+    }
+}
+
+if (!function_exists('sb_normalize_menu_record')) {
+    function sb_normalize_menu_record(array $menu): array
+    {
+        return [
+            'id' => (int)($menu['id'] ?? 0),
+            'siteId' => (int)($menu['siteId'] ?? 0),
+            'name' => trim((string)($menu['name'] ?? '')),
+            'items' => is_array($menu['items'] ?? null) ? array_values($menu['items']) : [],
+            'createdAt' => !empty($menu['createdAt']) ? (string)$menu['createdAt'] : date('c'),
+            'updatedAt' => !empty($menu['updatedAt']) ? (string)$menu['updatedAt'] : date('c'),
+        ];
+    }
+}
+
+if (!function_exists('sb_next_id')) {
+    function sb_next_id(array $rows, string $key = 'id'): int
+    {
+        $max = 0;
+
+        foreach ($rows as $row) {
+            $value = (int)($row[$key] ?? 0);
+            if ($value > $max) {
+                $max = $value;
+            }
+        }
+
+        return $max + 1;
+    }
+}
+
+if (!function_exists('sb_slugify')) {
+    function sb_slugify(string $name): string
+    {
+        $slug = \CUtil::translit($name, 'ru', [
+            'replace_space' => '-',
+            'replace_other' => '-',
+            'change_case' => 'L',
+            'delete_repeat_replace' => true,
+            'use_google' => false,
+        ]);
+
+        $slug = trim($slug, '-');
+        return $slug !== '' ? $slug : 'item';
+    }
+}
+
+if (!function_exists('sb_site_exists')) {
+    function sb_site_exists(int $siteId): bool
+    {
+        foreach (sb_read_sites() as $s) {
+            if ((int)($s['id'] ?? 0) === $siteId) {
+                return true;
+            }
+        }
+        return false;
+    }
+}
+
+if (!function_exists('sb_find_site')) {
+    function sb_find_site(int $siteId): ?array
+    {
+        foreach (sb_read_sites() as $s) {
+            if ((int)($s['id'] ?? 0) === $siteId) {
+                return $s;
+            }
+        }
+        return null;
+    }
+}
+
+if (!function_exists('sb_find_page')) {
+    function sb_find_page(int $pageId): ?array
+    {
+        foreach (sb_read_pages() as $p) {
+            if ((int)($p['id'] ?? 0) === $pageId) {
+                return $p;
+            }
+        }
+        return null;
+    }
+}
+
+if (!function_exists('sb_find_block')) {
+    function sb_find_block(int $blockId): ?array
+    {
+        foreach (sb_read_blocks() as $b) {
+            if ((int)($b['id'] ?? 0) === $blockId) {
+                return $b;
+            }
+        }
+        return null;
+    }
+}
+
+if (!function_exists('sb_page_exists_in_site')) {
+    function sb_page_exists_in_site(int $pageId, int $siteId): bool
+    {
+        $page = sb_find_page($pageId);
+        return $page && (int)($page['siteId'] ?? 0) === $siteId;
+    }
+}
+
+if (!function_exists('sb_page_children_ids')) {
+    function sb_page_children_ids(int $siteId, int $parentId): array
+    {
+        $ids = [];
+        foreach (sb_read_pages() as $p) {
+            if (
+                (int)($p['siteId'] ?? 0) === $siteId
+                && (int)($p['parentId'] ?? 0) === $parentId
+            ) {
+                $ids[] = (int)($p['id'] ?? 0);
+            }
+        }
+        return $ids;
+    }
+}
+
+if (!function_exists('sb_page_is_descendant')) {
+    function sb_page_is_descendant(int $siteId, int $candidateId, int $pageId): bool
+    {
+        if ($candidateId <= 0 || $pageId <= 0) {
+            return false;
+        }
+
+        $pages = sb_read_pages();
+
+        $childrenMap = [];
+        foreach ($pages as $p) {
+            if ((int)($p['siteId'] ?? 0) !== $siteId) {
+                continue;
+            }
+
+            $pid = (int)($p['parentId'] ?? 0);
+            $id  = (int)($p['id'] ?? 0);
+
+            if (!isset($childrenMap[$pid])) {
+                $childrenMap[$pid] = [];
+            }
+            $childrenMap[$pid][] = $id;
+        }
+
+        $stack = [$pageId];
+        $seen = [];
+
+        while ($stack) {
+            $current = array_pop($stack);
+            if (isset($seen[$current])) {
+                continue;
+            }
+            $seen[$current] = true;
+
+            foreach (($childrenMap[$current] ?? []) as $childId) {
+                if ($childId === $candidateId) {
+                    return true;
+                }
+                $stack[] = $childId;
+            }
+        }
+
+        return false;
+    }
+}
+
+if (!function_exists('sb_blocks_for_page')) {
+    function sb_blocks_for_page(int $pageId): array
+    {
+        $blocks = array_values(array_filter(sb_read_blocks(), static function ($b) use ($pageId) {
+            return (int)($b['pageId'] ?? 0) === $pageId;
+        }));
+
+        usort($blocks, static function ($a, $b) {
+            $sortCmp = (int)($a['sort'] ?? 500) <=> (int)($b['sort'] ?? 500);
+            if ($sortCmp !== 0) {
+                return $sortCmp;
+            }
+            return (int)($a['id'] ?? 0) <=> (int)($b['id'] ?? 0);
+        });
+
+        return $blocks;
+    }
+}
+
+if (!function_exists('sb_next_block_id')) {
+    function sb_next_block_id(array $blocks = null): int
+    {
+        if ($blocks === null) {
+            $blocks = sb_read_blocks();
+        }
+
+        $maxId = 0;
+        foreach ($blocks as $b) {
+            $maxId = max($maxId, (int)($b['id'] ?? 0));
+        }
+
+        return $maxId + 1;
+    }
+}
+
+if (!function_exists('sb_next_block_sort')) {
+    function sb_next_block_sort(int $pageId, array $blocks = null): int
+    {
+        if ($blocks === null) {
+            $blocks = sb_read_blocks();
+        }
+
+        $maxSort = 0;
+        foreach ($blocks as $b) {
+            if ((int)($b['pageId'] ?? 0) === $pageId) {
+                $maxSort = max($maxSort, (int)($b['sort'] ?? 0));
+            }
+        }
+
+        return $maxSort + 10;
+    }
+}
+
+if (!function_exists('sb_default_block_content')) {
+    function sb_default_block_content(string $type): array
+    {
+        switch ($type) {
+            case 'text':
+                return ['html' => '<p>Новый текст</p>'];
+
+            case 'heading':
+                return [
+                    'text' => 'Новый заголовок',
+                    'level' => 'h2',
+                    'align' => 'left',
+                ];
+
+            case 'image':
+                return [
+                    'fileId' => 0,
+                    'src' => '',
+                    'alt' => '',
+                    'title' => '',
+                    'width' => '',
+                    'height' => '',
+                    'link' => '',
+                ];
+
+            case 'button':
+                return [
+                    'text' => 'Кнопка',
+                    'href' => '#',
+                    'target' => '_self',
+                    'style' => 'primary',
+                    'align' => 'left',
+                ];
+
+            case 'spacer':
+                return [
+                    'height' => 30,
+                ];
+
+            case 'columns2':
+                return [
+                    'leftHtml' => '<p>Левая колонка</p>',
+                    'rightHtml' => '<p>Правая колонка</p>',
+                    'ratio' => '1:1',
+                    'gap' => 24,
+                ];
+
+            case 'gallery':
+                return [
+                    'items' => [],
+                    'columns' => 3,
+                    'gap' => 16,
+                ];
+
+            case 'card':
+                return [
+                    'title' => 'Карточка',
+                    'text' => 'Описание карточки',
+                    'imageFileId' => 0,
+                    'imageSrc' => '',
+                    'buttonText' => '',
+                    'buttonHref' => '',
+                ];
+
+            case 'cards':
+                return [
+                    'items' => [],
+                    'columns' => 3,
+                    'gap' => 24,
+                ];
+
+            case 'html':
+                return [
+                    'html' => '<div>HTML блок</div>',
+                ];
+
+            default:
+                return [];
+        }
+    }
+}
+
+if (!function_exists('sb_normalize_block_record')) {
+    function sb_normalize_block_record(array $block): array
+    {
+        if (!isset($block['content']) || !is_array($block['content'])) {
+            $block['content'] = [];
+        }
+
+        if (!isset($block['props']) || !is_array($block['props'])) {
+            $block['props'] = [];
+        }
+
+        if (!isset($block['type'])) {
+            $block['type'] = 'text';
+        }
+
+        if (!isset($block['sort'])) {
+            $block['sort'] = 500;
+        }
+
+        return $block;
+    }
+}
+
+if (!function_exists('sb_find_menu')) {
+    function sb_find_menu(int $menuId): ?array
+    {
+        foreach (sb_read_menus() as $m) {
+            if ((int)($m['id'] ?? 0) === $menuId) {
+                return $m;
+            }
+        }
+        return null;
+    }
+}
+
+if (!function_exists('sb_next_menu_id')) {
+    function sb_next_menu_id(array $menus = null): int
+    {
+        if ($menus === null) {
+            $menus = sb_read_menus();
+        }
+
+        $maxId = 0;
+        foreach ($menus as $m) {
+            $maxId = max($maxId, (int)($m['id'] ?? 0));
+        }
+
+        return $maxId + 1;
+    }
+}
+
+if (!function_exists('sb_next_menu_item_id')) {
+    function sb_next_menu_item_id(array $items): int
+    {
+        $maxId = 0;
+        foreach ($items as $item) {
+            $maxId = max($maxId, (int)($item['id'] ?? 0));
+        }
+        return $maxId + 1;
+    }
+}
+
+if (!function_exists('sb_normalize_menu_item')) {
+    function sb_normalize_menu_item(array $item): array
+    {
+        if (!isset($item['id'])) {
+            $item['id'] = 0;
+        }
+        if (!isset($item['title'])) {
+            $item['title'] = '';
+        }
+        if (!isset($item['type'])) {
+            $item['type'] = 'page';
+        }
+        if (!isset($item['pageId'])) {
+            $item['pageId'] = 0;
+        }
+        if (!isset($item['url'])) {
+            $item['url'] = '';
+        }
+        if (!isset($item['target'])) {
+            $item['target'] = '_self';
+        }
+        if (!isset($item['sort'])) {
+            $item['sort'] = 500;
+        }
+
+        return $item;
+    }
+}
+
+if (!function_exists('sb_normalize_menu_record')) {
+    function sb_normalize_menu_record(array $menu): array
+    {
+        if (!isset($menu['items']) || !is_array($menu['items'])) {
+            $menu['items'] = [];
+        }
+
+        $menu['items'] = array_map('sb_normalize_menu_item', $menu['items']);
+
+        usort($menu['items'], static function ($a, $b) {
+            $sortCmp = (int)($a['sort'] ?? 500) <=> (int)($b['sort'] ?? 500);
+            if ($sortCmp !== 0) {
+                return $sortCmp;
+            }
+            return (int)($a['id'] ?? 0) <=> (int)($b['id'] ?? 0);
+        });
+
+        if (!isset($menu['name'])) {
+            $menu['name'] = '';
+        }
+        if (!isset($menu['siteId'])) {
+            $menu['siteId'] = 0;
+        }
+
+        return $menu;
+    }
+}
+
+if (!function_exists('sb_menu_next_item_sort')) {
+    function sb_menu_next_item_sort(array $items): int
+    {
+        $maxSort = 0;
+        foreach ($items as $item) {
+            $maxSort = max($maxSort, (int)($item['sort'] ?? 0));
+        }
+        return $maxSort + 10;
+    }
+}
+
+if (!function_exists('sb_find_access_row')) {
+    function sb_find_access_row(int $siteId, string $accessCode): ?array
+    {
+        foreach (sb_read_access() as $row) {
+            if (
+                (int)($row['siteId'] ?? 0) === $siteId
+                && (string)($row['accessCode'] ?? '') === $accessCode
+            ) {
+                return $row;
+            }
+        }
+
+        return null;
+    }
+}
+
+if (!function_exists('sb_access_rows_for_site')) {
+    function sb_access_rows_for_site(int $siteId): array
+    {
+        return array_values(array_filter(sb_read_access(), static function ($row) use ($siteId) {
+            return (int)($row['siteId'] ?? 0) === $siteId;
+        }));
+    }
+}
+
+if (!function_exists('sb_normalize_access_role')) {
+    function sb_normalize_access_role(string $role): string
+    {
+        $role = strtoupper(trim($role));
+
+        if (!in_array($role, ['VIEWER', 'EDITOR', 'ADMIN', 'OWNER'], true)) {
+            return '';
+        }
+
+        return $role;
+    }
+}
+
+if (!function_exists('sb_count_site_owners')) {
+    function sb_count_site_owners(int $siteId): int
+    {
+        $count = 0;
+
+        foreach (sb_read_access() as $row) {
+            if (
+                (int)($row['siteId'] ?? 0) === $siteId
+                && (string)($row['role'] ?? '') === 'OWNER'
+            ) {
+                $count++;
+            }
+        }
+
+        return $count;
+    }
+}
+
+
+
+if (!function_exists('sb_is_bitrix_admin')) {
+    function sb_is_bitrix_admin(): bool
+    {
+        global $USER;
+
+        return is_object($USER)
+            && method_exists($USER, 'IsAdmin')
+            && $USER->IsAdmin();
+    }
+}
+
+if (!function_exists('sb_require_bitrix_admin')) {
+    function sb_require_bitrix_admin(): void
+    {
+        if (!sb_is_bitrix_admin()) {
+            sb_json_error('BITRIX_ADMIN_REQUIRED', 403, [
+                'message' => 'Создавать и изменять шаблоны может только администратор Битрикса.',
+            ]);
+        }
+    }
+}
+
+if (!function_exists('sb_find_template')) {
+    function sb_find_template(int $templateId): ?array
+    {
+        foreach (sb_read_templates() as $tpl) {
+            if ((int)($tpl['id'] ?? 0) === $templateId) {
+                return $tpl;
+            }
+        }
+        return null;
+    }
+}
+
+if (!function_exists('sb_next_template_id')) {
+    function sb_next_template_id(array $templates = null): int
+    {
+        if ($templates === null) {
+            $templates = sb_read_templates();
+        }
+
+        $maxId = 0;
+        foreach ($templates as $tpl) {
+            $maxId = max($maxId, (int)($tpl['id'] ?? 0));
+        }
+
+        return $maxId + 1;
+    }
+}
+
+if (!function_exists('sb_templates_for_site')) {
+    function sb_templates_for_site(int $siteId): array
+    {
+        $templates = array_values(array_filter(sb_read_templates(), static function ($tpl) use ($siteId) {
+            return (int)($tpl['siteId'] ?? 0) === $siteId;
+        }));
+
+        usort($templates, static function ($a, $b) {
+            return (int)($a['id'] ?? 0) <=> (int)($b['id'] ?? 0);
+        });
+
+        return $templates;
+    }
+}
+
+if (!function_exists('sb_normalize_template_record')) {
+    function sb_normalize_template_record(array $tpl): array
+    {
+        if (!isset($tpl['name'])) {
+            $tpl['name'] = '';
+        }
+        if (!isset($tpl['siteId'])) {
+            $tpl['siteId'] = 0;
+        }
+        if (!isset($tpl['blocks']) || !is_array($tpl['blocks'])) {
+            $tpl['blocks'] = [];
+        }
+
+        $tpl['blocks'] = array_map('sb_normalize_block_record', $tpl['blocks']);
+
+        usort($tpl['blocks'], static function ($a, $b) {
+            $sortCmp = (int)($a['sort'] ?? 500) <=> (int)($b['sort'] ?? 500);
+            if ($sortCmp !== 0) {
+                return $sortCmp;
+            }
+            return (int)($a['id'] ?? 0) <=> (int)($b['id'] ?? 0);
+        });
+
+        return $tpl;
+    }
+}
+
+if (!function_exists('sb_layout_default_record')) {
+    function sb_layout_default_record(int $siteId): array
+    {
+        return [
+            'siteId' => $siteId,
+            'settings' => [
+                'showHeader' => true,
+                'showFooter' => true,
+                'showLeft' => false,
+                'showRight' => false,
+                'leftWidth' => 260,
+                'rightWidth' => 260,
+                'leftMode' => 'blocks',
+            ],
+            'zones' => [
+                'header' => [],
+                'footer' => [],
+                'left' => [],
+                'right' => [],
+            ],
+        ];
+    }
+}
+
+if (!function_exists('sb_layout_valid_zone')) {
+    function sb_layout_valid_zone(string $zone): bool
+    {
+        return in_array($zone, ['header', 'footer', 'left', 'right'], true);
+    }
+}
+
+if (!function_exists('sb_find_layout')) {
+    function sb_find_layout(int $siteId): ?array
+    {
+        foreach (sb_read_layouts() as $layout) {
+            if ((int)($layout['siteId'] ?? 0) === $siteId) {
+                return $layout;
+            }
+        }
+        return null;
+    }
+}
+
+if (!function_exists('sb_layout_ensure_record')) {
+    function sb_layout_ensure_record(int $siteId): array
+    {
+        $layout = sb_find_layout($siteId);
+        if ($layout) {
+            return sb_normalize_layout_record($layout);
+        }
+
+        $layouts = sb_read_layouts();
+        $layout = sb_layout_default_record($siteId);
+        $layouts[] = $layout;
+        sb_write_layouts($layouts);
+
+        return sb_normalize_layout_record($layout);
+    }
+}
+
+if (!function_exists('sb_normalize_layout_record')) {
+    function sb_normalize_layout_record(array $layout): array
+    {
+        if (!isset($layout['settings']) || !is_array($layout['settings'])) {
+            $layout['settings'] = [];
+        }
+
+        $layout['settings'] = array_merge([
+            'showHeader' => true,
+            'showFooter' => true,
+            'showLeft' => false,
+            'showRight' => false,
+            'leftWidth' => 260,
+            'rightWidth' => 260,
+            'leftMode' => 'blocks',
+        ], $layout['settings']);
+
+        if (!isset($layout['zones']) || !is_array($layout['zones'])) {
+            $layout['zones'] = [];
+        }
+
+        foreach (['header', 'footer', 'left', 'right'] as $zone) {
+            if (!isset($layout['zones'][$zone]) || !is_array($layout['zones'][$zone])) {
+                $layout['zones'][$zone] = [];
+            }
+
+            $layout['zones'][$zone] = array_map('sb_normalize_block_record', $layout['zones'][$zone]);
+
+            usort($layout['zones'][$zone], static function ($a, $b) {
+                $sortCmp = (int)($a['sort'] ?? 500) <=> (int)($b['sort'] ?? 500);
+                if ($sortCmp !== 0) {
+                    return $sortCmp;
+                }
+                return (int)($a['id'] ?? 0) <=> (int)($b['id'] ?? 0);
+            });
+        }
+
+        return $layout;
+    }
+}
+
+if (!function_exists('sb_layout_next_block_id')) {
+    function sb_layout_next_block_id(array $layout): int
+    {
+        $maxId = 0;
+
+        $zones = (array)($layout['zones'] ?? []);
+        foreach ($zones as $blocks) {
+            if (!is_array($blocks)) {
+                continue;
+            }
+
+            foreach ($blocks as $block) {
+                $maxId = max($maxId, (int)($block['id'] ?? 0));
+            }
+        }
+
+        return $maxId + 1;
+    }
+}
+
+if (!function_exists('sb_layout_next_block_sort')) {
+    function sb_layout_next_block_sort(array $layout, string $zone): int
+    {
+        $maxSort = 0;
+
+        $blocks = (array)($layout['zones'][$zone] ?? []);
+        foreach ($blocks as $block) {
+            $maxSort = max($maxSort, (int)($block['sort'] ?? 0));
+        }
+
+        return $maxSort + 10;
+    }
+}
+
+if (!function_exists('sb_layout_find_block')) {
+    function sb_layout_find_block(array $layout, int $blockId): ?array
+    {
+        $zones = (array)($layout['zones'] ?? []);
+        foreach ($zones as $zoneName => $blocks) {
+            if (!is_array($blocks)) {
+                continue;
+            }
+
+            foreach ($blocks as $block) {
+                if ((int)($block['id'] ?? 0) === $blockId) {
+                    $block['_zone'] = (string)$zoneName;
+                    return $block;
+                }
+            }
+        }
+
+        return null;
+    }
+}
