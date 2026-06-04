@@ -1,793 +1,417 @@
-Да, начинаем правильно и безопасно: добавляем новый слой “секции страницы”, но пока не ломаем текущие блоки.
+Идём дальше: подключаем вывод секций на публичной странице.
 
-Важно: у тебя уже есть API section.* для разделов/папок сайтов, поэтому для новых “тильда-блоков” используем название:
+Теперь сайт будет рендериться так:
 
-pageSection.*
+Страница
+└── Секция 1
+    └── Колонка 1
+        └── Компоненты / старые блоки
 
-То есть:
+└── Секция 2
+    ├── Колонка 1
+    └── Колонка 2
 
-Страница → pageSection → компоненты/старые blocks
+Сейчас сделаем безопасно: если секций ещё нет, автоматически создаётся “Основная секция”, и старые блоки попадут в неё.
 
 
 ---
 
-1. Создай файл
+1. В public_page.php добавь подключение репозитория
 
-/local/sitebuilder/lib/PageSectionRepository.php
+Файл:
 
-<?php
+/local/sitebuilder/views/layout/public_page.php
 
-class PageSectionRepository
-{
-    protected const FILE_PATH = '/upload/sitebuilder/page_sections.json';
+После блока переменных:
 
-    public static function readAll(): array
-    {
-        $path = self::filePath();
+$site = $vm['site'];
+$pages = $vm['pages'];
+$currentPage = $vm['currentPage'];
+$pageBlocks = $vm['pageBlocks'];
+$layout = $vm['layout'];
+$menu = $vm['menu'];
+$basePath = $vm['basePath'];
+$siteId = (int)$vm['siteId'];
 
-        if (!file_exists($path)) {
-            return [];
-        }
+сразу добавь:
 
-        $raw = file_get_contents($path);
-        $data = json_decode((string)$raw, true);
+$pageSections = [];
 
-        if (!is_array($data)) {
-            return [];
-        }
+$pageSectionRepositoryPath = $_SERVER['DOCUMENT_ROOT'] . '/local/sitebuilder/lib/PageSectionRepository.php';
 
-        return array_values(array_map([self::class, 'normalize'], $data));
-    }
-
-    public static function writeAll(array $items): void
-    {
-        $path = self::filePath();
-        $dir = dirname($path);
-
-        if (!is_dir($dir)) {
-            mkdir($dir, 0775, true);
-        }
-
-        $items = array_values(array_map([self::class, 'normalize'], $items));
-
-        file_put_contents(
-            $path,
-            json_encode($items, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT),
-            LOCK_EX
-        );
-    }
-
-    public static function listForPage(int $siteId, int $pageId): array
-    {
-        $items = array_values(array_filter(self::readAll(), static function ($item) use ($siteId, $pageId) {
-            return (int)($item['siteId'] ?? 0) === $siteId
-                && (int)($item['pageId'] ?? 0) === $pageId;
-        }));
-
-        usort($items, static function ($a, $b) {
-            $sortCmp = (int)($a['sort'] ?? 500) <=> (int)($b['sort'] ?? 500);
-
-            if ($sortCmp !== 0) {
-                return $sortCmp;
-            }
-
-            return (int)($a['id'] ?? 0) <=> (int)($b['id'] ?? 0);
-        });
-
-        return $items;
-    }
-
-    public static function getById(int $sectionId): ?array
-    {
-        foreach (self::readAll() as $item) {
-            if ((int)($item['id'] ?? 0) === $sectionId) {
-                return $item;
-            }
-        }
-
-        return null;
-    }
-
-    public static function ensureDefaultForPage(int $siteId, int $pageId, int $userId = 0): array
-    {
-        $sections = self::listForPage($siteId, $pageId);
-
-        if (!empty($sections)) {
-            self::migratePageBlocksToSection($pageId, (int)$sections[0]['id']);
-            return $sections[0];
-        }
-
-        $now = date('c');
-        $items = self::readAll();
-
-        $section = self::normalize([
-            'id' => self::nextId($items),
-            'siteId' => $siteId,
-            'pageId' => $pageId,
-            'type' => 'section',
-            'title' => 'Основная секция',
-            'sort' => 10,
-            'layout' => [
-                'container' => 'default',
-                'columns' => 1,
-                'gap' => 24,
-            ],
-            'props' => [
-                'backgroundColor' => '',
-                'backgroundImage' => '',
-                'paddingTop' => 40,
-                'paddingBottom' => 40,
-                'minHeight' => 0,
-            ],
-            'createdBy' => $userId,
-            'createdAt' => $now,
-            'updatedBy' => $userId,
-            'updatedAt' => $now,
-        ]);
-
-        $items[] = $section;
-        self::writeAll($items);
-
-        self::migratePageBlocksToSection($pageId, (int)$section['id']);
-
-        return $section;
-    }
-
-    public static function create(int $siteId, int $pageId, string $title, array $layout, array $props, int $userId): array
-    {
-        $title = trim($title);
-
-        if ($title === '') {
-            $title = 'Новая секция';
-        }
-
-        $items = self::readAll();
-
-        $maxSort = 0;
-        foreach ($items as $item) {
-            if (
-                (int)($item['siteId'] ?? 0) === $siteId &&
-                (int)($item['pageId'] ?? 0) === $pageId
-            ) {
-                $maxSort = max($maxSort, (int)($item['sort'] ?? 0));
-            }
-        }
-
-        $now = date('c');
-
-        $section = self::normalize([
-            'id' => self::nextId($items),
-            'siteId' => $siteId,
-            'pageId' => $pageId,
-            'type' => 'section',
-            'title' => $title,
-            'sort' => $maxSort > 0 ? $maxSort + 10 : 10,
-            'layout' => $layout,
-            'props' => $props,
-            'createdBy' => $userId,
-            'createdAt' => $now,
-            'updatedBy' => $userId,
-            'updatedAt' => $now,
-        ]);
-
-        $items[] = $section;
-        self::writeAll($items);
-
-        return $section;
-    }
-
-    public static function update(int $sectionId, array $fields, int $userId): array
-    {
-        $items = self::readAll();
-        $updated = null;
-
-        foreach ($items as &$item) {
-            if ((int)($item['id'] ?? 0) !== $sectionId) {
-                continue;
-            }
-
-            if (array_key_exists('title', $fields)) {
-                $title = trim((string)$fields['title']);
-                $item['title'] = $title !== '' ? $title : 'Секция';
-            }
-
-            if (array_key_exists('layout', $fields) && is_array($fields['layout'])) {
-                $item['layout'] = array_merge(
-                    is_array($item['layout'] ?? null) ? $item['layout'] : [],
-                    $fields['layout']
-                );
-            }
-
-            if (array_key_exists('props', $fields) && is_array($fields['props'])) {
-                $item['props'] = array_merge(
-                    is_array($item['props'] ?? null) ? $item['props'] : [],
-                    $fields['props']
-                );
-            }
-
-            $item['updatedBy'] = $userId;
-            $item['updatedAt'] = date('c');
-
-            $item = self::normalize($item);
-            $updated = $item;
-            break;
-        }
-        unset($item);
-
-        if (!$updated) {
-            throw new RuntimeException('PAGE_SECTION_NOT_FOUND');
-        }
-
-        self::writeAll($items);
-
-        return $updated;
-    }
-
-    public static function move(int $sectionId, string $dir, int $userId): bool
-    {
-        if (!in_array($dir, ['up', 'down'], true)) {
-            throw new RuntimeException('INVALID_DIR');
-        }
-
-        $items = self::readAll();
-
-        $current = null;
-        foreach ($items as $item) {
-            if ((int)($item['id'] ?? 0) === $sectionId) {
-                $current = $item;
-                break;
-            }
-        }
-
-        if (!$current) {
-            throw new RuntimeException('PAGE_SECTION_NOT_FOUND');
-        }
-
-        $siteId = (int)$current['siteId'];
-        $pageId = (int)$current['pageId'];
-
-        $siblings = [];
-        foreach ($items as $index => $item) {
-            if (
-                (int)($item['siteId'] ?? 0) === $siteId &&
-                (int)($item['pageId'] ?? 0) === $pageId
-            ) {
-                $siblings[] = [
-                    'index' => $index,
-                    'row' => $item,
-                ];
-            }
-        }
-
-        usort($siblings, static function ($a, $b) {
-            $sortCmp = (int)($a['row']['sort'] ?? 500) <=> (int)($b['row']['sort'] ?? 500);
-
-            if ($sortCmp !== 0) {
-                return $sortCmp;
-            }
-
-            return (int)($a['row']['id'] ?? 0) <=> (int)($b['row']['id'] ?? 0);
-        });
-
-        $pos = null;
-        foreach ($siblings as $i => $sibling) {
-            if ((int)($sibling['row']['id'] ?? 0) === $sectionId) {
-                $pos = $i;
-                break;
-            }
-        }
-
-        if ($pos === null) {
-            throw new RuntimeException('PAGE_SECTION_NOT_FOUND_IN_SIBLINGS');
-        }
-
-        $swapPos = $dir === 'up' ? $pos - 1 : $pos + 1;
-
-        if (!isset($siblings[$swapPos])) {
-            return false;
-        }
-
-        $aIndex = $siblings[$pos]['index'];
-        $bIndex = $siblings[$swapPos]['index'];
-
-        $aSort = (int)($items[$aIndex]['sort'] ?? 500);
-        $bSort = (int)($items[$bIndex]['sort'] ?? 500);
-
-        $items[$aIndex]['sort'] = $bSort;
-        $items[$aIndex]['updatedBy'] = $userId;
-        $items[$aIndex]['updatedAt'] = date('c');
-
-        $items[$bIndex]['sort'] = $aSort;
-        $items[$bIndex]['updatedBy'] = $userId;
-        $items[$bIndex]['updatedAt'] = date('c');
-
-        self::writeAll($items);
-
-        return true;
-    }
-
-    public static function delete(int $sectionId, int $userId): void
-    {
-        $items = self::readAll();
-
-        $section = null;
-        foreach ($items as $item) {
-            if ((int)($item['id'] ?? 0) === $sectionId) {
-                $section = $item;
-                break;
-            }
-        }
-
-        if (!$section) {
-            throw new RuntimeException('PAGE_SECTION_NOT_FOUND');
-        }
-
-        $siteId = (int)$section['siteId'];
-        $pageId = (int)$section['pageId'];
-
-        $sections = self::listForPage($siteId, $pageId);
-
-        if (count($sections) <= 1) {
-            throw new RuntimeException('CANNOT_DELETE_LAST_SECTION');
-        }
-
-        $targetSectionId = 0;
-        foreach ($sections as $s) {
-            if ((int)$s['id'] !== $sectionId) {
-                $targetSectionId = (int)$s['id'];
-                break;
-            }
-        }
-
-        if ($targetSectionId <= 0) {
-            throw new RuntimeException('TARGET_SECTION_NOT_FOUND');
-        }
-
-        self::moveBlocksFromSection($sectionId, $targetSectionId, $userId);
-
-        $items = array_values(array_filter($items, static function ($item) use ($sectionId) {
-            return (int)($item['id'] ?? 0) !== $sectionId;
-        }));
-
-        self::writeAll($items);
-    }
-
-    public static function assignBlock(int $blockId, int $sectionId, int $column, int $userId): array
-    {
-        $section = self::getById($sectionId);
-
-        if (!$section) {
-            throw new RuntimeException('PAGE_SECTION_NOT_FOUND');
-        }
-
-        $column = max(1, min(4, $column));
-
-        $blocks = sb_read_blocks();
-        $updated = null;
-
-        foreach ($blocks as &$block) {
-            if ((int)($block['id'] ?? 0) !== $blockId) {
-                continue;
-            }
-
-            if ((int)($block['pageId'] ?? 0) !== (int)$section['pageId']) {
-                throw new RuntimeException('BLOCK_AND_SECTION_PAGE_MISMATCH');
-            }
-
-            $block['sectionId'] = $sectionId;
-            $block['column'] = $column;
-            $block['updatedBy'] = $userId;
-            $block['updatedAt'] = date('c');
-
-            $updated = $block;
-            break;
-        }
-        unset($block);
-
-        if (!$updated) {
-            throw new RuntimeException('BLOCK_NOT_FOUND');
-        }
-
-        sb_write_blocks($blocks);
-
-        return $updated;
-    }
-
-    protected static function moveBlocksFromSection(int $fromSectionId, int $toSectionId, int $userId): void
-    {
-        $blocks = sb_read_blocks();
-
-        foreach ($blocks as &$block) {
-            if ((int)($block['sectionId'] ?? 0) !== $fromSectionId) {
-                continue;
-            }
-
-            $block['sectionId'] = $toSectionId;
-            $block['column'] = 1;
-            $block['updatedBy'] = $userId;
-            $block['updatedAt'] = date('c');
-        }
-        unset($block);
-
-        sb_write_blocks($blocks);
-    }
-
-    protected static function migratePageBlocksToSection(int $pageId, int $sectionId): void
-    {
-        if (!function_exists('sb_read_blocks') || !function_exists('sb_write_blocks')) {
-            return;
-        }
-
-        $blocks = sb_read_blocks();
-        $changed = false;
-
-        foreach ($blocks as &$block) {
-            if ((int)($block['pageId'] ?? 0) !== $pageId) {
-                continue;
-            }
-
-            if ((int)($block['sectionId'] ?? 0) > 0) {
-                continue;
-            }
-
-            $block['sectionId'] = $sectionId;
-            $block['column'] = 1;
-            $changed = true;
-        }
-        unset($block);
-
-        if ($changed) {
-            sb_write_blocks($blocks);
-        }
-    }
-
-    protected static function normalize(array $item): array
-    {
-        $columns = (int)($item['layout']['columns'] ?? 1);
-        $columns = max(1, min(4, $columns));
-
-        $layout = is_array($item['layout'] ?? null) ? $item['layout'] : [];
-        $props = is_array($item['props'] ?? null) ? $item['props'] : [];
-
-        return [
-            'id' => (int)($item['id'] ?? 0),
-            'siteId' => (int)($item['siteId'] ?? 0),
-            'pageId' => (int)($item['pageId'] ?? 0),
-            'type' => (string)($item['type'] ?? 'section'),
-            'title' => (string)($item['title'] ?? 'Секция'),
-            'sort' => (int)($item['sort'] ?? 500),
-            'layout' => array_merge([
-                'container' => 'default',
-                'columns' => $columns,
-                'gap' => 24,
-            ], $layout),
-            'props' => array_merge([
-                'backgroundColor' => '',
-                'backgroundImage' => '',
-                'paddingTop' => 40,
-                'paddingBottom' => 40,
-                'minHeight' => 0,
-            ], $props),
-            'createdBy' => (int)($item['createdBy'] ?? 0),
-            'createdAt' => (string)($item['createdAt'] ?? ''),
-            'updatedBy' => (int)($item['updatedBy'] ?? 0),
-            'updatedAt' => (string)($item['updatedAt'] ?? ''),
-        ];
-    }
-
-    protected static function nextId(array $items): int
-    {
-        $max = 0;
-
-        foreach ($items as $item) {
-            $max = max($max, (int)($item['id'] ?? 0));
-        }
-
-        return $max + 1;
-    }
-
-    protected static function filePath(): string
-    {
-        return rtrim((string)$_SERVER['DOCUMENT_ROOT'], '/') . self::FILE_PATH;
-    }
+if (file_exists($pageSectionRepositoryPath)) {
+    require_once $pageSectionRepositoryPath;
 }
-
-
----
-
-2. Создай файл API-обработчика
-
-/local/sitebuilder/api/handlers/page_section.php
-
-<?php
-
-global $USER;
-
-require_once $_SERVER['DOCUMENT_ROOT'] . '/local/sitebuilder/lib/PageSectionRepository.php';
-
-if (!function_exists('sb_page_section_parse_array')) {
-    function sb_page_section_parse_array($value): array
-    {
-        if (is_array($value)) {
-            return $value;
-        }
-
-        if (!is_string($value) || trim($value) === '') {
-            return [];
-        }
-
-        $decoded = json_decode($value, true);
-
-        return is_array($decoded) ? $decoded : [];
-    }
-}
-
-if (!function_exists('sb_page_section_find_page')) {
-    function sb_page_section_find_page(int $siteId, int $pageId): ?array
-    {
-        foreach (sb_read_pages() as $page) {
-            if (
-                (int)($page['id'] ?? 0) === $pageId &&
-                (int)($page['siteId'] ?? 0) === $siteId
-            ) {
-                return $page;
-            }
-        }
-
-        return null;
-    }
-}
-
-if (!function_exists('sb_page_section_require_page')) {
-    function sb_page_section_require_page(int $siteId, int $pageId): array
-    {
-        if ($siteId <= 0) {
-            sb_json_error('SITE_ID_REQUIRED', 422);
-        }
-
-        if ($pageId <= 0) {
-            sb_json_error('PAGE_ID_REQUIRED', 422);
-        }
-
-        $page = sb_page_section_find_page($siteId, $pageId);
-
-        if (!$page) {
-            sb_json_error('PAGE_NOT_FOUND', 404);
-        }
-
-        return $page;
-    }
-}
-
-if ($action === 'pageSection.list') {
-    $siteId = (int)($_POST['siteId'] ?? 0);
-    $pageId = (int)($_POST['pageId'] ?? 0);
-
-    sb_page_section_require_page($siteId, $pageId);
-    sb_require_content_manager($siteId);
-
-    $defaultSection = PageSectionRepository::ensureDefaultForPage(
-        $siteId,
-        $pageId,
-        (int)$USER->GetID()
-    );
-
-    sb_json_ok([
-        'defaultSection' => $defaultSection,
-        'sections' => PageSectionRepository::listForPage($siteId, $pageId),
-    ]);
-}
-
-if ($action === 'pageSection.create') {
-    $siteId = (int)($_POST['siteId'] ?? 0);
-    $pageId = (int)($_POST['pageId'] ?? 0);
-    $title = trim((string)($_POST['title'] ?? ''));
-    $layout = sb_page_section_parse_array($_POST['layout'] ?? []);
-    $props = sb_page_section_parse_array($_POST['props'] ?? []);
-
-    sb_page_section_require_page($siteId, $pageId);
-    sb_require_content_manager($siteId);
-
-    $section = PageSectionRepository::create(
-        $siteId,
-        $pageId,
-        $title,
-        $layout,
-        $props,
-        (int)$USER->GetID()
-    );
-
-    sb_json_ok([
-        'section' => $section,
-        'sections' => PageSectionRepository::listForPage($siteId, $pageId),
-    ]);
-}
-
-if ($action === 'pageSection.update') {
-    $sectionId = (int)($_POST['sectionId'] ?? $_POST['id'] ?? 0);
-
-    if ($sectionId <= 0) {
-        sb_json_error('PAGE_SECTION_ID_REQUIRED', 422);
-    }
-
-    $section = PageSectionRepository::getById($sectionId);
-
-    if (!$section) {
-        sb_json_error('PAGE_SECTION_NOT_FOUND', 404);
-    }
-
-    $siteId = (int)$section['siteId'];
-    sb_require_content_manager($siteId);
-
-    $fields = [];
-
-    if (array_key_exists('title', $_POST)) {
-        $fields['title'] = (string)$_POST['title'];
-    }
-
-    if (array_key_exists('layout', $_POST)) {
-        $fields['layout'] = sb_page_section_parse_array($_POST['layout']);
-    }
-
-    if (array_key_exists('props', $_POST)) {
-        $fields['props'] = sb_page_section_parse_array($_POST['props']);
-    }
-
-    try {
-        $updated = PageSectionRepository::update(
-            $sectionId,
-            $fields,
-            (int)$USER->GetID()
-        );
-
-        sb_json_ok([
-            'section' => $updated,
-            'sections' => PageSectionRepository::listForPage(
-                (int)$updated['siteId'],
-                (int)$updated['pageId']
-            ),
-        ]);
-    } catch (Throwable $e) {
-        sb_json_error($e->getMessage(), 500);
-    }
-}
-
-if ($action === 'pageSection.move') {
-    $sectionId = (int)($_POST['sectionId'] ?? $_POST['id'] ?? 0);
-    $dir = trim((string)($_POST['dir'] ?? ''));
-
-    if ($sectionId <= 0) {
-        sb_json_error('PAGE_SECTION_ID_REQUIRED', 422);
-    }
-
-    $section = PageSectionRepository::getById($sectionId);
-
-    if (!$section) {
-        sb_json_error('PAGE_SECTION_NOT_FOUND', 404);
-    }
-
-    sb_require_content_manager((int)$section['siteId']);
-
-    try {
-        $moved = PageSectionRepository::move($sectionId, $dir, (int)$USER->GetID());
-
-        sb_json_ok([
-            'moved' => $moved,
-            'sections' => PageSectionRepository::listForPage(
-                (int)$section['siteId'],
-                (int)$section['pageId']
-            ),
-        ]);
-    } catch (Throwable $e) {
-        sb_json_error($e->getMessage(), 500);
-    }
-}
-
-if ($action === 'pageSection.delete') {
-    $sectionId = (int)($_POST['sectionId'] ?? $_POST['id'] ?? 0);
-
-    if ($sectionId <= 0) {
-        sb_json_error('PAGE_SECTION_ID_REQUIRED', 422);
-    }
-
-    $section = PageSectionRepository::getById($sectionId);
-
-    if (!$section) {
-        sb_json_error('PAGE_SECTION_NOT_FOUND', 404);
-    }
-
-    sb_require_content_manager((int)$section['siteId']);
-
-    try {
-        PageSectionRepository::delete($sectionId, (int)$USER->GetID());
-
-        sb_json_ok([
-            'deleted' => true,
-            'sections' => PageSectionRepository::listForPage(
-                (int)$section['siteId'],
-                (int)$section['pageId']
-            ),
-        ]);
-    } catch (Throwable $e) {
-        sb_json_error($e->getMessage(), 500);
-    }
-}
-
-if ($action === 'pageSection.assignBlock') {
-    $blockId = (int)($_POST['blockId'] ?? 0);
-    $sectionId = (int)($_POST['sectionId'] ?? 0);
-    $column = (int)($_POST['column'] ?? 1);
-
-    if ($blockId <= 0) {
-        sb_json_error('BLOCK_ID_REQUIRED', 422);
-    }
-
-    if ($sectionId <= 0) {
-        sb_json_error('PAGE_SECTION_ID_REQUIRED', 422);
-    }
-
-    $section = PageSectionRepository::getById($sectionId);
-
-    if (!$section) {
-        sb_json_error('PAGE_SECTION_NOT_FOUND', 404);
-    }
-
-    sb_require_content_manager((int)$section['siteId']);
-
-    try {
-        $block = PageSectionRepository::assignBlock(
-            $blockId,
-            $sectionId,
-            $column,
-            (int)$USER->GetID()
-        );
-
-        sb_json_ok([
-            'block' => $block,
-        ]);
-    } catch (Throwable $e) {
-        sb_json_error($e->getMessage(), 500);
-    }
-}
-
-sb_json_error('NOT_MOVED_YET', 501, [
-    'handler' => 'page_section',
-    'action' => $action,
-]);
-
-
----
-
-3. Обнови /local/sitebuilder/api/index.php
-
-Добавь новый роутинг до UNKNOWN_ACTION:
 
 if (
-    $action === 'pageSection.list' ||
-    $action === 'pageSection.create' ||
-    $action === 'pageSection.update' ||
-    $action === 'pageSection.move' ||
-    $action === 'pageSection.delete' ||
-    $action === 'pageSection.assignBlock'
+    class_exists('PageSectionRepository') &&
+    !empty($currentPage) &&
+    (int)($currentPage['id'] ?? 0) > 0
 ) {
-    require __DIR__ . '/handlers/page_section.php';
-    exit;
+    global $USER;
+
+    $currentUserId = is_object($USER) && method_exists($USER, 'GetID')
+        ? (int)$USER->GetID()
+        : 0;
+
+    $currentPageId = (int)$currentPage['id'];
+
+    PageSectionRepository::ensureDefaultForPage(
+        $siteId,
+        $currentPageId,
+        $currentUserId
+    );
+
+    $pageSections = PageSectionRepository::listForPage($siteId, $currentPageId);
 }
 
 
 ---
 
-После этого первый этап будет готов:
+2. В public_page.php добавь функции рендера секций
 
-Появится хранилище секций.
-Старые блоки автоматически попадут в “Основную секцию”.
-Можно будет создавать секции.
-Можно будет двигать секции.
-Можно будет переносить компоненты/blocks в секции и колонки.
+Ниже твоих функций меню, например после:
 
-Следующим шагом подключим это в public_page.php / public_render.php, чтобы публичная страница начала выводиться как:
+if (!function_exists('sb_public_render_auto_pages_menu')) {
+    function sb_public_render_auto_pages_menu(...)
 
-<section>
-  колонки
-    компоненты
-</section>
+добавь этот блок:
+
+if (!function_exists('sb_public_section_css_value')) {
+    function sb_public_section_css_value($value, string $suffix = 'px'): string
+    {
+        if ($value === null || $value === '') {
+            return '';
+        }
+
+        if (is_numeric($value)) {
+            return (string)((int)$value) . $suffix;
+        }
+
+        return (string)$value;
+    }
+}
+
+if (!function_exists('sb_public_section_style')) {
+    function sb_public_section_style(array $section): string
+    {
+        $props = is_array($section['props'] ?? null) ? $section['props'] : [];
+
+        $styles = [];
+
+        $paddingTop = sb_public_section_css_value($props['paddingTop'] ?? 40);
+        if ($paddingTop !== '') {
+            $styles[] = 'padding-top:' . $paddingTop;
+        }
+
+        $paddingBottom = sb_public_section_css_value($props['paddingBottom'] ?? 40);
+        if ($paddingBottom !== '') {
+            $styles[] = 'padding-bottom:' . $paddingBottom;
+        }
+
+        $minHeight = sb_public_section_css_value($props['minHeight'] ?? 0);
+        if ($minHeight !== '' && $minHeight !== '0px') {
+            $styles[] = 'min-height:' . $minHeight;
+        }
+
+        $backgroundColor = trim((string)($props['backgroundColor'] ?? ''));
+        if ($backgroundColor !== '') {
+            $styles[] = 'background-color:' . $backgroundColor;
+        }
+
+        $backgroundImage = trim((string)($props['backgroundImage'] ?? ''));
+        if ($backgroundImage !== '') {
+            $styles[] = 'background-image:url(\'' . str_replace("'", "\\'", $backgroundImage) . '\')';
+            $styles[] = 'background-size:cover';
+            $styles[] = 'background-position:center';
+        }
+
+        return implode(';', $styles);
+    }
+}
+
+if (!function_exists('sb_public_section_container_class')) {
+    function sb_public_section_container_class(array $section): string
+    {
+        $layout = is_array($section['layout'] ?? null) ? $section['layout'] : [];
+        $container = (string)($layout['container'] ?? 'default');
+
+        $allowed = ['default', 'wide', 'full'];
+
+        if (!in_array($container, $allowed, true)) {
+            $container = 'default';
+        }
+
+        return 'sb-section-container sb-section-container--' . $container;
+    }
+}
+
+if (!function_exists('sb_public_group_blocks_by_section')) {
+    function sb_public_group_blocks_by_section(array $pageBlocks, array $sections): array
+    {
+        $result = [];
+
+        $firstSectionId = 0;
+
+        foreach ($sections as $section) {
+            $sectionId = (int)($section['id'] ?? 0);
+
+            if ($sectionId <= 0) {
+                continue;
+            }
+
+            if ($firstSectionId <= 0) {
+                $firstSectionId = $sectionId;
+            }
+
+            $result[$sectionId] = [];
+        }
+
+        foreach ($pageBlocks as $block) {
+            $sectionId = (int)($block['sectionId'] ?? 0);
+
+            if ($sectionId <= 0 || !isset($result[$sectionId])) {
+                $sectionId = $firstSectionId;
+            }
+
+            if ($sectionId <= 0) {
+                continue;
+            }
+
+            $result[$sectionId][] = $block;
+        }
+
+        foreach ($result as &$blocks) {
+            usort($blocks, static function ($a, $b) {
+                $sortCmp = (int)($a['sort'] ?? 500) <=> (int)($b['sort'] ?? 500);
+
+                if ($sortCmp !== 0) {
+                    return $sortCmp;
+                }
+
+                return (int)($a['id'] ?? 0) <=> (int)($b['id'] ?? 0);
+            });
+        }
+        unset($blocks);
+
+        return $result;
+    }
+}
+
+if (!function_exists('sb_public_group_blocks_by_column')) {
+    function sb_public_group_blocks_by_column(array $blocks, int $columns): array
+    {
+        $columns = max(1, min(4, $columns));
+
+        $result = [];
+
+        for ($i = 1; $i <= $columns; $i++) {
+            $result[$i] = [];
+        }
+
+        foreach ($blocks as $block) {
+            $column = (int)($block['column'] ?? 1);
+            $column = max(1, min($columns, $column));
+
+            $result[$column][] = $block;
+        }
+
+        return $result;
+    }
+}
+
+if (!function_exists('sb_public_render_page_sections')) {
+    function sb_public_render_page_sections(array $sections, array $pageBlocks, array $context): string
+    {
+        if (empty($sections)) {
+            return sb_public_render_blocks($pageBlocks, $context);
+        }
+
+        $blocksBySection = sb_public_group_blocks_by_section($pageBlocks, $sections);
+
+        $html = '<div class="sb-page-sections">';
+
+        foreach ($sections as $section) {
+            $sectionId = (int)($section['id'] ?? 0);
+
+            if ($sectionId <= 0) {
+                continue;
+            }
+
+            $layout = is_array($section['layout'] ?? null) ? $section['layout'] : [];
+            $columns = (int)($layout['columns'] ?? 1);
+            $columns = max(1, min(4, $columns));
+
+            $gap = (int)($layout['gap'] ?? 24);
+            if ($gap < 0) {
+                $gap = 0;
+            }
+
+            $sectionBlocks = $blocksBySection[$sectionId] ?? [];
+            $blocksByColumn = sb_public_group_blocks_by_column($sectionBlocks, $columns);
+
+            $style = sb_public_section_style($section);
+            $containerClass = sb_public_section_container_class($section);
+
+            $html .= '<section class="sb-page-section sb-page-section--columns-' . $columns . '" data-section-id="' . $sectionId . '"' . ($style !== '' ? ' style="' . sb_public_h($style) . '"' : '') . '>';
+            $html .= '<div class="' . sb_public_h($containerClass) . '">';
+            $html .= '<div class="sb-section-grid" style="--sb-section-gap:' . (int)$gap . 'px">';
+
+            for ($column = 1; $column <= $columns; $column++) {
+                $columnBlocks = $blocksByColumn[$column] ?? [];
+
+                $html .= '<div class="sb-section-column sb-section-column--' . $column . '">';
+
+                if (!empty($columnBlocks)) {
+                    $html .= sb_public_render_blocks($columnBlocks, $context);
+                }
+
+                $html .= '</div>';
+            }
+
+            $html .= '</div>';
+            $html .= '</div>';
+            $html .= '</section>';
+        }
+
+        $html .= '</div>';
+
+        return $html;
+    }
+}
+
+
+---
+
+3. Замени создание $pageHtml
+
+Найди строку:
+
+$pageHtml = sb_public_render_blocks($pageBlocks, $vm);
+
+Замени на:
+
+$pageHtml = sb_public_render_page_sections($pageSections, $pageBlocks, $vm);
+
+
+---
+
+4. Добавь стили в публичный CSS
+
+Файл:
+
+/local/sitebuilder/assets/public/public.css
+
+В конец добавь:
+
+/* =========================================================
+   PAGE SECTIONS / TILDA-LIKE STRUCTURE
+   ========================================================= */
+
+.sb-page-sections {
+    width: 100%;
+    min-width: 0;
+}
+
+.sb-page-section {
+    width: 100%;
+    min-width: 0;
+    position: relative;
+    background-repeat: no-repeat;
+    box-sizing: border-box;
+}
+
+.sb-section-container {
+    width: 100%;
+    min-width: 0;
+    margin: 0 auto;
+    box-sizing: border-box;
+}
+
+.sb-section-container--default {
+    max-width: var(--sb-container-width, 1180px);
+}
+
+.sb-section-container--wide {
+    max-width: 1440px;
+}
+
+.sb-section-container--full {
+    max-width: none;
+}
+
+.sb-section-grid {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: var(--sb-section-gap, 24px);
+    width: 100%;
+    min-width: 0;
+}
+
+.sb-page-section--columns-1 .sb-section-grid {
+    grid-template-columns: 1fr;
+}
+
+.sb-page-section--columns-2 .sb-section-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.sb-page-section--columns-3 .sb-section-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.sb-page-section--columns-4 .sb-section-grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.sb-section-column {
+    min-width: 0;
+}
+
+.sb-section-column > *:first-child {
+    margin-top: 0;
+}
+
+.sb-section-column > *:last-child {
+    margin-bottom: 0;
+}
+
+@media (max-width: 900px) {
+    .sb-page-section--columns-2 .sb-section-grid,
+    .sb-page-section--columns-3 .sb-section-grid,
+    .sb-page-section--columns-4 .sb-section-grid {
+        grid-template-columns: 1fr;
+    }
+}
+
+
+---
+
+5. Обнови версию CSS в public_page.php
+
+Найди:
+
+<link rel="stylesheet" href="<?= sb_public_h($basePath) ?>/assets/public/public.css">
+
+Замени на:
+
+<link rel="stylesheet" href="<?= sb_public_h($basePath) ?>/assets/public/public.css?v=2">
+
+
+---
+
+После этого открой публичную страницу. Визуально почти ничего не должно сломаться, но структура уже будет новая:
+
+<div class="sb-page-sections">
+  <section class="sb-page-section">
+    <div class="sb-section-container">
+      <div class="sb-section-grid">
+        <div class="sb-section-column">
+          <!-- старые блоки -->
+        </div>
+      </div>
+    </div>
+  </section>
+</div>
+
+Следующий шаг — добавить в editor.php панель секций: добавить секцию, выбрать 1/2/3/4 колонки, переносить компоненты по секциям.
