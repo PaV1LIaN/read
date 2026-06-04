@@ -1,260 +1,286 @@
-Да, у тебя api.php — это только маршрутизатор. Поэтому я сделал готовый вариант так, чтобы он сам перехватывал JSON-ответы list/search/bootstrap и дописывал имя пользователя по ID.
+Да, сделаем загрузку через drag & drop прямо на область диска.
 
-Заменяй полностью:
+Логика будет такая:
 
-/local/sitebuilder/components/disk/api.php
+перетащил файл в блок диска
+→ блок подсветился
+→ отпустил файл
+→ если такого файла нет — загрузился
+→ если файл уже есть — появится окно: Заменить / Переименовать / Отмена
 
-на этот файл:
 
-<?php
+---
 
-require_once __DIR__ . '/bootstrap.php';
+1. script.js — добавь метод загрузки файлов
 
-$action = (string)($_GET['action'] ?? '');
+Файл:
 
-if (!function_exists('sb_disk_user_name_by_id')) {
-    function sb_disk_user_name_by_id(int $userId): string
-    {
-        static $cache = [];
+/local/sitebuilder/components/disk/script.js
 
-        if ($userId <= 0) {
-            return '';
-        }
+Найди место перед:
 
-        if (isset($cache[$userId])) {
-            return $cache[$userId];
-        }
+DiskComponent.prototype.bindStaticEvents = function () {
 
-        $name = '';
+и вставь туда:
 
-        if (class_exists('CUser')) {
-            $rs = \CUser::GetByID($userId);
+DiskComponent.prototype.setDragOver = function (active) {
+  this.root.classList.toggle('is-dragover', !!active);
+};
 
-            if ($user = $rs->Fetch()) {
-                $lastName = trim((string)($user['LAST_NAME'] ?? ''));
-                $firstName = trim((string)($user['NAME'] ?? ''));
-                $secondName = trim((string)($user['SECOND_NAME'] ?? ''));
+DiskComponent.prototype.uploadFiles = async function (files) {
+  files = Array.prototype.slice.call(files || []);
 
-                $name = trim($lastName . ' ' . $firstName . ' ' . $secondName);
+  if (!files.length) {
+    return;
+  }
 
-                if ($name === '') {
-                    $name = trim((string)($user['LOGIN'] ?? ''));
-                }
+  if (!this.state.permissions.canUpload) {
+    alert('У вас нет прав на загрузку файлов');
+    return;
+  }
 
-                if ($name === '') {
-                    $name = trim((string)($user['EMAIL'] ?? ''));
-                }
-            }
-        }
+  var preparedFiles = [];
 
-        if ($name === '') {
-            $name = 'ID ' . $userId;
-        }
+  try {
+    for (var i = 0; i < files.length; i++) {
+      var file = files[i];
 
-        $cache[$userId] = $name;
+      if (!file || !file.name) {
+        continue;
+      }
 
-        return $name;
+      var existingItem = this.findExistingFileByName(file.name);
+
+      if (!existingItem) {
+        preparedFiles.push(file);
+        continue;
+      }
+
+      var decision = await this.askDuplicateUploadAction(file, existingItem);
+
+      if (!decision || decision.action === 'cancel') {
+        continue;
+      }
+
+      if (decision.action === 'replace') {
+        await this.archiveExistingFileToHistory(existingItem);
+
+        preparedFiles.push(file);
+        continue;
+      }
+
+      if (decision.action === 'rename') {
+        preparedFiles.push(this.makeRenamedFile(file, decision.name));
+      }
     }
-}
 
-if (!function_exists('sb_disk_extract_created_by_id_from_item')) {
-    function sb_disk_extract_created_by_id_from_item(array $item): int
-    {
-        $possibleKeys = [
-            'createdById',
-            'createdBy',
-            'authorId',
-            'author',
-            'userId',
-            'user',
-        ];
-
-        foreach ($possibleKeys as $key) {
-            if (!array_key_exists($key, $item)) {
-                continue;
-            }
-
-            $value = $item[$key];
-
-            if (is_int($value)) {
-                return $value;
-            }
-
-            if (is_string($value) && preg_match('/^\d+$/', trim($value))) {
-                return (int)$value;
-            }
-        }
-
-        return 0;
+    if (!preparedFiles.length) {
+      return;
     }
-}
 
-if (!function_exists('sb_disk_enrich_item_user_name')) {
-    function sb_disk_enrich_item_user_name(array $item): array
-    {
-        $createdById = sb_disk_extract_created_by_id_from_item($item);
+    var formData = new FormData();
 
-        if ($createdById <= 0) {
-            return $item;
-        }
+    formData.append('siteId', this.state.siteId);
+    formData.append('pageId', this.state.pageId);
+    formData.append('blockId', this.state.blockId);
+    formData.append('currentFolderId', this.state.currentFolderId);
+    formData.append('sessid', this.getSessid());
 
-        $createdByName = sb_disk_user_name_by_id($createdById);
+    preparedFiles.forEach(function (file) {
+      formData.append('files[]', file);
+    });
 
-        $item['createdById'] = $createdById;
-        $item['createdByName'] = $createdByName;
-        $item['createdByFullName'] = $createdByName;
-        $item['authorName'] = $createdByName;
+    var res = await this.api('upload', formData, true);
 
-        /*
-         * Важно:
-         * Раньше createdBy мог быть числом, из-за этого JS показывал ID.
-         * Теперь createdBy отдаём уже как ФИО.
-         */
-        $item['createdBy'] = $createdByName;
-
-        return $item;
+    if (!res || !res.ok) {
+      window.alert((res && (res.message || res.error)) || 'Ошибка загрузки');
+      return;
     }
+
+    await this.loadFolder(this.state.currentFolderId);
+  } catch (err) {
+    console.error(err);
+    window.alert(err && err.message ? err.message : 'Ошибка загрузки');
+  }
+};
+
+
+---
+
+2. script.js — замени обработчик обычной загрузки
+
+Найди внутри bindStaticEvents() вот этот кусок:
+
+uploadInput.addEventListener('change', async function (e) {
+
+и замени весь обработчик change на этот:
+
+uploadInput.addEventListener('change', async function (e) {
+  var files = Array.prototype.slice.call(e.target.files || []);
+
+  try {
+    await self.uploadFiles(files);
+  } finally {
+    uploadInput.value = '';
+  }
+});
+
+То есть старую большую логику загрузки из change убираем, потому что теперь она вынесена в общий метод uploadFiles().
+
+
+---
+
+3. script.js — добавь drag & drop обработчики
+
+Внутри bindStaticEvents() найди блок:
+
+var uploadBtn = this.root.querySelector('[data-action="upload"]');
+var uploadInput = this.root.querySelector('[data-role="upload-input"]');
+
+После всего блока:
+
+if (uploadBtn && uploadInput) {
+  ...
 }
 
-if (!function_exists('sb_disk_enrich_json_response_with_user_names')) {
-    function sb_disk_enrich_json_response_with_user_names(string $buffer): string
-    {
-        $trimmed = trim($buffer);
+сразу вставь:
 
-        if ($trimmed === '') {
-            return $buffer;
-        }
+var dragDepth = 0;
 
-        $firstChar = substr($trimmed, 0, 1);
+function hasDraggedFiles(e) {
+  var types = e.dataTransfer && e.dataTransfer.types;
 
-        if ($firstChar !== '{' && $firstChar !== '[') {
-            return $buffer;
-        }
+  if (!types) {
+    return false;
+  }
 
-        $json = json_decode($buffer, true);
-
-        if (!is_array($json) || json_last_error() !== JSON_ERROR_NONE) {
-            return $buffer;
-        }
-
-        if (
-            isset($json['data']['items'])
-            && is_array($json['data']['items'])
-        ) {
-            foreach ($json['data']['items'] as &$item) {
-                if (is_array($item)) {
-                    $item = sb_disk_enrich_item_user_name($item);
-                }
-            }
-            unset($item);
-        }
-
-        if (
-            isset($json['data']['item'])
-            && is_array($json['data']['item'])
-        ) {
-            $json['data']['item'] = sb_disk_enrich_item_user_name($json['data']['item']);
-        }
-
-        return json_encode(
-            $json,
-            JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES
-        );
-    }
+  return Array.prototype.indexOf.call(types, 'Files') !== -1;
 }
 
-/*
- * Включаем перехват только для JSON-действий.
- * Для download нельзя включать, иначе можно сломать скачивание файла.
- */
-if (in_array($action, ['list', 'search', 'bootstrap'], true)) {
-    ob_start('sb_disk_enrich_json_response_with_user_names');
+this.root.addEventListener('dragenter', function (e) {
+  if (!hasDraggedFiles(e)) {
+    return;
+  }
+
+  e.preventDefault();
+  e.stopPropagation();
+
+  dragDepth++;
+  self.setDragOver(true);
+});
+
+this.root.addEventListener('dragover', function (e) {
+  if (!hasDraggedFiles(e)) {
+    return;
+  }
+
+  e.preventDefault();
+  e.stopPropagation();
+
+  if (e.dataTransfer) {
+    e.dataTransfer.dropEffect = self.state.permissions.canUpload ? 'copy' : 'none';
+  }
+
+  self.setDragOver(true);
+});
+
+this.root.addEventListener('dragleave', function (e) {
+  if (!hasDraggedFiles(e)) {
+    return;
+  }
+
+  e.preventDefault();
+  e.stopPropagation();
+
+  dragDepth--;
+
+  if (dragDepth <= 0) {
+    dragDepth = 0;
+    self.setDragOver(false);
+  }
+});
+
+this.root.addEventListener('drop', async function (e) {
+  if (!hasDraggedFiles(e)) {
+    return;
+  }
+
+  e.preventDefault();
+  e.stopPropagation();
+
+  dragDepth = 0;
+  self.setDragOver(false);
+
+  var files = Array.prototype.slice.call(
+    e.dataTransfer && e.dataTransfer.files ? e.dataTransfer.files : []
+  );
+
+  await self.uploadFiles(files);
+});
+
+
+---
+
+4. styles.css — добавь оформление drag & drop
+
+Файл:
+
+/local/sitebuilder/components/disk/styles.css
+
+В конец добавь:
+
+/* =========================================================
+   DRAG AND DROP UPLOAD
+   ========================================================= */
+
+.sb-disk {
+    position: relative;
 }
 
-try {
-    switch ($action) {
-        case 'resolveRoot':
-            require __DIR__ . '/actions/resolve_root.php';
-            break;
-
-        case 'getSettings':
-            require __DIR__ . '/actions/get_settings.php';
-            break;
-
-        case 'saveSettings':
-            require __DIR__ . '/actions/save_settings.php';
-            break;
-
-        case 'getPermissions':
-            require __DIR__ . '/actions/get_permissions.php';
-            break;
-
-        case 'getRootOptions':
-            require __DIR__ . '/actions/get_root_options.php';
-            break;
-
-        case 'list':
-            require __DIR__ . '/actions/list.php';
-            break;
-
-        case 'upload':
-            require __DIR__ . '/actions/upload.php';
-            break;
-
-        case 'createFolder':
-            require __DIR__ . '/actions/create_folder.php';
-            break;
-
-        case 'rename':
-            require __DIR__ . '/actions/rename.php';
-            break;
-
-        case 'delete':
-            require __DIR__ . '/actions/delete.php';
-            break;
-
-        case 'move':
-            require __DIR__ . '/actions/move.php';
-            break;
-
-        case 'copy':
-            require __DIR__ . '/actions/copy.php';
-            break;
-
-        case 'search':
-            require __DIR__ . '/actions/search.php';
-            break;
-
-        case 'download':
-            require __DIR__ . '/actions/download.php';
-            break;
-
-        case 'initSiteRoot':
-            require __DIR__ . '/actions/init_site_root.php';
-            break;
-
-        case 'initBlockRoot':
-            require __DIR__ . '/actions/init_block_root.php';
-            break;
-
-        case 'bootstrap':
-            require __DIR__ . '/actions/bootstrap.php';
-            break;
-
-        default:
-            DiskResponse::error('UNKNOWN_ACTION', 'Неизвестное действие');
-    }
-} catch (Throwable $e) {
-    DiskResponse::error('SERVER_ERROR', $e->getMessage());
+.sb-disk.is-dragover::before {
+    content: "";
+    position: absolute;
+    inset: -8px;
+    z-index: 50;
+    border: 2px dashed var(--disk-accent, #2563eb);
+    border-radius: 22px;
+    background: rgba(37, 99, 235, .08);
+    pointer-events: none;
 }
 
-После замены обнови версию скрипта в public_page.php, чтобы браузер точно подтянул свежие данные:
+.sb-disk.is-dragover::after {
+    content: "Отпустите файлы для загрузки";
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    z-index: 51;
+    transform: translate(-50%, -50%);
+    min-width: 260px;
+    padding: 16px 22px;
+    border-radius: 18px;
+    background: #ffffff;
+    color: #111827;
+    font-size: 15px;
+    font-weight: 900;
+    text-align: center;
+    box-shadow: 0 20px 60px rgba(15, 23, 42, .25);
+    pointer-events: none;
+}
 
-<script src="<?= sb_public_h($basePath) ?>/components/disk/script.js?v=21"></script>
 
-Потом Ctrl + F5.
+---
 
-Если всё равно будет показываться ID, значит actions/list.php вообще не отдаёт поле createdBy/createdById, и тогда надо будет доработать именно:
+5. Обнови версии подключения
 
-/local/sitebuilder/components/disk/actions/list.php
-/local/sitebuilder/components/disk/actions/search.php
+В public_page.php:
+
+<script src="<?= sb_public_h($basePath) ?>/components/disk/script.js?v=22"></script>
+
+<link rel="stylesheet" href="<?= sb_public_h($basePath) ?>/components/disk/styles.css?v=18">
+
+После этого сделай Ctrl + F5.
+
+Теперь файлы можно будет загружать двумя способами:
+
+через кнопку “Загрузить”
+перетаскиванием файла с компьютера в блок диска
