@@ -1,245 +1,154 @@
-Да, делаем так:
+Да, значит script.js уже работает правильно, но API диска отдаёт только ID, например:
 
-В таблице вместо колонки “Тип” будет “Добавил”.
-В истории файла тоже будет видно, кем была добавлена старая версия.
+createdBy: 99
 
-Сначала меняем script.js. Если после этого в колонке будет —, значит API диска пока не отдаёт автора, тогда следующим сообщением доработаем /components/disk/api.php.
+А нужно, чтобы /local/sitebuilder/components/disk/api.php отдавал ещё имя пользователя:
 
+createdById: 99,
+createdByName: "Павел Евгеньевич Махов"
 
----
-
-1. script.js — добавь helper автора
+1. В api.php добавь helper для имени пользователя
 
 Файл:
 
-/local/sitebuilder/components/disk/script.js
+/local/sitebuilder/components/disk/api.php
 
-Найди блок helper-функций внизу файла, рядом с:
+Вставь где-нибудь сверху, после require/use, но до обработки action:
 
-function getItemExtension(item) {
+if (!function_exists('sb_disk_user_name_by_id')) {
+    function sb_disk_user_name_by_id(int $userId): string
+    {
+        static $cache = [];
 
-Перед ним вставь:
+        if ($userId <= 0) {
+            return '';
+        }
 
-function getItemAddedByText(item) {
-  if (!item) {
-    return '—';
-  }
+        if (isset($cache[$userId])) {
+            return $cache[$userId];
+        }
 
-  var value =
-    item.createdByName ||
-    item.createdByTitle ||
-    item.createdByFullName ||
-    item.authorName ||
-    item.userName ||
-    item.createdBy ||
-    item.author ||
-    '';
+        $name = '';
 
-  value = String(value || '').trim();
+        $rs = \CUser::GetByID($userId);
+        if ($user = $rs->Fetch()) {
+            $lastName = trim((string)($user['LAST_NAME'] ?? ''));
+            $firstName = trim((string)($user['NAME'] ?? ''));
+            $secondName = trim((string)($user['SECOND_NAME'] ?? ''));
 
-  if (value) {
-    return value;
-  }
+            $name = trim($lastName . ' ' . $firstName . ' ' . $secondName);
 
-  var id =
-    item.createdById ||
-    item.authorId ||
-    item.userId ||
-    0;
+            if ($name === '') {
+                $name = trim((string)($user['LOGIN'] ?? ''));
+            }
 
-  id = Number(id || 0);
+            if ($name === '') {
+                $name = trim((string)($user['EMAIL'] ?? ''));
+            }
+        }
 
-  if (id > 0) {
-    return 'ID ' + id;
-  }
+        if ($name === '') {
+            $name = 'ID ' . $userId;
+        }
 
-  return '—';
-}
+        $cache[$userId] = $name;
 
-
----
-
-2. script.js — переименуй заголовок колонки
-
-Найди метод:
-
-DiskComponent.prototype.prepareModernUi = function () {
-
-В конец этого метода, перед закрывающей строкой:
-
-};
-
-добавь:
-
-this.renameTypeColumnToAddedBy();
-
-Теперь перед методом:
-
-DiskComponent.prototype.getBasePayload = function () {
-
-вставь новый метод:
-
-DiskComponent.prototype.renameTypeColumnToAddedBy = function () {
-  var table = this.root.querySelector('table');
-
-  if (!table) {
-    return;
-  }
-
-  var headers = table.querySelectorAll('thead th');
-
-  headers.forEach(function (th) {
-    var text = String(th.textContent || '').trim().toLowerCase();
-
-    if (text === 'тип') {
-      th.textContent = 'Добавил';
+        return $name;
     }
-  });
-};
+}
 
+if (!function_exists('sb_disk_object_created_by_id')) {
+    function sb_disk_object_created_by_id($object): int
+    {
+        if (!is_object($object)) {
+            return 0;
+        }
 
----
+        if (method_exists($object, 'getCreatedBy')) {
+            return (int)$object->getCreatedBy();
+        }
 
-3. script.js — замени колонку “Тип” в таблице
+        if (method_exists($object, 'getCreateUserId')) {
+            return (int)$object->getCreateUserId();
+        }
 
-Найди в renderItemsTable():
+        if (method_exists($object, 'getCreatedById')) {
+            return (int)$object->getCreatedById();
+        }
 
-var typeText = getItemTypeText(item);
-var sizeText = item.entityType === 'folder' ? '—' : (item.size ? formatBytes(item.size) : '—');
-var iconHtml = renderItemIcon(item);
-var openControl = renderOpenControl(item);
-var historyControl = self.renderHistoryControl(item);
-
-Замени на:
-
-var typeText = getItemTypeText(item);
-var addedByText = getItemAddedByText(item);
-var sizeText = item.entityType === 'folder' ? '—' : (item.size ? formatBytes(item.size) : '—');
-var iconHtml = renderItemIcon(item);
-var openControl = renderOpenControl(item);
-var historyControl = self.renderHistoryControl(item);
-
-Ниже найди строку:
-
-'<td><span class="sb-disk__type-pill">' + escapeHtml(typeText) + '</span></td>' +
-
-Замени на:
-
-'<td><span class="sb-disk__added-by">' + escapeHtml(addedByText) + '</span></td>' +
-
-
----
-
-4. script.js — в плитке тоже покажем автора
-
-В renderItemsGrid() найди:
-
-var typeText = getItemTypeText(item);
-var sizeText = item.entityType === 'folder' ? 'Папка' : (item.size ? formatBytes(item.size) : '—');
-var openControl = renderOpenControl(item);
-var historyControl = self.renderHistoryControl(item);
-
-Замени на:
-
-var typeText = getItemTypeText(item);
-var addedByText = getItemAddedByText(item);
-var sizeText = item.entityType === 'folder' ? 'Папка' : (item.size ? formatBytes(item.size) : '—');
-var openControl = renderOpenControl(item);
-var historyControl = self.renderHistoryControl(item);
-
-Найди в карточке:
-
-'<span class="sb-disk__type-pill">' + escapeHtml(typeText) + '</span>' +
-
-Замени на:
-
-'<span class="sb-disk__type-pill">' + escapeHtml(typeText) + '</span>' +
-
-Оставь так, а ниже после блока размера найди:
-
-'<div class="sb-disk__card-meta">' +
-  '<span class="sb-disk__card-sub">' + escapeHtml(sizeText) + '</span>' +
-'</div>' +
-
-И сразу после него добавь:
-
-'<div class="sb-disk__card-meta">' +
-  '<span class="sb-disk__card-sub">Добавил: ' + escapeHtml(addedByText) + '</span>' +
-'</div>' +
-
-
----
-
-5. script.js — история файла
-
-В openHistoryModalForFile() найди внутри historyItems.map(function (item) {:
-
-var time = self.formatHistoryDate(self.getHistoryTime(item));
-var size = item.size ? formatBytes(item.size) : '—';
-
-Замени на:
-
-var time = self.formatHistoryDate(self.getHistoryTime(item));
-var size = item.size ? formatBytes(item.size) : '—';
-var addedByText = getItemAddedByText(item);
-
-Ниже найди:
-
-+ '      <span>' + escapeHtml(time) + '</span>'
-+ '      <span>' + escapeHtml(size) + '</span>'
-
-Замени на:
-
-+ '      <span>' + escapeHtml(time) + '</span>'
-+ '      <span>' + escapeHtml(size) + '</span>'
-+ '      <span>Добавил: ' + escapeHtml(addedByText) + '</span>'
-
-
----
-
-6. styles.css — стиль для автора
-
-В конец файла:
-
-/local/sitebuilder/components/disk/styles.css
-
-добавь:
-
-/* =========================================================
-   ADDED BY COLUMN
-   ========================================================= */
-
-.sb-disk__added-by {
-    display: inline-flex;
-    align-items: center;
-    max-width: 180px;
-    min-height: 24px;
-    padding: 0 9px;
-    border-radius: 999px;
-    background: #f3f4f6;
-    color: #374151;
-    font-size: 12px;
-    font-weight: 800;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
+        return 0;
+    }
 }
 
 
 ---
 
-7. Обнови версии подключения
+2. В месте, где API собирает items, добавь имя
+
+В api.php найди место, где формируется элемент списка, примерно так:
+
+$items[] = [
+    'id' => (int)$object->getId(),
+    'name' => (string)$object->getName(),
+    ...
+];
+
+Перед массивом добавь:
+
+$createdById = sb_disk_object_created_by_id($object);
+$createdByName = sb_disk_user_name_by_id($createdById);
+
+И внутрь массива добавь:
+
+'createdById' => $createdById,
+'createdByName' => $createdByName,
+'createdBy' => $createdByName,
+
+Должно получиться примерно так:
+
+$createdById = sb_disk_object_created_by_id($object);
+$createdByName = sb_disk_user_name_by_id($createdById);
+
+$items[] = [
+    'id' => (int)$object->getId(),
+    'name' => (string)$object->getName(),
+    'entityType' => $object instanceof \Bitrix\Disk\Folder ? 'folder' : 'file',
+
+    'createdById' => $createdById,
+    'createdByName' => $createdByName,
+    'createdBy' => $createdByName,
+
+    // остальные поля как были
+];
+
+
+---
+
+3. Важно сделать это и для list, и для search
+
+Если в api.php есть отдельная логика для:
+
+list
+search
+
+то добавь эти поля в обоих местах.
+Иначе в обычной папке имя будет, а в поиске снова будет ID.
+
+
+---
+
+4. Обнови версии файлов
 
 В public_page.php:
 
-<script src="<?= sb_public_h($basePath) ?>/components/disk/script.js?v=19"></script>
+<script src="<?= sb_public_h($basePath) ?>/components/disk/script.js?v=20"></script>
 
-<link rel="stylesheet" href="<?= sb_public_h($basePath) ?>/components/disk/styles.css?v=17">
+Если CSS не менял, его версию можно не трогать.
 
 После этого сделай Ctrl + F5.
 
-Если в колонке будет —, пришли мне файл:
+Если не найдёшь место, где формируется $items[], пришли мне целиком:
 
 /local/sitebuilder/components/disk/api.php
 
-Тогда я добавлю туда отдачу createdByName из Bitrix Disk.
+и я сразу вставлю в правильные места.
