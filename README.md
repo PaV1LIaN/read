@@ -1,14 +1,13 @@
-Да, делаем на стороне компонента диска:
+Да, сделаем историю заменённых файлов без backend-переделки: при выборе “Заменить” старый файл не удаляем, а переименовываем в скрытую историю:
 
-если файл с таким именем уже есть:
-1. Заменить — старый файл удаляется, новый загружается с тем же именем
-2. Переименовать — новый файл загружается с новым именем
-3. Отмена — этот файл не загружается
+_history__timestamp_random__имя-файла.png
+
+В списке такие файлы показываться не будут, но у нового файла появится кнопка “История”, где можно открыть старые версии.
 
 
 ---
 
-1. script.js — добавь методы
+1. script.js — добавь методы истории
 
 Файл:
 
@@ -18,7 +17,274 @@
 
 DiskComponent.prototype.bindStaticEvents = function () {
 
-И вставь туда:
+и вставь:
+
+DiskComponent.prototype.isHistoryItem = function (item) {
+  return String(item && item.name ? item.name : '').indexOf('_history__') === 0;
+};
+
+DiskComponent.prototype.getHistoryOriginalName = function (item) {
+  var name = String(item && item.name ? item.name : '');
+
+  if (name.indexOf('_history__') !== 0) {
+    return name;
+  }
+
+  var rest = name.slice('_history__'.length);
+  var sepIndex = rest.indexOf('__');
+
+  if (sepIndex < 0) {
+    return name;
+  }
+
+  return rest.slice(sepIndex + 2);
+};
+
+DiskComponent.prototype.getHistoryTime = function (item) {
+  var name = String(item && item.name ? item.name : '');
+
+  if (name.indexOf('_history__') !== 0) {
+    return 0;
+  }
+
+  var rest = name.slice('_history__'.length);
+  var sepIndex = rest.indexOf('__');
+
+  if (sepIndex < 0) {
+    return 0;
+  }
+
+  var timePart = rest.slice(0, sepIndex);
+  var timestamp = Number(String(timePart).split('_')[0] || 0);
+
+  return timestamp > 0 ? timestamp : 0;
+};
+
+DiskComponent.prototype.formatHistoryDate = function (timestamp) {
+  timestamp = Number(timestamp || 0);
+
+  if (!timestamp) {
+    return 'Старая версия';
+  }
+
+  var date = new Date(timestamp);
+
+  return date.toLocaleString('ru-RU');
+};
+
+DiskComponent.prototype.buildHistoryFileName = function (originalName) {
+  originalName = String(originalName || '').trim();
+
+  if (!originalName) {
+    originalName = 'file';
+  }
+
+  var stamp = Date.now() + '_' + Math.floor(Math.random() * 100000);
+
+  return '_history__' + stamp + '__' + originalName;
+};
+
+DiskComponent.prototype.getHistoryItemsForFile = function (fileName) {
+  fileName = String(fileName || '').trim().toLowerCase();
+
+  if (!fileName) {
+    return [];
+  }
+
+  return this.state.items
+    .filter(function (item) {
+      if (!this.isHistoryItem(item)) {
+        return false;
+      }
+
+      return String(this.getHistoryOriginalName(item) || '').trim().toLowerCase() === fileName;
+    }, this)
+    .sort(function (a, b) {
+      return this.getHistoryTime(b) - this.getHistoryTime(a);
+    }.bind(this));
+};
+
+DiskComponent.prototype.renameDiskItem = async function (item, newName) {
+  var payload = this.getBasePayload();
+
+  payload.entityType = item.entityType || 'file';
+  payload.entityId = Number(item.id || 0);
+  payload.newName = newName;
+  payload.sessid = this.getSessid();
+
+  var res = await this.api('rename', payload);
+
+  if (!res || !res.ok) {
+    throw new Error((res && (res.message || res.error)) || 'RENAME_ERROR');
+  }
+
+  return res;
+};
+
+DiskComponent.prototype.archiveExistingFileToHistory = async function (existingItem) {
+  if (!existingItem || String(existingItem.entityType || '') !== 'file') {
+    return;
+  }
+
+  var oldName = String(existingItem.name || '').trim();
+
+  if (!oldName) {
+    return;
+  }
+
+  var historyName = this.buildHistoryFileName(oldName);
+
+  await this.renameDiskItem(existingItem, historyName);
+
+  existingItem.name = historyName;
+};
+
+DiskComponent.prototype.renderHistoryControl = function (item) {
+  if (!item || String(item.entityType || '') !== 'file') {
+    return '';
+  }
+
+  if (this.isHistoryItem(item)) {
+    return '';
+  }
+
+  var historyItems = this.getHistoryItemsForFile(item.name);
+
+  if (!historyItems.length) {
+    return '';
+  }
+
+  return '<button type="button" class="sb-disk__row-btn" data-row-action="history">История</button>';
+};
+
+DiskComponent.prototype.openHistoryModalForFile = function (fileName) {
+  var self = this;
+  var historyItems = this.getHistoryItemsForFile(fileName);
+
+  if (!historyItems.length) {
+    alert('Истории замен для этого файла пока нет');
+    return;
+  }
+
+  var modal = document.createElement('div');
+  modal.className = 'sb-disk-history-modal';
+
+  modal.innerHTML = ''
+    + '<div class="sb-disk-history-modal__backdrop" data-history-action="close"></div>'
+    + '<div class="sb-disk-history-modal__dialog">'
+    + '  <div class="sb-disk-history-modal__head">'
+    + '    <div>'
+    + '      <div class="sb-disk-history-modal__title">История файла</div>'
+    + '      <div class="sb-disk-history-modal__subtitle">' + escapeHtml(fileName) + '</div>'
+    + '    </div>'
+    + '    <button type="button" class="sb-disk-history-modal__close" data-history-action="close">×</button>'
+    + '  </div>'
+    + '  <div class="sb-disk-history-modal__body">'
+    + historyItems.map(function (item) {
+        var time = self.formatHistoryDate(self.getHistoryTime(item));
+        var size = item.size ? formatBytes(item.size) : '—';
+
+        return ''
+          + '<div class="sb-disk-history-item" data-history-id="' + escapeHtml(item.id) + '">'
+          + '  <div class="sb-disk-history-item__main">'
+          + '    <div class="sb-disk-history-item__name">' + escapeHtml(self.getHistoryOriginalName(item)) + '</div>'
+          + '    <div class="sb-disk-history-item__meta">'
+          + '      <span>' + escapeHtml(time) + '</span>'
+          + '      <span>' + escapeHtml(size) + '</span>'
+          + '    </div>'
+          + '  </div>'
+          + '  <div class="sb-disk-history-item__actions">'
+          + '    <button type="button" class="sb-disk-history-btn is-primary" data-history-action="open" data-history-id="' + escapeHtml(item.id) + '">Открыть</button>'
+          + (item.downloadUrl
+              ? '    <button type="button" class="sb-disk-history-btn" data-history-action="download" data-history-id="' + escapeHtml(item.id) + '">Скачать</button>'
+              : '')
+          + '  </div>'
+          + '</div>';
+      }).join('')
+    + '  </div>'
+    + '</div>';
+
+  function findHistoryItem(id) {
+    id = Number(id || 0);
+
+    for (var i = 0; i < historyItems.length; i++) {
+      if (Number(historyItems[i].id || 0) === id) {
+        return historyItems[i];
+      }
+    }
+
+    return null;
+  }
+
+  function close() {
+    if (modal && modal.parentNode) {
+      modal.parentNode.removeChild(modal);
+    }
+
+    document.removeEventListener('keydown', onKeyDown);
+  }
+
+  function onKeyDown(e) {
+    if (e.key === 'Escape') {
+      close();
+    }
+  }
+
+  modal.addEventListener('click', function (e) {
+    var btn = e.target.closest('[data-history-action]');
+
+    if (!btn) {
+      return;
+    }
+
+    var action = btn.getAttribute('data-history-action');
+
+    if (action === 'close') {
+      close();
+      return;
+    }
+
+    var id = Number(btn.getAttribute('data-history-id') || 0);
+    var item = findHistoryItem(id);
+
+    if (!item) {
+      return;
+    }
+
+    if (action === 'open') {
+      if (item.previewUrl) {
+        window.open(item.previewUrl, '_blank');
+        return;
+      }
+
+      if (item.downloadUrl) {
+        window.open(item.downloadUrl, '_blank');
+      }
+
+      return;
+    }
+
+    if (action === 'download') {
+      if (item.downloadUrl) {
+        window.open(item.downloadUrl, '_blank');
+      }
+    }
+  });
+
+  document.addEventListener('keydown', onKeyDown);
+  document.body.appendChild(modal);
+};
+
+
+---
+
+2. script.js — замени findExistingFileByName
+
+Найди функцию:
+
+DiskComponent.prototype.findExistingFileByName = function (fileName) {
+
+и замени её целиком:
 
 DiskComponent.prototype.findExistingFileByName = function (fileName) {
   fileName = String(fileName || '').trim().toLowerCase();
@@ -29,6 +295,10 @@ DiskComponent.prototype.findExistingFileByName = function (fileName) {
 
   for (var i = 0; i < this.state.items.length; i++) {
     var item = this.state.items[i];
+
+    if (this.isHistoryItem(item)) {
+      continue;
+    }
 
     if (String(item.entityType || '').toLowerCase() !== 'file') {
       continue;
@@ -42,346 +312,201 @@ DiskComponent.prototype.findExistingFileByName = function (fileName) {
   return null;
 };
 
-DiskComponent.prototype.splitFileName = function (fileName) {
-  fileName = String(fileName || '').trim();
 
-  var dotIndex = fileName.lastIndexOf('.');
+---
 
-  if (dotIndex <= 0) {
-    return {
-      base: fileName,
-      ext: ''
-    };
-  }
+3. script.js — замени getDisplayItems
 
-  return {
-    base: fileName.slice(0, dotIndex),
-    ext: fileName.slice(dotIndex)
-  };
-};
+Найди:
 
-DiskComponent.prototype.suggestDuplicateFileName = function (fileName) {
-  var parts = this.splitFileName(fileName);
-  var base = parts.base || 'file';
-  var ext = parts.ext || '';
-  var index = 1;
-  var candidate = base + ' (копия)' + ext;
+DiskComponent.prototype.getDisplayItems = function () {
 
-  while (this.findExistingFileByName(candidate)) {
-    index++;
-    candidate = base + ' (копия ' + index + ')' + ext;
-  }
+и замени целиком:
 
-  return candidate;
-};
+DiskComponent.prototype.getDisplayItems = function () {
+  var folders = [];
+  var files = [];
 
-DiskComponent.prototype.makeRenamedFile = function (file, newName) {
-  newName = String(newName || '').trim();
-
-  if (!newName) {
-    throw new Error('EMPTY_FILE_NAME');
-  }
-
-  if (typeof File === 'function') {
-    return new File([file], newName, {
-      type: file.type,
-      lastModified: file.lastModified
-    });
-  }
-
-  throw new Error('Ваш браузер не поддерживает переименование файла перед загрузкой');
-};
-
-DiskComponent.prototype.deleteDiskItems = async function (items) {
-  var payload = this.getBasePayload();
-
-  payload.items = items;
-  payload.sessid = this.getSessid();
-
-  var res = await this.api('delete', payload);
-
-  if (!res || !res.ok) {
-    throw new Error((res && (res.message || res.error)) || 'DELETE_ERROR');
-  }
-
-  return res;
-};
-
-DiskComponent.prototype.askDuplicateUploadAction = function (file, existingItem) {
-  var self = this;
-
-  return new Promise(function (resolve) {
-    var fileName = String(file && file.name ? file.name : '');
-    var suggestedName = self.suggestDuplicateFileName(fileName);
-
-    var modal = document.createElement('div');
-    modal.className = 'sb-disk-duplicate-modal';
-
-    modal.innerHTML = ''
-      + '<div class="sb-disk-duplicate-modal__backdrop" data-duplicate-action="cancel"></div>'
-      + '<div class="sb-disk-duplicate-modal__dialog">'
-      + '  <div class="sb-disk-duplicate-modal__head">'
-      + '    <div>'
-      + '      <div class="sb-disk-duplicate-modal__title">Файл уже существует</div>'
-      + '      <div class="sb-disk-duplicate-modal__subtitle">В этой папке уже есть файл с таким именем.</div>'
-      + '    </div>'
-      + '    <button type="button" class="sb-disk-duplicate-modal__close" data-duplicate-action="cancel">×</button>'
-      + '  </div>'
-      + ''
-      + '  <div class="sb-disk-duplicate-modal__body">'
-      + '    <div class="sb-disk-duplicate-file">'
-      + '      <div class="sb-disk-duplicate-file__label">Файл:</div>'
-      + '      <div class="sb-disk-duplicate-file__name">' + escapeHtml(fileName) + '</div>'
-      + '    </div>'
-      + ''
-      + '    <div class="sb-disk-duplicate-field">'
-      + '      <label>Новое имя, если выбрать “Переименовать”</label>'
-      + '      <input type="text" class="sb-disk-duplicate-input" value="' + escapeHtml(suggestedName) + '">'
-      + '    </div>'
-      + ''
-      + '    <div class="sb-disk-duplicate-note">'
-      + '      “Заменить” удалит старый файл и загрузит новый с тем же именем.'
-      + '    </div>'
-      + '  </div>'
-      + ''
-      + '  <div class="sb-disk-duplicate-modal__footer">'
-      + '    <button type="button" class="sb-disk-duplicate-btn" data-duplicate-action="cancel">Отмена</button>'
-      + '    <button type="button" class="sb-disk-duplicate-btn" data-duplicate-action="rename">Переименовать</button>'
-      + '    <button type="button" class="sb-disk-duplicate-btn is-primary" data-duplicate-action="replace">Заменить</button>'
-      + '  </div>'
-      + '</div>';
-
-    function close(result) {
-      if (modal && modal.parentNode) {
-        modal.parentNode.removeChild(modal);
-      }
-
-      document.removeEventListener('keydown', onKeyDown);
-
-      resolve(result);
+  this.state.items.forEach(function (item) {
+    if (this.isHistoryItem(item)) {
+      return;
     }
 
-    function onKeyDown(e) {
-      if (e.key === 'Escape') {
-        close({
-          action: 'cancel'
-        });
-      }
+    if (String(item.entityType || '').toLowerCase() === 'folder') {
+      folders.push(item);
+    } else {
+      files.push(item);
     }
+  }, this);
 
-    modal.addEventListener('click', function (e) {
-      var btn = e.target.closest('[data-duplicate-action]');
-
-      if (!btn) {
-        return;
-      }
-
-      var action = btn.getAttribute('data-duplicate-action');
-
-      if (action === 'cancel') {
-        close({
-          action: 'cancel'
-        });
-        return;
-      }
-
-      if (action === 'replace') {
-        close({
-          action: 'replace',
-          existingItem: existingItem
-        });
-        return;
-      }
-
-      if (action === 'rename') {
-        var input = modal.querySelector('.sb-disk-duplicate-input');
-        var newName = input ? String(input.value || '').trim() : '';
-
-        if (!newName) {
-          alert('Введите новое имя файла');
-          if (input) input.focus();
-          return;
-        }
-
-        if (self.findExistingFileByName(newName)) {
-          alert('Файл с таким именем уже есть. Укажите другое имя.');
-          if (input) input.focus();
-          return;
-        }
-
-        close({
-          action: 'rename',
-          name: newName
-        });
-      }
-    });
-
-    document.addEventListener('keydown', onKeyDown);
-    document.body.appendChild(modal);
-
-    setTimeout(function () {
-      var input = modal.querySelector('.sb-disk-duplicate-input');
-      if (input) {
-        input.focus();
-        input.select();
-      }
-    }, 50);
-  });
+  return folders.concat(files);
 };
 
 
 ---
 
-2. script.js — замени обработчик загрузки
+4. script.js — замени логику “Заменить”
 
-Найди внутри bindStaticEvents() вот этот блок:
+В обработчике загрузки найди кусок:
 
-uploadInput.addEventListener('change', async function (e) {
-  var files = Array.prototype.slice.call(e.target.files || []);
-  if (!files.length) {
-    return;
-  }
+if (decision.action === 'replace') {
+  await self.deleteDiskItems([{
+    id: Number(existingItem.id || 0),
+    entityType: 'file'
+  }]);
 
-  var formData = new FormData();
-  formData.append('siteId', self.state.siteId);
-  formData.append('pageId', self.state.pageId);
-  formData.append('blockId', self.state.blockId);
-  formData.append('currentFolderId', self.state.currentFolderId);
-  formData.append('sessid', self.getSessid());
-
-  files.forEach(function (file) {
-    formData.append('files[]', file);
+  self.state.items = self.state.items.filter(function (item) {
+    return Number(item.id || 0) !== Number(existingItem.id || 0);
   });
 
-  var res = await self.api('upload', formData, true);
-  if (!res || !res.ok) {
-    window.alert((res && (res.message || res.error)) || 'Ошибка загрузки');
-    return;
-  }
+  preparedFiles.push(file);
+  continue;
+}
 
-  uploadInput.value = '';
-  await self.loadFolder(self.state.currentFolderId);
-});
+Замени на:
 
-Замени его целиком на:
+if (decision.action === 'replace') {
+  await self.archiveExistingFileToHistory(existingItem);
 
-uploadInput.addEventListener('change', async function (e) {
-  var files = Array.prototype.slice.call(e.target.files || []);
+  preparedFiles.push(file);
+  continue;
+}
 
-  if (!files.length) {
-    return;
-  }
-
-  if (!self.state.permissions.canUpload) {
-    uploadInput.value = '';
-    return;
-  }
-
-  var preparedFiles = [];
-
-  try {
-    for (var i = 0; i < files.length; i++) {
-      var file = files[i];
-      var existingItem = self.findExistingFileByName(file.name);
-
-      if (!existingItem) {
-        preparedFiles.push(file);
-        continue;
-      }
-
-      var decision = await self.askDuplicateUploadAction(file, existingItem);
-
-      if (!decision || decision.action === 'cancel') {
-        continue;
-      }
-
-      if (decision.action === 'replace') {
-        await self.deleteDiskItems([{
-          id: Number(existingItem.id || 0),
-          entityType: 'file'
-        }]);
-
-        self.state.items = self.state.items.filter(function (item) {
-          return Number(item.id || 0) !== Number(existingItem.id || 0);
-        });
-
-        preparedFiles.push(file);
-        continue;
-      }
-
-      if (decision.action === 'rename') {
-        preparedFiles.push(self.makeRenamedFile(file, decision.name));
-      }
-    }
-
-    if (!preparedFiles.length) {
-      uploadInput.value = '';
-      return;
-    }
-
-    var formData = new FormData();
-
-    formData.append('siteId', self.state.siteId);
-    formData.append('pageId', self.state.pageId);
-    formData.append('blockId', self.state.blockId);
-    formData.append('currentFolderId', self.state.currentFolderId);
-    formData.append('sessid', self.getSessid());
-
-    preparedFiles.forEach(function (file) {
-      formData.append('files[]', file);
-    });
-
-    var res = await self.api('upload', formData, true);
-
-    if (!res || !res.ok) {
-      window.alert((res && (res.message || res.error)) || 'Ошибка загрузки');
-      return;
-    }
-
-    uploadInput.value = '';
-    await self.loadFolder(self.state.currentFolderId);
-  } catch (err) {
-    console.error(err);
-    uploadInput.value = '';
-    window.alert(err && err.message ? err.message : 'Ошибка загрузки');
-  }
-});
+Теперь старый файл не удаляется, а уходит в историю.
 
 
 ---
 
-3. styles.css — добавь стили окна выбора
+5. script.js — добавь кнопку “История” в таблицу
 
-В конец файла:
+В renderItemsTable() перед:
+
+var openControl = renderOpenControl(item);
+
+добавь:
+
+var historyControl = self.renderHistoryControl(item);
+
+Если в начале renderItemsTable() ещё нет:
+
+var self = this;
+
+добавь перед tbody.innerHTML:
+
+var self = this;
+
+В действиях найди:
+
++ (item.entityType === 'file'
+  ? '<button type="button" class="sb-disk__row-btn" data-row-action="download">Скачать</button>'
+  : '') +
+'<button type="button" class="sb-disk__row-btn" data-row-action="rename">Переим.</button>' +
+
+Замени на:
+
++ (item.entityType === 'file'
+  ? '<button type="button" class="sb-disk__row-btn" data-row-action="download">Скачать</button>'
+  : '') +
+historyControl +
+'<button type="button" class="sb-disk__row-btn" data-row-action="rename">Переим.</button>' +
+
+
+---
+
+6. script.js — добавь кнопку “История” в плитку
+
+В renderItemsGrid() перед:
+
+var openControl = renderOpenControl(item);
+
+добавь:
+
+var historyControl = self.renderHistoryControl(item);
+
+Если в начале renderItemsGrid() ещё нет:
+
+var self = this;
+
+добавь перед container.innerHTML:
+
+var self = this;
+
+В действиях найди:
+
++ (item.entityType === 'file'
+  ? '<button type="button" class="sb-disk__row-btn" data-row-action="download">Скачать</button>'
+  : '') +
+'<button type="button" class="sb-disk__row-btn" data-row-action="rename">Переим.</button>' +
+
+Замени на:
+
++ (item.entityType === 'file'
+  ? '<button type="button" class="sb-disk__row-btn" data-row-action="download">Скачать</button>'
+  : '') +
+historyControl +
+'<button type="button" class="sb-disk__row-btn" data-row-action="rename">Переим.</button>' +
+
+
+---
+
+7. script.js — обработчик кнопки “История”
+
+Внутри общего click-обработчика найди блок:
+
+var downloadBtn = e.target.closest('[data-row-action="download"]');
+
+Перед ним вставь:
+
+var historyBtn = e.target.closest('[data-row-action="history"]');
+if (historyBtn) {
+  var historyRow = e.target.closest('[data-id][data-entity-type="file"]');
+
+  if (!historyRow) {
+    return;
+  }
+
+  var fileName = historyRow.getAttribute('data-name') || '';
+
+  self.openHistoryModalForFile(fileName);
+  return;
+}
+
+
+---
+
+8. styles.css — стили истории
+
+В конец:
 
 /local/sitebuilder/components/disk/styles.css
 
 добавь:
 
 /* =========================================================
-   DUPLICATE FILE UPLOAD MODAL
+   FILE HISTORY MODAL
    ========================================================= */
 
-.sb-disk-duplicate-modal {
+.sb-disk-history-modal {
     position: fixed;
     inset: 0;
-    z-index: 20000;
+    z-index: 21000;
     display: flex;
     align-items: center;
     justify-content: center;
     padding: 24px;
 }
 
-.sb-disk-duplicate-modal__backdrop {
+.sb-disk-history-modal__backdrop {
     position: absolute;
     inset: 0;
     background: rgba(15, 23, 42, .48);
     backdrop-filter: blur(5px);
 }
 
-.sb-disk-duplicate-modal__dialog {
+.sb-disk-history-modal__dialog {
     position: relative;
-    width: min(520px, 100%);
+    width: min(640px, 100%);
+    max-height: calc(100vh - 48px);
     overflow: hidden;
     border: 1px solid #e5e7eb;
     border-radius: 22px;
@@ -389,7 +514,7 @@ uploadInput.addEventListener('change', async function (e) {
     box-shadow: 0 28px 80px rgba(15, 23, 42, .30);
 }
 
-.sb-disk-duplicate-modal__head {
+.sb-disk-history-modal__head {
     display: flex;
     align-items: flex-start;
     justify-content: space-between;
@@ -399,21 +524,22 @@ uploadInput.addEventListener('change', async function (e) {
     background: #f9fafb;
 }
 
-.sb-disk-duplicate-modal__title {
+.sb-disk-history-modal__title {
     color: #111827;
     font-size: 20px;
     font-weight: 900;
     line-height: 1.25;
 }
 
-.sb-disk-duplicate-modal__subtitle {
+.sb-disk-history-modal__subtitle {
     margin-top: 5px;
     color: #6b7280;
     font-size: 13px;
     line-height: 1.45;
+    word-break: break-word;
 }
 
-.sb-disk-duplicate-modal__close {
+.sb-disk-history-modal__close {
     width: 34px;
     height: 34px;
     border: 1px solid #e5e7eb;
@@ -425,90 +551,79 @@ uploadInput.addEventListener('change', async function (e) {
     line-height: 1;
 }
 
-.sb-disk-duplicate-modal__close:hover {
+.sb-disk-history-modal__close:hover {
     background: #f3f4f6;
     color: #111827;
 }
 
-.sb-disk-duplicate-modal__body {
-    padding: 22px;
+.sb-disk-history-modal__body {
+    max-height: calc(100vh - 170px);
+    overflow: auto;
+    padding: 16px;
 }
 
-.sb-disk-duplicate-file {
+.sb-disk-history-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 14px;
     padding: 12px;
     border: 1px solid #e5e7eb;
     border-radius: 14px;
-    background: #f8fafc;
+    background: #fff;
 }
 
-.sb-disk-duplicate-file__label {
-    color: #6b7280;
-    font-size: 12px;
-    font-weight: 700;
+.sb-disk-history-item + .sb-disk-history-item {
+    margin-top: 10px;
 }
 
-.sb-disk-duplicate-file__name {
-    margin-top: 4px;
+.sb-disk-history-item:hover {
+    border-color: #c7d2fe;
+    background: #f8fbff;
+}
+
+.sb-disk-history-item__main {
+    min-width: 0;
+}
+
+.sb-disk-history-item__name {
     color: #111827;
     font-size: 14px;
     font-weight: 900;
     word-break: break-word;
 }
 
-.sb-disk-duplicate-field {
-    margin-top: 14px;
-}
-
-.sb-disk-duplicate-field label {
-    display: block;
-    margin-bottom: 6px;
-    color: #374151;
-    font-size: 13px;
-    font-weight: 800;
-}
-
-.sb-disk-duplicate-input {
-    width: 100%;
-    height: 40px;
-    padding: 0 13px;
-    border: 1px solid #dbe3ef;
-    border-radius: 13px;
-    background: #fff;
-    color: #111827;
-    font-size: 13px;
-    outline: none;
-}
-
-.sb-disk-duplicate-input:focus {
-    border-color: var(--disk-accent, #2563eb);
-    box-shadow: 0 0 0 3px rgba(37, 99, 235, .12);
-}
-
-.sb-disk-duplicate-note {
-    margin-top: 12px;
-    padding: 10px 12px;
-    border: 1px solid #dbeafe;
-    border-radius: 12px;
-    background: #eff6ff;
-    color: #1e40af;
-    font-size: 12px;
-    line-height: 1.45;
-}
-
-.sb-disk-duplicate-modal__footer {
+.sb-disk-history-item__meta {
     display: flex;
-    justify-content: flex-end;
-    gap: 10px;
-    padding: 16px 22px;
-    border-top: 1px solid #eef2f7;
-    background: #f9fafb;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-top: 6px;
 }
 
-.sb-disk-duplicate-btn {
-    min-height: 38px;
-    padding: 0 14px;
+.sb-disk-history-item__meta span {
+    display: inline-flex;
+    min-height: 22px;
+    align-items: center;
+    padding: 0 8px;
+    border-radius: 999px;
+    background: #f3f4f6;
+    color: #6b7280;
+    font-size: 12px;
+    font-weight: 700;
+}
+
+.sb-disk-history-item__actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex: 0 0 auto;
+}
+
+.sb-disk-history-btn {
+    min-height: 34px;
+    padding: 0 12px;
     border: 1px solid #dbe3ef;
-    border-radius: 12px;
+    border-radius: 11px;
     background: #fff;
     color: #374151;
     font-size: 13px;
@@ -516,50 +631,57 @@ uploadInput.addEventListener('change', async function (e) {
     cursor: pointer;
 }
 
-.sb-disk-duplicate-btn:hover {
+.sb-disk-history-btn:hover {
     border-color: #c7d2fe;
     background: #eef2ff;
     color: var(--disk-accent, #2563eb);
 }
 
-.sb-disk-duplicate-btn.is-primary {
+.sb-disk-history-btn.is-primary {
     border-color: var(--disk-accent, #2563eb);
     background: var(--disk-accent, #2563eb);
     color: #fff;
 }
 
-.sb-disk-duplicate-btn.is-primary:hover {
+.sb-disk-history-btn.is-primary:hover {
     background: var(--disk-accent-hover, #3f5de9);
     border-color: var(--disk-accent-hover, #3f5de9);
     color: #fff;
 }
 
-@media (max-width: 620px) {
-    .sb-disk-duplicate-modal {
+@media (max-width: 700px) {
+    .sb-disk-history-modal {
         align-items: flex-start;
         padding: 12px;
     }
 
-    .sb-disk-duplicate-modal__footer {
-        flex-direction: column-reverse;
+    .sb-disk-history-item {
+        align-items: stretch;
+        flex-direction: column;
     }
 
-    .sb-disk-duplicate-btn {
-        width: 100%;
+    .sb-disk-history-item__actions {
+        justify-content: flex-start;
+        flex-wrap: wrap;
     }
 }
 
 
 ---
 
-4. Обнови версии подключения
+9. Обнови версии подключения
 
 В public_page.php:
 
-<script src="<?= sb_public_h($basePath) ?>/components/disk/script.js?v=16"></script>
+<script src="<?= sb_public_h($basePath) ?>/components/disk/script.js?v=17"></script>
 
-<link rel="stylesheet" href="<?= sb_public_h($basePath) ?>/components/disk/styles.css?v=15">
+<link rel="stylesheet" href="<?= sb_public_h($basePath) ?>/components/disk/styles.css?v=16">
 
-После этого сделай Ctrl + F5.
+После Ctrl + F5 схема будет такая:
 
-Теперь при загрузке файла с уже существующим именем появится окно с выбором: Заменить / Переименовать / Отмена.
+Загружаешь файл с тем же именем
+→ выбираешь “Заменить”
+→ старый файл скрывается в историю
+→ новый файл загружается
+→ у нового файла появляется кнопка “История”
+→ в истории можно открыть или скачать старую версию
