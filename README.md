@@ -1,26 +1,8 @@
-Да, по скрину видно: секции уже выводятся, но сетка колонок не применяется. Поэтому колонки идут обычными div друг под другом.
-
-Причина почти точно в CSS: в public_page.php сейчас выводится класс:
-
-sb-page-section__grid
-
-а в старом CSS мог остаться класс:
-
-.sb-section-grid
-
-Сделаем универсально, чтобы работали оба варианта классов.
-
-1. В public.css добавь в самый конец
-
-Файл:
-
-/local/sitebuilder/assets/public/public.css
-
-Добавь именно в самый низ:
+Не заменяй весь public.css, иначе опять можно снести рабочий визуал. Просто добавь этот блок в самый конец файла:
 
 /* =========================================================
    SITEBUILDER PAGE SECTIONS FIX
-   Работает и со старым, и с новым HTML секций
+   Секции и колонки на публичной странице
    ========================================================= */
 
 .sb-page-sections {
@@ -38,7 +20,7 @@ sb-page-section__grid
     margin-top: 24px;
 }
 
-/* Новый вариант */
+/* Новый HTML секций */
 .sb-page-section__grid {
     display: grid !important;
     grid-template-columns: repeat(var(--sb-section-columns, 1), minmax(0, 1fr)) !important;
@@ -54,7 +36,7 @@ sb-page-section__grid
     box-sizing: border-box;
 }
 
-/* Старый вариант, если где-то остался */
+/* Старый HTML секций, если где-то остался */
 .sb-section-grid {
     display: grid !important;
     grid-template-columns: repeat(var(--sb-section-columns, 1), minmax(0, 1fr)) !important;
@@ -70,6 +52,21 @@ sb-page-section__grid
     box-sizing: border-box;
 }
 
+/* Чтобы блоки внутри колонок не ломали ширину */
+.sb-page-section__column > *,
+.sb-section-column > * {
+    max-width: 100%;
+    min-width: 0;
+    box-sizing: border-box;
+}
+
+/* Отступы блоков внутри колонок */
+.sb-page-section__column > * + *,
+.sb-section-column > * + * {
+    margin-top: 16px;
+}
+
+/* На телефонах все колонки становятся одной */
 @media (max-width: 900px) {
     .sb-page-section__grid,
     .sb-section-grid {
@@ -77,58 +74,8 @@ sb-page-section__grid
     }
 }
 
-2. Обнови версию CSS в рабочем public_page.php
-
-Найди подключение:
-
-/assets/public/public.css
-
-Например:
-
-<link rel="stylesheet" href="<?= sb_public_h($basePath) ?>/assets/public/public.css?v=7">
-
-Поставь новую версию:
+И в public_page.php обнови версию подключения CSS:
 
 <link rel="stylesheet" href="<?= sb_public_h($basePath) ?>/assets/public/public.css?v=8">
 
-Если там без версии, сделай так:
-
-<link rel="stylesheet" href="<?= sb_public_h($basePath) ?>/assets/public/public.css?v=8">
-
-3. Проверь, что в public_page.php grid выводится так
-
-В твоей рабочей версии, которую мы точечно правили, внутри функции sb_public_render_page_sections() должно быть:
-
-$html .= '<div class="sb-page-section__grid" style="--sb-section-columns:' . $columns . ';--sb-section-gap:' . $gap . 'px;">';
-
-Если у тебя там сейчас другой класс:
-
-$html .= '<div class="sb-section-grid" style="--sb-section-columns:' . $columns . ';--sb-section-gap:' . $gap . 'px;">';
-
-это тоже нормально — CSS выше покрывает оба варианта.
-
-4. Сделай жёсткое обновление
-
-На публичной странице нажми:
-
-Ctrl + F5
-
-Или временно открой с параметром:
-
-/local/sitebuilder/public.php?siteId=13&pageId=13&clear_cache=Y
-
-Что должно получиться
-
-У тебя в редакторе:
-
-Основная секция:
-колонка 1 — button
-колонка 2 — button
-колонка 3 — пусто
-
-Новая секция:
-колонка 1 — пусто
-колонка 2 — text
-колонка 3 — пусто
-
-На публичной странице должно стать так же: первая секция в 3 колонки, ниже вторая секция тоже в 3 колонки, а текст должен стоять во второй колонке, а не идти списком под кнопками.
+После этого на публичной странице сделай Ctrl + F5.
