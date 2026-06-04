@@ -1,18 +1,31 @@
-Да, значит проблема уже не в editor.js, а в public-рендере.
+Скорее всего проблема такая же, как была с колонками: у блока text поле content приходит как JSON-строка, а публичный рендер ждёт массив. Поэтому он не находит content['text'].
 
-В редакторе layout.columns = 2 читается нормально, а в public_page.php, скорее всего, layout секции приходит как JSON-строка, и код воспринимает его как пустой массив. Поэтому публичная страница думает, что у секции 1 колонка, и выводит всё столбиком.
+Нужно поправить рендер блока text.
 
-1. Исправь public_page.php
+1. Найди функцию рендера блоков
 
-Файл:
+Ищи в проекте:
 
+function sb_public_render_blocks
+
+или:
+
+function sb_public_render_block
+
+Скорее всего она находится в одном из файлов:
+
+/local/sitebuilder/public.php
 /local/sitebuilder/views/layout/public_page.php
+/local/sitebuilder/lib/helpers.php
 
-Найди место, где у тебя идут функции секций, и перед функцией:
 
-if (!function_exists('sb_public_section_css_value')) {
+---
 
-добавь:
+2. Добавь универсальную функцию декодирования
+
+Если ты уже добавлял sb_public_to_array() в public_page.php, повторно не надо.
+
+Она должна быть такой:
 
 if (!function_exists('sb_public_to_array')) {
     function sb_public_to_array($value): array
@@ -36,203 +49,96 @@ if (!function_exists('sb_public_to_array')) {
 
 ---
 
-2. Замени чтение props в sb_public_section_style
+3. Исправь рендер блока text
 
-Найди:
+Найди в функции рендера блоков место примерно такое:
 
-$props = is_array($section['props'] ?? null) ? $section['props'] : [];
+if ($type === 'text') {
+    ...
+}
 
-Замени на:
+И замени обработку text на такую:
 
-$props = sb_public_to_array($section['props'] ?? []);
+if ($type === 'text') {
+    $content = sb_public_to_array($block['content'] ?? []);
+    $props = sb_public_to_array($block['props'] ?? []);
 
+    $text = (string)($content['text'] ?? '');
 
----
-
-3. Замени чтение layout в sb_public_section_container_class
-
-Найди:
-
-$layout = is_array($section['layout'] ?? null) ? $section['layout'] : [];
-
-Замени на:
-
-$layout = sb_public_to_array($section['layout'] ?? []);
-
-
----
-
-4. Замени чтение layout в sb_public_render_page_sections
-
-Найди внутри функции sb_public_render_page_sections:
-
-$layout = is_array($section['layout'] ?? null) ? $section['layout'] : [];
-$columns = (int)($layout['columns'] ?? 1);
-
-Замени на:
-
-$layout = sb_public_to_array($section['layout'] ?? []);
-$columns = (int)($layout['columns'] ?? 1);
-
-
----
-
-5. Проверь группировку блоков по колонкам
-
-В функции:
-
-function sb_public_group_blocks_by_column(array $blocks, int $columns): array
-
-должно быть так:
-
-if (!function_exists('sb_public_group_blocks_by_column')) {
-    function sb_public_group_blocks_by_column(array $blocks, int $columns): array
-    {
-        $columns = max(1, min(4, $columns));
-
-        $result = [];
-
-        for ($i = 1; $i <= $columns; $i++) {
-            $result[$i] = [];
-        }
-
-        foreach ($blocks as $block) {
-            $props = sb_public_to_array($block['props'] ?? []);
-            $placement = sb_public_to_array($props['_placement'] ?? []);
-
-            $column = (int)($block['column'] ?? 0);
-
-            if ($column <= 0) {
-                $column = (int)($props['column'] ?? 0);
-            }
-
-            if ($column <= 0) {
-                $column = (int)($placement['column'] ?? 0);
-            }
-
-            if ($column <= 0) {
-                $column = 1;
-            }
-
-            $column = max(1, min($columns, $column));
-
-            $result[$column][] = $block;
-        }
-
-        return $result;
+    if ($text === '') {
+        return '';
     }
+
+    return '<div class="sb-public-block sb-public-block--text">'
+        . '<div class="sb-public-text">'
+        . nl2br(sb_public_h($text))
+        . '</div>'
+        . '</div>';
 }
 
 
 ---
 
-6. Проверь CSS публичной части
+4. Заодно лучше поправить heading, button, html
+
+Чтобы потом не всплыла такая же проблема, в каждом типе блока content и props лучше получать так:
+
+$content = sb_public_to_array($block['content'] ?? []);
+$props = sb_public_to_array($block['props'] ?? []);
+
+Например для heading:
+
+if ($type === 'heading') {
+    $content = sb_public_to_array($block['content'] ?? []);
+
+    $text = (string)($content['text'] ?? '');
+
+    if ($text === '') {
+        return '';
+    }
+
+    return '<div class="sb-public-block sb-public-block--heading">'
+        . '<h2 class="sb-public-heading">'
+        . sb_public_h($text)
+        . '</h2>'
+        . '</div>';
+}
+
+
+---
+
+5. Добавь CSS, если текст есть, но его почти не видно
 
 Файл:
 
 /local/sitebuilder/assets/public/public.css
 
-В конец добавь или проверь, что есть:
+В конец:
 
-.sb-page-sections {
-    width: 100%;
-    min-width: 0;
+.sb-public-block--text {
+    margin: 12px 0;
 }
 
-.sb-page-section {
-    width: 100%;
-    min-width: 0;
-    box-sizing: border-box;
+.sb-public-text {
+    color: #374151;
+    font-size: 16px;
+    line-height: 1.65;
+    white-space: normal;
 }
 
-.sb-section-container {
-    width: 100%;
-    min-width: 0;
-    margin: 0 auto;
-    box-sizing: border-box;
+.sb-public-heading {
+    margin: 0 0 14px;
+    color: #111827;
+    font-size: 28px;
+    line-height: 1.25;
+    font-weight: 900;
 }
 
-.sb-section-container--default {
-    max-width: var(--sb-container-width, 1180px);
-}
+И обнови версию CSS в public_page.php:
 
-.sb-section-container--wide {
-    max-width: 1440px;
-}
-
-.sb-section-container--full {
-    max-width: none;
-}
-
-.sb-section-grid {
-    display: grid;
-    grid-template-columns: 1fr;
-    gap: var(--sb-section-gap, 24px);
-    width: 100%;
-    min-width: 0;
-    align-items: start;
-}
-
-.sb-page-section--columns-1 .sb-section-grid {
-    grid-template-columns: 1fr;
-}
-
-.sb-page-section--columns-2 .sb-section-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-}
-
-.sb-page-section--columns-3 .sb-section-grid {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-}
-
-.sb-page-section--columns-4 .sb-section-grid {
-    grid-template-columns: repeat(4, minmax(0, 1fr));
-}
-
-.sb-section-column {
-    min-width: 0;
-}
-
-@media (max-width: 900px) {
-    .sb-page-section--columns-2 .sb-section-grid,
-    .sb-page-section--columns-3 .sb-section-grid,
-    .sb-page-section--columns-4 .sb-section-grid {
-        grid-template-columns: 1fr;
-    }
-}
+<link rel="stylesheet" href="<?= sb_public_h($basePath) ?>/assets/public/public.css?v=4">
 
 
 ---
 
-7. Обнови версию CSS в public_page.php
-
-Найди:
-
-<link rel="stylesheet" href="<?= sb_public_h($basePath) ?>/assets/public/public.css">
-
-или текущую версию, например:
-
-<link rel="stylesheet" href="<?= sb_public_h($basePath) ?>/assets/public/public.css?v=2">
-
-Поставь новую:
-
-<link rel="stylesheet" href="<?= sb_public_h($basePath) ?>/assets/public/public.css?v=3">
-
-
----
-
-После этого сделай Ctrl + F5 на публичной странице.
-
-Должно стать так:
-
-Основная секция
-├── колонка 1: button
-└── колонка 2: button + heading
-
-Если всё равно будет столбиком, пришли мне кусок из public_page.php, где у тебя функции:
-
-sb_public_render_page_sections
-sb_public_group_blocks_by_section
-sb_public_group_blocks_by_column
-
-Там уже точечно поправим.
+После этого текстовый блок должен появиться на публичной странице. Если не появится — пришли мне функцию sb_public_render_blocks / sb_public_render_block, я точечно заменю её целиком.
