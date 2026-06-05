@@ -1,793 +1,536 @@
-Да, сейчас данные заполняются в узкой правой панели, поэтому неудобно. Сделаем большое окно редактирования таблицы, как мини-Excel:
+Да, начнём с изменения ширины столбцов прямо в public. Остальные изменения данных прямо на странице сделаем следующим шагом.
 
-Открыть таблицу → большое окно → столбцы сверху → строки ниже → заполнение ячеек
+Сейчас добавим режим:
 
-1. В 30-blocks.js замени весь блок TABLE BLOCK
+public.php?siteId=13&pageId=14&edit=Y
+
+В этом режиме у таблицы появятся “ручки” на границах столбцов и кнопка Сохранить ширину.
+
+
+---
+
+1. Замени table.php
 
 Файл:
 
-/local/sitebuilder/assets/admin/editor/30-blocks.js
+/local/sitebuilder/views/blocks/table.php
 
-Найди место:
+Полностью замени на:
 
-/* =========================================================
-   TABLE BLOCK
-   ========================================================= */
+<?php
+global $USER;
 
-И замени весь блок от этого комментария до function fillVisualBlockForm(block) на этот код:
+$title = trim((string)($content['title'] ?? ''));
 
-/* =========================================================
-   TABLE BLOCK
-   ========================================================= */
+$columns = is_array($content['columns'] ?? null) ? $content['columns'] : [];
+$rows = is_array($content['rows'] ?? null) ? $content['rows'] : [];
 
-var tableEditorDraft = null;
+if (empty($columns)) {
+    return;
+}
 
-function normalizeTableContent(content) {
-    content = content || {};
+$isEditMode = (
+    (string)($_GET['edit'] ?? '') === 'Y'
+    && is_object($USER)
+    && method_exists($USER, 'IsAuthorized')
+    && $USER->IsAuthorized()
+    && method_exists($USER, 'IsAdmin')
+    && $USER->IsAdmin()
+);
 
-    var columns = Array.isArray(content.columns) ? content.columns : [];
-    var rows = Array.isArray(content.rows) ? content.rows : [];
+$columns = array_values(array_map(static function ($column, $index) {
+    $id = trim((string)($column['id'] ?? ''));
 
-    if (!columns.length) {
-        columns = [
-            {id: 'col_1', label: 'Столбец 1'},
-            {id: 'col_2', label: 'Столбец 2'},
-            {id: 'col_3', label: 'Столбец 3'}
-        ];
+    if ($id === '') {
+        $id = 'col_' . ($index + 1);
     }
 
-    columns = columns.map(function (column, index) {
-        var id = String(column.id || '').trim();
+    $label = trim((string)($column['label'] ?? ''));
 
-        if (!id) {
-            id = 'col_' + (index + 1);
+    if ($label === '') {
+        $label = 'Столбец ' . ($index + 1);
+    }
+
+    $width = (int)($column['width'] ?? 0);
+
+    if ($width < 40) {
+        $width = 0;
+    }
+
+    if ($width > 1200) {
+        $width = 1200;
+    }
+
+    return [
+        'id' => $id,
+        'label' => $label,
+        'width' => $width,
+    ];
+}, $columns, array_keys($columns)));
+
+$normalizedRows = [];
+
+foreach ($rows as $rowIndex => $row) {
+    $cells = is_array($row['cells'] ?? null) ? $row['cells'] : [];
+    $rowId = trim((string)($row['id'] ?? ''));
+
+    if ($rowId === '') {
+        $rowId = 'row_' . ($rowIndex + 1);
+    }
+
+    $normalizedRows[] = [
+        'id' => $rowId,
+        'cells' => $cells,
+    ];
+}
+
+$tableContent = [
+    'title' => $title !== '' ? $title : 'Таблица',
+    'columns' => $columns,
+    'rows' => $normalizedRows,
+];
+
+$contentJson = json_encode($tableContent, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+$propsJson = json_encode(is_array($props ?? null) ? $props : [], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+
+$blockId = (int)($block['id'] ?? 0);
+?>
+
+<section
+    class="sb-block sb-block--table<?= $isEditMode ? ' is-public-editable-table' : '' ?>"
+    <?php if ($isEditMode): ?>
+        data-public-editable-table
+        data-block-id="<?= $blockId ?>"
+        data-content="<?= sb_public_h((string)$contentJson) ?>"
+        data-props="<?= sb_public_h((string)$propsJson) ?>"
+    <?php endif; ?>
+>
+    <?php if ($title !== ''): ?>
+        <h2 class="sb-public-table__title"><?= sb_public_h($title) ?></h2>
+    <?php endif; ?>
+
+    <?php if ($isEditMode): ?>
+        <div class="sb-public-table-editbar">
+            <div class="sb-public-table-editbar__text">
+                Режим редактирования: можно менять ширину столбцов
+            </div>
+
+            <button class="sb-public-table-editbar__btn" type="button" data-table-save-widths>
+                Сохранить ширину
+            </button>
+        </div>
+    <?php endif; ?>
+
+    <div class="sb-public-table-wrap">
+        <table class="sb-public-table<?= $isEditMode ? ' sb-public-table--editable' : '' ?>">
+            <colgroup>
+                <?php foreach ($columns as $column): ?>
+                    <?php
+                    $style = '';
+
+                    if ((int)$column['width'] > 0) {
+                        $style = ' style="width:' . (int)$column['width'] . 'px;"';
+                    }
+                    ?>
+                    <col data-column-id="<?= sb_public_h($column['id']) ?>"<?= $style ?>>
+                <?php endforeach; ?>
+            </colgroup>
+
+            <thead>
+                <tr>
+                    <?php foreach ($columns as $column): ?>
+                        <?php
+                        $style = '';
+
+                        if ((int)$column['width'] > 0) {
+                            $style = ' style="width:' . (int)$column['width'] . 'px;"';
+                        }
+                        ?>
+                        <th data-column-id="<?= sb_public_h($column['id']) ?>"<?= $style ?>>
+                            <span class="sb-public-table__th-text"><?= sb_public_h($column['label']) ?></span>
+
+                            <?php if ($isEditMode): ?>
+                                <span class="sb-public-table-resizer" data-column-resizer></span>
+                            <?php endif; ?>
+                        </th>
+                    <?php endforeach; ?>
+                </tr>
+            </thead>
+
+            <tbody>
+                <?php if (!empty($normalizedRows)): ?>
+                    <?php foreach ($normalizedRows as $row): ?>
+                        <?php $cells = is_array($row['cells'] ?? null) ? $row['cells'] : []; ?>
+                        <tr data-row-id="<?= sb_public_h((string)$row['id']) ?>">
+                            <?php foreach ($columns as $column): ?>
+                                <td data-column-id="<?= sb_public_h($column['id']) ?>">
+                                    <?= nl2br(sb_public_h((string)($cells[$column['id']] ?? ''))) ?>
+                                </td>
+                            <?php endforeach; ?>
+                        </tr>
+                    <?php endforeach; ?>
+                <?php else: ?>
+                    <tr>
+                        <td colspan="<?= count($columns) ?>">Нет данных</td>
+                    </tr>
+                <?php endif; ?>
+            </tbody>
+        </table>
+    </div>
+</section>
+
+
+---
+
+2. Создай JS для public-редактирования таблиц
+
+Создай файл:
+
+/local/sitebuilder/assets/public/table-edit.js
+
+Вставь:
+
+(function () {
+    var config = window.SB_PUBLIC_EDIT_CONFIG || {};
+    var API_URL = config.apiUrl || '/local/sitebuilder/api.php';
+    var sessid = config.sessid || '';
+
+    function parseJson(value, fallback) {
+        try {
+            return JSON.parse(value || '');
+        } catch (e) {
+            return fallback;
+        }
+    }
+
+    function setDirty(root, isDirty) {
+        root.classList.toggle('is-dirty', !!isDirty);
+
+        var btn = root.querySelector('[data-table-save-widths]');
+
+        if (btn) {
+            btn.textContent = isDirty ? 'Сохранить ширину *' : 'Сохранить ширину';
+        }
+    }
+
+    function saveBlock(root) {
+        var blockId = Number(root.getAttribute('data-block-id') || 0);
+        var content = parseJson(root.getAttribute('data-content'), {});
+        var props = parseJson(root.getAttribute('data-props'), {});
+
+        if (!blockId) {
+            alert('Не найден ID блока таблицы');
+            return;
         }
 
-        return {
-            id: id,
-            label: String(column.label || ('Столбец ' + (index + 1)))
-        };
-    });
+        var formData = new FormData();
 
-    rows = rows.map(function (row) {
-        var cells = row && row.cells && typeof row.cells === 'object' ? row.cells : {};
+        formData.append('action', 'block.update');
+        formData.append('sessid', sessid);
+        formData.append('id', String(blockId));
+        formData.append('content', JSON.stringify(content));
+        formData.append('props', JSON.stringify(props || {}));
 
-        return {
-            id: String((row && row.id) || ('row_' + Date.now() + '_' + Math.random().toString(16).slice(2))),
-            cells: cells
-        };
-    });
+        var btn = root.querySelector('[data-table-save-widths]');
 
-    return {
-        title: String(content.title || 'Таблица'),
-        columns: columns,
-        rows: rows
-    };
-}
+        if (btn) {
+            btn.disabled = true;
+            btn.textContent = 'Сохраняю...';
+        }
 
-function renderTableEditor(content) {
-    tableEditorDraft = normalizeTableContent(content);
+        fetch(API_URL, {
+            method: 'POST',
+            body: formData,
+            credentials: 'same-origin'
+        })
+            .then(function (response) {
+                return response.json();
+            })
+            .then(function (res) {
+                if (!res || !res.ok) {
+                    throw new Error((res && (res.message || res.error)) || 'SAVE_ERROR');
+                }
 
-    var titleInput = document.getElementById('tableTitleInput');
-    var columnsNode = document.getElementById('tableColumnsEditor');
-    var rowsNode = document.getElementById('tableRowsEditor');
+                root.setAttribute('data-content', JSON.stringify(content));
+                setDirty(root, false);
 
-    if (titleInput) {
-        titleInput.value = tableEditorDraft.title || '';
+                if (btn) {
+                    btn.textContent = 'Сохранено';
+                    setTimeout(function () {
+                        btn.textContent = 'Сохранить ширину';
+                    }, 1000);
+                }
+            })
+            .catch(function (err) {
+                console.error(err);
+                alert('Не удалось сохранить ширину столбцов: ' + err.message);
+                setDirty(root, true);
+            })
+            .finally(function () {
+                if (btn) {
+                    btn.disabled = false;
+                }
+            });
     }
 
-    if (columnsNode) {
-        columnsNode.innerHTML = ''
-            + '<div class="sb-table-editor__summary">'
-            + '  <div><strong>Столбцов:</strong> ' + tableEditorDraft.columns.length + '</div>'
-            + '  <div class="sb-table-editor__chips">'
-            + tableEditorDraft.columns.map(function (column) {
-                return '<span class="sb-table-editor__chip">' + escapeHtml(column.label) + '</span>';
-            }).join('')
-            + '  </div>'
-            + '</div>';
-    }
+    function initTable(root) {
+        var table = root.querySelector('.sb-public-table');
+        var content = parseJson(root.getAttribute('data-content'), {});
 
-    if (rowsNode) {
-        rowsNode.innerHTML = ''
-            + '<div class="sb-table-editor__summary">'
-            + '  <div><strong>Строк:</strong> ' + tableEditorDraft.rows.length + '</div>'
-            + '  <button class="sb-btn sb-btn-primary" type="button" data-table-action="open-data-modal">'
-            + '      Открыть удобное заполнение'
-            + '  </button>'
-            + '</div>';
-    }
-}
+        if (!table || !content || !Array.isArray(content.columns)) {
+            return;
+        }
 
-function collectTableContentFromEditor() {
-    var titleInput = document.getElementById('tableTitleInput');
+        var active = null;
 
-    var current = normalizeTableContent(tableEditorDraft || {});
+        root.querySelectorAll('[data-column-resizer]').forEach(function (resizer) {
+            resizer.addEventListener('mousedown', function (e) {
+                e.preventDefault();
 
-    current.title = titleInput
-        ? String(titleInput.value || '').trim()
-        : current.title;
+                var th = resizer.closest('th[data-column-id]');
 
-    if (!current.title) {
-        current.title = 'Таблица';
-    }
+                if (!th) {
+                    return;
+                }
 
-    return current;
-}
+                var columnId = String(th.getAttribute('data-column-id') || '');
+                var col = table.querySelector('col[data-column-id="' + columnId + '"]');
 
-function ensureTableDataModal() {
-    var modal = document.getElementById('sbTableDataModal');
+                active = {
+                    root: root,
+                    table: table,
+                    th: th,
+                    col: col,
+                    columnId: columnId,
+                    startX: e.clientX,
+                    startWidth: th.getBoundingClientRect().width
+                };
 
-    if (modal) {
-        return modal;
-    }
+                document.body.classList.add('sb-public-table-resizing');
+            });
+        });
 
-    modal = document.createElement('div');
-    modal.id = 'sbTableDataModal';
-    modal.className = 'sb-table-data-modal';
-    modal.hidden = true;
+        document.addEventListener('mousemove', function (e) {
+            if (!active) {
+                return;
+            }
 
-    modal.innerHTML = ''
-        + '<div class="sb-table-data-modal__backdrop" data-table-action="close-data-modal"></div>'
-        + '<div class="sb-table-data-modal__dialog">'
-        + '  <div class="sb-table-data-modal__head">'
-        + '      <div>'
-        + '          <h2 class="sb-table-data-modal__title">Заполнение таблицы</h2>'
-        + '          <p class="sb-table-data-modal__subtitle">Редактируй названия столбцов и значения строк в удобном виде</p>'
-        + '      </div>'
-        + '      <button class="sb-table-data-modal__close" type="button" data-table-action="close-data-modal">×</button>'
-        + '  </div>'
-        + '  <div class="sb-table-data-modal__toolbar">'
-        + '      <button class="sb-btn sb-btn-light" type="button" data-table-action="modal-add-column">+ Столбец</button>'
-        + '      <button class="sb-btn sb-btn-light" type="button" data-table-action="modal-add-row">+ Строка</button>'
-        + '  </div>'
-        + '  <div class="sb-table-data-modal__body" data-role="table-data-body"></div>'
-        + '  <div class="sb-table-data-modal__footer">'
-        + '      <button class="sb-btn sb-btn-light" type="button" data-table-action="close-data-modal">Отмена</button>'
-        + '      <button class="sb-btn sb-btn-primary" type="button" data-table-action="apply-data-modal">Применить</button>'
-        + '  </div>'
-        + '</div>';
+            var diff = e.clientX - active.startX;
+            var newWidth = Math.round(active.startWidth + diff);
 
-    document.body.appendChild(modal);
+            if (newWidth < 80) {
+                newWidth = 80;
+            }
 
-    return modal;
-}
+            if (newWidth > 1200) {
+                newWidth = 1200;
+            }
 
-function renderTableDataModal() {
-    var modal = ensureTableDataModal();
-    var body = modal.querySelector('[data-role="table-data-body"]');
+            active.th.style.width = newWidth + 'px';
 
-    if (!body) {
-        return;
-    }
+            if (active.col) {
+                active.col.style.width = newWidth + 'px';
+            }
 
-    tableEditorDraft = normalizeTableContent(tableEditorDraft || {});
+            content.columns = content.columns.map(function (column) {
+                if (String(column.id) === active.columnId) {
+                    column.width = newWidth;
+                }
 
-    var columns = tableEditorDraft.columns;
-    var rows = tableEditorDraft.rows;
-
-    var html = ''
-        + '<div class="sb-table-data-scroll">'
-        + '<table class="sb-table-data-grid">'
-        + '  <thead>'
-        + '      <tr>'
-        + '          <th class="sb-table-data-grid__num">#</th>';
-
-    columns.forEach(function (column) {
-        html += ''
-            + '<th data-table-modal-column-id="' + escapeHtml(column.id) + '">'
-            + '  <div class="sb-table-data-column-head">'
-            + '      <input class="sb-input sb-table-data-column-input" type="text" value="' + escapeHtml(column.label) + '" placeholder="Название столбца">'
-            + '      <button class="sb-btn sb-btn-danger sb-btn-small" type="button" data-table-action="modal-delete-column" data-column-id="' + escapeHtml(column.id) + '">×</button>'
-            + '  </div>'
-            + '</th>';
-    });
-
-    html += ''
-        + '      </tr>'
-        + '  </thead>'
-        + '  <tbody>';
-
-    if (!rows.length) {
-        html += ''
-            + '<tr>'
-            + '  <td colspan="' + (columns.length + 1) + '" class="sb-table-data-empty">Строк пока нет. Нажми “+ Строка”.</td>'
-            + '</tr>';
-    } else {
-        rows.forEach(function (row, rowIndex) {
-            var cells = row.cells || {};
-
-            html += ''
-                + '<tr data-table-modal-row-id="' + escapeHtml(row.id) + '">'
-                + '  <td class="sb-table-data-grid__num">'
-                + '      <div class="sb-table-data-row-num">'
-                + '          <span>' + (rowIndex + 1) + '</span>'
-                + '          <button class="sb-btn sb-btn-danger sb-btn-small" type="button" data-table-action="modal-delete-row" data-row-id="' + escapeHtml(row.id) + '">×</button>'
-                + '      </div>'
-                + '  </td>';
-
-            columns.forEach(function (column) {
-                html += ''
-                    + '<td>'
-                    + '  <textarea class="sb-table-data-cell" data-column-id="' + escapeHtml(column.id) + '" rows="2">' + escapeHtml(cells[column.id] || '') + '</textarea>'
-                    + '</td>';
+                return column;
             });
 
-            html += '</tr>';
-        });
-    }
-
-    html += ''
-        + '  </tbody>'
-        + '</table>'
-        + '</div>';
-
-    body.innerHTML = html;
-}
-
-function collectTableDataFromModal() {
-    var modal = ensureTableDataModal();
-
-    var columns = [];
-    var rows = [];
-
-    modal.querySelectorAll('[data-table-modal-column-id]').forEach(function (columnNode, index) {
-        var oldId = String(columnNode.getAttribute('data-table-modal-column-id') || '').trim();
-        var input = columnNode.querySelector('.sb-table-data-column-input');
-        var label = input ? String(input.value || '').trim() : '';
-
-        if (!oldId) {
-            oldId = 'col_' + (index + 1);
-        }
-
-        if (!label) {
-            label = 'Столбец ' + (index + 1);
-        }
-
-        columns.push({
-            id: oldId,
-            label: label
-        });
-    });
-
-    if (!columns.length) {
-        columns = [
-            {id: 'col_1', label: 'Столбец 1'}
-        ];
-    }
-
-    modal.querySelectorAll('[data-table-modal-row-id]').forEach(function (rowNode, rowIndex) {
-        var rowId = String(rowNode.getAttribute('data-table-modal-row-id') || '').trim();
-
-        if (!rowId) {
-            rowId = 'row_' + (Date.now() + rowIndex);
-        }
-
-        var cells = {};
-
-        columns.forEach(function (column) {
-            var input = rowNode.querySelector('[data-column-id="' + column.id + '"]');
-            cells[column.id] = input ? String(input.value || '') : '';
+            root.setAttribute('data-content', JSON.stringify(content));
+            setDirty(root, true);
         });
 
-        rows.push({
-            id: rowId,
-            cells: cells
+        document.addEventListener('mouseup', function () {
+            if (!active) {
+                return;
+            }
+
+            active = null;
+            document.body.classList.remove('sb-public-table-resizing');
         });
-    });
 
-    var current = collectTableContentFromEditor();
+        var saveBtn = root.querySelector('[data-table-save-widths]');
 
-    return {
-        title: current.title || 'Таблица',
-        columns: columns,
-        rows: rows
-    };
-}
-
-function openTableDataModal() {
-    tableEditorDraft = collectTableContentFromEditor();
-
-    var modal = ensureTableDataModal();
-    modal.hidden = false;
-
-    renderTableDataModal();
-}
-
-function closeTableDataModal() {
-    var modal = ensureTableDataModal();
-    modal.hidden = true;
-}
-
-function applyTableDataModal() {
-    tableEditorDraft = collectTableDataFromModal();
-
-    renderTableEditor(tableEditorDraft);
-    closeTableDataModal();
-
-    alert('Данные применены. Теперь нажми “Сохранить блок”, чтобы записать изменения.');
-}
-
-function addTableColumn() {
-    var current = collectTableContentFromEditor();
-    var newId = 'col_' + Date.now();
-
-    current.columns.push({
-        id: newId,
-        label: 'Столбец ' + (current.columns.length + 1)
-    });
-
-    current.rows = current.rows.map(function (row) {
-        row.cells = row.cells || {};
-        row.cells[newId] = '';
-        return row;
-    });
-
-    tableEditorDraft = current;
-    renderTableEditor(tableEditorDraft);
-}
-
-function deleteTableColumn(columnId) {
-    var current = collectTableContentFromEditor();
-
-    if (current.columns.length <= 1) {
-        alert('Нельзя удалить последний столбец');
-        return;
+        if (saveBtn) {
+            saveBtn.addEventListener('click', function () {
+                saveBlock(root);
+            });
+        }
     }
 
-    current.columns = current.columns.filter(function (column) {
-        return column.id !== columnId;
+    document.addEventListener('DOMContentLoaded', function () {
+        document.querySelectorAll('[data-public-editable-table]').forEach(initTable);
     });
-
-    current.rows = current.rows.map(function (row) {
-        if (row.cells) {
-            delete row.cells[columnId];
-        }
-
-        return row;
-    });
-
-    tableEditorDraft = current;
-    renderTableEditor(tableEditorDraft);
-}
-
-function addTableRow() {
-    var current = collectTableContentFromEditor();
-    var cells = {};
-
-    current.columns.forEach(function (column) {
-        cells[column.id] = '';
-    });
-
-    current.rows.push({
-        id: 'row_' + Date.now(),
-        cells: cells
-    });
-
-    tableEditorDraft = current;
-    renderTableEditor(tableEditorDraft);
-}
-
-function deleteTableRow(rowId) {
-    var current = collectTableContentFromEditor();
-
-    current.rows = current.rows.filter(function (row) {
-        return row.id !== rowId;
-    });
-
-    tableEditorDraft = current;
-    renderTableEditor(tableEditorDraft);
-}
-
-function addTableColumnInModal() {
-    tableEditorDraft = collectTableDataFromModal();
-
-    var newId = 'col_' + Date.now();
-
-    tableEditorDraft.columns.push({
-        id: newId,
-        label: 'Столбец ' + tableEditorDraft.columns.length
-    });
-
-    tableEditorDraft.rows = tableEditorDraft.rows.map(function (row) {
-        row.cells = row.cells || {};
-        row.cells[newId] = '';
-        return row;
-    });
-
-    renderTableDataModal();
-}
-
-function addTableRowInModal() {
-    tableEditorDraft = collectTableDataFromModal();
-
-    var cells = {};
-
-    tableEditorDraft.columns.forEach(function (column) {
-        cells[column.id] = '';
-    });
-
-    tableEditorDraft.rows.push({
-        id: 'row_' + Date.now(),
-        cells: cells
-    });
-
-    renderTableDataModal();
-}
-
-function deleteTableColumnInModal(columnId) {
-    tableEditorDraft = collectTableDataFromModal();
-
-    if (tableEditorDraft.columns.length <= 1) {
-        alert('Нельзя удалить последний столбец');
-        return;
-    }
-
-    tableEditorDraft.columns = tableEditorDraft.columns.filter(function (column) {
-        return column.id !== columnId;
-    });
-
-    tableEditorDraft.rows = tableEditorDraft.rows.map(function (row) {
-        if (row.cells) {
-            delete row.cells[columnId];
-        }
-
-        return row;
-    });
-
-    renderTableDataModal();
-}
-
-function deleteTableRowInModal(rowId) {
-    tableEditorDraft = collectTableDataFromModal();
-
-    tableEditorDraft.rows = tableEditorDraft.rows.filter(function (row) {
-        return row.id !== rowId;
-    });
-
-    renderTableDataModal();
-}
-
-Важно: строка function fillVisualBlockForm(block) { должна остаться ниже этого блока.
+})();
 
 
 ---
 
-2. В 60-events.js замени верхний обработчик таблицы
+3. Подключи JS в public_page.php
 
 Файл:
 
-/local/sitebuilder/assets/admin/editor/60-events.js
+/local/sitebuilder/public_page.php
 
-Если ты уже вставлял обработчик data-table-action, замени его целиком на этот:
+Найди место внизу, где подключается disk script или перед </body>.
 
-document.addEventListener('click', function (e) {
-    var tableAction = e.target.closest('[data-table-action]');
+Вставь перед </body>:
 
-    if (!tableAction) {
-        return;
-    }
+<?php
+global $USER;
 
-    var action = tableAction.getAttribute('data-table-action');
+$isPublicEditMode = (
+    (string)($_GET['edit'] ?? '') === 'Y'
+    && is_object($USER)
+    && $USER->IsAuthorized()
+    && $USER->IsAdmin()
+);
+?>
 
-    if (action === 'open-data-modal') {
-        openTableDataModal();
-        return;
-    }
+<?php if ($isPublicEditMode): ?>
+    <script>
+        window.SB_PUBLIC_EDIT_CONFIG = <?= json_encode([
+            'apiUrl' => $basePath . '/api.php',
+            'sessid' => bitrix_sessid(),
+        ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) ?>;
+    </script>
 
-    if (action === 'close-data-modal') {
-        closeTableDataModal();
-        return;
-    }
-
-    if (action === 'apply-data-modal') {
-        applyTableDataModal();
-        return;
-    }
-
-    if (action === 'add-column') {
-        addTableColumn();
-        return;
-    }
-
-    if (action === 'add-row') {
-        addTableRow();
-        return;
-    }
-
-    if (action === 'delete-column') {
-        var columnNode = tableAction.closest('[data-table-column-id]');
-        var columnId = columnNode ? String(columnNode.getAttribute('data-table-column-id') || '') : '';
-
-        if (columnId) {
-            deleteTableColumn(columnId);
-        }
-
-        return;
-    }
-
-    if (action === 'delete-row') {
-        var rowNode = tableAction.closest('[data-table-row-id]');
-        var rowId = rowNode ? String(rowNode.getAttribute('data-table-row-id') || '') : '';
-
-        if (rowId) {
-            deleteTableRow(rowId);
-        }
-
-        return;
-    }
-
-    if (action === 'modal-add-column') {
-        addTableColumnInModal();
-        return;
-    }
-
-    if (action === 'modal-add-row') {
-        addTableRowInModal();
-        return;
-    }
-
-    if (action === 'modal-delete-column') {
-        var modalColumnId = String(tableAction.getAttribute('data-column-id') || '');
-
-        if (modalColumnId) {
-            deleteTableColumnInModal(modalColumnId);
-        }
-
-        return;
-    }
-
-    if (action === 'modal-delete-row') {
-        var modalRowId = String(tableAction.getAttribute('data-row-id') || '');
-
-        if (modalRowId) {
-            deleteTableRowInModal(modalRowId);
-        }
-
-        return;
-    }
-});
+    <script src="<?= sb_public_h($basePath) ?>/assets/public/table-edit.js?v=1"></script>
+<?php endif; ?>
 
 
 ---
 
-3. В editor.css добавь стили большого окна
+4. Добавь стили в public.css
 
 Файл:
 
-/local/sitebuilder/assets/admin/editor.css
+/local/sitebuilder/assets/public/public.css
 
 В самый конец добавь:
 
 /* =========================================================
-   Big table data modal
+   Public table edit mode
    ========================================================= */
 
-.sb-table-editor__summary {
-    display: grid;
-    gap: 10px;
-    padding: 12px;
-    border: 1px solid #e2e8f0;
-    border-radius: 14px;
-    background: #fff;
-}
-
-.sb-table-editor__chips {
+.sb-public-table-editbar {
     display: flex;
-    flex-wrap: wrap;
-    gap: 6px;
+    align-items: center;
+    justify-content: space-between;
+    gap: 14px;
+    margin: 0 0 12px;
+    padding: 10px 12px;
+    border: 1px dashed rgba(37, 99, 235, .45);
+    border-radius: 14px;
+    background: rgba(37, 99, 235, .06);
 }
 
-.sb-table-editor__chip {
-    display: inline-flex;
-    align-items: center;
-    min-height: 24px;
-    padding: 3px 8px;
-    border-radius: 999px;
-    background: #eef2ff;
-    color: #3730a3;
-    font-size: 12px;
+.sb-public-table-editbar__text {
+    color: #1e40af;
+    font-size: 13px;
     font-weight: 800;
 }
 
-.sb-table-data-modal[hidden] {
-    display: none !important;
-}
-
-.sb-table-data-modal {
-    position: fixed;
-    inset: 0;
-    z-index: 99999;
-}
-
-.sb-table-data-modal__backdrop {
-    position: absolute;
-    inset: 0;
-    background: rgba(15, 23, 42, .48);
-}
-
-.sb-table-data-modal__dialog {
-    position: absolute;
-    inset: 32px;
-    display: flex;
-    flex-direction: column;
-    min-width: 0;
-    min-height: 0;
-    border-radius: 22px;
-    background: #fff;
-    box-shadow: 0 24px 80px rgba(15, 23, 42, .35);
-    overflow: hidden;
-}
-
-.sb-table-data-modal__head {
-    display: flex;
-    align-items: flex-start;
-    justify-content: space-between;
-    gap: 20px;
-    padding: 18px 22px;
-    border-bottom: 1px solid #e2e8f0;
-}
-
-.sb-table-data-modal__title {
-    margin: 0;
-    color: #0f172a;
-    font-size: 22px;
-    font-weight: 900;
-}
-
-.sb-table-data-modal__subtitle {
-    margin: 4px 0 0;
-    color: #64748b;
-    font-size: 13px;
-}
-
-.sb-table-data-modal__close {
-    width: 38px;
-    height: 38px;
+.sb-public-table-editbar__btn {
+    min-height: 34px;
+    padding: 7px 12px;
     border: 0;
-    border-radius: 12px;
-    background: #f1f5f9;
-    color: #0f172a;
-    font-size: 26px;
-    line-height: 1;
+    border-radius: 10px;
+    background: #2563eb;
+    color: #fff;
+    font-size: 13px;
+    font-weight: 900;
     cursor: pointer;
 }
 
-.sb-table-data-modal__toolbar {
-    display: flex;
-    gap: 10px;
-    padding: 14px 22px;
-    border-bottom: 1px solid #e2e8f0;
-    background: #f8fafc;
+.sb-public-table-editbar__btn:disabled {
+    opacity: .65;
+    cursor: wait;
 }
 
-.sb-table-data-modal__body {
-    flex: 1;
-    min-height: 0;
-    padding: 18px 22px;
-    overflow: auto;
+.sb-block--table.is-dirty .sb-public-table-editbar {
+    border-color: rgba(245, 158, 11, .75);
+    background: rgba(245, 158, 11, .08);
 }
 
-.sb-table-data-scroll {
-    width: 100%;
-    overflow: auto;
-}
-
-.sb-table-data-grid {
-    width: 100%;
-    min-width: 900px;
-    border-collapse: separate;
-    border-spacing: 0;
+.sb-public-table--editable {
     table-layout: fixed;
 }
 
-.sb-table-data-grid th,
-.sb-table-data-grid td {
-    padding: 8px;
-    border-right: 1px solid #e2e8f0;
-    border-bottom: 1px solid #e2e8f0;
-    background: #fff;
-    vertical-align: top;
+.sb-public-table--editable th {
+    position: relative;
+    user-select: none;
 }
 
-.sb-table-data-grid th {
-    position: sticky;
+.sb-public-table__th-text {
+    display: block;
+    padding-right: 10px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.sb-public-table-resizer {
+    position: absolute;
     top: 0;
-    z-index: 2;
-    background: #f8fafc;
+    right: -4px;
+    width: 8px;
+    height: 100%;
+    cursor: col-resize;
+    z-index: 5;
 }
 
-.sb-table-data-grid th:first-child,
-.sb-table-data-grid td:first-child {
-    border-left: 1px solid #e2e8f0;
+.sb-public-table-resizer::after {
+    content: "";
+    position: absolute;
+    top: 8px;
+    bottom: 8px;
+    left: 3px;
+    width: 2px;
+    border-radius: 99px;
+    background: rgba(37, 99, 235, .35);
+    opacity: 0;
+    transition: opacity .15s ease;
 }
 
-.sb-table-data-grid thead th {
-    border-top: 1px solid #e2e8f0;
+.sb-public-table-resizer:hover::after,
+.sb-public-table-resizing .sb-public-table-resizer::after {
+    opacity: 1;
 }
 
-.sb-table-data-grid__num {
-    width: 84px;
-    min-width: 84px;
-    max-width: 84px;
-}
-
-.sb-table-data-column-head {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) 34px;
-    gap: 8px;
-    align-items: center;
-}
-
-.sb-table-data-row-num {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 6px;
-    min-height: 38px;
-    color: #475569;
-    font-size: 12px;
-    font-weight: 900;
-}
-
-.sb-table-data-cell {
-    width: 100%;
-    min-height: 46px;
-    resize: vertical;
-    box-sizing: border-box;
-    padding: 9px 10px;
-    border: 1px solid #cbd5e1;
-    border-radius: 10px;
-    background: #fff;
-    color: #0f172a;
-    font: inherit;
-    font-size: 13px;
-    line-height: 1.35;
-}
-
-.sb-table-data-cell:focus,
-.sb-table-data-column-input:focus {
-    outline: none;
-    border-color: #2563eb;
-    box-shadow: 0 0 0 3px rgba(37, 99, 235, .12);
-}
-
-.sb-table-data-empty {
-    padding: 28px !important;
-    color: #64748b;
-    text-align: center;
-}
-
-.sb-table-data-modal__footer {
-    display: flex;
-    justify-content: flex-end;
-    gap: 10px;
-    padding: 16px 22px;
-    border-top: 1px solid #e2e8f0;
-    background: #f8fafc;
-}
-
-@media (max-width: 900px) {
-    .sb-table-data-modal__dialog {
-        inset: 10px;
-        border-radius: 16px;
-    }
+body.sb-public-table-resizing {
+    cursor: col-resize !important;
+    user-select: none;
 }
 
 
 ---
 
-4. Обнови версии в editor.php
+5. Обнови версию CSS в public_page.php
 
-Поставь новые версии:
+Найди подключение:
 
-<script src="<?= htmlspecialchars($basePath, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?>/assets/admin/editor/30-blocks.js?v=6"></script>
-<script src="<?= htmlspecialchars($basePath, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?>/assets/admin/editor/60-events.js?v=6"></script>
+<link rel="stylesheet" href="<?= sb_public_h($basePath) ?>/assets/public/public.css?v=12">
 
-И CSS:
+Поставь, например:
 
-<link rel="stylesheet" href="<?= htmlspecialchars($basePath, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?>/assets/admin/editor.css?v=6">
+<link rel="stylesheet" href="<?= sb_public_h($basePath) ?>/assets/public/public.css?v=13">
 
-Потом сделай Ctrl + F5.
 
-Теперь в правой панели будет не куча маленьких полей, а кнопка “Открыть удобное заполнение”. Там можно будет нормально заполнять строки и столбцы в большом окне.
+---
+
+Как проверить
+
+Открой public-страницу так:
+
+/local/sitebuilder/public.php?siteId=13&pageId=14&edit=Y
+
+У таблицы должна появиться синяя панель:
+
+Режим редактирования: можно менять ширину столбцов
+[Сохранить ширину]
+
+Наведи мышкой на границу между заголовками столбцов, потяни вправо/влево и нажми Сохранить ширину. После обновления страницы ширина должна остаться.
