@@ -1,246 +1,69 @@
-Идём дальше. После Route Model Binding логичный Laravel-like шаг — Policies / Gate.
+Идём дальше. Раз мы сделали Policy, следующий Laravel-like шаг — сделать helper can() / cannot() для views.
 
-Простыми словами:
+В Laravel часто делают так:
 
-Middleware проверяет доступ ДО контроллера.
-Policy проверяет: можно ли делать действие с конкретной моделью.
+@can('update', $note)
+    <a>Изменить</a>
+@endcan
 
-Например:
+У нас Blade нет, поэтому сделаем PHP-вариант:
 
-$this->authorize('update', $note);
+<?php if (can('update', \Local\MvcDemo\Models\Note::class)): ?>
+    <a>Изменить</a>
+<?php endif; ?>
 
-Это значит:
-
-Можно ли текущему пользователю редактировать именно эту заметку?
+То есть view сможет сам аккуратно скрывать кнопки, если прав нет.
 
 
 ---
 
-1. Создай /local/mvc/Core/AuthorizationException.php
+1. Обнови /local/mvc/helpers.php
 
-<?php
+В конец файла добавь:
 
-namespace Local\Mvc\Core;
-
-use RuntimeException;
-
-class AuthorizationException extends RuntimeException
-{
-    public function __construct(
-        private string $ability = '',
-        private string $subject = ''
-    ) {
-        parent::__construct('Доступ запрещён');
-    }
-
-    public function ability(): string
+if (!function_exists('can')) {
+    /**
+     * Laravel-like can()
+     *
+     * Пример:
+     * can('create', Note::class)
+     * can('update', $note)
+     */
+    function can(string $ability, object|string $subject): bool
     {
-        return $this->ability;
-    }
-
-    public function subject(): string
-    {
-        return $this->subject;
+        try {
+            return \Local\Mvc\Support\Facades\Gate::allows($ability, $subject);
+        } catch (\Throwable $e) {
+            return false;
+        }
     }
 }
 
-
----
-
-2. Создай /local/mvc/Core/GateManager.php
-
-<?php
-
-namespace Local\Mvc\Core;
-
-use RuntimeException;
-
-/**
- * GateManager
- *
- * Laravel-like Gate.
- *
- * Он ищет Policy-класс для модели и вызывает нужный метод.
- */
-class GateManager
-{
-    public function allows(string $ability, object|string $subject): bool
+if (!function_exists('cannot')) {
+    /**
+     * Laravel-like cannot()
+     *
+     * Пример:
+     * cannot('delete', $note)
+     */
+    function cannot(string $ability, object|string $subject): bool
     {
-        $policy = $this->policyFor($subject);
-
-        if (!$policy) {
-            throw new RuntimeException('POLICY_NOT_FOUND_FOR_SUBJECT');
-        }
-
-        if (!method_exists($policy, $ability)) {
-            throw new RuntimeException('POLICY_METHOD_NOT_FOUND: ' . get_class($policy) . '::' . $ability);
-        }
-
-        return (bool)$policy->{$ability}($subject);
-    }
-
-    public function denies(string $ability, object|string $subject): bool
-    {
-        return !$this->allows($ability, $subject);
-    }
-
-    public function authorize(string $ability, object|string $subject): void
-    {
-        if ($this->allows($ability, $subject)) {
-            return;
-        }
-
-        $subjectName = is_object($subject) ? get_class($subject) : $subject;
-
-        throw new AuthorizationException($ability, $subjectName);
-    }
-
-    private function policyFor(object|string $subject): ?object
-    {
-        $modelClass = is_object($subject) ? get_class($subject) : $subject;
-
-        $policies = Config::get('auth.policies', []);
-
-        if (!is_array($policies)) {
-            return null;
-        }
-
-        $policyClass = (string)($policies[$modelClass] ?? '');
-
-        if ($policyClass === '') {
-            return null;
-        }
-
-        if (!class_exists($policyClass)) {
-            throw new RuntimeException('POLICY_CLASS_NOT_FOUND: ' . $policyClass);
-        }
-
-        return App::make($policyClass);
+        return !can($ability, $subject);
     }
 }
 
+Теперь в любом view можно писать:
 
----
-
-3. Создай facade /local/mvc/Support/Facades/Gate.php
-
-<?php
-
-namespace Local\Mvc\Support\Facades;
-
-use Local\Mvc\Core\GateManager;
-
-/**
- * Gate
- *
- * Laravel-like facade:
- *
- * Gate::allows('update', $note)
- * Gate::authorize('delete', $note)
- */
-class Gate extends Facade
-{
-    protected static function accessor(): string
-    {
-        return GateManager::class;
-    }
-}
+can('create', \Local\MvcDemo\Models\Note::class)
 
 
 ---
 
-4. Зарегистрируй GateManager в /local/mvc/Core/App.php
+2. Обнови /local/mvc_demo/Policies/NotePolicy.php
 
-В методе run() найди блок:
+Сделаем методы update и delete чуть гибче: они смогут принимать и объект Note, и строку Note::class.
 
-$container->singleton(\Local\Mvc\Core\SchemaBuilder::class, \Local\Mvc\Core\SchemaBuilder::class);
-$container->singleton(\Local\Mvc\Core\SeederRunner::class, \Local\Mvc\Core\SeederRunner::class);
-
-Добавь ниже:
-
-$container->singleton(\Local\Mvc\Core\GateManager::class, \Local\Mvc\Core\GateManager::class);
-
-
----
-
-5. Обнови /local/mvc/Core/Controller.php
-
-Внутрь класса Controller добавь метод:
-
-/**
- * Laravel-like authorize().
- *
- * Пример:
- * $this->authorize('update', $note);
- */
-protected function authorize(string $ability, object|string $subject): void
-{
-    \Local\Mvc\Support\Facades\Gate::authorize($ability, $subject);
-}
-
-Теперь любой контроллер сможет писать:
-
-$this->authorize('delete', $note);
-
-
----
-
-6. Обнови /local/mvc/Core/ErrorHandler.php
-
-В методе:
-
-public static function renderThrowable(Throwable $e): void
-
-в самое начало добавь:
-
-if ($e instanceof AuthorizationException) {
-    self::renderAuthorizationException($e);
-    return;
-}
-
-Должно быть до ValidationException и до обычной ошибки.
-
-Теперь в этот же класс добавь метод:
-
-private static function renderAuthorizationException(AuthorizationException $e): void
-{
-    self::log($e->getMessage(), $e->getFile(), $e->getLine());
-
-    if (self::wantsJson()) {
-        Response::json([
-            'ok' => false,
-            'error' => 'FORBIDDEN',
-            'details' => [
-                'message' => 'Доступ запрещён.',
-                'ability' => $e->ability(),
-                'subject' => $e->subject(),
-            ],
-        ], 403)->send();
-
-        return;
-    }
-
-    Response::html(
-        '<h1>403</h1>'
-        . '<p>Доступ запрещён.</p>'
-        . '<pre>'
-        . htmlspecialchars('Ability: ' . $e->ability() . "\nSubject: " . $e->subject())
-        . '</pre>',
-        403
-    )->send();
-}
-
-
----
-
-7. Создай папку Policies
-
-/local/mvc_demo/Policies/
-
-
----
-
-8. Создай /local/mvc_demo/Policies/NotePolicy.php
+Полностью замени файл:
 
 <?php
 
@@ -270,194 +93,226 @@ class NotePolicy
         return Auth::isAdmin();
     }
 
-    public function update(Note $note): bool
+    public function update(Note|string $note): bool
     {
         return Auth::isAdmin();
     }
 
-    public function delete(Note $note): bool
+    public function delete(Note|string $note): bool
     {
         return Auth::isAdmin();
     }
 }
 
+Почему так?
 
----
+В контроллере мы проверяем конкретную модель:
 
-9. Подключи Policy в /local/mvc_demo/config.php
+$this->authorize('update', $note);
 
-Добавь блок auth:
+А во view иногда удобно проверить просто класс:
 
-'auth' => [
-    'policies' => [
-        \Local\MvcDemo\Models\Note::class => \Local\MvcDemo\Policies\NotePolicy::class,
-    ],
-],
-
-Примерно так:
-
-return [
-    'app' => [
-        'name' => 'MVC Demo',
-        'description' => 'Тестовый проект на общем MVC-фреймворке',
-    ],
-
-    'debug' => true,
-
-    'auth' => [
-        'policies' => [
-            \Local\MvcDemo\Models\Note::class => \Local\MvcDemo\Policies\NotePolicy::class,
-        ],
-    ],
-
-    // остальные блоки ниже...
-];
+can('update', Note::class)
 
 
 ---
 
-10. Обнови /local/mvc_demo/Controllers/NoteController.php
+3. Обнови /local/mvc_demo/Views/notes/index.php
 
-Теперь добавим проверки доступа.
+В самом верху после проверки B_PROLOG_INCLUDED добавь:
 
-Полный файл:
+$canCreateNote = can('create', \Local\MvcDemo\Models\Note::class);
+$canUpdateNote = can('update', \Local\MvcDemo\Models\Note::class);
+$canDeleteNote = can('delete', \Local\MvcDemo\Models\Note::class);
+
+Должно быть примерно так:
 
 <?php
 
-namespace Local\MvcDemo\Controllers;
-
-use Local\Mvc\Core\Controller;
-use Local\Mvc\Core\Flash;
-use Local\Mvc\Core\Response;
-use Local\MvcDemo\Models\Note;
-use Local\MvcDemo\Requests\StoreNoteRequest;
-use Local\MvcDemo\Requests\UpdateNoteRequest;
-
-class NoteController extends Controller
-{
-    public function index(): Response
-    {
-        $this->authorize('viewAny', Note::class);
-
-        return $this->render('notes/index', [
-            'title' => 'Заметки',
-            'notes' => Note::latest(20),
-        ]);
-    }
-
-    public function store(StoreNoteRequest $request): Response
-    {
-        $this->authorize('create', Note::class);
-
-        $data = $request->validated();
-
-        Note::create([
-            'title' => $data['title'],
-            'body' => $data['body'],
-        ]);
-
-        Flash::success('Заметка создана.');
-
-        return redirect()->route('notes.index');
-    }
-
-    public function edit(Note $note): Response
-    {
-        $this->authorize('update', $note);
-
-        return $this->render('notes/edit', [
-            'title' => 'Редактирование заметки',
-            'note' => $note->normalized(),
-        ]);
-    }
-
-    public function update(Note $note, UpdateNoteRequest $request): Response
-    {
-        $this->authorize('update', $note);
-
-        $data = $request->validated();
-
-        $note->update([
-            'title' => $data['title'],
-            'body' => $data['body'],
-        ]);
-
-        Flash::success('Заметка обновлена.');
-
-        return redirect()->route('notes.index');
-    }
-
-    public function destroy(Note $note): Response
-    {
-        $this->authorize('delete', $note);
-
-        $note->delete();
-
-        Flash::success('Заметка удалена.');
-
-        return redirect()->route('notes.index');
-    }
-
-    public function factory(): Response
-    {
-        $this->authorize('create', Note::class);
-
-        Note::factory()
-            ->count(5)
-            ->create();
-
-        Flash::success('Factory создала 5 тестовых заметок.');
-
-        return redirect()->route('notes.index');
-    }
+if (!defined('B_PROLOG_INCLUDED') || B_PROLOG_INCLUDED !== true) {
+    die();
 }
+
+$canCreateNote = can('create', \Local\MvcDemo\Models\Note::class);
+$canUpdateNote = can('update', \Local\MvcDemo\Models\Note::class);
+$canDeleteNote = can('delete', \Local\MvcDemo\Models\Note::class);
+
+?>
 
 
 ---
 
-11. Проверка
+4. Спрячь форму создания от тех, кто не может создавать
+
+Найди блок с формой создания заметки:
+
+<div class="mvc-info">
+    <form method="post" action="<?= e(route('notes.store')) ?>">
+        ...
+    </form>
+</div>
+
+Оберни его так:
+
+<?php if ($canCreateNote): ?>
+    <div class="mvc-info">
+        <form method="post" action="<?= e(route('notes.store')) ?>">
+            <?= csrf_field() ?>
+
+            <div style="margin-bottom: 14px;">
+                <label style="display:block;margin-bottom:6px;font-weight:600;">
+                    Название
+                </label>
+
+                <input
+                    type="text"
+                    name="title"
+                    value="<?= e(old('title')) ?>"
+                    style="width:100%;min-height:42px;padding:8px 12px;border:1px solid #d1d5db;border-radius:10px;"
+                >
+            </div>
+
+            <div style="margin-bottom: 14px;">
+                <label style="display:block;margin-bottom:6px;font-weight:600;">
+                    Текст
+                </label>
+
+                <textarea
+                    name="body"
+                    rows="4"
+                    style="width:100%;padding:8px 12px;border:1px solid #d1d5db;border-radius:10px;"
+                ><?= e(old('body')) ?></textarea>
+            </div>
+
+            <button
+                type="submit"
+                style="min-height:42px;padding:0 18px;border:0;border-radius:10px;background:#2563eb;color:#fff;font-weight:600;cursor:pointer;"
+            >
+                Создать заметку
+            </button>
+        </form>
+    </div>
+<?php else: ?>
+    <div class="mvc-info" style="border-color:#fde68a;background:#fffbeb;color:#92400e;">
+        У вас нет прав на создание заметок.
+    </div>
+<?php endif; ?>
+
+
+---
+
+5. Спрячь кнопку Factory
+
+Если ты добавлял блок:
+
+<form method="post" action="<?= e(route('notes.factory')) ?>">
+
+оберни его так:
+
+<?php if ($canCreateNote): ?>
+    <div class="mvc-info">
+        <form method="post" action="<?= e(route('notes.factory')) ?>">
+            <?= csrf_field() ?>
+
+            <button
+                type="submit"
+                style="min-height:42px;padding:0 18px;border:0;border-radius:10px;background:#7c3aed;color:#fff;font-weight:600;cursor:pointer;"
+            >
+                Создать 5 заметок через Factory
+            </button>
+        </form>
+    </div>
+<?php endif; ?>
+
+
+---
+
+6. Обнови колонку действий
+
+В таблице найди колонку с кнопками Изменить и Удалить.
+
+Сделай так:
+
+<td style="padding:8px;border-bottom:1px solid #e5e7eb;">
+    <?php if ($canUpdateNote || $canDeleteNote): ?>
+        <div style="display:flex;gap:8px;align-items:center;">
+            <?php if ($canUpdateNote): ?>
+                <a
+                    href="<?= e(route('notes.edit', ['id' => (int)($note['id'] ?? 0)])) ?>"
+                    style="padding:6px 10px;border-radius:8px;background:#2563eb;color:#fff;text-decoration:none;"
+                >
+                    Изменить
+                </a>
+            <?php endif; ?>
+
+            <?php if ($canDeleteNote): ?>
+                <form method="post" action="<?= e(route('notes.destroy', ['id' => (int)($note['id'] ?? 0)])) ?>" style="margin:0;">
+                    <?= csrf_field() ?>
+                    <?= method_field('DELETE') ?>
+
+                    <button
+                        type="submit"
+                        onclick="return confirm('Удалить заметку?')"
+                        style="padding:6px 10px;border:0;border-radius:8px;background:#dc2626;color:#fff;cursor:pointer;"
+                    >
+                        Удалить
+                    </button>
+                </form>
+            <?php endif; ?>
+        </div>
+    <?php else: ?>
+        <span style="color:#9ca3af;">Нет действий</span>
+    <?php endif; ?>
+</td>
+
+
+---
+
+7. Проверка
 
 Сбрось OPcache:
 
 opcache_reset();
 echo 'OPcache reset OK';
 
-Проверь:
+Открой:
 
 /local/mvc_demo/notes
 
-Если ты админ Битрикса — создание, изменение и удаление должны работать.
+Если ты админ — кнопки создания, изменения, удаления должны быть видны.
 
-Если открыть под обычным пользователем:
+Если зайти обычным пользователем:
 
-создание / изменение / удаление
-
-должны давать:
-
-403 — Доступ запрещён
+Создать заметку — скрыто
+Factory — скрыто
+Изменить / удалить — скрыто
 
 
 ---
 
 Что мы сделали
 
-Теперь у нас есть Laravel-like авторизация:
+Раньше права проверялись только в контроллере:
 
 $this->authorize('update', $note);
 
-И Policy:
+Теперь view тоже может аккуратно проверять права:
 
-class NotePolicy
-{
-    public function update(Note $note): bool
-    {
-        return Auth::isAdmin();
-    }
-}
+can('update', Note::class)
 
 Главная мысль:
 
-Middleware — общий входной фильтр.
-Policy — проверка конкретного действия над конкретной моделью.
+Policy защищает действие.
+can() помогает не показывать лишние кнопки.
 
-В Laravel это одна из самых важных идей.
+Это похоже на Laravel:
+
+@can('update', $note)
+    ...
+@endcan
+
+Только у нас пока PHP-вариант:
+
+<?php if (can('update', Note::class)): ?>
+    ...
+<?php endif; ?>
