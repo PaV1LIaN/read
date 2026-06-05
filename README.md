@@ -1,389 +1,264 @@
-Да, это логичный баг: сейчас шаблон сохраняет страницы, блоки, layout, меню, но секции страницы отдельно не сохраняет. Поэтому при создании сайта из шаблона создаётся дефолтная секция на 1 колонку, и блоки съезжают туда.
+Да, правильно. Тогда не зашиваем контакты в компонент. Контакты — только пример использования.
 
-Правим один файл:
+Компонент должен быть универсальным:
 
-/local/sitebuilder/lib/SiteTemplateService.php
+Таблица
+├── заголовок таблицы
+├── любое количество столбцов
+├── свои названия столбцов
+└── любое количество строк
 
+Например им можно сделать:
 
----
+Контакты: ФИО | Почта | Телефон
+Прайс: Услуга | Цена | Срок
+Сотрудники: ФИО | Должность | Отдел
+Расписание: День | Время | Кабинет
 
-1. В createFromSite() добавь сохранение секций
+Что меняем в предыдущем коде
 
-Найди внутри функции createFromSite():
+1. В editor.php кнопку лучше сделать универсальной
 
-$menus = self::menusForSite($siteId);
+Было:
 
-Замени на:
+<button class="sb-editor-add-card" type="button" data-add-block="table">
+    <span class="sb-editor-add-card__title">Таблица</span>
+    <span class="sb-editor-add-card__text">Столбцы и строки, например контакты</span>
+</button>
 
-$sections = self::sectionsForSite($siteId, $pages);
-$menus = self::menusForSite($siteId);
+Сделай так:
 
-Ниже найди payload:
-
-'payload' => [
-    'site' => self::prepareSiteForSnapshot($site),
-    'pages' => array_map([self::class, 'preparePageForSnapshot'], $pages),
-    'blocks' => $blocks,
-    'layout' => $layout,
-    'menus' => array_map([self::class, 'prepareMenuForSnapshot'], $menus),
-],
-
-Замени на:
-
-'payload' => [
-    'site' => self::prepareSiteForSnapshot($site),
-    'pages' => array_map([self::class, 'preparePageForSnapshot'], $pages),
-    'sections' => array_map([self::class, 'prepareSectionForSnapshot'], $sections),
-    'blocks' => $blocks,
-    'layout' => $layout,
-    'menus' => array_map([self::class, 'prepareMenuForSnapshot'], $menus),
-],
+<button class="sb-editor-add-card" type="button" data-add-block="table">
+    <span class="sb-editor-add-card__title">Таблица</span>
+    <span class="sb-editor-add-card__text">Свои столбцы и строки для любых данных</span>
+</button>
 
 
 ---
 
-2. В createSiteFromTemplate() добавь копирование секций
+2. В форме таблицы текст тоже делаем универсальным
 
-Найди:
+В tableBlockForm замени подсказки на такие:
 
-$pageIdMap = self::copyPages($siteId, $payload, $userId);
-self::copyBlocks($pageIdMap, $payload, $userId);
+<div id="tableBlockForm" class="sb-block-type-form" style="margin-top:12px;">
+    <div class="sb-field">
+        <label for="tableTitleInput">Заголовок таблицы</label>
+        <input class="sb-input" type="text" id="tableTitleInput" placeholder="Например: Прайс-лист, контакты, расписание">
+    </div>
 
-Замени на:
+    <div class="sb-table-editor" style="margin-top:12px;">
+        <div class="sb-table-editor__head">
+            <div>
+                <strong>Столбцы</strong>
+                <p class="sb-editor-note">Задай любое количество столбцов и назови их как нужно</p>
+            </div>
 
-$pageIdMap = self::copyPages($siteId, $payload, $userId);
-$sectionIdMap = self::copySections($siteId, $pageIdMap, $payload, $userId);
-self::copyBlocks($pageIdMap, $payload, $userId, $sectionIdMap);
+            <button class="sb-btn sb-btn-light sb-btn-small" type="button" data-table-action="add-column">
+                + Столбец
+            </button>
+        </div>
 
+        <div id="tableColumnsEditor" class="sb-table-editor__columns"></div>
 
----
+        <div class="sb-table-editor__head" style="margin-top:16px;">
+            <div>
+                <strong>Строки</strong>
+                <p class="sb-editor-note">Добавляй строки и заполняй значения по столбцам</p>
+            </div>
 
-3. Замени функцию prepareBlockForSnapshot()
+            <button class="sb-btn sb-btn-primary sb-btn-small" type="button" data-table-action="add-row">
+                + Строка
+            </button>
+        </div>
 
-Найди:
-
-protected static function prepareBlockForSnapshot(array $block): array
-
-И замени всю функцию на эту:
-
-protected static function prepareBlockForSnapshot(array $block): array
-{
-    $rawProps = is_array($block['props'] ?? null) ? $block['props'] : [];
-    $placement = is_array($rawProps['_placement'] ?? null) ? $rawProps['_placement'] : [];
-
-    $sectionId = (int)($block['sectionId'] ?? 0);
-
-    if ($sectionId <= 0) {
-        $sectionId = (int)($rawProps['sectionId'] ?? 0);
-    }
-
-    if ($sectionId <= 0) {
-        $sectionId = (int)($placement['sectionId'] ?? 0);
-    }
-
-    $column = (int)($block['column'] ?? 0);
-
-    if ($column <= 0) {
-        $column = (int)($rawProps['column'] ?? 0);
-    }
-
-    if ($column <= 0) {
-        $column = (int)($placement['column'] ?? 0);
-    }
-
-    if ($column <= 0) {
-        $column = 1;
-    }
-
-    $block = sb_normalize_block_record($block);
-
-    return [
-        'oldId' => (int)($block['id'] ?? 0),
-        'oldPageId' => (int)($block['pageId'] ?? 0),
-        'oldSectionId' => $sectionId,
-        'sectionId' => $sectionId,
-        'column' => max(1, min(4, $column)),
-        'type' => (string)($block['type'] ?? 'text'),
-        'sort' => (int)($block['sort'] ?? 500),
-        'content' => self::sanitizeDiskData($block['content'] ?? []),
-        'props' => self::sanitizeDiskData($block['props'] ?? []),
-    ];
-}
+        <div id="tableRowsEditor" class="sb-table-editor__rows"></div>
+    </div>
+</div>
 
 
 ---
 
-4. Добавь новые функции перед menusForSite()
+3. В 30-blocks.js сделай универсальные столбцы
 
 Найди функцию:
 
-protected static function menusForSite(int $siteId): array
+function normalizeTableContent(content) {
 
-Прямо перед ней вставь:
+И замени её целиком на эту:
 
-protected static function sectionsForSite(int $siteId, array $pages): array
-{
-    $pageIds = [];
+function normalizeTableContent(content) {
+    content = content || {};
 
-    foreach ($pages as $page) {
-        $pageId = (int)($page['id'] ?? 0);
+    var columns = Array.isArray(content.columns) ? content.columns : [];
+    var rows = Array.isArray(content.rows) ? content.rows : [];
 
-        if ($pageId > 0) {
-            $pageIds[$pageId] = true;
-        }
+    if (!columns.length) {
+        columns = [
+            {id: 'col_1', label: 'Столбец 1'},
+            {id: 'col_2', label: 'Столбец 2'},
+            {id: 'col_3', label: 'Столбец 3'}
+        ];
     }
 
-    if (empty($pageIds)) {
-        return [];
-    }
+    columns = columns.map(function (column, index) {
+        var id = String(column.id || '').trim();
 
-    $repoFile = __DIR__ . '/PageSectionRepository.php';
-
-    if (file_exists($repoFile)) {
-        require_once $repoFile;
-    }
-
-    if (!class_exists('PageSectionRepository')) {
-        return [];
-    }
-
-    $sections = array_values(array_filter(PageSectionRepository::readAll(), static function ($section) use ($siteId, $pageIds) {
-        $sectionSiteId = (int)($section['siteId'] ?? 0);
-        $sectionPageId = (int)($section['pageId'] ?? 0);
-
-        return $sectionSiteId === $siteId && isset($pageIds[$sectionPageId]);
-    }));
-
-    usort($sections, static function ($a, $b) {
-        $pageCmp = (int)($a['pageId'] ?? 0) <=> (int)($b['pageId'] ?? 0);
-
-        if ($pageCmp !== 0) {
-            return $pageCmp;
+        if (!id) {
+            id = 'col_' + (index + 1);
         }
 
-        $sortCmp = (int)($a['sort'] ?? 500) <=> (int)($b['sort'] ?? 500);
-
-        if ($sortCmp !== 0) {
-            return $sortCmp;
-        }
-
-        return (int)($a['id'] ?? 0) <=> (int)($b['id'] ?? 0);
+        return {
+            id: id,
+            label: String(column.label || ('Столбец ' + (index + 1)))
+        };
     });
 
-    return $sections;
+    rows = rows.map(function (row) {
+        var cells = row && row.cells && typeof row.cells === 'object' ? row.cells : {};
+
+        return {
+            id: String((row && row.id) || ('row_' + Date.now() + '_' + Math.random().toString(16).slice(2))),
+            cells: cells
+        };
+    });
+
+    return {
+        title: String(content.title || 'Таблица'),
+        columns: columns,
+        rows: rows
+    };
 }
 
-protected static function prepareSectionForSnapshot(array $section): array
-{
-    return [
-        'oldId' => (int)($section['id'] ?? 0),
-        'oldPageId' => (int)($section['pageId'] ?? 0),
-        'title' => (string)($section['title'] ?? 'Секция'),
-        'sort' => (int)($section['sort'] ?? 500),
-        'layout' => is_array($section['layout'] ?? null) ? $section['layout'] : [],
-        'props' => is_array($section['props'] ?? null) ? $section['props'] : [],
+
+---
+
+4. В collectTableContentFromEditor() замени дефолтные столбцы
+
+Найди внутри неё:
+
+if (!columns.length) {
+    columns = [
+        {id: 'fio', label: 'ФИО'},
+        {id: 'email', label: 'Почта'},
+        {id: 'phone', label: 'Телефон'}
     ];
 }
 
-protected static function copySections(int $siteId, array $pageIdMap, array $payload, int $userId): array
-{
-    $templateSections = is_array($payload['sections'] ?? null) ? $payload['sections'] : [];
+Замени на:
 
-    if (empty($templateSections)) {
-        return [];
-    }
-
-    $repoFile = __DIR__ . '/PageSectionRepository.php';
-
-    if (file_exists($repoFile)) {
-        require_once $repoFile;
-    }
-
-    if (!class_exists('PageSectionRepository')) {
-        return [];
-    }
-
-    $items = PageSectionRepository::readAll();
-    $nextSectionId = self::nextSectionId($items);
-    $now = date('c');
-
-    $sectionIdMap = [];
-    $newSections = [];
-
-    foreach ($templateSections as $section) {
-        $oldPageId = (int)($section['oldPageId'] ?? 0);
-
-        if ($oldPageId <= 0 || !isset($pageIdMap[$oldPageId])) {
-            continue;
-        }
-
-        $oldSectionId = (int)($section['oldId'] ?? 0);
-        $newSectionId = $nextSectionId++;
-
-        if ($oldSectionId > 0) {
-            $sectionIdMap[$oldSectionId] = $newSectionId;
-        }
-
-        $newSections[] = [
-            'id' => $newSectionId,
-            'siteId' => $siteId,
-            'pageId' => (int)$pageIdMap[$oldPageId],
-            'type' => 'section',
-            'title' => (string)($section['title'] ?? 'Секция'),
-            'sort' => (int)($section['sort'] ?? 500),
-            'layout' => is_array($section['layout'] ?? null) ? $section['layout'] : [],
-            'props' => is_array($section['props'] ?? null) ? $section['props'] : [],
-            'createdBy' => $userId,
-            'createdAt' => $now,
-            'updatedBy' => $userId,
-            'updatedAt' => $now,
-        ];
-    }
-
-    if (!empty($newSections)) {
-        PageSectionRepository::writeAll(array_merge($items, $newSections));
-    }
-
-    return $sectionIdMap;
-}
-
-protected static function nextSectionId(array $sections): int
-{
-    $maxId = 0;
-
-    foreach ($sections as $section) {
-        $maxId = max($maxId, (int)($section['id'] ?? 0));
-    }
-
-    return $maxId + 1;
+if (!columns.length) {
+    columns = [
+        {id: 'col_1', label: 'Столбец 1'},
+        {id: 'col_2', label: 'Столбец 2'},
+        {id: 'col_3', label: 'Столбец 3'}
+    ];
 }
 
 
 ---
 
-5. Замени функцию copyBlocks()
+5. В createBlock(type) сделай выбор начального количества столбцов
+
+Найди кусок:
+
+} else if (type === 'table') {
+    content = {
+        title: 'Контакты',
+        columns: [
+            {id: 'fio', label: 'ФИО'},
+            {id: 'email', label: 'Почта'},
+            {id: 'phone', label: 'Телефон'}
+        ],
+        rows: [
+            {
+                id: 'row_1',
+                cells: {
+                    fio: 'Иванов Иван',
+                    email: 'ivanov@example.ru',
+                    phone: '+7 999 000-00-00'
+                }
+            }
+        ]
+    };
+} else if (type === 'disk') {
+
+Замени на универсальный вариант:
+
+} else if (type === 'table') {
+    var columnsCountRaw = window.prompt('Сколько столбцов создать?', '3');
+    var columnsCount = Number(columnsCountRaw || 3);
+
+    if (!Number.isFinite(columnsCount) || columnsCount < 1) {
+        columnsCount = 3;
+    }
+
+    if (columnsCount > 12) {
+        columnsCount = 12;
+    }
+
+    var tableColumns = [];
+    var tableCells = {};
+
+    for (var i = 1; i <= columnsCount; i++) {
+        var columnId = 'col_' + i;
+
+        tableColumns.push({
+            id: columnId,
+            label: 'Столбец ' + i
+        });
+
+        tableCells[columnId] = '';
+    }
+
+    content = {
+        title: 'Таблица',
+        columns: tableColumns,
+        rows: [
+            {
+                id: 'row_1',
+                cells: tableCells
+            }
+        ]
+    };
+} else if (type === 'disk') {
+
+Теперь при добавлении компонента он спросит:
+
+Сколько столбцов создать?
+
+А потом пользователь сможет назвать их как угодно.
+
+
+---
+
+6. В addTableColumn() сделай универсальное название
 
 Найди:
 
-protected static function copyBlocks(array $pageIdMap, array $payload, int $userId): void
+current.columns.push({
+    id: newId,
+    label: 'Новый столбец'
+});
 
-И замени всю функцию на эту:
+Можно оставить, но лучше так:
 
-protected static function copyBlocks(array $pageIdMap, array $payload, int $userId, array $sectionIdMap = []): void
-{
-    $blocks = sb_read_blocks();
-    $templateBlocks = is_array($payload['blocks'] ?? null) ? $payload['blocks'] : [];
-    $nextBlockId = sb_next_block_id($blocks);
-    $now = date('c');
-
-    foreach ($templateBlocks as $block) {
-        $oldPageId = (int)($block['oldPageId'] ?? 0);
-
-        if (!isset($pageIdMap[$oldPageId])) {
-            continue;
-        }
-
-        $props = self::sanitizeDiskData($block['props'] ?? []);
-
-        if (!is_array($props)) {
-            $props = [];
-        }
-
-        $placement = is_array($props['_placement'] ?? null) ? $props['_placement'] : [];
-
-        $oldSectionId = (int)($block['oldSectionId'] ?? $block['sectionId'] ?? 0);
-
-        if ($oldSectionId <= 0) {
-            $oldSectionId = (int)($props['sectionId'] ?? 0);
-        }
-
-        if ($oldSectionId <= 0) {
-            $oldSectionId = (int)($placement['sectionId'] ?? 0);
-        }
-
-        $column = (int)($block['column'] ?? 0);
-
-        if ($column <= 0) {
-            $column = (int)($props['column'] ?? 0);
-        }
-
-        if ($column <= 0) {
-            $column = (int)($placement['column'] ?? 0);
-        }
-
-        if ($column <= 0) {
-            $column = 1;
-        }
-
-        $column = max(1, min(4, $column));
-
-        $newSectionId = 0;
-
-        if ($oldSectionId > 0 && isset($sectionIdMap[$oldSectionId])) {
-            $newSectionId = (int)$sectionIdMap[$oldSectionId];
-        }
-
-        if ($newSectionId > 0) {
-            $props['sectionId'] = $newSectionId;
-            $props['column'] = $column;
-            $props['_placement'] = [
-                'sectionId' => $newSectionId,
-                'column' => $column,
-            ];
-        } else {
-            unset($props['sectionId'], $props['column'], $props['_placement']);
-        }
-
-        $newBlock = [
-            'id' => $nextBlockId++,
-            'pageId' => (int)$pageIdMap[$oldPageId],
-            'type' => (string)($block['type'] ?? 'text'),
-            'sort' => (int)($block['sort'] ?? 500),
-            'content' => self::sanitizeDiskData($block['content'] ?? []),
-            'props' => $props,
-            'createdBy' => $userId,
-            'createdAt' => $now,
-            'updatedBy' => $userId,
-            'updatedAt' => $now,
-        ];
-
-        if ($newSectionId > 0) {
-            $newBlock['sectionId'] = $newSectionId;
-            $newBlock['column'] = $column;
-        }
-
-        $blocks[] = sb_normalize_block_record($newBlock);
-    }
-
-    sb_write_blocks($blocks);
-}
+current.columns.push({
+    id: newId,
+    label: 'Столбец ' + (current.columns.length + 1)
+});
 
 
 ---
 
-6. Что важно после правки
+7. Публичный шаблон table.php оставляем универсальным
 
-Старые уже созданные шаблоны не исправятся, потому что в них секции уже не попали.
+Файл:
 
-После правки нужно:
+/local/sitebuilder/views/blocks/table.php
 
-1. Открыть исходный сайт, где секции настроены правильно.
-
-
-2. Нажать “Сохранить как шаблон” заново.
+Его логика уже универсальная. Он не должен знать про контакты, почту или телефон. Он просто выводит любые columns и любые rows.
 
 
-3. Создать сайт из нового шаблона.
+---
 
-
-
-Тогда секции сохранят:
-
-количество колонок
-gap
-container
-padding
-фон
-привязку блоков к секциям и колонкам
-
-Потом проверь созданный сайт: публичная страница должна сразу открыть секции с теми же колонками, что были у шаблона.
+После этих замен компонент будет универсальным: при создании выбираешь начальное количество столбцов, потом называешь столбцы как нужно и добавляешь строки.
