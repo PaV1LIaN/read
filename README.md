@@ -1,157 +1,174 @@
-Да, сделаем нормально: при создании таблицы будем спрашивать название таблицы, а потом его можно будет менять в правой панели в поле “Заголовок таблицы” и нажимать “Сохранить блок”.
+Похоже, браузер или сервер всё ещё берёт старый вариант, где дефолтные 3 столбца. Сделаем жёстче: после создания таблицы сразу явно сохраняем контент с нужным количеством столбцов через block.update.
 
-1. В 30-blocks.js замени кусок создания table
-
-Файл:
+В файле:
 
 /local/sitebuilder/assets/admin/editor/30-blocks.js
 
-Найди внутри createBlock(type) вот этот кусок:
+найди функцию:
 
-} else if (type === 'table') {
-    var columnsCountRaw = window.prompt('Сколько столбцов создать?', '3');
-    var columnsCount = Number(columnsCountRaw || 3);
+async function createBlock(type) {
 
-    if (!columnsCount || isNaN(columnsCount) || columnsCount < 1) {
-        columnsCount = 3;
-    }
+и замени всю функцию целиком на эту:
 
-    if (columnsCount > 12) {
-        columnsCount = 12;
-    }
-
-    columnsCount = Math.floor(columnsCount);
-
-    var tableColumns = [];
-    var tableCells = {};
-
-    for (var i = 1; i <= columnsCount; i++) {
-        var columnId = 'col_' + i;
-
-        tableColumns.push({
-            id: columnId,
-            label: 'Столбец ' + i
-        });
-
-        tableCells[columnId] = '';
-    }
-
-    content = {
-        title: 'Таблица',
-        columns: tableColumns,
-        rows: [
-            {
-                id: 'row_1',
-                cells: tableCells
-            }
-        ]
-    };
-
-Замени на:
-
-} else if (type === 'table') {
-    var tableTitle = window.prompt('Название таблицы', 'Таблица');
-
-    if (tableTitle === null) {
+async function createBlock(type) {
+    if (!state.currentPageId) {
+        alert('Сначала выберите страницу');
         return;
     }
 
-    tableTitle = String(tableTitle || '').trim();
+    var content = {};
+    var props = {};
+    var isTableBlock = false;
 
-    if (!tableTitle) {
-        tableTitle = 'Таблица';
+    if (type === 'heading') {
+        content = {text: 'Новый заголовок'};
+    } else if (type === 'text') {
+        content = {text: 'Новый текстовый блок'};
+    } else if (type === 'button') {
+        content = {
+            label: 'Кнопка',
+            href: '#',
+            target: '_self'
+        };
+    } else if (type === 'html') {
+        content = {html: '<div>Новый HTML блок</div>'};
+    } else if (type === 'table') {
+        isTableBlock = true;
+
+        var tableTitle = window.prompt('Название таблицы', 'Таблица');
+
+        if (tableTitle === null) {
+            return;
+        }
+
+        tableTitle = String(tableTitle || '').trim();
+
+        if (!tableTitle) {
+            tableTitle = 'Таблица';
+        }
+
+        var columnsCountRaw = window.prompt('Сколько столбцов создать?', '3');
+
+        if (columnsCountRaw === null) {
+            return;
+        }
+
+        columnsCountRaw = String(columnsCountRaw || '').replace(',', '.').trim();
+
+        var columnsCount = parseInt(columnsCountRaw, 10);
+
+        if (!columnsCount || isNaN(columnsCount) || columnsCount < 1) {
+            columnsCount = 3;
+        }
+
+        if (columnsCount > 12) {
+            columnsCount = 12;
+        }
+
+        var tableColumns = [];
+        var tableCells = {};
+
+        for (var i = 1; i <= columnsCount; i++) {
+            var columnId = 'col_' + i;
+
+            tableColumns.push({
+                id: columnId,
+                label: 'Столбец ' + i
+            });
+
+            tableCells[columnId] = '';
+        }
+
+        content = {
+            title: tableTitle,
+            columns: tableColumns,
+            rows: [
+                {
+                    id: 'row_1',
+                    cells: tableCells
+                }
+            ]
+        };
+    } else if (type === 'disk') {
+        content = {};
+        props = {
+            title: 'Файлы',
+            rootMode: 'site',
+            rootFolderId: null,
+            viewMode: 'table',
+            allowUpload: true,
+            allowCreateFolder: true,
+            allowRename: true,
+            allowDelete: true,
+            allowDownload: true,
+            showSearch: true,
+            showBreadcrumbs: true,
+            defaultSort: 'updatedAt',
+            defaultSortDirection: 'desc',
+            allowedExtensions: [],
+            maxFileSize: 52428800,
+            permissionMode: 'inherit_site',
+            useSiteRootFallback: true
+        };
     }
 
-    var columnsCountRaw = window.prompt('Сколько столбцов создать?', '3');
+    var targetSectionId = getDefaultSectionId();
+    var targetColumn = getDefaultColumn();
 
-    if (columnsCountRaw === null) {
-        return;
-    }
-
-    var columnsCount = Number(columnsCountRaw || 3);
-
-    if (!columnsCount || isNaN(columnsCount) || columnsCount < 1) {
-        columnsCount = 3;
-    }
-
-    if (columnsCount > 12) {
-        columnsCount = 12;
-    }
-
-    columnsCount = Math.floor(columnsCount);
-
-    var tableColumns = [];
-    var tableCells = {};
-
-    for (var i = 1; i <= columnsCount; i++) {
-        var columnId = 'col_' + i;
-
-        tableColumns.push({
-            id: columnId,
-            label: 'Столбец ' + i
-        });
-
-        tableCells[columnId] = '';
-    }
-
-    content = {
-        title: tableTitle,
-        columns: tableColumns,
-        rows: [
-            {
-                id: 'row_1',
-                cells: tableCells
-            }
-        ]
+    props.sectionId = targetSectionId;
+    props.column = targetColumn;
+    props._placement = {
+        sectionId: targetSectionId,
+        column: targetColumn
     };
 
+    var createRes = await api('block.create', {
+        pageId: state.currentPageId,
+        type: type,
+        content: JSON.stringify(content),
+        props: JSON.stringify(props),
+        sectionId: targetSectionId,
+        column: targetColumn
+    });
 
----
+    await loadBlocks();
 
-2. Проверь, что в editor.php есть поле названия
+    var createdBlockId = Number(
+        (createRes.block && createRes.block.id) ||
+        (createRes.data && createRes.data.block && createRes.data.block.id) ||
+        0
+    );
 
-В форме таблицы должно быть:
+    if (!createdBlockId && state.blocks.length) {
+        var sortedBlocks = state.blocks.slice().sort(function (a, b) {
+            return Number(b.id || 0) - Number(a.id || 0);
+        });
 
-<div class="sb-field">
-    <label for="tableTitleInput">Заголовок таблицы</label>
-    <input class="sb-input" type="text" id="tableTitleInput" placeholder="Например: Прайс-лист, контакты, расписание">
-</div>
+        createdBlockId = Number(sortedBlocks[0].id || 0);
+    }
 
-Если этого поля нет — вставь его внутрь:
+    if (createdBlockId > 0) {
+        if (targetSectionId > 0) {
+            await assignBlockToSection(createdBlockId, targetSectionId, targetColumn);
+        }
 
-<div id="tableBlockForm" class="sb-block-type-form" style="margin-top:12px;">
+        if (isTableBlock) {
+            await api('block.update', {
+                id: createdBlockId,
+                content: JSON.stringify(content),
+                props: JSON.stringify(props)
+            });
+        }
 
-самым первым элементом.
+        state.currentBlockId = createdBlockId;
+        await loadBlocks();
+    }
+}
 
+Потом в editor.php обнови версию:
 
----
+/assets/admin/editor/30-blocks.js?v=5
 
-3. Как менять название уже созданной таблицы
+И сделай Ctrl + F5.
 
-1. Нажми на блок таблицы в редакторе.
-
-
-2. Справа появится поле “Заголовок таблицы”.
-
-
-3. Введи новое название.
-
-
-4. Нажми “Сохранить блок”.
-
-
-
-
----
-
-4. Обнови версию файла
-
-В editor.php поменяй:
-
-/assets/admin/editor/30-blocks.js?v=3
-
-на:
-
-/assets/admin/editor/30-blocks.js?v=4
-
-Потом Ctrl + F5.
+После этого при вводе 5 должно создаться ровно 5 столбцов: Столбец 1 … Столбец 5.
