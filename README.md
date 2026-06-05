@@ -1,496 +1,389 @@
-Создай последний файл:
+Да, это логичный баг: сейчас шаблон сохраняет страницы, блоки, layout, меню, но секции страницы отдельно не сохраняет. Поэтому при создании сайта из шаблона создаётся дефолтная секция на 1 колонку, и блоки съезжают туда.
 
-/local/sitebuilder/assets/admin/editor/60-events.js
+Правим один файл:
 
-И вставь туда:
+/local/sitebuilder/lib/SiteTemplateService.php
 
-if (pagesList) {
-    pagesList.addEventListener('click', async function (e) {
-        var item = e.target.closest('[data-page-id]');
-        if (!item) return;
 
-        state.currentPageId = Number(item.getAttribute('data-page-id') || 0);
-        state.currentBlockId = 0;
-        state.currentSectionId = 0;
-        state.currentColumn = 1;
+---
 
-        renderPages();
-        fillPageForm();
+1. В createFromSite() добавь сохранение секций
 
-        await loadBlocks();
-    });
-}
+Найди внутри функции createFromSite():
 
-if (blocksList) {
-    blocksList.addEventListener('click', function (e) {
-        var item = e.target.closest('[data-block-id]');
-        if (!item) return;
+$menus = self::menusForSite($siteId);
 
-        state.currentBlockId = Number(item.getAttribute('data-block-id') || 0);
+Замени на:
 
-        var selectedBlock = getCurrentBlock();
+$sections = self::sectionsForSite($siteId, $pages);
+$menus = self::menusForSite($siteId);
 
-        if (selectedBlock) {
-            var selectedSectionId = getBlockSectionId(selectedBlock);
-            var selectedColumn = getBlockColumn(selectedBlock);
+Ниже найди payload:
 
-            if (selectedSectionId > 0) {
-                state.currentSectionId = selectedSectionId;
-            }
+'payload' => [
+    'site' => self::prepareSiteForSnapshot($site),
+    'pages' => array_map([self::class, 'preparePageForSnapshot'], $pages),
+    'blocks' => $blocks,
+    'layout' => $layout,
+    'menus' => array_map([self::class, 'prepareMenuForSnapshot'], $menus),
+],
 
-            state.currentColumn = selectedColumn > 0 ? selectedColumn : 1;
-        }
+Замени на:
 
-        renderPageSectionsPanel();
-        renderBlocks();
-        fillBlockForm();
-    });
+'payload' => [
+    'site' => self::prepareSiteForSnapshot($site),
+    'pages' => array_map([self::class, 'preparePageForSnapshot'], $pages),
+    'sections' => array_map([self::class, 'prepareSectionForSnapshot'], $sections),
+    'blocks' => $blocks,
+    'layout' => $layout,
+    'menus' => array_map([self::class, 'prepareMenuForSnapshot'], $menus),
+],
 
-    blocksList.addEventListener('dragstart', function (e) {
-        var blockNode = e.target.closest('.sb-editor-block[data-block-id]');
-        if (!blockNode) {
-            return;
-        }
 
-        var blockId = Number(blockNode.getAttribute('data-block-id') || 0);
+---
 
-        if (blockId <= 0) {
-            return;
-        }
+2. В createSiteFromTemplate() добавь копирование секций
 
-        state.draggedBlockId = blockId;
-        blockNode.classList.add('is-dragging');
+Найди:
 
-        if (e.dataTransfer) {
-            e.dataTransfer.effectAllowed = 'move';
-            e.dataTransfer.setData('text/plain', String(blockId));
-        }
-    });
+$pageIdMap = self::copyPages($siteId, $payload, $userId);
+self::copyBlocks($pageIdMap, $payload, $userId);
 
-    blocksList.addEventListener('dragend', function (e) {
-        var blockNode = e.target.closest('.sb-editor-block[data-block-id]');
-        if (blockNode) {
-            blockNode.classList.remove('is-dragging');
-        }
+Замени на:
 
-        state.draggedBlockId = 0;
+$pageIdMap = self::copyPages($siteId, $payload, $userId);
+$sectionIdMap = self::copySections($siteId, $pageIdMap, $payload, $userId);
+self::copyBlocks($pageIdMap, $payload, $userId, $sectionIdMap);
 
-        blocksList.querySelectorAll('.sb-editor-section-preview__column.is-drag-over').forEach(function (columnNode) {
-            columnNode.classList.remove('is-drag-over');
-        });
-    });
 
-    blocksList.addEventListener('dragover', function (e) {
-        var columnNode = e.target.closest('.sb-editor-section-preview__column[data-section-id][data-column]');
-        if (!columnNode) {
-            return;
-        }
+---
 
-        e.preventDefault();
+3. Замени функцию prepareBlockForSnapshot()
 
-        if (e.dataTransfer) {
-            e.dataTransfer.dropEffect = 'move';
-        }
+Найди:
 
-        blocksList.querySelectorAll('.sb-editor-section-preview__column.is-drag-over').forEach(function (node) {
-            if (node !== columnNode) {
-                node.classList.remove('is-drag-over');
-            }
-        });
+protected static function prepareBlockForSnapshot(array $block): array
 
-        columnNode.classList.add('is-drag-over');
-    });
+И замени всю функцию на эту:
 
-    blocksList.addEventListener('dragleave', function (e) {
-        var columnNode = e.target.closest('.sb-editor-section-preview__column[data-section-id][data-column]');
-        if (!columnNode) {
-            return;
-        }
+protected static function prepareBlockForSnapshot(array $block): array
+{
+    $rawProps = is_array($block['props'] ?? null) ? $block['props'] : [];
+    $placement = is_array($rawProps['_placement'] ?? null) ? $rawProps['_placement'] : [];
 
-        var related = e.relatedTarget;
+    $sectionId = (int)($block['sectionId'] ?? 0);
 
-        if (related && columnNode.contains(related)) {
-            return;
-        }
-
-        columnNode.classList.remove('is-drag-over');
-    });
-
-    blocksList.addEventListener('drop', async function (e) {
-        var columnNode = e.target.closest('.sb-editor-section-preview__column[data-section-id][data-column]');
-        if (!columnNode) {
-            return;
-        }
-
-        e.preventDefault();
-
-        columnNode.classList.remove('is-drag-over');
-
-        var blockId = Number(state.draggedBlockId || 0);
-
-        if (!blockId && e.dataTransfer) {
-            blockId = Number(e.dataTransfer.getData('text/plain') || 0);
-        }
-
-        var sectionId = Number(columnNode.getAttribute('data-section-id') || 0);
-        var column = Number(columnNode.getAttribute('data-column') || 1);
-
-        if (blockId <= 0 || sectionId <= 0) {
-            return;
-        }
-
-        try {
-            await assignBlockToSection(blockId, sectionId, column);
-
-            state.currentBlockId = blockId;
-            state.currentSectionId = sectionId;
-            state.currentColumn = column;
-
-            await loadBlocks();
-
-            setPageSectionsMessage('Блок перенесён в секцию #' + sectionId + ', колонку ' + column, 'success');
-        } catch (err) {
-            console.error(err);
-            setPageSectionsMessage('Не удалось перенести блок', 'error');
-        }
-    });
-}
-
-var addPageSectionBtn = document.getElementById('addPageSectionBtn');
-if (addPageSectionBtn) {
-    addPageSectionBtn.addEventListener('click', createPageSection);
-}
-
-document.addEventListener('click', function (e) {
-    var addTargetBtn = e.target.closest('[data-set-add-target]');
-    if (addTargetBtn) {
-        var targetSectionId = Number(addTargetBtn.getAttribute('data-set-add-target') || 0);
-        var targetColumn = Number(addTargetBtn.getAttribute('data-column') || 1);
-
-        if (targetSectionId > 0) {
-            state.currentSectionId = targetSectionId;
-            state.currentColumn = targetColumn > 0 ? targetColumn : 1;
-
-            renderPageSectionsPanel();
-            renderBlocks();
-
-            setPageSectionsMessage(
-                'Новые компоненты будут добавляться в секцию #' + targetSectionId + ', колонку ' + state.currentColumn,
-                'success'
-            );
-        }
-
-        return;
+    if ($sectionId <= 0) {
+        $sectionId = (int)($rawProps['sectionId'] ?? 0);
     }
 
-    var selectSection = e.target.closest('[data-page-section-select], [data-add-block-to-section]');
+    if ($sectionId <= 0) {
+        $sectionId = (int)($placement['sectionId'] ?? 0);
+    }
 
-    if (selectSection) {
-        var sectionId = Number(
-            selectSection.getAttribute('data-page-section-select') ||
-            selectSection.getAttribute('data-add-block-to-section') ||
-            0
-        );
+    $column = (int)($block['column'] ?? 0);
 
-        if (sectionId > 0) {
-            state.currentSectionId = sectionId;
-            state.currentColumn = 1;
-            renderPageSectionsPanel();
-            renderBlocks();
+    if ($column <= 0) {
+        $column = (int)($rawProps['column'] ?? 0);
+    }
+
+    if ($column <= 0) {
+        $column = (int)($placement['column'] ?? 0);
+    }
+
+    if ($column <= 0) {
+        $column = 1;
+    }
+
+    $block = sb_normalize_block_record($block);
+
+    return [
+        'oldId' => (int)($block['id'] ?? 0),
+        'oldPageId' => (int)($block['pageId'] ?? 0),
+        'oldSectionId' => $sectionId,
+        'sectionId' => $sectionId,
+        'column' => max(1, min(4, $column)),
+        'type' => (string)($block['type'] ?? 'text'),
+        'sort' => (int)($block['sort'] ?? 500),
+        'content' => self::sanitizeDiskData($block['content'] ?? []),
+        'props' => self::sanitizeDiskData($block['props'] ?? []),
+    ];
+}
+
+
+---
+
+4. Добавь новые функции перед menusForSite()
+
+Найди функцию:
+
+protected static function menusForSite(int $siteId): array
+
+Прямо перед ней вставь:
+
+protected static function sectionsForSite(int $siteId, array $pages): array
+{
+    $pageIds = [];
+
+    foreach ($pages as $page) {
+        $pageId = (int)($page['id'] ?? 0);
+
+        if ($pageId > 0) {
+            $pageIds[$pageId] = true;
+        }
+    }
+
+    if (empty($pageIds)) {
+        return [];
+    }
+
+    $repoFile = __DIR__ . '/PageSectionRepository.php';
+
+    if (file_exists($repoFile)) {
+        require_once $repoFile;
+    }
+
+    if (!class_exists('PageSectionRepository')) {
+        return [];
+    }
+
+    $sections = array_values(array_filter(PageSectionRepository::readAll(), static function ($section) use ($siteId, $pageIds) {
+        $sectionSiteId = (int)($section['siteId'] ?? 0);
+        $sectionPageId = (int)($section['pageId'] ?? 0);
+
+        return $sectionSiteId === $siteId && isset($pageIds[$sectionPageId]);
+    }));
+
+    usort($sections, static function ($a, $b) {
+        $pageCmp = (int)($a['pageId'] ?? 0) <=> (int)($b['pageId'] ?? 0);
+
+        if ($pageCmp !== 0) {
+            return $pageCmp;
         }
 
-        return;
-    }
+        $sortCmp = (int)($a['sort'] ?? 500) <=> (int)($b['sort'] ?? 500);
 
-    var sectionBtn = e.target.closest('[data-section-action]');
-
-    if (!sectionBtn) {
-        return;
-    }
-
-    var action = sectionBtn.getAttribute('data-section-action');
-    var sectionActionId = Number(sectionBtn.getAttribute('data-section-id') || 0);
-
-    if (action === 'move-up') {
-        movePageSection(sectionActionId, 'up');
-        return;
-    }
-
-    if (action === 'move-down') {
-        movePageSection(sectionActionId, 'down');
-        return;
-    }
-
-    if (action === 'save') {
-        savePageSection(sectionActionId);
-        return;
-    }
-
-    if (action === 'delete') {
-        deletePageSection(sectionActionId);
-    }
-});
-
-document.addEventListener('change', function (e) {
-    var sectionField = e.target.closest('[data-section-field="columns"], [data-section-field="container"]');
-
-    if (sectionField) {
-        var sectionId = Number(sectionField.getAttribute('data-section-id') || 0);
-
-        if (sectionId > 0) {
-            savePageSection(sectionId);
+        if ($sortCmp !== 0) {
+            return $sortCmp;
         }
 
-        return;
+        return (int)($a['id'] ?? 0) <=> (int)($b['id'] ?? 0);
+    });
+
+    return $sections;
+}
+
+protected static function prepareSectionForSnapshot(array $section): array
+{
+    return [
+        'oldId' => (int)($section['id'] ?? 0),
+        'oldPageId' => (int)($section['pageId'] ?? 0),
+        'title' => (string)($section['title'] ?? 'Секция'),
+        'sort' => (int)($section['sort'] ?? 500),
+        'layout' => is_array($section['layout'] ?? null) ? $section['layout'] : [],
+        'props' => is_array($section['props'] ?? null) ? $section['props'] : [],
+    ];
+}
+
+protected static function copySections(int $siteId, array $pageIdMap, array $payload, int $userId): array
+{
+    $templateSections = is_array($payload['sections'] ?? null) ? $payload['sections'] : [];
+
+    if (empty($templateSections)) {
+        return [];
     }
 
-    if (e.target && e.target.id === 'blockSectionInput') {
-        var block = getCurrentBlock();
-        var newSectionId = Number(e.target.value || 0);
+    $repoFile = __DIR__ . '/PageSectionRepository.php';
 
-        if (block) {
-            state.currentSectionId = newSectionId;
-            state.currentColumn = 1;
+    if (file_exists($repoFile)) {
+        require_once $repoFile;
+    }
 
-            fillBlockPlacementForm(Object.assign({}, block, {
-                sectionId: newSectionId,
-                column: 1,
-                props: Object.assign({}, block.props || {}, {
-                    sectionId: newSectionId,
-                    column: 1,
-                    _placement: {
-                        sectionId: newSectionId,
-                        column: 1
-                    }
-                })
-            }));
+    if (!class_exists('PageSectionRepository')) {
+        return [];
+    }
 
-            renderPageSectionsPanel();
-            renderBlocks();
+    $items = PageSectionRepository::readAll();
+    $nextSectionId = self::nextSectionId($items);
+    $now = date('c');
+
+    $sectionIdMap = [];
+    $newSections = [];
+
+    foreach ($templateSections as $section) {
+        $oldPageId = (int)($section['oldPageId'] ?? 0);
+
+        if ($oldPageId <= 0 || !isset($pageIdMap[$oldPageId])) {
+            continue;
         }
 
-        return;
-    }
+        $oldSectionId = (int)($section['oldId'] ?? 0);
+        $newSectionId = $nextSectionId++;
 
-    if (e.target && e.target.id === 'blockColumnInput') {
-        var columnValue = Number(e.target.value || 1);
-
-        state.currentColumn = columnValue > 0 ? columnValue : 1;
-
-        renderBlocks();
-    }
-});
-
-var createPageBtn = document.getElementById('createPageBtn');
-if (createPageBtn) {
-    createPageBtn.addEventListener('click', createPage);
-}
-
-var savePageBtn = document.getElementById('savePageBtn');
-if (savePageBtn) {
-    savePageBtn.addEventListener('click', savePage);
-}
-
-var deletePageBtn = document.getElementById('deletePageBtn');
-if (deletePageBtn) {
-    deletePageBtn.addEventListener('click', deletePage);
-}
-
-var movePageUpBtn = document.getElementById('movePageUpBtn');
-if (movePageUpBtn) {
-    movePageUpBtn.addEventListener('click', function () {
-        movePage('up');
-    });
-}
-
-var movePageDownBtn = document.getElementById('movePageDownBtn');
-if (movePageDownBtn) {
-    movePageDownBtn.addEventListener('click', function () {
-        movePage('down');
-    });
-}
-
-var publishPageBtn = document.getElementById('publishPageBtn');
-if (publishPageBtn) {
-    publishPageBtn.addEventListener('click', async function () {
-        if (!state.currentPageId) return;
-
-        await api('page.setStatus', {
-            id: state.currentPageId,
-            status: 'published'
-        });
-
-        await loadPages();
-    });
-}
-
-document.querySelectorAll('[data-add-block]').forEach(function (btn) {
-    btn.addEventListener('click', function () {
-        createBlock(btn.getAttribute('data-add-block'));
-    });
-});
-
-var saveBlockBtn = document.getElementById('saveBlockBtn');
-if (saveBlockBtn) {
-    saveBlockBtn.addEventListener('click', saveBlock);
-}
-
-var duplicateBlockBtn = document.getElementById('duplicateBlockBtn');
-if (duplicateBlockBtn) {
-    duplicateBlockBtn.addEventListener('click', duplicateBlock);
-}
-
-var deleteBlockBtn = document.getElementById('deleteBlockBtn');
-if (deleteBlockBtn) {
-    deleteBlockBtn.addEventListener('click', deleteBlock);
-}
-
-var moveBlockUpBtn = document.getElementById('moveBlockUpBtn');
-if (moveBlockUpBtn) {
-    moveBlockUpBtn.addEventListener('click', function () {
-        moveBlock('up');
-    });
-}
-
-var moveBlockDownBtn = document.getElementById('moveBlockDownBtn');
-if (moveBlockDownBtn) {
-    moveBlockDownBtn.addEventListener('click', function () {
-        moveBlock('down');
-    });
-}
-
-var deleteSiteBtn = document.getElementById('deleteSiteBtn');
-if (deleteSiteBtn) {
-    deleteSiteBtn.addEventListener('click', deleteSite);
-}
-
-var saveAsTemplateBtn = document.getElementById('saveAsTemplateBtn');
-if (saveAsTemplateBtn) {
-    saveAsTemplateBtn.addEventListener('click', openTemplateModal);
-}
-
-var createTemplateBtn = document.getElementById('createTemplateBtn');
-if (createTemplateBtn) {
-    createTemplateBtn.addEventListener('click', createTemplateFromSite);
-}
-
-document.querySelectorAll('[data-close-template-modal]').forEach(function (btn) {
-    btn.addEventListener('click', closeTemplateModal);
-});
-
-var syncAccessBtn = document.getElementById('syncAccessBtn');
-if (syncAccessBtn) {
-    syncAccessBtn.addEventListener('click', syncAccess);
-}
-
-var ensureBitrixGroupBtn = document.getElementById('ensureBitrixGroupBtn');
-if (ensureBitrixGroupBtn) {
-    ensureBitrixGroupBtn.addEventListener('click', ensureBitrixGroup);
-}
-
-var grantAccessBtn = document.getElementById('grantAccessBtn');
-if (grantAccessBtn) {
-    grantAccessBtn.addEventListener('click', grantAccessRole);
-}
-
-var reloadAccessBtn = document.getElementById('reloadAccessBtn');
-if (reloadAccessBtn) {
-    reloadAccessBtn.addEventListener('click', loadAccessList);
-}
-
-var accessUserSearchInput = document.getElementById('accessUserSearchInput');
-if (accessUserSearchInput) {
-    accessUserSearchInput.addEventListener('input', function () {
-        clearTimeout(state.userSearchTimer);
-
-        state.userSearchTimer = setTimeout(function () {
-            searchAccessUsers();
-        }, 300);
-    });
-
-    accessUserSearchInput.addEventListener('keydown', function (e) {
-        if (e.key === 'Enter') {
-            e.preventDefault();
-
-            if (state.userSearchResults.length) {
-                selectAccessUser(state.userSearchResults[0]);
-            }
-        }
-    });
-}
-
-document.addEventListener('click', function (e) {
-    var selectBtn = e.target.closest('[data-select-access-user]');
-    if (selectBtn) {
-        var userId = Number(selectBtn.getAttribute('data-select-access-user') || 0);
-        var user = (state.userSearchResults || []).find(function (item) {
-            return Number(item.id || 0) === userId;
-        });
-
-        if (user) {
-            selectAccessUser(user);
+        if ($oldSectionId > 0) {
+            $sectionIdMap[$oldSectionId] = $newSectionId;
         }
 
-        return;
+        $newSections[] = [
+            'id' => $newSectionId,
+            'siteId' => $siteId,
+            'pageId' => (int)$pageIdMap[$oldPageId],
+            'type' => 'section',
+            'title' => (string)($section['title'] ?? 'Секция'),
+            'sort' => (int)($section['sort'] ?? 500),
+            'layout' => is_array($section['layout'] ?? null) ? $section['layout'] : [],
+            'props' => is_array($section['props'] ?? null) ? $section['props'] : [],
+            'createdBy' => $userId,
+            'createdAt' => $now,
+            'updatedBy' => $userId,
+            'updatedAt' => $now,
+        ];
     }
 
-    var clearBtn = e.target.closest('[data-clear-access-user]');
-    if (clearBtn) {
-        clearSelectedAccessUser();
-        return;
+    if (!empty($newSections)) {
+        PageSectionRepository::writeAll(array_merge($items, $newSections));
     }
 
-    var removeBtn = e.target.closest('[data-access-remove-user]');
-    if (removeBtn) {
-        removeAccessRole(Number(removeBtn.getAttribute('data-access-remove-user') || 0));
-        return;
+    return $sectionIdMap;
+}
+
+protected static function nextSectionId(array $sections): int
+{
+    $maxId = 0;
+
+    foreach ($sections as $section) {
+        $maxId = max($maxId, (int)($section['id'] ?? 0));
     }
-});
 
-document.addEventListener('mousedown', function (e) {
-    var wrap = e.target.closest('.sb-access-search-wrap');
-    if (!wrap) {
-        renderAccessUserSearchResults([]);
+    return $maxId + 1;
+}
+
+
+---
+
+5. Замени функцию copyBlocks()
+
+Найди:
+
+protected static function copyBlocks(array $pageIdMap, array $payload, int $userId): void
+
+И замени всю функцию на эту:
+
+protected static function copyBlocks(array $pageIdMap, array $payload, int $userId, array $sectionIdMap = []): void
+{
+    $blocks = sb_read_blocks();
+    $templateBlocks = is_array($payload['blocks'] ?? null) ? $payload['blocks'] : [];
+    $nextBlockId = sb_next_block_id($blocks);
+    $now = date('c');
+
+    foreach ($templateBlocks as $block) {
+        $oldPageId = (int)($block['oldPageId'] ?? 0);
+
+        if (!isset($pageIdMap[$oldPageId])) {
+            continue;
+        }
+
+        $props = self::sanitizeDiskData($block['props'] ?? []);
+
+        if (!is_array($props)) {
+            $props = [];
+        }
+
+        $placement = is_array($props['_placement'] ?? null) ? $props['_placement'] : [];
+
+        $oldSectionId = (int)($block['oldSectionId'] ?? $block['sectionId'] ?? 0);
+
+        if ($oldSectionId <= 0) {
+            $oldSectionId = (int)($props['sectionId'] ?? 0);
+        }
+
+        if ($oldSectionId <= 0) {
+            $oldSectionId = (int)($placement['sectionId'] ?? 0);
+        }
+
+        $column = (int)($block['column'] ?? 0);
+
+        if ($column <= 0) {
+            $column = (int)($props['column'] ?? 0);
+        }
+
+        if ($column <= 0) {
+            $column = (int)($placement['column'] ?? 0);
+        }
+
+        if ($column <= 0) {
+            $column = 1;
+        }
+
+        $column = max(1, min(4, $column));
+
+        $newSectionId = 0;
+
+        if ($oldSectionId > 0 && isset($sectionIdMap[$oldSectionId])) {
+            $newSectionId = (int)$sectionIdMap[$oldSectionId];
+        }
+
+        if ($newSectionId > 0) {
+            $props['sectionId'] = $newSectionId;
+            $props['column'] = $column;
+            $props['_placement'] = [
+                'sectionId' => $newSectionId,
+                'column' => $column,
+            ];
+        } else {
+            unset($props['sectionId'], $props['column'], $props['_placement']);
+        }
+
+        $newBlock = [
+            'id' => $nextBlockId++,
+            'pageId' => (int)$pageIdMap[$oldPageId],
+            'type' => (string)($block['type'] ?? 'text'),
+            'sort' => (int)($block['sort'] ?? 500),
+            'content' => self::sanitizeDiskData($block['content'] ?? []),
+            'props' => $props,
+            'createdBy' => $userId,
+            'createdAt' => $now,
+            'updatedBy' => $userId,
+            'updatedAt' => $now,
+        ];
+
+        if ($newSectionId > 0) {
+            $newBlock['sectionId'] = $newSectionId;
+            $newBlock['column'] = $column;
+        }
+
+        $blocks[] = sb_normalize_block_record($newBlock);
     }
-});
 
-window.onerror = function (message, source, lineno, colno, error) {
-    print({
-        jsError: true,
-        message: message,
-        source: source,
-        line: lineno,
-        column: colno,
-        stack: error && error.stack ? error.stack : null
-    });
-};
+    sb_write_blocks($blocks);
+}
 
-(async function init() {
-    try {
-        setManagementPanelsVisible(false);
 
-        await loadSite();
-        await loadPages();
-        await loadBlocks();
-        await loadAccessList();
-    } catch (e) {
-        print(e);
-        alert('Не удалось загрузить редактор');
-    }
-})();
+---
 
-Теперь в editor.php замени старое подключение:
+6. Что важно после правки
 
-<script src="<?= htmlspecialchars($basePath, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?>/assets/admin/editor.js?v=1"></script>
+Старые уже созданные шаблоны не исправятся, потому что в них секции уже не попали.
 
-на новые:
+После правки нужно:
 
-<script src="<?= htmlspecialchars($basePath, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?>/assets/admin/editor/00-core.js?v=1"></script>
-<script src="<?= htmlspecialchars($basePath, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?>/assets/admin/editor/10-sections.js?v=1"></script>
-<script src="<?= htmlspecialchars($basePath, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?>/assets/admin/editor/20-pages.js?v=1"></script>
-<script src="<?= htmlspecialchars($basePath, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?>/assets/admin/editor/30-blocks.js?v=1"></script>
-<script src="<?= htmlspecialchars($basePath, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?>/assets/admin/editor/40-access.js?v=1"></script>
-<script src="<?= htmlspecialchars($basePath, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?>/assets/admin/editor/50-template.js?v=1"></script>
-<script src="<?= htmlspecialchars($basePath, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?>/assets/admin/editor/60-events.js?v=1"></script>
+1. Открыть исходный сайт, где секции настроены правильно.
 
-Старый editor.js вместе с ними не подключай. Потом Ctrl + F5 в редакторе.
+
+2. Нажать “Сохранить как шаблон” заново.
+
+
+3. Создать сайт из нового шаблона.
+
+
+
+Тогда секции сохранят:
+
+количество колонок
+gap
+container
+padding
+фон
+привязку блоков к секциям и колонкам
+
+Потом проверь созданный сайт: публичная страница должна сразу открыть секции с теми же колонками, что были у шаблона.
