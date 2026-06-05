@@ -1,167 +1,289 @@
-Да, ошибка понятная:
+Идём дальше. Сейчас сделаем Laravel-like pagination.
 
-Argument #1 ($note) must be of type Note, string given
+В Laravel обычно не делают так:
 
-Значит контейнер увидел параметр маршрута {note}, но передал его как строку "5", а не превратил в объект Note.
+Note::latest(20)
 
-Причина почти точно в порядке внутри Container::resolveParameters():
+А делают так:
 
-if (array_key_exists($name, $parameters)) {
-    $dependencies[] = $parameters[$name];
-    continue;
-}
+Note::query()->paginate(10)
 
-Этот блок срабатывает раньше, чем Route Model Binding. Поэтому $note сразу становится строкой.
+У нас QueryBuilder::paginate() уже есть, теперь подключим его к заметкам.
 
 
 ---
 
-Исправляем /local/mvc/Core/Container.php
+1. Обнови /local/mvc_demo/Models/Note.php
 
-Открой файл:
+Добавь два метода внутрь класса Note:
 
-/local/mvc/Core/Container.php
-
-Найди метод:
-
-private function resolveParameters(...)
-
-И замени его полностью на этот:
-
-private function resolveParameters(ReflectionMethod|ReflectionFunctionAbstract $reflection, array $parameters = []): array
+public static function paginateLatest(int $page = 1, int $perPage = 10): array
 {
-    $dependencies = [];
+    $result = self::query()
+        ->orderBy('id', 'desc')
+        ->paginate($page, $perPage);
 
-    foreach ($reflection->getParameters() as $parameter) {
-        $name = $parameter->getName();
-        $type = $parameter->getType();
+    $result['items'] = array_map([self::class, 'normalize'], $result['items']);
 
-        /**
-         * 1. Сначала обрабатываем классы.
-         *
-         * Это важно для Route Model Binding:
-         *
-         * public function destroy(Note $note)
-         *
-         * Если сначала проверить route params,
-         * то $note станет строкой из URL, а не объектом Note.
-         */
-        if ($type instanceof ReflectionNamedType && !$type->isBuiltin()) {
-            $className = $type->getName();
+    return $result;
+}
 
-            /**
-             * Laravel-like Route Model Binding.
-             *
-             * Пример:
-             * маршрут: /notes/{note}
-             * метод: destroy(Note $note)
-             */
-            if (is_subclass_of($className, Model::class)) {
-                $modelId = null;
+public static function paginateTrashedLatest(int $page = 1, int $perPage = 10): array
+{
+    $result = self::onlyTrashed()
+        ->orderBy('id', 'desc')
+        ->paginate($page, $perPage);
 
-                if (array_key_exists($name, $parameters)) {
-                    $modelId = $parameters[$name];
-                } elseif (array_key_exists('id', $parameters)) {
-                    $modelId = $parameters['id'];
-                } elseif (count($parameters) === 1) {
-                    $modelId = reset($parameters);
-                }
+    $result['items'] = array_map([self::class, 'normalize'], $result['items']);
 
-                if ($modelId !== null) {
-                    $model = $className::findModel($modelId);
+    return $result;
+}
 
-                    if (!$model instanceof Model) {
-                        throw new ModelNotFoundException($className, $modelId);
-                    }
+То есть в модели теперь будут варианты:
 
-                    $dependencies[] = $model;
-                    continue;
-                }
-            }
+Note::latest(20);              // просто последние 20
+Note::paginateLatest($page);   // постранично
+Note::trashedLatest(20);       // удалённые последние 20
+Note::paginateTrashedLatest(); // удалённые постранично
 
-            /**
-             * Обычная зависимость:
-             * UserService $service
-             * StoreNoteRequest $request
-             */
-            $object = $this->make($className);
 
-            if ($object instanceof FormRequest) {
-                $object->validateResolved();
-            }
+---
 
-            $dependencies[] = $object;
-            continue;
-        }
+2. Обнови /local/mvc_demo/Controllers/NoteController.php
 
-        /**
-         * 2. Потом обычные route-параметры.
-         *
-         * Пример:
-         * public function show(string $id)
-         */
-        if (array_key_exists($name, $parameters)) {
-            $dependencies[] = $parameters[$name];
-            continue;
-        }
+Замени метод index():
 
-        /**
-         * 3. Значение по умолчанию.
-         */
-        if ($parameter->isDefaultValueAvailable()) {
-            $dependencies[] = $parameter->getDefaultValue();
-            continue;
-        }
+public function index(): Response
+{
+    $this->authorize('viewAny', Note::class);
 
-        throw new RuntimeException(
-            'CONTAINER_CANNOT_RESOLVE_PARAMETER: $' . $name . ' in ' . $reflection->getName()
-        );
-    }
+    return $this->render('notes/index', [
+        'title' => 'Заметки',
+        'notes' => Note::latest(20),
+    ]);
+}
 
-    return $dependencies;
+на:
+
+public function index(): Response
+{
+    $this->authorize('viewAny', Note::class);
+
+    $page = (int)request('page', 1);
+
+    $result = Note::paginateLatest($page, 10);
+
+    return $this->render('notes/index', [
+        'title' => 'Заметки',
+        'notes' => $result['items'],
+        'pagination' => $result['pagination'],
+    ]);
+}
+
+Теперь замени метод trash():
+
+public function trash(): Response
+{
+    $this->authorize('viewAny', Note::class);
+
+    return $this->render('notes/trash', [
+        'title' => 'Удалённые заметки',
+        'notes' => Note::trashedLatest(20),
+    ]);
+}
+
+на:
+
+public function trash(): Response
+{
+    $this->authorize('viewAny', Note::class);
+
+    $page = (int)request('page', 1);
+
+    $result = Note::paginateTrashedLatest($page, 10);
+
+    return $this->render('notes/trash', [
+        'title' => 'Удалённые заметки',
+        'notes' => $result['items'],
+        'pagination' => $result['pagination'],
+    ]);
 }
 
 
 ---
 
-Проверь, что сверху в Container.php есть нужный use
+3. Добавь helper для пагинации во view
 
-В начале файла должно быть:
+Создай файл:
 
-use ReflectionClass;
-use ReflectionFunctionAbstract;
-use ReflectionMethod;
-use ReflectionNamedType;
-use RuntimeException;
+/local/mvc_demo/Views/partials/pagination.php
 
-Model, FormRequest, ModelNotFoundException дополнительно импортировать не надо, потому что они в том же namespace:
+Код:
 
-namespace Local\Mvc\Core;
+<?php
+
+if (!defined('B_PROLOG_INCLUDED') || B_PROLOG_INCLUDED !== true) {
+    die();
+}
+
+$pagination = $pagination ?? [];
+
+$currentPage = (int)($pagination['page'] ?? $pagination['current_page'] ?? 1);
+$lastPage = (int)($pagination['last_page'] ?? $pagination['pages'] ?? 1);
+$total = (int)($pagination['total'] ?? 0);
+$perPage = (int)($pagination['per_page'] ?? 10);
+
+$routeName = (string)($routeName ?? '');
+$routeParams = is_array($routeParams ?? null) ? $routeParams : [];
+$query = is_array($query ?? null) ? $query : [];
+
+if ($lastPage < 2 || $routeName === '') {
+    return;
+}
+
+$from = $total > 0 ? (($currentPage - 1) * $perPage + 1) : 0;
+$to = min($currentPage * $perPage, $total);
+
+?>
+
+<div class="mvc-info" style="display:flex;justify-content:space-between;gap:12px;align-items:center;flex-wrap:wrap;">
+    <div style="color:#6b7280;">
+        Показано <?= e($from) ?>–<?= e($to) ?> из <?= e($total) ?>
+    </div>
+
+    <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;">
+        <?php if ($currentPage > 1): ?>
+            <a
+                href="<?= e(route($routeName, $routeParams, array_merge($query, ['page' => $currentPage - 1]))) ?>"
+                style="padding:6px 10px;border:1px solid #d1d5db;border-radius:8px;text-decoration:none;"
+            >
+                ← Назад
+            </a>
+        <?php endif; ?>
+
+        <?php
+        $start = max(1, $currentPage - 2);
+        $end = min($lastPage, $currentPage + 2);
+        ?>
+
+        <?php for ($page = $start; $page <= $end; $page++): ?>
+            <?php if ($page === $currentPage): ?>
+                <span
+                    style="padding:6px 10px;border-radius:8px;background:#2563eb;color:#fff;font-weight:600;"
+                >
+                    <?= e($page) ?>
+                </span>
+            <?php else: ?>
+                <a
+                    href="<?= e(route($routeName, $routeParams, array_merge($query, ['page' => $page]))) ?>"
+                    style="padding:6px 10px;border:1px solid #d1d5db;border-radius:8px;text-decoration:none;"
+                >
+                    <?= e($page) ?>
+                </a>
+            <?php endif; ?>
+        <?php endfor; ?>
+
+        <?php if ($currentPage < $lastPage): ?>
+            <a
+                href="<?= e(route($routeName, $routeParams, array_merge($query, ['page' => $currentPage + 1]))) ?>"
+                style="padding:6px 10px;border:1px solid #d1d5db;border-radius:8px;text-decoration:none;"
+            >
+                Вперёд →
+            </a>
+        <?php endif; ?>
+    </div>
+</div>
 
 
 ---
 
-Сбрось OPcache
+4. Подключи пагинацию в /local/mvc_demo/Views/notes/index.php
+
+После таблицы заметок, ниже блока со списком, добавь:
+
+<?php
+$routeName = 'notes.index';
+$routeParams = [];
+$query = [];
+require $_SERVER['DOCUMENT_ROOT'] . '/local/mvc_demo/Views/partials/pagination.php';
+?>
+
+То есть примерно после закрытия таблицы:
+
+<?php endif; ?>
+    </div>
+
+    <?php
+    $routeName = 'notes.index';
+    $routeParams = [];
+    $query = [];
+    require $_SERVER['DOCUMENT_ROOT'] . '/local/mvc_demo/Views/partials/pagination.php';
+    ?>
+</div>
+
+
+---
+
+5. Подключи пагинацию в /local/mvc_demo/Views/notes/trash.php
+
+Точно так же после таблицы удалённых заметок добавь:
+
+<?php
+$routeName = 'notes.trash';
+$routeParams = [];
+$query = [];
+require $_SERVER['DOCUMENT_ROOT'] . '/local/mvc_demo/Views/partials/pagination.php';
+?>
+
+
+---
+
+6. Проверка
+
+Сбрось OPcache:
 
 opcache_reset();
 echo 'OPcache reset OK';
 
-Потом снова попробуй удалить заметку.
+Открой:
 
-Теперь цепочка должна быть такая:
+/local/mvc_demo/notes
 
-DELETE /notes/5
-↓
-Router получает {note} = 5
-↓
-Container видит destroy(Note $note)
-↓
-Container делает Note::findModel(5)
-↓
-В контроллер приходит объект Note
-↓
-$note->delete()
-↓
-soft delete через deleted_at
+Нажми несколько раз:
 
-После удаления заметка должна исчезнуть из обычного списка и появиться в корзине.
+Создать 5 заметок через Factory
+
+Когда заметок станет больше 10, внизу появится пагинация.
+
+Проверь URL:
+
+/local/mvc_demo/notes?page=2
+
+И корзину:
+
+/local/mvc_demo/notes/trash?page=2
+
+
+---
+
+Что мы сделали
+
+Раньше список был простой:
+
+Note::latest(20)
+
+Теперь Laravel-like:
+
+Note::paginateLatest($page, 10)
+
+И внутри используется наш QueryBuilder:
+
+$query->paginate($page, $perPage)
+
+Главная мысль:
+
+QueryBuilder собирает LIMIT/OFFSET.
+Paginator считает страницы.
+View показывает ссылки.
+
+Это очень похоже на Laravel paginate(), только пока без Blade-компонента links().
