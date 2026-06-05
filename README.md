@@ -1,18 +1,9 @@
-Да, делаем следующий этап: редактирование таблицы прямо на public-странице.
+Да, сделаем так:
 
-Что появится в режиме:
-
-/public.php?siteId=13&pageId=14&edit=Y
-
-Можно будет:
-
-1. менять название таблицы;
-2. менять названия столбцов прямо в шапке;
-3. менять значения ячеек прямо в таблице;
-4. добавлять строки;
-5. удалять строки;
-6. менять ширину столбцов;
-7. сохранять всё одной кнопкой.
+1. В public edit-mode появится кнопка “+ Столбец”.
+2. У каждого столбца появится выбор выравнивания: слева / центр / справа.
+3. Выравнивание будет сохраняться в content.columns[].align.
+4. На обычной public-странице таблица тоже будет показываться с этим выравниванием.
 
 
 ---
@@ -23,7 +14,7 @@
 
 /local/sitebuilder/views/blocks/table.php
 
-Полностью замени на:
+Полностью замени на этот код:
 
 <?php
 global $USER;
@@ -46,7 +37,17 @@ $isEditMode = (
     && $USER->IsAdmin()
 );
 
-$columns = array_values(array_map(static function ($column, $index) {
+$normalizeAlign = static function ($align): string {
+    $align = (string)$align;
+
+    if (!in_array($align, ['left', 'center', 'right'], true)) {
+        return 'left';
+    }
+
+    return $align;
+};
+
+$columns = array_values(array_map(static function ($column, $index) use ($normalizeAlign) {
     $id = trim((string)($column['id'] ?? ''));
 
     if ($id === '') {
@@ -73,6 +74,7 @@ $columns = array_values(array_map(static function ($column, $index) {
         'id' => $id,
         'label' => $label,
         'width' => $width,
+        'align' => $normalizeAlign($column['align'] ?? 'left'),
     ];
 }, $columns, array_keys($columns)));
 
@@ -128,6 +130,10 @@ $blockId = (int)($block['id'] ?? 0);
             </div>
 
             <div class="sb-public-table-editbar__actions">
+                <button class="sb-public-table-editbar__btn sb-public-table-editbar__btn--light" type="button" data-table-add-column>
+                    + Столбец
+                </button>
+
                 <button class="sb-public-table-editbar__btn sb-public-table-editbar__btn--light" type="button" data-table-add-row>
                     + Строка
                 </button>
@@ -170,20 +176,38 @@ $blockId = (int)($block['id'] ?? 0);
 
                     <?php foreach ($columns as $column): ?>
                         <?php
-                        $style = '';
+                        $styleParts = [
+                            'text-align:' . $column['align'],
+                        ];
 
                         if ((int)$column['width'] > 0) {
-                            $style = ' style="width:' . (int)$column['width'] . 'px;"';
+                            $styleParts[] = 'width:' . (int)$column['width'] . 'px';
                         }
+
+                        $style = ' style="' . sb_public_h(implode(';', $styleParts)) . '"';
                         ?>
-                        <th data-column-id="<?= sb_public_h($column['id']) ?>"<?= $style ?>>
-                            <span
-                                class="sb-public-table__th-text"
+                        <th
+                            data-column-id="<?= sb_public_h($column['id']) ?>"
+                            data-column-align-value="<?= sb_public_h($column['align']) ?>"
+                            <?= $style ?>
+                        >
+                            <div class="sb-public-table-th-inner">
+                                <span
+                                    class="sb-public-table__th-text"
+                                    <?php if ($isEditMode): ?>
+                                        contenteditable="true"
+                                        data-column-label
+                                    <?php endif; ?>
+                                ><?= sb_public_h($column['label']) ?></span>
+
                                 <?php if ($isEditMode): ?>
-                                    contenteditable="true"
-                                    data-column-label
+                                    <select class="sb-public-table-align-select" data-column-align>
+                                        <option value="left"<?= $column['align'] === 'left' ? ' selected' : '' ?>>Слева</option>
+                                        <option value="center"<?= $column['align'] === 'center' ? ' selected' : '' ?>>Центр</option>
+                                        <option value="right"<?= $column['align'] === 'right' ? ' selected' : '' ?>>Справа</option>
+                                    </select>
                                 <?php endif; ?>
-                            ><?= sb_public_h($column['label']) ?></span>
+                            </div>
 
                             <?php if ($isEditMode): ?>
                                 <span class="sb-public-table-resizer" data-column-resizer></span>
@@ -211,6 +235,7 @@ $blockId = (int)($block['id'] ?? 0);
                             <?php foreach ($columns as $column): ?>
                                 <td
                                     data-column-id="<?= sb_public_h($column['id']) ?>"
+                                    style="text-align:<?= sb_public_h($column['align']) ?>"
                                     <?php if ($isEditMode): ?>
                                         contenteditable="true"
                                         data-cell-editable
@@ -241,7 +266,7 @@ $blockId = (int)($block['id'] ?? 0);
 Полностью замени на:
 
 (function () {
-    window.SB_TABLE_EDIT_LOADED = 'v5-inline-edit';
+    window.SB_TABLE_EDIT_LOADED = 'v6-inline-columns-align';
 
     var config = window.SB_PUBLIC_EDIT_CONFIG || {};
     var API_URL = config.apiUrl || '/local/sitebuilder/api.php';
@@ -263,6 +288,16 @@ $blockId = (int)($block['id'] ?? 0);
         }
 
         return String(value).replace(/"/g, '\\"');
+    }
+
+    function normalizeAlign(align) {
+        align = String(align || 'left');
+
+        if (['left', 'center', 'right'].indexOf(align) === -1) {
+            return 'left';
+        }
+
+        return align;
     }
 
     function textValue(node) {
@@ -323,6 +358,16 @@ $blockId = (int)($block['id'] ?? 0);
         return clampWidth(th.getBoundingClientRect().width || 160);
     }
 
+    function getColumnAlignFromTh(th) {
+        var select = th.querySelector('[data-column-align]');
+
+        if (select) {
+            return normalizeAlign(select.value);
+        }
+
+        return normalizeAlign(th.getAttribute('data-column-align-value') || 'left');
+    }
+
     function collectContentFromDom(root) {
         var oldContent = getContent(root);
         var table = root.querySelector('.sb-public-table');
@@ -364,7 +409,8 @@ $blockId = (int)($block['id'] ?? 0);
             columns.push({
                 id: columnId,
                 label: label,
-                width: clampWidth(width)
+                width: clampWidth(width),
+                align: getColumnAlignFromTh(th)
             });
         });
 
@@ -394,6 +440,42 @@ $blockId = (int)($block['id'] ?? 0);
             columns: columns,
             rows: rows
         };
+    }
+
+    function applyColumnAlign(root, columnId, align) {
+        var table = root.querySelector('.sb-public-table');
+
+        if (!table) {
+            return;
+        }
+
+        align = normalizeAlign(align);
+
+        var th = table.querySelector('th[data-column-id="' + cssEscape(columnId) + '"]');
+
+        if (th) {
+            th.style.textAlign = align;
+            th.setAttribute('data-column-align-value', align);
+
+            var select = th.querySelector('[data-column-align]');
+
+            if (select) {
+                select.value = align;
+            }
+        }
+
+        table.querySelectorAll('td[data-column-id="' + cssEscape(columnId) + '"]').forEach(function (td) {
+            td.style.textAlign = align;
+        });
+    }
+
+    function applyAllAligns(root) {
+        var content = getContent(root);
+        var columns = Array.isArray(content.columns) ? content.columns : [];
+
+        columns.forEach(function (column) {
+            applyColumnAlign(root, String(column.id || ''), normalizeAlign(column.align || 'left'));
+        });
     }
 
     function applyWidths(root) {
@@ -455,6 +537,7 @@ $blockId = (int)($block['id'] ?? 0);
         setContent(root, content);
 
         applyWidths(root);
+        applyAllAligns(root);
         setDirty(root, true);
     }
 
@@ -466,6 +549,97 @@ $blockId = (int)($block['id'] ?? 0);
                 num.textContent = String(index + 1);
             }
         });
+    }
+
+    function addColumn(root) {
+        var table = root.querySelector('.sb-public-table');
+
+        if (!table) {
+            return;
+        }
+
+        var content = collectContentFromDom(root);
+        var columns = Array.isArray(content.columns) ? content.columns : [];
+        var rows = Array.isArray(content.rows) ? content.rows : [];
+
+        var newIndex = columns.length + 1;
+        var newColumnId = 'col_' + Date.now();
+
+        columns.push({
+            id: newColumnId,
+            label: 'Столбец ' + newIndex,
+            width: 160,
+            align: 'left'
+        });
+
+        rows = rows.map(function (row) {
+            row.cells = row.cells || {};
+            row.cells[newColumnId] = '';
+            return row;
+        });
+
+        content.columns = columns;
+        content.rows = rows;
+
+        setContent(root, content);
+
+        var colgroup = table.querySelector('colgroup');
+
+        if (colgroup) {
+            var col = document.createElement('col');
+            col.setAttribute('data-column-id', newColumnId);
+            col.setAttribute('width', '160');
+            col.style.width = '160px';
+            colgroup.appendChild(col);
+        }
+
+        var headRow = table.querySelector('thead tr');
+
+        if (headRow) {
+            var th = document.createElement('th');
+
+            th.setAttribute('data-column-id', newColumnId);
+            th.setAttribute('data-column-align-value', 'left');
+            th.style.textAlign = 'left';
+            th.innerHTML = ''
+                + '<div class="sb-public-table-th-inner">'
+                + '  <span class="sb-public-table__th-text" contenteditable="true" data-column-label>Столбец ' + newIndex + '</span>'
+                + '  <select class="sb-public-table-align-select" data-column-align>'
+                + '      <option value="left" selected>Слева</option>'
+                + '      <option value="center">Центр</option>'
+                + '      <option value="right">Справа</option>'
+                + '  </select>'
+                + '</div>'
+                + '<span class="sb-public-table-resizer" data-column-resizer></span>';
+
+            headRow.appendChild(th);
+        }
+
+        var tbody = table.querySelector('tbody');
+
+        if (tbody) {
+            var emptyRow = tbody.querySelector('[data-empty-row]');
+
+            if (emptyRow) {
+                emptyRow.remove();
+            }
+
+            tbody.querySelectorAll('tr[data-row-id]').forEach(function (tr) {
+                var td = document.createElement('td');
+
+                td.setAttribute('data-column-id', newColumnId);
+                td.setAttribute('contenteditable', 'true');
+                td.setAttribute('data-cell-editable', '');
+                td.style.textAlign = 'left';
+
+                tr.appendChild(td);
+            });
+        }
+
+        applyWidths(root);
+        applyAllAligns(root);
+        setContent(root, collectContentFromDom(root));
+        setDirty(root, true);
     }
 
     function addRow(root) {
@@ -510,6 +684,7 @@ $blockId = (int)($block['id'] ?? 0);
             td.setAttribute('data-column-id', column.id);
             td.setAttribute('contenteditable', 'true');
             td.setAttribute('data-cell-editable', '');
+            td.style.textAlign = normalizeAlign(column.align || 'left');
 
             tr.appendChild(td);
         });
@@ -648,6 +823,7 @@ $blockId = (int)($block['id'] ?? 0);
 
     function initTable(root) {
         applyWidths(root);
+        applyAllAligns(root);
         renumberRows(root);
 
         root.addEventListener('input', function (e) {
@@ -658,6 +834,20 @@ $blockId = (int)($block['id'] ?? 0);
             ) {
                 setContent(root, collectContentFromDom(root));
                 setDirty(root, true);
+            }
+        });
+
+        root.addEventListener('change', function (e) {
+            if (e.target.matches('[data-column-align]')) {
+                var th = e.target.closest('th[data-column-id]');
+                var columnId = th ? String(th.getAttribute('data-column-id') || '') : '';
+                var align = normalizeAlign(e.target.value);
+
+                if (columnId) {
+                    applyColumnAlign(root, columnId, align);
+                    setContent(root, collectContentFromDom(root));
+                    setDirty(root, true);
+                }
             }
         });
 
@@ -683,6 +873,14 @@ $blockId = (int)($block['id'] ?? 0);
         if (addRowBtn) {
             addRowBtn.addEventListener('click', function () {
                 addRow(root);
+            });
+        }
+
+        var addColumnBtn = root.querySelector('[data-table-add-column]');
+
+        if (addColumnBtn) {
+            addColumnBtn.addEventListener('click', function () {
+                addColumn(root);
             });
         }
 
@@ -748,120 +946,42 @@ $blockId = (int)($block['id'] ?? 0);
 В самый конец добавь:
 
 /* =========================================================
-   Public table inline edit
+   Public table columns and align
    ========================================================= */
 
-.sb-public-table-editbar__main {
-    min-width: 240px;
-    flex: 1;
-}
-
-.sb-public-table-editbar__label {
+.sb-public-table-th-inner {
     display: grid;
-    gap: 5px;
-    color: #1e40af;
-    font-size: 12px;
-    font-weight: 900;
+    gap: 6px;
+    min-width: 0;
 }
 
-.sb-public-table-title-input {
+.sb-public-table-align-select {
     width: 100%;
-    min-height: 36px;
+    min-height: 28px;
     box-sizing: border-box;
-    padding: 7px 10px;
-    border: 1px solid rgba(37, 99, 235, .35);
-    border-radius: 10px;
+    padding: 3px 7px;
+    border: 1px solid rgba(148, 163, 184, .7);
+    border-radius: 8px;
     background: #fff;
-    color: #0f172a;
-    font: inherit;
-    font-size: 14px;
+    color: #334155;
+    font-size: 12px;
     font-weight: 800;
 }
 
-.sb-public-table-editbar__actions {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-}
-
-.sb-public-table-editbar__btn--light {
-    background: #fff !important;
-    color: #1e40af !important;
-    border: 1px solid rgba(37, 99, 235, .35) !important;
-}
-
-.sb-public-table__control-col {
-    width: 72px !important;
-}
-
-.sb-public-table__control-th,
-.sb-public-table__control-td {
-    width: 72px !important;
-    min-width: 72px !important;
-    max-width: 72px !important;
-    text-align: center !important;
-    background: #f8fafc !important;
-}
-
-.sb-public-table-row-actions {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    gap: 6px;
-}
-
-.sb-public-table-row-num {
-    min-width: 20px;
-    color: #64748b;
-    font-size: 12px;
-    font-weight: 900;
-}
-
-.sb-public-table-row-delete {
-    width: 24px;
-    height: 24px;
-    border: 0;
-    border-radius: 8px;
-    background: #fee2e2;
-    color: #991b1b;
-    font-size: 16px;
-    font-weight: 900;
-    line-height: 1;
-    cursor: pointer;
-}
-
-.sb-public-table-row-delete:hover {
-    background: #fecaca;
-}
-
-.sb-public-table--editable [contenteditable="true"] {
+.sb-public-table-align-select:focus {
     outline: none;
-    cursor: text;
+    border-color: #2563eb;
+    box-shadow: 0 0 0 3px rgba(37, 99, 235, .12);
 }
 
-.sb-public-table--editable [contenteditable="true"]:focus {
-    box-shadow: inset 0 0 0 2px rgba(37, 99, 235, .45);
-    background: #eff6ff;
-}
-
-.sb-public-table--editable td[data-cell-editable] {
-    white-space: pre-wrap;
-}
-
-.sb-public-table--editable .sb-public-table__th-text {
-    min-height: 22px;
-    border-radius: 8px;
-    padding: 3px 8px 3px 3px;
-}
-
-.sb-public-table--editable .sb-public-table__th-text:focus {
-    background: #eff6ff;
+.sb-public-table-editbar__actions {
+    flex-wrap: wrap;
 }
 
 
 ---
 
-4. Обнови версию подключения
+4. Обнови версии подключения
 
 В файле:
 
@@ -869,21 +989,18 @@ $blockId = (int)($block['id'] ?? 0);
 
 Поставь:
 
-<script src="<?= sb_public_h($basePath) ?>/assets/public/table-edit.js?v=11"></script>
+<script src="<?= sb_public_h($basePath) ?>/assets/public/table-edit.js?v=12"></script>
 
-И версию CSS:
+И CSS:
 
-<link rel="stylesheet" href="<?= sb_public_h($basePath) ?>/assets/public/public.css?v=17">
+<link rel="stylesheet" href="<?= sb_public_h($basePath) ?>/assets/public/public.css?v=18">
 
+После этого сделай Ctrl + F5.
 
----
-
-После Ctrl + F5 проверь в консоли:
+Проверка в консоли:
 
 window.SB_TABLE_EDIT_LOADED
 
 Должно быть:
 
-"v5-inline-edit"
-
-Теперь можно кликать прямо в ячейки и заголовки, менять текст, добавлять/удалять строки и нажимать “Сохранить изменения”.
+"v6-inline-columns-align"
