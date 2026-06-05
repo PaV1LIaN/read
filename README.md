@@ -1,304 +1,637 @@
 Создай файл:
 
-/local/sitebuilder/assets/admin/editor/20-pages.js
+/local/sitebuilder/assets/admin/editor/30-blocks.js
 
 И вставь туда:
 
-async function loadSite() {
-    var res = await api('site.get', {
-        siteId: siteId
-    });
+function blockPreviewText(block) {
+    var type = String(block.type || '');
+    var content = block.content || {};
+    var props = block.props || {};
+    var sectionId = getBlockSectionId(block);
+    var column = getBlockColumn(block);
 
-    state.site = res.site || null;
-}
+    var placementText = sectionId > 0 ? ' · секция #' + sectionId + ' · колонка ' + column : '';
 
-async function loadPages() {
-    var res = await api('page.list', {
-        siteId: siteId
-    });
-
-    state.pages = Array.isArray(res.pages) ? res.pages : [];
-
-    if (!state.currentPageId && state.pages.length) {
-        state.currentPageId = Number(state.pages[0].id || 0);
+    if (type === 'heading') {
+        return (content.text || '[пустой заголовок]') + placementText;
     }
 
-    fillParentOptions();
-    renderPages();
-    fillPageForm();
-    updateCanvasHeader();
+    if (type === 'text') {
+        return (content.text || '[пустой текст]') + placementText;
+    }
+
+    if (type === 'button') {
+        return (content.label || 'Кнопка') + (content.href ? ' → ' + content.href : '') + placementText;
+    }
+
+    if (type === 'html') {
+        return ((content.html || '').slice(0, 220) || '[пустой HTML]') + placementText;
+    }
+
+    if (type === 'disk') {
+        return 'Компонент "Диск": '
+            + (props.title || 'Файлы')
+            + ' · rootMode=' + (props.rootMode || 'site')
+            + ' · view=' + (props.viewMode || 'table')
+            + placementText;
+    }
+
+    try {
+        return JSON.stringify(content) + placementText;
+    } catch (e) {
+        return '[контент блока]' + placementText;
+    }
 }
 
-async function loadBlocks() {
+function renderBlocks() {
+    if (!blocksList) {
+        return;
+    }
+
     if (!state.currentPageId) {
-        state.blocks = [];
-        state.currentBlockId = 0;
-        state.pageSections = [];
-        state.currentSectionId = 0;
-        state.currentColumn = 1;
-        renderPageSectionsPanel();
-        renderBlocks();
-        fillBlockForm();
+        blocksList.innerHTML = ''
+            + '<div class="sb-editor-empty-big">'
+            + '   <strong>Страница не выбрана</strong>'
+            + '   Выбери страницу слева, чтобы редактировать блоки'
+            + '</div>';
         return;
     }
 
-    await loadPageSections();
-
-    var res = await api('block.list', {
-        pageId: state.currentPageId
-    });
-
-    state.blocks = Array.isArray(res.blocks) ? res.blocks : [];
-
-    await ensureUnsectionedBlocksAssigned();
-
-    if (state.currentBlockId) {
-        var exists = state.blocks.some(function (b) {
-            return Number(b.id || 0) === state.currentBlockId;
-        });
-
-        if (!exists) {
-            state.currentBlockId = 0;
-        }
-    }
-
-    renderBlocks();
-    fillBlockForm();
-    updateCanvasHeader();
-}
-
-function fillParentOptions() {
-    if (!newPageParentId) {
-        return;
-    }
-
-    var currentValue = String(newPageParentId.value || '0');
-    var html = '<option value="0">Без родителя</option>';
-
-    state.pages.forEach(function (page) {
-        html += '<option value="' + Number(page.id || 0) + '">' + escapeHtml(page.title || ('Страница #' + page.id)) + '</option>';
-    });
-
-    newPageParentId.innerHTML = html;
-    newPageParentId.value = currentValue;
-}
-
-function fillPageParentEditorOptions() {
-    var select = document.getElementById('pageParentInput');
-    if (!select) return;
-
-    var currentPageId = Number(state.currentPageId || 0);
-    var currentValue = String(select.value || '0');
-
-    var html = '<option value="0">Без родителя</option>';
-
-    state.pages.forEach(function (page) {
-        var id = Number(page.id || 0);
-
-        if (id === currentPageId) {
+    if (!state.pageSections.length) {
+        if (!state.blocks.length) {
+            blocksList.innerHTML = ''
+                + '<div class="sb-editor-empty-big">'
+                + '   <strong>На странице пока нет блоков</strong>'
+                + '   Добавь первый блок через панель сверху'
+                + '</div>';
             return;
         }
 
-        html += '<option value="' + id + '">' + escapeHtml(page.title || ('Страница #' + id)) + '</option>';
-    });
+        blocksList.innerHTML = state.blocks.map(function (block) {
+            var active = Number(block.id || 0) === state.currentBlockId ? ' is-active' : '';
 
-    select.innerHTML = html;
+            return ''
+                + '<div class="sb-editor-block' + active + '" draggable="true" data-block-id="' + Number(block.id || 0) + '">'
+                + '  <div class="sb-editor-block-head">'
+                + '      <div>'
+                + '          <h3 class="sb-editor-block-title">' + escapeHtml(block.type || 'block') + '</h3>'
+                + '          <div class="sb-editor-chip">block #' + Number(block.id || 0) + '</div>'
+                + '      </div>'
+                + '  </div>'
+                + '  <div class="sb-editor-block-preview">' + escapeHtml(blockPreviewText(block)) + '</div>'
+                + '</div>';
+        }).join('');
 
-    if (currentValue && select.querySelector('option[value="' + currentValue + '"]')) {
-        select.value = currentValue;
-    }
-}
-
-function renderPages() {
-    if (!pagesList) {
         return;
     }
 
-    if (!state.pages.length) {
-        pagesList.innerHTML = '<div class="sb-empty">Страниц пока нет</div>';
-        return;
-    }
+    var grouped = groupBlocksBySectionAndColumn();
 
-    var tree = buildPageTree(state.pages, 0, 0, []);
+    blocksList.innerHTML = state.pageSections.map(function (section) {
+        var sectionId = Number(section.id || 0);
+        var layout = section.layout || {};
+        var columns = getSectionColumns(sectionId);
+        var activeSection = Number(state.currentSectionId || 0) === sectionId ? ' is-active' : '';
 
-    pagesList.innerHTML = tree.map(function (item) {
-        var page = item.page;
-        var depth = item.depth;
-        var active = Number(page.id || 0) === state.currentPageId ? ' is-active' : '';
-        var hasChildren = pageHasChildren(page.id);
-        var status = String(page.status || 'draft');
-
-        return ''
-            + '<div class="sb-editor-page-item' + active + '" data-page-id="' + Number(page.id || 0) + '" style="margin-left:' + (depth * 18) + 'px;">'
-            + '  <div class="sb-editor-page-top">'
+        var html = ''
+            + '<div class="sb-editor-section-preview' + activeSection + '" data-editor-section-id="' + sectionId + '">'
+            + '  <div class="sb-editor-section-preview__head" data-page-section-select="' + sectionId + '">'
             + '      <div>'
-            + '          <h3 class="sb-editor-page-title">' + escapeHtml(page.title || '') + '</h3>'
-            + '          <div class="sb-editor-page-meta">'
-            +               '<span class="sb-editor-chip">' + escapeHtml(page.slug || '') + '</span>'
-            +               '<span class="sb-editor-chip ' + (status === 'published' ? 'sb-editor-chip--green' : 'sb-editor-chip--yellow') + '">' + escapeHtml(status) + '</span>'
-            +               (hasChildren ? '<span class="sb-editor-chip sb-editor-chip--blue">section</span>' : '')
+            + '          <h3 class="sb-editor-section-preview__title">' + escapeHtml(section.title || 'Секция') + '</h3>'
+            + '          <div class="sb-editor-section-preview__meta">'
+            + '              <span>' + columns + ' кол.</span>'
+            + '              <span>' + escapeHtml(layout.container || 'default') + '</span>'
             + '          </div>'
             + '      </div>'
+            + '      <button class="sb-btn sb-btn-light sb-btn-small" type="button" data-add-block-to-section="' + sectionId + '">Выбрать</button>'
+            + '  </div>'
+            + '  <div class="sb-editor-section-preview__grid sb-editor-section-preview__grid--' + columns + '">';
+
+        for (var column = 1; column <= columns; column++) {
+            var blocks = grouped[sectionId] && grouped[sectionId][column]
+                ? grouped[sectionId][column]
+                : [];
+
+            var isTargetColumn =
+                Number(state.currentSectionId || 0) === sectionId &&
+                Number(state.currentColumn || 1) === column;
+
+            html += ''
+                + '<div class="sb-editor-section-preview__column' + (isTargetColumn ? ' is-target' : '') + '" data-section-id="' + sectionId + '" data-column="' + column + '">'
+                + '  <div class="sb-editor-section-preview__column-head">'
+                + '      <div class="sb-editor-section-preview__column-title">Колонка ' + column + '</div>'
+                + '      <button class="sb-btn sb-btn-light sb-btn-small" type="button" data-set-add-target="' + sectionId + '" data-column="' + column + '">'
+                +          (isTargetColumn ? 'Выбрано' : 'Добавлять сюда')
+                + '      </button>'
+                + '  </div>';
+
+            if (!blocks.length) {
+                html += '<div class="sb-editor-section-preview__empty">Пусто</div>';
+            } else {
+                html += blocks.map(function (block) {
+                    var active = Number(block.id || 0) === state.currentBlockId ? ' is-active' : '';
+
+                    return ''
+                        + '<div class="sb-editor-block' + active + '" draggable="true" data-block-id="' + Number(block.id || 0) + '">'
+                        + '  <div class="sb-editor-block-head">'
+                        + '      <div>'
+                        + '          <h3 class="sb-editor-block-title">' + escapeHtml(block.type || 'block') + '</h3>'
+                        + '          <div class="sb-editor-chip">block #' + Number(block.id || 0) + '</div>'
+                        + '      </div>'
+                        + '  </div>'
+                        + '  <div class="sb-editor-block-preview">' + escapeHtml(blockPreviewText(block)) + '</div>'
+                        + '</div>';
+                }).join('');
+            }
+
+            html += '</div>';
+        }
+
+        html += ''
             + '  </div>'
             + '</div>';
+
+        return html;
     }).join('');
 }
 
-function updateCanvasHeader() {
-    var page = getCurrentPage();
-    var pageTitle = document.getElementById('canvasPageTitle');
-    var pageMeta = document.getElementById('canvasPageMeta');
-    var previewHeading = document.getElementById('pagePreviewHeading');
-
-    if (!page) {
-        if (pageTitle) {
-            pageTitle.textContent = 'Страница';
+function hideAllBlockTypeForms() {
+    [
+        'headingBlockForm',
+        'textBlockForm',
+        'buttonBlockForm',
+        'htmlBlockForm',
+        'diskBlockForm',
+        'unknownBlockForm'
+    ].forEach(function (id) {
+        var node = document.getElementById(id);
+        if (node) {
+            node.classList.remove('is-active');
+            node.classList.add('sb-hidden');
         }
-
-        if (pageMeta) {
-            pageMeta.textContent = 'Выберите страницу слева';
-        }
-
-        if (previewHeading) {
-            previewHeading.textContent = 'Выберите страницу';
-        }
-
-        return;
-    }
-
-    if (pageTitle) {
-        pageTitle.textContent = page.title || 'Страница';
-    }
-
-    if (pageMeta) {
-        pageMeta.textContent = 'slug: ' + (page.slug || '') + ' · статус: ' + (page.status || 'draft') + ' · блоков: ' + state.blocks.length;
-    }
-
-    if (previewHeading) {
-        previewHeading.textContent = page.title || 'Страница';
-    }
+    });
 }
 
-function fillPageForm() {
-    var page = getCurrentPage();
+function showBlockTypeForm(id) {
+    var node = document.getElementById(id);
+    if (!node) return;
 
-    fillPageParentEditorOptions();
-
-    var titleInput = document.getElementById('pageTitleInput');
-    var slugInput = document.getElementById('pageSlugInput');
-    var statusInput = document.getElementById('pageStatusInput');
-    var parentSelect = document.getElementById('pageParentInput');
-
-    if (titleInput) {
-        titleInput.value = page ? (page.title || '') : '';
-    }
-
-    if (slugInput) {
-        slugInput.value = page ? (page.slug || '') : '';
-    }
-
-    if (statusInput) {
-        statusInput.value = page ? (page.status || 'draft') : 'draft';
-    }
-
-    if (parentSelect) {
-        parentSelect.value = page ? String(page.parentId || 0) : '0';
-    }
+    node.classList.add('is-active');
+    node.classList.remove('sb-hidden');
 }
 
-async function createPage() {
-    var title = getInputValue('newPageTitle').trim();
-    var slug = getInputValue('newPageSlug').trim();
-    var parentId = Number(getInputValue('newPageParentId') || 0);
+function fillVisualBlockForm(block) {
+    hideAllBlockTypeForms();
 
-    if (!title) {
-        alert('Введите название страницы');
+    var type = String(block.type || '');
+    var content = block.content || {};
 
-        var titleInput = document.getElementById('newPageTitle');
-        if (titleInput) {
-            titleInput.focus();
+    if (type === 'heading') {
+        showBlockTypeForm('headingBlockForm');
+
+        var headingTextInput = document.getElementById('headingTextInput');
+        if (headingTextInput) {
+            headingTextInput.value = content.text || '';
         }
 
         return;
     }
 
-    await api('page.create', {
-        siteId: siteId,
-        title: title,
-        slug: slug,
-        parentId: parentId
+    if (type === 'text') {
+        showBlockTypeForm('textBlockForm');
+
+        var textTextInput = document.getElementById('textTextInput');
+        if (textTextInput) {
+            textTextInput.value = content.text || '';
+        }
+
+        return;
+    }
+
+    if (type === 'button') {
+        showBlockTypeForm('buttonBlockForm');
+
+        var buttonLabelInput = document.getElementById('buttonLabelInput');
+        var buttonHrefInput = document.getElementById('buttonHrefInput');
+        var buttonTargetInput = document.getElementById('buttonTargetInput');
+
+        if (buttonLabelInput) {
+            buttonLabelInput.value = content.label || '';
+        }
+
+        if (buttonHrefInput) {
+            buttonHrefInput.value = content.href || '';
+        }
+
+        if (buttonTargetInput) {
+            buttonTargetInput.value = content.target || '_self';
+        }
+
+        return;
+    }
+
+    if (type === 'html') {
+        showBlockTypeForm('htmlBlockForm');
+
+        var htmlInput = document.getElementById('htmlInput');
+        if (htmlInput) {
+            htmlInput.value = content.html || '';
+        }
+
+        return;
+    }
+
+    if (type === 'disk') {
+        showBlockTypeForm('diskBlockForm');
+        return;
+    }
+
+    showBlockTypeForm('unknownBlockForm');
+
+    var jsonFields = document.getElementById('blockJsonFields');
+    if (jsonFields) {
+        jsonFields.classList.add('is-open');
+    }
+}
+
+function fillDiskForm(props) {
+    props = props || {};
+
+    var diskTitleInput = document.getElementById('diskTitleInput');
+    var diskRootModeInput = document.getElementById('diskRootModeInput');
+    var diskViewModeInput = document.getElementById('diskViewModeInput');
+    var diskPermissionModeInput = document.getElementById('diskPermissionModeInput');
+    var diskMaxFileSizeInput = document.getElementById('diskMaxFileSizeInput');
+    var diskAllowedExtensionsInput = document.getElementById('diskAllowedExtensionsInput');
+
+    if (diskTitleInput) {
+        diskTitleInput.value = props.title || 'Файлы';
+    }
+
+    if (diskRootModeInput) {
+        diskRootModeInput.value = props.rootMode || 'site';
+    }
+
+    if (diskViewModeInput) {
+        diskViewModeInput.value = props.viewMode || 'table';
+    }
+
+    if (diskPermissionModeInput) {
+        diskPermissionModeInput.value = props.permissionMode || 'inherit_site';
+    }
+
+    if (diskMaxFileSizeInput) {
+        diskMaxFileSizeInput.value = props.maxFileSize || 52428800;
+    }
+
+    if (diskAllowedExtensionsInput) {
+        diskAllowedExtensionsInput.value = Array.isArray(props.allowedExtensions) ? props.allowedExtensions.join(' ') : '';
+    }
+
+    var checks = {
+        diskAllowUploadInput: !!props.allowUpload,
+        diskAllowCreateFolderInput: !!props.allowCreateFolder,
+        diskAllowRenameInput: !!props.allowRename,
+        diskAllowDeleteInput: !!props.allowDelete,
+        diskAllowDownloadInput: !!props.allowDownload,
+        diskShowSearchInput: !!props.showSearch,
+        diskShowBreadcrumbsInput: !!props.showBreadcrumbs,
+        diskUseSiteRootFallbackInput: !!props.useSiteRootFallback
+    };
+
+    Object.keys(checks).forEach(function (id) {
+        var node = document.getElementById(id);
+        if (node) {
+            node.checked = checks[id];
+        }
+    });
+}
+
+function fillBlockForm() {
+    var block = getCurrentBlock();
+    var emptyNode = document.getElementById('blockInspectorEmpty');
+    var formNode = document.getElementById('blockInspector');
+
+    if (!block) {
+        if (emptyNode) {
+            emptyNode.classList.remove('sb-hidden');
+        }
+
+        if (formNode) {
+            formNode.classList.add('sb-hidden');
+        }
+
+        hideAllBlockTypeForms();
+
+        var blockTypeInput = document.getElementById('blockTypeInput');
+        var blockContentInput = document.getElementById('blockContentInput');
+        var blockPropsInput = document.getElementById('blockPropsInput');
+
+        if (blockTypeInput) {
+            blockTypeInput.value = '';
+        }
+
+        if (blockContentInput) {
+            blockContentInput.value = '';
+        }
+
+        if (blockPropsInput) {
+            blockPropsInput.value = '';
+        }
+
+        var jsonFieldsEmpty = document.getElementById('blockJsonFields');
+        if (jsonFieldsEmpty) {
+            jsonFieldsEmpty.classList.remove('is-open');
+        }
+
+        fillBlockPlacementForm(null);
+
+        return;
+    }
+
+    if (emptyNode) {
+        emptyNode.classList.add('sb-hidden');
+    }
+
+    if (formNode) {
+        formNode.classList.remove('sb-hidden');
+    }
+
+    var content = block.content || {};
+    var props = block.props || {};
+
+    var blockTypeInputFilled = document.getElementById('blockTypeInput');
+    var blockContentInputFilled = document.getElementById('blockContentInput');
+    var blockPropsInputFilled = document.getElementById('blockPropsInput');
+
+    if (blockTypeInputFilled) {
+        blockTypeInputFilled.value = block.type || '';
+    }
+
+    if (blockContentInputFilled) {
+        blockContentInputFilled.value = JSON.stringify(content, null, 2);
+    }
+
+    if (blockPropsInputFilled) {
+        blockPropsInputFilled.value = JSON.stringify(props, null, 2);
+    }
+
+    var jsonFields = document.getElementById('blockJsonFields');
+    if (jsonFields) {
+        jsonFields.classList.remove('is-open');
+    }
+
+    if (block.type === 'disk') {
+        fillDiskForm(props);
+    }
+
+    fillVisualBlockForm(block);
+    fillBlockPlacementForm(block);
+}
+
+function collectDiskBlockProps(block) {
+    var oldProps = block.props || {};
+
+    return {
+        title: getInputValue('diskTitleInput').trim() || 'Файлы',
+        rootMode: getInputValue('diskRootModeInput') || 'site',
+        rootFolderId: oldProps.rootFolderId || null,
+        viewMode: getInputValue('diskViewModeInput') || 'table',
+        permissionMode: getInputValue('diskPermissionModeInput') || 'inherit_site',
+        maxFileSize: Number(getInputValue('diskMaxFileSizeInput') || 0),
+        allowedExtensions: String(getInputValue('diskAllowedExtensionsInput') || '')
+            .trim()
+            .split(/\s+/)
+            .filter(Boolean),
+        allowUpload: getChecked('diskAllowUploadInput'),
+        allowCreateFolder: getChecked('diskAllowCreateFolderInput'),
+        allowRename: getChecked('diskAllowRenameInput'),
+        allowDelete: getChecked('diskAllowDeleteInput'),
+        allowDownload: getChecked('diskAllowDownloadInput'),
+        showSearch: getChecked('diskShowSearchInput'),
+        showBreadcrumbs: getChecked('diskShowBreadcrumbsInput'),
+        useSiteRootFallback: getChecked('diskUseSiteRootFallbackInput'),
+        defaultSort: oldProps.defaultSort || 'updatedAt',
+        defaultSortDirection: oldProps.defaultSortDirection || 'desc',
+
+        sectionId: oldProps.sectionId || null,
+        column: oldProps.column || null,
+        _placement: oldProps._placement || null
+    };
+}
+
+function collectVisualBlockData(block) {
+    var type = String(block.type || '');
+    var content = {};
+    var props = block.props || {};
+
+    if (type === 'heading') {
+        return {
+            content: {
+                text: getInputValue('headingTextInput').trim()
+            },
+            props: props
+        };
+    }
+
+    if (type === 'text') {
+        return {
+            content: {
+                text: getInputValue('textTextInput')
+            },
+            props: props
+        };
+    }
+
+    if (type === 'button') {
+        return {
+            content: {
+                label: getInputValue('buttonLabelInput').trim() || 'Кнопка',
+                href: getInputValue('buttonHrefInput').trim() || '#',
+                target: getInputValue('buttonTargetInput') || '_self'
+            },
+            props: props
+        };
+    }
+
+    if (type === 'html') {
+        return {
+            content: {
+                html: getInputValue('htmlInput')
+            },
+            props: props
+        };
+    }
+
+    if (type === 'disk') {
+        return {
+            content: block.content || {},
+            props: collectDiskBlockProps(block)
+        };
+    }
+
+    try {
+        content = JSON.parse(document.getElementById('blockContentInput').value || '{}');
+    } catch (e) {
+        alert('Контент блока должен быть валидным JSON');
+        return null;
+    }
+
+    try {
+        props = JSON.parse(document.getElementById('blockPropsInput').value || '{}');
+    } catch (e) {
+        alert('Свойства блока должны быть валидным JSON');
+        return null;
+    }
+
+    return {
+        content: content,
+        props: props
+    };
+}
+
+async function createBlock(type) {
+    if (!state.currentPageId) {
+        alert('Сначала выберите страницу');
+        return;
+    }
+
+    var content = {};
+    var props = {};
+
+    if (type === 'heading') {
+        content = {text: 'Новый заголовок'};
+    } else if (type === 'text') {
+        content = {text: 'Новый текстовый блок'};
+    } else if (type === 'button') {
+        content = {
+            label: 'Кнопка',
+            href: '#',
+            target: '_self'
+        };
+    } else if (type === 'html') {
+        content = {html: '<div>Новый HTML блок</div>'};
+    } else if (type === 'disk') {
+        content = {};
+        props = {
+            title: 'Файлы',
+            rootMode: 'site',
+            rootFolderId: null,
+            viewMode: 'table',
+            allowUpload: true,
+            allowCreateFolder: true,
+            allowRename: true,
+            allowDelete: true,
+            allowDownload: true,
+            showSearch: true,
+            showBreadcrumbs: true,
+            defaultSort: 'updatedAt',
+            defaultSortDirection: 'desc',
+            allowedExtensions: [],
+            maxFileSize: 52428800,
+            permissionMode: 'inherit_site',
+            useSiteRootFallback: true
+        };
+    }
+
+    var targetSectionId = getDefaultSectionId();
+    var targetColumn = getDefaultColumn();
+
+    props.sectionId = targetSectionId;
+    props.column = targetColumn;
+    props._placement = {
+        sectionId: targetSectionId,
+        column: targetColumn
+    };
+
+    var createRes = await api('block.create', {
+        pageId: state.currentPageId,
+        type: type,
+        content: JSON.stringify(content),
+        props: JSON.stringify(props),
+        sectionId: targetSectionId,
+        column: targetColumn
     });
 
-    var newTitleInput = document.getElementById('newPageTitle');
-    var newSlugInput = document.getElementById('newPageSlug');
-    var newParentInput = document.getElementById('newPageParentId');
+    await loadBlocks();
 
-    if (newTitleInput) {
-        newTitleInput.value = '';
+    var createdBlockId = Number(
+        (createRes.block && createRes.block.id) ||
+        (createRes.data && createRes.data.block && createRes.data.block.id) ||
+        0
+    );
+
+    if (!createdBlockId && state.blocks.length) {
+        var sortedBlocks = state.blocks.slice().sort(function (a, b) {
+            return Number(b.id || 0) - Number(a.id || 0);
+        });
+
+        createdBlockId = Number(sortedBlocks[0].id || 0);
     }
 
-    if (newSlugInput) {
-        newSlugInput.value = '';
+    if (createdBlockId > 0 && targetSectionId > 0) {
+        await assignBlockToSection(createdBlockId, targetSectionId, targetColumn);
+        state.currentBlockId = createdBlockId;
+        await loadBlocks();
+    }
+}
+
+async function saveBlock() {
+    var block = getCurrentBlock();
+    if (!block) return;
+
+    var collected = collectVisualBlockData(block);
+
+    if (!collected) {
+        return;
     }
 
-    if (newParentInput) {
-        newParentInput.value = '0';
-    }
+    await api('block.update', {
+        id: block.id,
+        content: JSON.stringify(collected.content),
+        props: JSON.stringify(collected.props)
+    });
 
-    await loadPages();
+    await saveBlockPlacement(block);
+
     await loadBlocks();
 }
 
-async function savePage() {
-    if (!state.currentPageId) return;
+async function duplicateBlock() {
+    var block = getCurrentBlock();
+    if (!block) return;
 
-    var parentId = Number(getInputValue('pageParentInput') || 0);
-
-    await api('page.updateMeta', {
-        id: state.currentPageId,
-        title: getInputValue('pageTitleInput').trim(),
-        slug: getInputValue('pageSlugInput').trim(),
-        parentId: parentId
+    await api('block.duplicate', {
+        id: block.id
     });
 
-    await api('page.setStatus', {
-        id: state.currentPageId,
-        status: getInputValue('pageStatusInput')
-    });
-
-    await loadPages();
     await loadBlocks();
 }
 
-async function deletePage() {
-    if (!state.currentPageId) return;
-    if (!confirm('Удалить страницу? Дочерние страницы и блоки этой страницы тоже будут удалены.')) return;
+async function deleteBlock() {
+    var block = getCurrentBlock();
+    if (!block) return;
+    if (!confirm('Удалить блок?')) return;
 
-    var idToDelete = state.currentPageId;
-
-    await api('page.delete', {
-        id: idToDelete
+    await api('block.delete', {
+        id: block.id
     });
 
-    if (state.currentPageId === idToDelete) {
-        state.currentPageId = 0;
-        state.currentSectionId = 0;
-        state.currentColumn = 1;
-    }
-
-    await loadPages();
+    state.currentBlockId = 0;
     await loadBlocks();
 }
 
-async function movePage(dir) {
-    if (!state.currentPageId) return;
+async function moveBlock(dir) {
+    var block = getCurrentBlock();
+    if (!block) return;
 
-    await api('page.move', {
-        id: state.currentPageId,
+    await api('block.move', {
+        id: block.id,
         dir: dir
     });
 
-    await loadPages();
+    await loadBlocks();
 }
 
-Когда вставишь, напиши — дальше пришлю 30-blocks.js.
+Когда вставишь, напиши — дальше пришлю 40-access.js.
