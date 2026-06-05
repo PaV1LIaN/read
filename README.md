@@ -1,124 +1,6 @@
-Идём дальше. Сейчас сделаем Laravel-like pagination.
+Да, замени полностью эти два файла.
 
-В Laravel обычно не делают так:
-
-Note::latest(20)
-
-А делают так:
-
-Note::query()->paginate(10)
-
-У нас QueryBuilder::paginate() уже есть, теперь подключим его к заметкам.
-
-
----
-
-1. Обнови /local/mvc_demo/Models/Note.php
-
-Добавь два метода внутрь класса Note:
-
-public static function paginateLatest(int $page = 1, int $perPage = 10): array
-{
-    $result = self::query()
-        ->orderBy('id', 'desc')
-        ->paginate($page, $perPage);
-
-    $result['items'] = array_map([self::class, 'normalize'], $result['items']);
-
-    return $result;
-}
-
-public static function paginateTrashedLatest(int $page = 1, int $perPage = 10): array
-{
-    $result = self::onlyTrashed()
-        ->orderBy('id', 'desc')
-        ->paginate($page, $perPage);
-
-    $result['items'] = array_map([self::class, 'normalize'], $result['items']);
-
-    return $result;
-}
-
-То есть в модели теперь будут варианты:
-
-Note::latest(20);              // просто последние 20
-Note::paginateLatest($page);   // постранично
-Note::trashedLatest(20);       // удалённые последние 20
-Note::paginateTrashedLatest(); // удалённые постранично
-
-
----
-
-2. Обнови /local/mvc_demo/Controllers/NoteController.php
-
-Замени метод index():
-
-public function index(): Response
-{
-    $this->authorize('viewAny', Note::class);
-
-    return $this->render('notes/index', [
-        'title' => 'Заметки',
-        'notes' => Note::latest(20),
-    ]);
-}
-
-на:
-
-public function index(): Response
-{
-    $this->authorize('viewAny', Note::class);
-
-    $page = (int)request('page', 1);
-
-    $result = Note::paginateLatest($page, 10);
-
-    return $this->render('notes/index', [
-        'title' => 'Заметки',
-        'notes' => $result['items'],
-        'pagination' => $result['pagination'],
-    ]);
-}
-
-Теперь замени метод trash():
-
-public function trash(): Response
-{
-    $this->authorize('viewAny', Note::class);
-
-    return $this->render('notes/trash', [
-        'title' => 'Удалённые заметки',
-        'notes' => Note::trashedLatest(20),
-    ]);
-}
-
-на:
-
-public function trash(): Response
-{
-    $this->authorize('viewAny', Note::class);
-
-    $page = (int)request('page', 1);
-
-    $result = Note::paginateTrashedLatest($page, 10);
-
-    return $this->render('notes/trash', [
-        'title' => 'Удалённые заметки',
-        'notes' => $result['items'],
-        'pagination' => $result['pagination'],
-    ]);
-}
-
-
----
-
-3. Добавь helper для пагинации во view
-
-Создай файл:
-
-/local/mvc_demo/Views/partials/pagination.php
-
-Код:
+/local/mvc_demo/Views/notes/index.php
 
 <?php
 
@@ -126,91 +8,184 @@ if (!defined('B_PROLOG_INCLUDED') || B_PROLOG_INCLUDED !== true) {
     die();
 }
 
-$pagination = $pagination ?? [];
-
-$currentPage = (int)($pagination['page'] ?? $pagination['current_page'] ?? 1);
-$lastPage = (int)($pagination['last_page'] ?? $pagination['pages'] ?? 1);
-$total = (int)($pagination['total'] ?? 0);
-$perPage = (int)($pagination['per_page'] ?? 10);
-
-$routeName = (string)($routeName ?? '');
-$routeParams = is_array($routeParams ?? null) ? $routeParams : [];
-$query = is_array($query ?? null) ? $query : [];
-
-if ($lastPage < 2 || $routeName === '') {
-    return;
-}
-
-$from = $total > 0 ? (($currentPage - 1) * $perPage + 1) : 0;
-$to = min($currentPage * $perPage, $total);
+$canCreateNote = can('create', \Local\MvcDemo\Models\Note::class);
+$canUpdateNote = can('update', \Local\MvcDemo\Models\Note::class);
+$canDeleteNote = can('delete', \Local\MvcDemo\Models\Note::class);
 
 ?>
 
-<div class="mvc-info" style="display:flex;justify-content:space-between;gap:12px;align-items:center;flex-wrap:wrap;">
-    <div style="color:#6b7280;">
-        Показано <?= e($from) ?>–<?= e($to) ?> из <?= e($total) ?>
+<div class="mvc-card">
+    <h1 class="mvc-page-title">
+        <?= e($title ?? 'Заметки') ?>
+    </h1>
+
+    <p class="mvc-page-text">
+        Это тестовый CRUD через Laravel-like Model, QueryBuilder, FormRequest, Policy, Factory, Soft Deletes и Pagination.
+        Таблица лежит в PostgreSQL:
+        <span class="mvc-code">mvc.mvc_demo_notes</span>
+    </p>
+
+    <?php if (!empty($flash)): ?>
+        <?php foreach ($flash as $item): ?>
+            <?php
+            $type = $item['type'] ?? 'info';
+            $style = 'border-color:#bfdbfe;background:#eff6ff;color:#1d4ed8;';
+
+            if ($type === 'success') {
+                $style = 'border-color:#bbf7d0;background:#f0fdf4;color:#166534;';
+            } elseif ($type === 'error') {
+                $style = 'border-color:#fecaca;background:#fef2f2;color:#991b1b;';
+            }
+            ?>
+
+            <div class="mvc-info" style="<?= e($style) ?>">
+                <?= e($item['message'] ?? '') ?>
+            </div>
+        <?php endforeach; ?>
+    <?php endif; ?>
+
+    <div class="mvc-info">
+        <a href="<?= e(route('notes.trash')) ?>">
+            Открыть корзину удалённых заметок
+        </a>
     </div>
 
-    <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;">
-        <?php if ($currentPage > 1): ?>
-            <a
-                href="<?= e(route($routeName, $routeParams, array_merge($query, ['page' => $currentPage - 1]))) ?>"
-                style="padding:6px 10px;border:1px solid #d1d5db;border-radius:8px;text-decoration:none;"
-            >
-                ← Назад
-            </a>
-        <?php endif; ?>
+    <?php if ($canCreateNote): ?>
+        <div class="mvc-info">
+            <form method="post" action="<?= e(route('notes.store')) ?>">
+                <?= csrf_field() ?>
 
-        <?php
-        $start = max(1, $currentPage - 2);
-        $end = min($lastPage, $currentPage + 2);
-        ?>
+                <div style="margin-bottom: 14px;">
+                    <label style="display:block;margin-bottom:6px;font-weight:600;">
+                        Название
+                    </label>
 
-        <?php for ($page = $start; $page <= $end; $page++): ?>
-            <?php if ($page === $currentPage): ?>
-                <span
-                    style="padding:6px 10px;border-radius:8px;background:#2563eb;color:#fff;font-weight:600;"
+                    <input
+                        type="text"
+                        name="title"
+                        value="<?= e(old('title')) ?>"
+                        style="width:100%;min-height:42px;padding:8px 12px;border:1px solid #d1d5db;border-radius:10px;"
+                    >
+                </div>
+
+                <div style="margin-bottom: 14px;">
+                    <label style="display:block;margin-bottom:6px;font-weight:600;">
+                        Текст
+                    </label>
+
+                    <textarea
+                        name="body"
+                        rows="4"
+                        style="width:100%;padding:8px 12px;border:1px solid #d1d5db;border-radius:10px;"
+                    ><?= e(old('body')) ?></textarea>
+                </div>
+
+                <button
+                    type="submit"
+                    style="min-height:42px;padding:0 18px;border:0;border-radius:10px;background:#2563eb;color:#fff;font-weight:600;cursor:pointer;"
                 >
-                    <?= e($page) ?>
-                </span>
-            <?php else: ?>
-                <a
-                    href="<?= e(route($routeName, $routeParams, array_merge($query, ['page' => $page]))) ?>"
-                    style="padding:6px 10px;border:1px solid #d1d5db;border-radius:8px;text-decoration:none;"
+                    Создать заметку
+                </button>
+            </form>
+        </div>
+
+        <div class="mvc-info">
+            <form method="post" action="<?= e(route('notes.factory')) ?>">
+                <?= csrf_field() ?>
+
+                <button
+                    type="submit"
+                    style="min-height:42px;padding:0 18px;border:0;border-radius:10px;background:#7c3aed;color:#fff;font-weight:600;cursor:pointer;"
                 >
-                    <?= e($page) ?>
-                </a>
-            <?php endif; ?>
-        <?php endfor; ?>
+                    Создать 5 заметок через Factory
+                </button>
+            </form>
+        </div>
+    <?php else: ?>
+        <div class="mvc-info" style="border-color:#fde68a;background:#fffbeb;color:#92400e;">
+            У вас нет прав на создание заметок.
+        </div>
+    <?php endif; ?>
 
-        <?php if ($currentPage < $lastPage): ?>
-            <a
-                href="<?= e(route($routeName, $routeParams, array_merge($query, ['page' => $currentPage + 1]))) ?>"
-                style="padding:6px 10px;border:1px solid #d1d5db;border-radius:8px;text-decoration:none;"
-            >
-                Вперёд →
-            </a>
+    <div class="mvc-info">
+        <?php if (empty($notes)): ?>
+            <p style="margin:0;">Заметок пока нет.</p>
+        <?php else: ?>
+            <table style="width:100%;border-collapse:collapse;">
+                <thead>
+                    <tr>
+                        <th style="text-align:left;padding:8px;border-bottom:1px solid #e5e7eb;">ID</th>
+                        <th style="text-align:left;padding:8px;border-bottom:1px solid #e5e7eb;">Название</th>
+                        <th style="text-align:left;padding:8px;border-bottom:1px solid #e5e7eb;">Текст</th>
+                        <th style="text-align:left;padding:8px;border-bottom:1px solid #e5e7eb;">Создана</th>
+                        <th style="text-align:left;padding:8px;border-bottom:1px solid #e5e7eb;">Обновлена</th>
+                        <th style="text-align:left;padding:8px;border-bottom:1px solid #e5e7eb;">Действие</th>
+                    </tr>
+                </thead>
+
+                <tbody>
+                    <?php foreach ($notes as $note): ?>
+                        <?php
+                        $noteId = (int)($note['id'] ?? 0);
+                        ?>
+
+                        <tr>
+                            <td style="padding:8px;border-bottom:1px solid #e5e7eb;">
+                                <?= e($note['id'] ?? '') ?>
+                            </td>
+
+                            <td style="padding:8px;border-bottom:1px solid #e5e7eb;">
+                                <?= e($note['title'] ?? '') ?>
+                            </td>
+
+                            <td style="padding:8px;border-bottom:1px solid #e5e7eb;">
+                                <?= e($note['body'] ?? '') ?>
+                            </td>
+
+                            <td style="padding:8px;border-bottom:1px solid #e5e7eb;">
+                                <?= e($note['created_at'] ?? '') ?>
+                            </td>
+
+                            <td style="padding:8px;border-bottom:1px solid #e5e7eb;">
+                                <?= e($note['updated_at'] ?? '') ?>
+                            </td>
+
+                            <td style="padding:8px;border-bottom:1px solid #e5e7eb;">
+                                <?php if ($canUpdateNote || $canDeleteNote): ?>
+                                    <div style="display:flex;gap:8px;align-items:center;">
+                                        <?php if ($canUpdateNote): ?>
+                                            <a
+                                                href="<?= e(route('notes.edit', ['note' => $noteId])) ?>"
+                                                style="padding:6px 10px;border-radius:8px;background:#2563eb;color:#fff;text-decoration:none;"
+                                            >
+                                                Изменить
+                                            </a>
+                                        <?php endif; ?>
+
+                                        <?php if ($canDeleteNote): ?>
+                                            <form method="post" action="<?= e(route('notes.destroy', ['note' => $noteId])) ?>" style="margin:0;">
+                                                <?= csrf_field() ?>
+                                                <?= method_field('DELETE') ?>
+
+                                                <button
+                                                    type="submit"
+                                                    onclick="return confirm('Удалить заметку? Она попадёт в корзину.')"
+                                                    style="padding:6px 10px;border:0;border-radius:8px;background:#dc2626;color:#fff;cursor:pointer;"
+                                                >
+                                                    Удалить
+                                                </button>
+                                            </form>
+                                        <?php endif; ?>
+                                    </div>
+                                <?php else: ?>
+                                    <span style="color:#9ca3af;">Нет действий</span>
+                                <?php endif; ?>
+                            </td>
+                        </tr>
+                    <?php endforeach; ?>
+                </tbody>
+            </table>
         <?php endif; ?>
-    </div>
-</div>
-
-
----
-
-4. Подключи пагинацию в /local/mvc_demo/Views/notes/index.php
-
-После таблицы заметок, ниже блока со списком, добавь:
-
-<?php
-$routeName = 'notes.index';
-$routeParams = [];
-$query = [];
-require $_SERVER['DOCUMENT_ROOT'] . '/local/mvc_demo/Views/partials/pagination.php';
-?>
-
-То есть примерно после закрытия таблицы:
-
-<?php endif; ?>
     </div>
 
     <?php
@@ -224,66 +199,143 @@ require $_SERVER['DOCUMENT_ROOT'] . '/local/mvc_demo/Views/partials/pagination.p
 
 ---
 
-5. Подключи пагинацию в /local/mvc_demo/Views/notes/trash.php
-
-Точно так же после таблицы удалённых заметок добавь:
+/local/mvc_demo/Views/notes/trash.php
 
 <?php
-$routeName = 'notes.trash';
-$routeParams = [];
-$query = [];
-require $_SERVER['DOCUMENT_ROOT'] . '/local/mvc_demo/Views/partials/pagination.php';
+
+if (!defined('B_PROLOG_INCLUDED') || B_PROLOG_INCLUDED !== true) {
+    die();
+}
+
+$canRestoreNote = can('create', \Local\MvcDemo\Models\Note::class);
+$canForceDeleteNote = can('delete', \Local\MvcDemo\Models\Note::class);
+
 ?>
 
+<div class="mvc-card">
+    <h1 class="mvc-page-title">
+        <?= e($title ?? 'Удалённые заметки') ?>
+    </h1>
 
----
+    <p class="mvc-page-text">
+        Это корзина. Здесь лежат записи, у которых заполнено
+        <span class="mvc-code">deleted_at</span>.
+    </p>
 
-6. Проверка
+    <?php if (!empty($flash)): ?>
+        <?php foreach ($flash as $item): ?>
+            <?php
+            $type = $item['type'] ?? 'info';
+            $style = 'border-color:#bfdbfe;background:#eff6ff;color:#1d4ed8;';
 
-Сбрось OPcache:
+            if ($type === 'success') {
+                $style = 'border-color:#bbf7d0;background:#f0fdf4;color:#166534;';
+            } elseif ($type === 'error') {
+                $style = 'border-color:#fecaca;background:#fef2f2;color:#991b1b;';
+            }
+            ?>
+
+            <div class="mvc-info" style="<?= e($style) ?>">
+                <?= e($item['message'] ?? '') ?>
+            </div>
+        <?php endforeach; ?>
+    <?php endif; ?>
+
+    <div class="mvc-info">
+        <a href="<?= e(route('notes.index')) ?>">
+            ← Назад к заметкам
+        </a>
+    </div>
+
+    <div class="mvc-info">
+        <?php if (empty($notes)): ?>
+            <p style="margin:0;">Корзина пустая.</p>
+        <?php else: ?>
+            <table style="width:100%;border-collapse:collapse;">
+                <thead>
+                    <tr>
+                        <th style="text-align:left;padding:8px;border-bottom:1px solid #e5e7eb;">ID</th>
+                        <th style="text-align:left;padding:8px;border-bottom:1px solid #e5e7eb;">Название</th>
+                        <th style="text-align:left;padding:8px;border-bottom:1px solid #e5e7eb;">Текст</th>
+                        <th style="text-align:left;padding:8px;border-bottom:1px solid #e5e7eb;">Удалена</th>
+                        <th style="text-align:left;padding:8px;border-bottom:1px solid #e5e7eb;">Действие</th>
+                    </tr>
+                </thead>
+
+                <tbody>
+                    <?php foreach ($notes as $note): ?>
+                        <?php
+                        $noteId = (int)($note['id'] ?? 0);
+                        ?>
+
+                        <tr>
+                            <td style="padding:8px;border-bottom:1px solid #e5e7eb;">
+                                <?= e($note['id'] ?? '') ?>
+                            </td>
+
+                            <td style="padding:8px;border-bottom:1px solid #e5e7eb;">
+                                <?= e($note['title'] ?? '') ?>
+                            </td>
+
+                            <td style="padding:8px;border-bottom:1px solid #e5e7eb;">
+                                <?= e($note['body'] ?? '') ?>
+                            </td>
+
+                            <td style="padding:8px;border-bottom:1px solid #e5e7eb;">
+                                <?= e($note['deleted_at'] ?? '') ?>
+                            </td>
+
+                            <td style="padding:8px;border-bottom:1px solid #e5e7eb;">
+                                <?php if ($canRestoreNote || $canForceDeleteNote): ?>
+                                    <div style="display:flex;gap:8px;align-items:center;">
+                                        <?php if ($canRestoreNote): ?>
+                                            <form method="post" action="<?= e(route('notes.restore', ['note' => $noteId])) ?>" style="margin:0;">
+                                                <?= csrf_field() ?>
+
+                                                <button
+                                                    type="submit"
+                                                    style="padding:6px 10px;border:0;border-radius:8px;background:#16a34a;color:#fff;cursor:pointer;"
+                                                >
+                                                    Восстановить
+                                                </button>
+                                            </form>
+                                        <?php endif; ?>
+
+                                        <?php if ($canForceDeleteNote): ?>
+                                            <form method="post" action="<?= e(route('notes.force-delete', ['note' => $noteId])) ?>" style="margin:0;">
+                                                <?= csrf_field() ?>
+                                                <?= method_field('DELETE') ?>
+
+                                                <button
+                                                    type="submit"
+                                                    onclick="return confirm('Удалить окончательно? Это действие нельзя отменить.')"
+                                                    style="padding:6px 10px;border:0;border-radius:8px;background:#dc2626;color:#fff;cursor:pointer;"
+                                                >
+                                                    Удалить навсегда
+                                                </button>
+                                            </form>
+                                        <?php endif; ?>
+                                    </div>
+                                <?php else: ?>
+                                    <span style="color:#9ca3af;">Нет действий</span>
+                                <?php endif; ?>
+                            </td>
+                        </tr>
+                    <?php endforeach; ?>
+                </tbody>
+            </table>
+        <?php endif; ?>
+    </div>
+
+    <?php
+    $routeName = 'notes.trash';
+    $routeParams = [];
+    $query = [];
+    require $_SERVER['DOCUMENT_ROOT'] . '/local/mvc_demo/Views/partials/pagination.php';
+    ?>
+</div>
+
+После замены сбрось OPcache:
 
 opcache_reset();
 echo 'OPcache reset OK';
-
-Открой:
-
-/local/mvc_demo/notes
-
-Нажми несколько раз:
-
-Создать 5 заметок через Factory
-
-Когда заметок станет больше 10, внизу появится пагинация.
-
-Проверь URL:
-
-/local/mvc_demo/notes?page=2
-
-И корзину:
-
-/local/mvc_demo/notes/trash?page=2
-
-
----
-
-Что мы сделали
-
-Раньше список был простой:
-
-Note::latest(20)
-
-Теперь Laravel-like:
-
-Note::paginateLatest($page, 10)
-
-И внутри используется наш QueryBuilder:
-
-$query->paginate($page, $perPage)
-
-Главная мысль:
-
-QueryBuilder собирает LIMIT/OFFSET.
-Paginator считает страницы.
-View показывает ссылки.
-
-Это очень похоже на Laravel paginate(), только пока без Blade-компонента links().
