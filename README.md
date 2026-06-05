@@ -1,637 +1,396 @@
 Создай файл:
 
-/local/sitebuilder/assets/admin/editor/30-blocks.js
+/local/sitebuilder/assets/admin/editor/40-access.js
 
 И вставь туда:
 
-function blockPreviewText(block) {
-    var type = String(block.type || '');
-    var content = block.content || {};
-    var props = block.props || {};
-    var sectionId = getBlockSectionId(block);
-    var column = getBlockColumn(block);
+function setManagementPanelsVisible(canManage) {
+    var groupPanel = document.getElementById('siteGroupPanel');
+    var accessPanel = document.getElementById('siteAccessPanel');
+    var apiPanel = document.getElementById('apiOutputPanel');
+    var deleteSiteBtn = document.getElementById('deleteSiteBtn');
 
-    var placementText = sectionId > 0 ? ' · секция #' + sectionId + ' · колонка ' + column : '';
-
-    if (type === 'heading') {
-        return (content.text || '[пустой заголовок]') + placementText;
+    if (groupPanel) {
+        groupPanel.hidden = !canManage;
     }
 
-    if (type === 'text') {
-        return (content.text || '[пустой текст]') + placementText;
+    if (accessPanel) {
+        accessPanel.hidden = !canManage;
     }
 
-    if (type === 'button') {
-        return (content.label || 'Кнопка') + (content.href ? ' → ' + content.href : '') + placementText;
+    if (apiPanel) {
+        apiPanel.hidden = !canManage;
     }
 
-    if (type === 'html') {
-        return ((content.html || '').slice(0, 220) || '[пустой HTML]') + placementText;
-    }
+    if (deleteSiteBtn) {
+        var role = state.site && state.site.currentUserRole
+            ? String(state.site.currentUserRole)
+            : '';
 
-    if (type === 'disk') {
-        return 'Компонент "Диск": '
-            + (props.title || 'Файлы')
-            + ' · rootMode=' + (props.rootMode || 'site')
-            + ' · view=' + (props.viewMode || 'table')
-            + placementText;
-    }
+        var canDeleteSite = IS_BITRIX_ADMIN || role === 'OWNER' || canManage;
 
-    try {
-        return JSON.stringify(content) + placementText;
-    } catch (e) {
-        return '[контент блока]' + placementText;
+        deleteSiteBtn.classList.toggle('sb-hidden', !canDeleteSite);
     }
 }
 
-function renderBlocks() {
-    if (!blocksList) {
-        return;
-    }
+function renderBitrixGroupPanel() {
+    var site = state.site || {};
+    var groupId = Number(site.bitrixGroupId || 0);
+    var node = document.getElementById('bitrixGroupInfo');
 
-    if (!state.currentPageId) {
-        blocksList.innerHTML = ''
-            + '<div class="sb-editor-empty-big">'
-            + '   <strong>Страница не выбрана</strong>'
-            + '   Выбери страницу слева, чтобы редактировать блоки'
-            + '</div>';
-        return;
-    }
+    if (!node) return;
 
-    if (!state.pageSections.length) {
-        if (!state.blocks.length) {
-            blocksList.innerHTML = ''
-                + '<div class="sb-editor-empty-big">'
-                + '   <strong>На странице пока нет блоков</strong>'
-                + '   Добавь первый блок через панель сверху'
-                + '</div>';
-            return;
-        }
-
-        blocksList.innerHTML = state.blocks.map(function (block) {
-            var active = Number(block.id || 0) === state.currentBlockId ? ' is-active' : '';
-
-            return ''
-                + '<div class="sb-editor-block' + active + '" draggable="true" data-block-id="' + Number(block.id || 0) + '">'
-                + '  <div class="sb-editor-block-head">'
-                + '      <div>'
-                + '          <h3 class="sb-editor-block-title">' + escapeHtml(block.type || 'block') + '</h3>'
-                + '          <div class="sb-editor-chip">block #' + Number(block.id || 0) + '</div>'
-                + '      </div>'
-                + '  </div>'
-                + '  <div class="sb-editor-block-preview">' + escapeHtml(blockPreviewText(block)) + '</div>'
-                + '</div>';
-        }).join('');
-
-        return;
-    }
-
-    var grouped = groupBlocksBySectionAndColumn();
-
-    blocksList.innerHTML = state.pageSections.map(function (section) {
-        var sectionId = Number(section.id || 0);
-        var layout = section.layout || {};
-        var columns = getSectionColumns(sectionId);
-        var activeSection = Number(state.currentSectionId || 0) === sectionId ? ' is-active' : '';
-
-        var html = ''
-            + '<div class="sb-editor-section-preview' + activeSection + '" data-editor-section-id="' + sectionId + '">'
-            + '  <div class="sb-editor-section-preview__head" data-page-section-select="' + sectionId + '">'
-            + '      <div>'
-            + '          <h3 class="sb-editor-section-preview__title">' + escapeHtml(section.title || 'Секция') + '</h3>'
-            + '          <div class="sb-editor-section-preview__meta">'
-            + '              <span>' + columns + ' кол.</span>'
-            + '              <span>' + escapeHtml(layout.container || 'default') + '</span>'
-            + '          </div>'
-            + '      </div>'
-            + '      <button class="sb-btn sb-btn-light sb-btn-small" type="button" data-add-block-to-section="' + sectionId + '">Выбрать</button>'
-            + '  </div>'
-            + '  <div class="sb-editor-section-preview__grid sb-editor-section-preview__grid--' + columns + '">';
-
-        for (var column = 1; column <= columns; column++) {
-            var blocks = grouped[sectionId] && grouped[sectionId][column]
-                ? grouped[sectionId][column]
-                : [];
-
-            var isTargetColumn =
-                Number(state.currentSectionId || 0) === sectionId &&
-                Number(state.currentColumn || 1) === column;
-
-            html += ''
-                + '<div class="sb-editor-section-preview__column' + (isTargetColumn ? ' is-target' : '') + '" data-section-id="' + sectionId + '" data-column="' + column + '">'
-                + '  <div class="sb-editor-section-preview__column-head">'
-                + '      <div class="sb-editor-section-preview__column-title">Колонка ' + column + '</div>'
-                + '      <button class="sb-btn sb-btn-light sb-btn-small" type="button" data-set-add-target="' + sectionId + '" data-column="' + column + '">'
-                +          (isTargetColumn ? 'Выбрано' : 'Добавлять сюда')
-                + '      </button>'
-                + '  </div>';
-
-            if (!blocks.length) {
-                html += '<div class="sb-editor-section-preview__empty">Пусто</div>';
-            } else {
-                html += blocks.map(function (block) {
-                    var active = Number(block.id || 0) === state.currentBlockId ? ' is-active' : '';
-
-                    return ''
-                        + '<div class="sb-editor-block' + active + '" draggable="true" data-block-id="' + Number(block.id || 0) + '">'
-                        + '  <div class="sb-editor-block-head">'
-                        + '      <div>'
-                        + '          <h3 class="sb-editor-block-title">' + escapeHtml(block.type || 'block') + '</h3>'
-                        + '          <div class="sb-editor-chip">block #' + Number(block.id || 0) + '</div>'
-                        + '      </div>'
-                        + '  </div>'
-                        + '  <div class="sb-editor-block-preview">' + escapeHtml(blockPreviewText(block)) + '</div>'
-                        + '</div>';
-                }).join('');
-            }
-
-            html += '</div>';
-        }
-
-        html += ''
-            + '  </div>'
+    if (groupId > 0) {
+        node.innerHTML = ''
+            + '<div><strong>Группа создана</strong></div>'
+            + '<div class="sb-muted">ID группы: ' + groupId + '</div>'
+            + '<div style="margin-top:8px;">'
+            + '  <a class="sb-btn sb-btn-light sb-btn-small" target="_blank" href="/workgroups/group/' + groupId + '/">Открыть группу</a>'
             + '</div>';
 
-        return html;
+        return;
+    }
+
+    node.innerHTML = ''
+        + '<div><strong>Группа Битрикс24 не создана</strong></div>'
+        + '<div class="sb-muted">Можно создать группу и затем синхронизировать права.</div>';
+}
+
+async function ensureBitrixGroup() {
+    var resultNode = document.getElementById('syncAccessResult');
+
+    try {
+        var res = await api('site.ensureGroup', {
+            siteId: siteId
+        });
+
+        state.site = res.site || state.site;
+
+        renderBitrixGroupPanel();
+
+        if (resultNode) {
+            resultNode.textContent = JSON.stringify(res, null, 2);
+        }
+    } catch (e) {
+        if (resultNode) {
+            resultNode.textContent = JSON.stringify(e, null, 2);
+        }
+    }
+}
+
+async function syncAccess() {
+    var resultNode = document.getElementById('syncAccessResult');
+
+    try {
+        var res = await api('site.syncAccess', {
+            siteId: siteId
+        });
+
+        if (resultNode) {
+            resultNode.textContent = JSON.stringify(res, null, 2);
+        }
+
+        await loadAccessList();
+    } catch (e) {
+        if (resultNode) {
+            resultNode.textContent = JSON.stringify(e, null, 2);
+        }
+    }
+}
+
+function setAccessMessage(message, type) {
+    var node = document.getElementById('accessMessage');
+    if (!node) return;
+
+    node.classList.remove('sb-hidden', 'is-success', 'is-error');
+
+    if (type === 'success') {
+        node.classList.add('is-success');
+    }
+
+    if (type === 'error') {
+        node.classList.add('is-error');
+    }
+
+    node.textContent = message || '';
+}
+
+function hideAccessMessage() {
+    var node = document.getElementById('accessMessage');
+    if (!node) return;
+
+    node.classList.add('sb-hidden');
+    node.textContent = '';
+}
+
+function renderAccessUserSearchResults(users) {
+    var results = document.getElementById('accessUserSearchResults');
+    if (!results) return;
+
+    state.userSearchResults = Array.isArray(users) ? users : [];
+
+    if (!state.userSearchResults.length) {
+        results.innerHTML = '';
+        results.classList.add('sb-hidden');
+        return;
+    }
+
+    results.innerHTML = state.userSearchResults.map(function (user) {
+        var id = Number(user.id || 0);
+        var title = user.title || user.name || ('Пользователь #' + id);
+        var meta = [];
+
+        if (user.login) meta.push(user.login);
+        if (user.email) meta.push(user.email);
+
+        return ''
+            + '<button class="sb-access-result-item" type="button" data-select-access-user="' + id + '" style="display:grid;grid-template-columns:32px minmax(0,1fr);gap:10px;align-items:center;width:100%;min-height:44px;padding:7px 10px;box-sizing:border-box;">'
+            +      userAvatarHtml(user, 'sb-access-result-avatar')
+            + '  <div class="sb-access-result-body" style="min-width:0;overflow:hidden;">'
+            + '      <div class="sb-access-result-title" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + escapeHtml(title) + '</div>'
+            + '      <div class="sb-access-result-meta" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">ID: ' + id + (meta.length ? ' · ' + escapeHtml(meta.join(' · ')) : '') + '</div>'
+            + '  </div>'
+            + '</button>';
+    }).join('');
+
+    results.classList.remove('sb-hidden');
+}
+
+function renderSelectedAccessUser() {
+    var selectedNode = document.getElementById('accessSelectedUser');
+    if (!selectedNode) return;
+
+    var user = state.selectedAccessUser;
+
+    if (!user) {
+        selectedNode.innerHTML = '';
+        selectedNode.classList.add('sb-hidden');
+        return;
+    }
+
+    var userId = Number(user.id || 0);
+    var meta = [];
+
+    if (user.login) meta.push(user.login);
+    if (user.email) meta.push(user.email);
+
+    selectedNode.innerHTML = ''
+        + '<div class="sb-access-selected-user">'
+        +      userAvatarHtml(user, 'sb-access-selected-avatar')
+        + '  <div class="sb-access-selected-body">'
+        + '      <div class="sb-access-selected-title">' + escapeHtml(user.title || user.name || ('Пользователь #' + userId)) + '</div>'
+        + '      <div class="sb-access-selected-meta">ID: ' + userId + (meta.length ? ' · ' + escapeHtml(meta.join(' · ')) : '') + '</div>'
+        + '  </div>'
+        + '  <div class="sb-access-selected-actions">'
+        + '      <button class="sb-btn sb-btn-light sb-btn-small" type="button" data-clear-access-user>Сбросить</button>'
+        + '  </div>'
+        + '</div>';
+
+    selectedNode.classList.remove('sb-hidden');
+}
+
+async function searchAccessUsers() {
+    var input = document.getElementById('accessUserSearchInput');
+    if (!input) return;
+
+    var query = String(input.value || '').trim();
+
+    state.selectedAccessUser = null;
+    renderSelectedAccessUser();
+
+    if (query === '') {
+        renderAccessUserSearchResults([]);
+        return;
+    }
+
+    if (!/^\d+$/.test(query) && query.length < 2) {
+        renderAccessUserSearchResults([]);
+        return;
+    }
+
+    try {
+        var res = await api('user.search', {
+            siteId: siteId,
+            query: query,
+            limit: 10
+        });
+
+        renderAccessUserSearchResults(Array.isArray(res.users) ? res.users : []);
+    } catch (e) {
+        renderAccessUserSearchResults([]);
+    }
+}
+
+function selectAccessUser(user) {
+    state.selectedAccessUser = user || null;
+
+    var input = document.getElementById('accessUserSearchInput');
+    if (input && user) {
+        input.value = user.title || user.name || '';
+    }
+
+    renderAccessUserSearchResults([]);
+    renderSelectedAccessUser();
+}
+
+function clearSelectedAccessUser() {
+    state.selectedAccessUser = null;
+
+    var input = document.getElementById('accessUserSearchInput');
+    if (input) {
+        input.value = '';
+        input.focus();
+    }
+
+    renderSelectedAccessUser();
+    renderAccessUserSearchResults([]);
+}
+
+function roleBadge(role) {
+    role = String(role || 'VIEWER');
+
+    var cls = 'sb-role-badge--viewer';
+
+    if (role === 'OWNER') {
+        cls = 'sb-role-badge--owner';
+    } else if (role === 'ADMIN') {
+        cls = 'sb-role-badge--admin';
+    } else if (role === 'EDITOR') {
+        cls = 'sb-role-badge--editor';
+    }
+
+    return '<span class="sb-role-badge ' + cls + '">' + escapeHtml(role) + '</span>';
+}
+
+function renderAccessList() {
+    var list = document.getElementById('accessList');
+    if (!list) return;
+
+    if (!Array.isArray(state.accessItems) || !state.accessItems.length) {
+        list.innerHTML = '<div class="sb-empty">Права ещё не выданы</div>';
+        return;
+    }
+
+    list.innerHTML = state.accessItems.map(function (item) {
+        var userId = Number(item.userId || 0);
+        var name = item.userName || item.title || ('Пользователь #' + userId);
+        var role = item.role || '';
+
+        return ''
+            + '<div class="sb-access-item">'
+            + '  <div class="sb-access-item__main">'
+            + '      <div class="sb-access-item__name">' + escapeHtml(name) + '</div>'
+            + '      <div class="sb-access-item__meta">ID: ' + userId + ' · ' + escapeHtml(item.accessCode || '') + '</div>'
+            + '  </div>'
+            + '  <div class="sb-access-item__side">'
+            +        roleBadge(role)
+            + '      <button class="sb-btn sb-btn-danger sb-btn-small" type="button" data-access-remove-user="' + userId + '">Удалить</button>'
+            + '  </div>'
+            + '</div>';
     }).join('');
 }
 
-function hideAllBlockTypeForms() {
-    [
-        'headingBlockForm',
-        'textBlockForm',
-        'buttonBlockForm',
-        'htmlBlockForm',
-        'diskBlockForm',
-        'unknownBlockForm'
-    ].forEach(function (id) {
-        var node = document.getElementById(id);
-        if (node) {
-            node.classList.remove('is-active');
-            node.classList.add('sb-hidden');
-        }
-    });
-}
-
-function showBlockTypeForm(id) {
-    var node = document.getElementById(id);
-    if (!node) return;
-
-    node.classList.add('is-active');
-    node.classList.remove('sb-hidden');
-}
-
-function fillVisualBlockForm(block) {
-    hideAllBlockTypeForms();
-
-    var type = String(block.type || '');
-    var content = block.content || {};
-
-    if (type === 'heading') {
-        showBlockTypeForm('headingBlockForm');
-
-        var headingTextInput = document.getElementById('headingTextInput');
-        if (headingTextInput) {
-            headingTextInput.value = content.text || '';
-        }
-
-        return;
-    }
-
-    if (type === 'text') {
-        showBlockTypeForm('textBlockForm');
-
-        var textTextInput = document.getElementById('textTextInput');
-        if (textTextInput) {
-            textTextInput.value = content.text || '';
-        }
-
-        return;
-    }
-
-    if (type === 'button') {
-        showBlockTypeForm('buttonBlockForm');
-
-        var buttonLabelInput = document.getElementById('buttonLabelInput');
-        var buttonHrefInput = document.getElementById('buttonHrefInput');
-        var buttonTargetInput = document.getElementById('buttonTargetInput');
-
-        if (buttonLabelInput) {
-            buttonLabelInput.value = content.label || '';
-        }
-
-        if (buttonHrefInput) {
-            buttonHrefInput.value = content.href || '';
-        }
-
-        if (buttonTargetInput) {
-            buttonTargetInput.value = content.target || '_self';
-        }
-
-        return;
-    }
-
-    if (type === 'html') {
-        showBlockTypeForm('htmlBlockForm');
-
-        var htmlInput = document.getElementById('htmlInput');
-        if (htmlInput) {
-            htmlInput.value = content.html || '';
-        }
-
-        return;
-    }
-
-    if (type === 'disk') {
-        showBlockTypeForm('diskBlockForm');
-        return;
-    }
-
-    showBlockTypeForm('unknownBlockForm');
-
-    var jsonFields = document.getElementById('blockJsonFields');
-    if (jsonFields) {
-        jsonFields.classList.add('is-open');
-    }
-}
-
-function fillDiskForm(props) {
-    props = props || {};
-
-    var diskTitleInput = document.getElementById('diskTitleInput');
-    var diskRootModeInput = document.getElementById('diskRootModeInput');
-    var diskViewModeInput = document.getElementById('diskViewModeInput');
-    var diskPermissionModeInput = document.getElementById('diskPermissionModeInput');
-    var diskMaxFileSizeInput = document.getElementById('diskMaxFileSizeInput');
-    var diskAllowedExtensionsInput = document.getElementById('diskAllowedExtensionsInput');
-
-    if (diskTitleInput) {
-        diskTitleInput.value = props.title || 'Файлы';
-    }
-
-    if (diskRootModeInput) {
-        diskRootModeInput.value = props.rootMode || 'site';
-    }
-
-    if (diskViewModeInput) {
-        diskViewModeInput.value = props.viewMode || 'table';
-    }
-
-    if (diskPermissionModeInput) {
-        diskPermissionModeInput.value = props.permissionMode || 'inherit_site';
-    }
-
-    if (diskMaxFileSizeInput) {
-        diskMaxFileSizeInput.value = props.maxFileSize || 52428800;
-    }
-
-    if (diskAllowedExtensionsInput) {
-        diskAllowedExtensionsInput.value = Array.isArray(props.allowedExtensions) ? props.allowedExtensions.join(' ') : '';
-    }
-
-    var checks = {
-        diskAllowUploadInput: !!props.allowUpload,
-        diskAllowCreateFolderInput: !!props.allowCreateFolder,
-        diskAllowRenameInput: !!props.allowRename,
-        diskAllowDeleteInput: !!props.allowDelete,
-        diskAllowDownloadInput: !!props.allowDownload,
-        diskShowSearchInput: !!props.showSearch,
-        diskShowBreadcrumbsInput: !!props.showBreadcrumbs,
-        diskUseSiteRootFallbackInput: !!props.useSiteRootFallback
-    };
-
-    Object.keys(checks).forEach(function (id) {
-        var node = document.getElementById(id);
-        if (node) {
-            node.checked = checks[id];
-        }
-    });
-}
-
-function fillBlockForm() {
-    var block = getCurrentBlock();
-    var emptyNode = document.getElementById('blockInspectorEmpty');
-    var formNode = document.getElementById('blockInspector');
-
-    if (!block) {
-        if (emptyNode) {
-            emptyNode.classList.remove('sb-hidden');
-        }
-
-        if (formNode) {
-            formNode.classList.add('sb-hidden');
-        }
-
-        hideAllBlockTypeForms();
-
-        var blockTypeInput = document.getElementById('blockTypeInput');
-        var blockContentInput = document.getElementById('blockContentInput');
-        var blockPropsInput = document.getElementById('blockPropsInput');
-
-        if (blockTypeInput) {
-            blockTypeInput.value = '';
-        }
-
-        if (blockContentInput) {
-            blockContentInput.value = '';
-        }
-
-        if (blockPropsInput) {
-            blockPropsInput.value = '';
-        }
-
-        var jsonFieldsEmpty = document.getElementById('blockJsonFields');
-        if (jsonFieldsEmpty) {
-            jsonFieldsEmpty.classList.remove('is-open');
-        }
-
-        fillBlockPlacementForm(null);
-
-        return;
-    }
-
-    if (emptyNode) {
-        emptyNode.classList.add('sb-hidden');
-    }
-
-    if (formNode) {
-        formNode.classList.remove('sb-hidden');
-    }
-
-    var content = block.content || {};
-    var props = block.props || {};
-
-    var blockTypeInputFilled = document.getElementById('blockTypeInput');
-    var blockContentInputFilled = document.getElementById('blockContentInput');
-    var blockPropsInputFilled = document.getElementById('blockPropsInput');
-
-    if (blockTypeInputFilled) {
-        blockTypeInputFilled.value = block.type || '';
-    }
-
-    if (blockContentInputFilled) {
-        blockContentInputFilled.value = JSON.stringify(content, null, 2);
-    }
-
-    if (blockPropsInputFilled) {
-        blockPropsInputFilled.value = JSON.stringify(props, null, 2);
-    }
-
-    var jsonFields = document.getElementById('blockJsonFields');
-    if (jsonFields) {
-        jsonFields.classList.remove('is-open');
-    }
-
-    if (block.type === 'disk') {
-        fillDiskForm(props);
-    }
-
-    fillVisualBlockForm(block);
-    fillBlockPlacementForm(block);
-}
-
-function collectDiskBlockProps(block) {
-    var oldProps = block.props || {};
-
-    return {
-        title: getInputValue('diskTitleInput').trim() || 'Файлы',
-        rootMode: getInputValue('diskRootModeInput') || 'site',
-        rootFolderId: oldProps.rootFolderId || null,
-        viewMode: getInputValue('diskViewModeInput') || 'table',
-        permissionMode: getInputValue('diskPermissionModeInput') || 'inherit_site',
-        maxFileSize: Number(getInputValue('diskMaxFileSizeInput') || 0),
-        allowedExtensions: String(getInputValue('diskAllowedExtensionsInput') || '')
-            .trim()
-            .split(/\s+/)
-            .filter(Boolean),
-        allowUpload: getChecked('diskAllowUploadInput'),
-        allowCreateFolder: getChecked('diskAllowCreateFolderInput'),
-        allowRename: getChecked('diskAllowRenameInput'),
-        allowDelete: getChecked('diskAllowDeleteInput'),
-        allowDownload: getChecked('diskAllowDownloadInput'),
-        showSearch: getChecked('diskShowSearchInput'),
-        showBreadcrumbs: getChecked('diskShowBreadcrumbsInput'),
-        useSiteRootFallback: getChecked('diskUseSiteRootFallbackInput'),
-        defaultSort: oldProps.defaultSort || 'updatedAt',
-        defaultSortDirection: oldProps.defaultSortDirection || 'desc',
-
-        sectionId: oldProps.sectionId || null,
-        column: oldProps.column || null,
-        _placement: oldProps._placement || null
-    };
-}
-
-function collectVisualBlockData(block) {
-    var type = String(block.type || '');
-    var content = {};
-    var props = block.props || {};
-
-    if (type === 'heading') {
-        return {
-            content: {
-                text: getInputValue('headingTextInput').trim()
-            },
-            props: props
-        };
-    }
-
-    if (type === 'text') {
-        return {
-            content: {
-                text: getInputValue('textTextInput')
-            },
-            props: props
-        };
-    }
-
-    if (type === 'button') {
-        return {
-            content: {
-                label: getInputValue('buttonLabelInput').trim() || 'Кнопка',
-                href: getInputValue('buttonHrefInput').trim() || '#',
-                target: getInputValue('buttonTargetInput') || '_self'
-            },
-            props: props
-        };
-    }
-
-    if (type === 'html') {
-        return {
-            content: {
-                html: getInputValue('htmlInput')
-            },
-            props: props
-        };
-    }
-
-    if (type === 'disk') {
-        return {
-            content: block.content || {},
-            props: collectDiskBlockProps(block)
-        };
-    }
+async function loadAccessList() {
+    var panel = document.getElementById('siteAccessPanel');
+    if (!panel) return;
 
     try {
-        content = JSON.parse(document.getElementById('blockContentInput').value || '{}');
-    } catch (e) {
-        alert('Контент блока должен быть валидным JSON');
-        return null;
-    }
-
-    try {
-        props = JSON.parse(document.getElementById('blockPropsInput').value || '{}');
-    } catch (e) {
-        alert('Свойства блока должны быть валидным JSON');
-        return null;
-    }
-
-    return {
-        content: content,
-        props: props
-    };
-}
-
-async function createBlock(type) {
-    if (!state.currentPageId) {
-        alert('Сначала выберите страницу');
-        return;
-    }
-
-    var content = {};
-    var props = {};
-
-    if (type === 'heading') {
-        content = {text: 'Новый заголовок'};
-    } else if (type === 'text') {
-        content = {text: 'Новый текстовый блок'};
-    } else if (type === 'button') {
-        content = {
-            label: 'Кнопка',
-            href: '#',
-            target: '_self'
-        };
-    } else if (type === 'html') {
-        content = {html: '<div>Новый HTML блок</div>'};
-    } else if (type === 'disk') {
-        content = {};
-        props = {
-            title: 'Файлы',
-            rootMode: 'site',
-            rootFolderId: null,
-            viewMode: 'table',
-            allowUpload: true,
-            allowCreateFolder: true,
-            allowRename: true,
-            allowDelete: true,
-            allowDownload: true,
-            showSearch: true,
-            showBreadcrumbs: true,
-            defaultSort: 'updatedAt',
-            defaultSortDirection: 'desc',
-            allowedExtensions: [],
-            maxFileSize: 52428800,
-            permissionMode: 'inherit_site',
-            useSiteRootFallback: true
-        };
-    }
-
-    var targetSectionId = getDefaultSectionId();
-    var targetColumn = getDefaultColumn();
-
-    props.sectionId = targetSectionId;
-    props.column = targetColumn;
-    props._placement = {
-        sectionId: targetSectionId,
-        column: targetColumn
-    };
-
-    var createRes = await api('block.create', {
-        pageId: state.currentPageId,
-        type: type,
-        content: JSON.stringify(content),
-        props: JSON.stringify(props),
-        sectionId: targetSectionId,
-        column: targetColumn
-    });
-
-    await loadBlocks();
-
-    var createdBlockId = Number(
-        (createRes.block && createRes.block.id) ||
-        (createRes.data && createRes.data.block && createRes.data.block.id) ||
-        0
-    );
-
-    if (!createdBlockId && state.blocks.length) {
-        var sortedBlocks = state.blocks.slice().sort(function (a, b) {
-            return Number(b.id || 0) - Number(a.id || 0);
+        var res = await api('site.accessList', {
+            siteId: siteId
         });
 
-        createdBlockId = Number(sortedBlocks[0].id || 0);
-    }
+        state.accessItems = Array.isArray(res.items) ? res.items : [];
 
-    if (createdBlockId > 0 && targetSectionId > 0) {
-        await assignBlockToSection(createdBlockId, targetSectionId, targetColumn);
-        state.currentBlockId = createdBlockId;
-        await loadBlocks();
+        setManagementPanelsVisible(true);
+        renderBitrixGroupPanel();
+        renderAccessList();
+    } catch (e) {
+        state.accessItems = [];
+        setManagementPanelsVisible(false);
     }
 }
 
-async function saveBlock() {
-    var block = getCurrentBlock();
-    if (!block) return;
+async function grantAccessRole() {
+    var roleInput = document.getElementById('accessRoleInput');
+    if (!roleInput) return;
 
-    var collected = collectVisualBlockData(block);
+    var user = state.selectedAccessUser;
+    var userId = user ? Number(user.id || 0) : 0;
+    var role = String(roleInput.value || '').trim();
 
-    if (!collected) {
+    if (userId <= 0) {
+        setAccessMessage('Сначала найди и выбери пользователя из списка', 'error');
+
+        var searchInput = document.getElementById('accessUserSearchInput');
+        if (searchInput) {
+            searchInput.focus();
+        }
+
         return;
     }
 
-    await api('block.update', {
-        id: block.id,
-        content: JSON.stringify(collected.content),
-        props: JSON.stringify(collected.props)
-    });
+    if (!role) {
+        setAccessMessage('Выбери роль', 'error');
+        return;
+    }
 
-    await saveBlockPlacement(block);
+    try {
+        setAccessMessage('Сохраняю права...', '');
 
-    await loadBlocks();
+        var res = await api('site.accessSet', {
+            siteId: siteId,
+            userId: userId,
+            role: role
+        });
+
+        state.accessItems = Array.isArray(res.items) ? res.items : [];
+
+        clearSelectedAccessUser();
+        renderAccessList();
+
+        var groupSync = res.result && res.result.groupSync ? res.result.groupSync : null;
+        var syncText = '';
+
+        if (groupSync) {
+            if (groupSync.ok) {
+                syncText = '\nПользователь также синхронизирован с группой Битрикс24.';
+            } else if (groupSync.error) {
+                syncText = '\nНо с группой Битрикс24 не синхронизировался: ' + groupSync.error;
+            } else if (groupSync.message) {
+                syncText = '\nГруппа Битрикс24: ' + groupSync.message;
+            }
+        }
+
+        setAccessMessage('Роль выдана: U' + userId + ' → ' + role + syncText, 'success');
+    } catch (e) {
+        setAccessMessage('Ошибка выдачи роли: ' + ((e && (e.error || e.message)) || 'UNKNOWN_ERROR'), 'error');
+    }
 }
 
-async function duplicateBlock() {
-    var block = getCurrentBlock();
-    if (!block) return;
+async function removeAccessRole(userId) {
+    userId = Number(userId || 0);
 
-    await api('block.duplicate', {
-        id: block.id
-    });
+    if (userId <= 0) return;
 
-    await loadBlocks();
+    if (!confirm('Удалить доступ пользователя #' + userId + '?')) {
+        return;
+    }
+
+    try {
+        hideAccessMessage();
+
+        var res = await api('site.accessRemove', {
+            siteId: siteId,
+            userId: userId
+        });
+
+        state.accessItems = Array.isArray(res.items) ? res.items : [];
+        renderAccessList();
+
+        setAccessMessage('Доступ удалён', 'success');
+    } catch (e) {
+        setAccessMessage('Ошибка удаления доступа: ' + ((e && (e.error || e.message)) || 'UNKNOWN_ERROR'), 'error');
+    }
 }
 
-async function deleteBlock() {
-    var block = getCurrentBlock();
-    if (!block) return;
-    if (!confirm('Удалить блок?')) return;
-
-    await api('block.delete', {
-        id: block.id
-    });
-
-    state.currentBlockId = 0;
-    await loadBlocks();
-}
-
-async function moveBlock(dir) {
-    var block = getCurrentBlock();
-    if (!block) return;
-
-    await api('block.move', {
-        id: block.id,
-        dir: dir
-    });
-
-    await loadBlocks();
-}
-
-Когда вставишь, напиши — дальше пришлю 40-access.js.
+Когда вставишь, напиши — дальше пришлю 50-template.js.
