@@ -1,4 +1,4 @@
-Похоже, ручка внутри th не ловит событие. Давай сделаем над таблицей отдельные широкие невидимые “ручки”, которые точно будут ловить мышку.
+Похоже, прошлый вариант слишком сложный и событие всё равно не цепляется. Давай сделаем проще и надёжнее: будем тянуть прямо за правый край заголовка столбца или за уже существующую ручку data-column-resizer.
 
 1. Полностью замени table-edit.js
 
@@ -6,9 +6,11 @@
 
 /local/sitebuilder/assets/public/table-edit.js
 
-Замени весь код на этот:
+Вставь весь файл целиком:
 
 (function () {
+    window.SB_TABLE_EDIT_LOADED = 'v4-edge-resize';
+
     var config = window.SB_PUBLIC_EDIT_CONFIG || {};
     var API_URL = config.apiUrl || '/local/sitebuilder/api.php';
     var sessid = config.sessid || '';
@@ -61,84 +63,8 @@
         }
     }
 
-    function getColumnWidth(table, columnId) {
-        var th = table.querySelector('th[data-column-id="' + cssEscape(columnId) + '"]');
-
-        if (!th) {
-            return 160;
-        }
-
-        var width = Math.round(th.getBoundingClientRect().width);
-
-        if (!width || width < 80) {
-            width = 160;
-        }
-
-        return width;
-    }
-
-    function applyTableWidth(root) {
-        var table = root.querySelector('.sb-public-table');
-
-        if (!table) {
-            return;
-        }
-
-        var content = getContent(root);
-        var columns = Array.isArray(content.columns) ? content.columns : [];
-        var total = 0;
-
-        columns.forEach(function (column) {
-            var columnId = String(column.id || '');
-            var width = parseInt(column.width || 0, 10);
-
-            if (!width || width < 80) {
-                width = getColumnWidth(table, columnId);
-            }
-
-            if (width < 80) {
-                width = 80;
-            }
-
-            if (width > 1200) {
-                width = 1200;
-            }
-
-            column.width = width;
-            total += width;
-
-            var col = table.querySelector('col[data-column-id="' + cssEscape(columnId) + '"]');
-            var th = table.querySelector('th[data-column-id="' + cssEscape(columnId) + '"]');
-
-            if (col) {
-                col.style.width = width + 'px';
-            }
-
-            if (th) {
-                th.style.width = width + 'px';
-                th.style.minWidth = width + 'px';
-                th.style.maxWidth = width + 'px';
-            }
-        });
-
-        if (total > 0) {
-            table.style.tableLayout = 'fixed';
-            table.style.width = total + 'px';
-            table.style.minWidth = total + 'px';
-        }
-
-        content.columns = columns;
-        setContent(root, content);
-    }
-
-    function updateColumnWidth(root, columnId, width) {
-        var table = root.querySelector('.sb-public-table');
-
-        if (!table) {
-            return;
-        }
-
-        width = Math.round(width);
+    function clampWidth(width) {
+        width = Math.round(Number(width || 0));
 
         if (width < 80) {
             width = 80;
@@ -148,8 +74,65 @@
             width = 1200;
         }
 
+        return width;
+    }
+
+    function getColumnCurrentWidth(table, columnId) {
+        var th = table.querySelector('th[data-column-id="' + cssEscape(columnId) + '"]');
+
+        if (!th) {
+            return 160;
+        }
+
+        return clampWidth(th.getBoundingClientRect().width || 160);
+    }
+
+    function applyWidths(root) {
+        var table = root.querySelector('.sb-public-table');
         var content = getContent(root);
         var columns = Array.isArray(content.columns) ? content.columns : [];
+
+        if (!table || !columns.length) {
+            return;
+        }
+
+        var total = 0;
+
+        columns.forEach(function (column) {
+            var columnId = String(column.id || '');
+            var width = clampWidth(column.width || getColumnCurrentWidth(table, columnId));
+
+            column.width = width;
+            total += width;
+
+            var col = table.querySelector('col[data-column-id="' + cssEscape(columnId) + '"]');
+            var th = table.querySelector('th[data-column-id="' + cssEscape(columnId) + '"]');
+
+            if (col) {
+                col.style.setProperty('width', width + 'px', 'important');
+                col.setAttribute('width', String(width));
+            }
+
+            if (th) {
+                th.style.setProperty('width', width + 'px', 'important');
+                th.style.setProperty('min-width', width + 'px', 'important');
+                th.style.setProperty('max-width', width + 'px', 'important');
+            }
+        });
+
+        table.style.setProperty('table-layout', 'fixed', 'important');
+        table.style.setProperty('width', total + 'px', 'important');
+        table.style.setProperty('min-width', total + 'px', 'important');
+
+        content.columns = columns;
+        setContent(root, content);
+    }
+
+    function updateColumnWidth(root, columnId, width) {
+        var content = getContent(root);
+        var columns = Array.isArray(content.columns) ? content.columns : [];
+
+        width = clampWidth(width);
 
         columns = columns.map(function (column) {
             if (String(column.id || '') === String(columnId)) {
@@ -162,124 +145,8 @@
         content.columns = columns;
         setContent(root, content);
 
-        applyTableWidth(root);
-        buildResizeLayer(root);
+        applyWidths(root);
         setDirty(root, true);
-    }
-
-    function removeResizeLayer(root) {
-        root.querySelectorAll('.sb-public-table-resize-layer').forEach(function (node) {
-            node.remove();
-        });
-    }
-
-    function buildResizeLayer(root) {
-        var wrap = root.querySelector('.sb-public-table-wrap');
-        var table = root.querySelector('.sb-public-table');
-
-        if (!wrap || !table) {
-            return;
-        }
-
-        removeResizeLayer(root);
-
-        wrap.style.position = 'relative';
-
-        var layer = document.createElement('div');
-        layer.className = 'sb-public-table-resize-layer';
-
-        var wrapRect = wrap.getBoundingClientRect();
-        var tableRect = table.getBoundingClientRect();
-
-        layer.style.position = 'absolute';
-        layer.style.left = '0';
-        layer.style.top = '0';
-        layer.style.width = Math.max(wrap.scrollWidth, wrap.clientWidth) + 'px';
-        layer.style.height = Math.max(table.offsetHeight, tableRect.height) + 'px';
-        layer.style.pointerEvents = 'none';
-        layer.style.zIndex = '20';
-
-        table.querySelectorAll('th[data-column-id]').forEach(function (th) {
-            var columnId = String(th.getAttribute('data-column-id') || '');
-
-            if (!columnId) {
-                return;
-            }
-
-            var thRect = th.getBoundingClientRect();
-
-            var handle = document.createElement('div');
-            handle.className = 'sb-public-table-resize-handle';
-            handle.setAttribute('data-resize-column-id', columnId);
-
-            var left = (thRect.right - wrapRect.left) + wrap.scrollLeft - 8;
-            var top = (tableRect.top - wrapRect.top) + wrap.scrollTop;
-
-            handle.style.position = 'absolute';
-            handle.style.left = left + 'px';
-            handle.style.top = top + 'px';
-            handle.style.width = '16px';
-            handle.style.height = Math.max(table.offsetHeight, tableRect.height) + 'px';
-            handle.style.cursor = 'col-resize';
-            handle.style.pointerEvents = 'auto';
-            handle.style.touchAction = 'none';
-
-            layer.appendChild(handle);
-        });
-
-        wrap.appendChild(layer);
-    }
-
-    function startResize(e, handle) {
-        e.preventDefault();
-        e.stopPropagation();
-
-        var root = handle.closest('[data-public-editable-table]');
-        var columnId = String(handle.getAttribute('data-resize-column-id') || '');
-
-        if (!root || !columnId) {
-            return;
-        }
-
-        var table = root.querySelector('.sb-public-table');
-
-        if (!table) {
-            return;
-        }
-
-        activeResize = {
-            root: root,
-            table: table,
-            columnId: columnId,
-            startX: getClientX(e),
-            startWidth: getColumnWidth(table, columnId)
-        };
-
-        document.body.classList.add('sb-public-table-resizing');
-    }
-
-    function moveResize(e) {
-        if (!activeResize) {
-            return;
-        }
-
-        e.preventDefault();
-
-        var diff = getClientX(e) - activeResize.startX;
-        var newWidth = activeResize.startWidth + diff;
-
-        updateColumnWidth(activeResize.root, activeResize.columnId, newWidth);
-    }
-
-    function stopResize() {
-        if (!activeResize) {
-            return;
-        }
-
-        buildResizeLayer(activeResize.root);
-
-        activeResize = null;
-        document.body.classList.remove('sb-public-table-resizing');
     }
 
     function saveBlock(root) {
@@ -342,25 +209,59 @@
             });
     }
 
-    function initTable(root) {
-        applyTableWidth(root);
-        buildResizeLayer(root);
+    function startResize(e, th) {
+        var root = th.closest('[data-public-editable-table]');
+        var table = root ? root.querySelector('.sb-public-table') : null;
+        var columnId = String(th.getAttribute('data-column-id') || '');
 
-        var wrap = root.querySelector('.sb-public-table-wrap');
-
-        if (wrap) {
-            wrap.addEventListener('scroll', function () {
-                buildResizeLayer(root);
-            });
+        if (!root || !table || !columnId) {
+            return;
         }
 
-        var saveBtn = root.querySelector('[data-table-save-widths]');
+        e.preventDefault();
+        e.stopPropagation();
 
-        if (saveBtn) {
-            saveBtn.addEventListener('click', function () {
+        activeResize = {
+            root: root,
+            table: table,
+            columnId: columnId,
+            startX: getClientX(e),
+            startWidth: getColumnCurrentWidth(table, columnId)
+        };
+
+        document.body.classList.add('sb-public-table-resizing');
+    }
+
+    function moveResize(e) {
+        if (!activeResize) {
+            return;
+        }
+
+        e.preventDefault();
+
+        var diff = getClientX(e) - activeResize.startX;
+        var newWidth = activeResize.startWidth + diff;
+
+        updateColumnWidth(activeResize.root, activeResize.columnId, newWidth);
+    }
+
+    function stopResize() {
+        if (!activeResize) {
+            return;
+        }
+
+        activeResize = null;
+        document.body.classList.remove('sb-public-table-resizing');
+    }
+
+    function initTable(root) {
+        applyWidths(root);
+
+        root.querySelectorAll('[data-table-save-widths]').forEach(function (btn) {
+            btn.addEventListener('click', function () {
                 saveBlock(root);
             });
-        }
+        });
     }
 
     function initAllTables() {
@@ -368,37 +269,52 @@
     }
 
     document.addEventListener('mousedown', function (e) {
-        var handle = e.target.closest('.sb-public-table-resize-handle');
+        var resizer = e.target.closest('[data-column-resizer]');
 
-        if (!handle) {
+        if (resizer) {
+            var thFromResizer = resizer.closest('th[data-column-id]');
+
+            if (thFromResizer) {
+                startResize(e, thFromResizer);
+            }
+
             return;
         }
 
-        startResize(e, handle);
+        var th = e.target.closest('.sb-public-table--editable th[data-column-id]');
+
+        if (!th) {
+            return;
+        }
+
+        var rect = th.getBoundingClientRect();
+        var distanceFromRight = rect.right - e.clientX;
+
+        if (distanceFromRight >= 0 && distanceFromRight <= 18) {
+            startResize(e, th);
+        }
     }, true);
 
     document.addEventListener('mousemove', moveResize, true);
     document.addEventListener('mouseup', stopResize, true);
 
     document.addEventListener('touchstart', function (e) {
-        var handle = e.target.closest('.sb-public-table-resize-handle');
+        var resizer = e.target.closest('[data-column-resizer]');
 
-        if (!handle) {
+        if (!resizer) {
             return;
         }
 
-        startResize(e, handle);
+        var th = resizer.closest('th[data-column-id]');
+
+        if (th) {
+            startResize(e, th);
+        }
     }, {capture: true, passive: false});
 
     document.addEventListener('touchmove', moveResize, {capture: true, passive: false});
     document.addEventListener('touchend', stopResize, true);
     document.addEventListener('touchcancel', stopResize, true);
-
-    window.addEventListener('resize', function () {
-        document.querySelectorAll('[data-public-editable-table]').forEach(function (root) {
-            buildResizeLayer(root);
-        });
-    });
 
     if (document.readyState === 'loading') {
         document.addEventListener('DOMContentLoaded', initAllTables);
@@ -407,26 +323,43 @@
     }
 })();
 
-2. Добавь стили поверх старых
+2. В конец public.css добавь
 
-В конец:
-
-/local/sitebuilder/assets/public/public.css
-
-добавь:
-
-.sb-public-table-resize-layer {
-    pointer-events: none;
+.sb-public-table--editable {
+    table-layout: fixed !important;
+    width: auto !important;
 }
 
-.sb-public-table-resize-handle {
-    background: rgba(37, 99, 235, .06);
-    border-left: 2px solid rgba(37, 99, 235, .45);
+.sb-public-table--editable th[data-column-id] {
+    position: relative !important;
+    user-select: none !important;
 }
 
-.sb-public-table-resize-handle:hover {
-    background: rgba(37, 99, 235, .14);
-    border-left-color: rgba(37, 99, 235, .95);
+.sb-public-table--editable th[data-column-id]:hover {
+    cursor: default;
+}
+
+.sb-public-table-resizer {
+    position: absolute !important;
+    top: 0 !important;
+    right: -8px !important;
+    width: 18px !important;
+    height: 100% !important;
+    cursor: col-resize !important;
+    z-index: 999 !important;
+    touch-action: none !important;
+    background: rgba(37, 99, 235, .08) !important;
+}
+
+.sb-public-table-resizer::after {
+    content: "" !important;
+    position: absolute !important;
+    top: 8px !important;
+    bottom: 8px !important;
+    left: 8px !important;
+    width: 2px !important;
+    border-radius: 99px !important;
+    background: rgba(37, 99, 235, .8) !important;
 }
 
 body.sb-public-table-resizing,
@@ -435,16 +368,22 @@ body.sb-public-table-resizing * {
     user-select: none !important;
 }
 
-3. Обнови версию подключения
+3. Обнови версии
 
 В public_page.php поставь:
 
-<script src="<?= sb_public_h($basePath) ?>/assets/public/table-edit.js?v=3"></script>
+<script src="<?= sb_public_h($basePath) ?>/assets/public/table-edit.js?v=4"></script>
 
 И CSS:
 
-<link rel="stylesheet" href="<?= sb_public_h($basePath) ?>/assets/public/public.css?v=15">
+<link rel="stylesheet" href="<?= sb_public_h($basePath) ?>/assets/public/public.css?v=16">
 
-Потом Ctrl + F5.
+После Ctrl + F5 открой консоль и проверь:
 
-Теперь на таблице должны появиться синие вертикальные полоски по границам столбцов. Тянуть нужно именно за них.
+window.SB_TABLE_EDIT_LOADED
+
+Должно вернуть:
+
+"v4-edge-resize"
+
+Если вернёт undefined или старую версию — браузер не подключил новый файл, поэтому оно и не двигается.
