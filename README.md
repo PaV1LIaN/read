@@ -1,269 +1,284 @@
-Идём дальше. Раз мы сделали Policy, следующий Laravel-like шаг — сделать helper can() / cannot() для views.
+Идём дальше. Сейчас сделаем наш Route::resource() ещё ближе к Laravel.
 
-В Laravel часто делают так:
+Сейчас resource-маршруты у нас такие:
 
-@can('update', $note)
-    <a>Изменить</a>
-@endcan
+GET     /notes/{id:\d+}/edit
+PUT     /notes/{id:\d+}
+DELETE  /notes/{id:\d+}
 
-У нас Blade нет, поэтому сделаем PHP-вариант:
+А в Laravel обычно так:
 
-<?php if (can('update', \Local\MvcDemo\Models\Note::class)): ?>
-    <a>Изменить</a>
-<?php endif; ?>
+GET     /notes/{note}/edit
+PUT     /notes/{note}
+DELETE  /notes/{note}
 
-То есть view сможет сам аккуратно скрывать кнопки, если прав нет.
+И контроллер:
 
+public function edit(Note $note): Response
 
----
+То есть название параметра совпадает с моделью:
 
-1. Обнови /local/mvc/helpers.php
+{note} → Note $note
 
-В конец файла добавь:
-
-if (!function_exists('can')) {
-    /**
-     * Laravel-like can()
-     *
-     * Пример:
-     * can('create', Note::class)
-     * can('update', $note)
-     */
-    function can(string $ability, object|string $subject): bool
-    {
-        try {
-            return \Local\Mvc\Support\Facades\Gate::allows($ability, $subject);
-        } catch (\Throwable $e) {
-            return false;
-        }
-    }
-}
-
-if (!function_exists('cannot')) {
-    /**
-     * Laravel-like cannot()
-     *
-     * Пример:
-     * cannot('delete', $note)
-     */
-    function cannot(string $ability, object|string $subject): bool
-    {
-        return !can($ability, $subject);
-    }
-}
-
-Теперь в любом view можно писать:
-
-can('create', \Local\MvcDemo\Models\Note::class)
+Сейчас сделаем так же.
 
 
 ---
 
-2. Обнови /local/mvc_demo/Policies/NotePolicy.php
+1. Обнови resource() в /local/mvc/Core/Router.php
 
-Сделаем методы update и delete чуть гибче: они смогут принимать и объект Note, и строку Note::class.
+Найди метод:
 
-Полностью замени файл:
+public function resource(string $path, string $controller, array $options = []): void
 
-<?php
+И замени его полностью на:
 
-namespace Local\MvcDemo\Policies;
-
-use Local\Mvc\Core\Auth;
-use Local\MvcDemo\Models\Note;
-
-/**
- * NotePolicy
- *
- * Правила доступа к заметкам.
- *
- * Для demo:
- * - смотреть список может авторизованный пользователь
- * - создавать, редактировать и удалять может только админ
- */
-class NotePolicy
+public function resource(string $path, string $controller, array $options = []): void
 {
-    public function viewAny(string $modelClass): bool
-    {
-        return Auth::check();
+    $path = '/' . trim($path, '/');
+
+    $resourceName = trim($path, '/');
+    $resourceName = str_replace('/', '.', $resourceName);
+
+    /**
+     * Laravel-like имя параметра.
+     *
+     * /notes  => {note}
+     * /users  => {user}
+     *
+     * Можно переопределить:
+     * Route::resource('/notes', NoteController::class, [
+     *     'parameter' => 'note',
+     * ]);
+     */
+    $parameter = (string)($options['parameter'] ?? $this->resourceParameterName($path));
+
+    $only = $options['only'] ?? [
+        'index',
+        'create',
+        'store',
+        'show',
+        'edit',
+        'update',
+        'destroy',
+    ];
+
+    $except = $options['except'] ?? [];
+    $middleware = $options['middleware'] ?? [];
+
+    if (!is_array($only)) {
+        $only = [$only];
     }
 
-    public function create(string $modelClass): bool
-    {
-        return Auth::isAdmin();
+    if (!is_array($except)) {
+        $except = [$except];
     }
 
-    public function update(Note|string $note): bool
-    {
-        return Auth::isAdmin();
+    if (!is_array($middleware)) {
+        $middleware = [$middleware];
     }
 
-    public function delete(Note|string $note): bool
-    {
-        return Auth::isAdmin();
+    $enabled = static function (string $action) use ($only, $except): bool {
+        return in_array($action, $only, true) && !in_array($action, $except, true);
+    };
+
+    $modelParam = '{' . $parameter . ':\d+}';
+
+    if ($enabled('index')) {
+        $this->get($path, [$controller, 'index'], $middleware, $resourceName . '.index');
+    }
+
+    if ($enabled('create')) {
+        $this->get($path . '/create', [$controller, 'create'], $middleware, $resourceName . '.create');
+    }
+
+    if ($enabled('store')) {
+        $this->post($path, [$controller, 'store'], $middleware, $resourceName . '.store');
+    }
+
+    if ($enabled('show')) {
+        $this->get($path . '/' . $modelParam, [$controller, 'show'], $middleware, $resourceName . '.show');
+    }
+
+    if ($enabled('edit')) {
+        $this->get($path . '/' . $modelParam . '/edit', [$controller, 'edit'], $middleware, $resourceName . '.edit');
+    }
+
+    if ($enabled('update')) {
+        $this->put($path . '/' . $modelParam, [$controller, 'update'], $middleware, $resourceName . '.update');
+    }
+
+    if ($enabled('destroy')) {
+        $this->delete($path . '/' . $modelParam, [$controller, 'destroy'], $middleware, $resourceName . '.destroy');
     }
 }
 
-Почему так?
-
-В контроллере мы проверяем конкретную модель:
-
-$this->authorize('update', $note);
-
-А во view иногда удобно проверить просто класс:
-
-can('update', Note::class)
-
 
 ---
 
-3. Обнови /local/mvc_demo/Views/notes/index.php
+2. В этот же Router.php добавь private-метод
 
-В самом верху после проверки B_PROLOG_INCLUDED добавь:
+Добавь внутрь класса Router, ближе к нижним private-методам:
 
-$canCreateNote = can('create', \Local\MvcDemo\Models\Note::class);
-$canUpdateNote = can('update', \Local\MvcDemo\Models\Note::class);
-$canDeleteNote = can('delete', \Local\MvcDemo\Models\Note::class);
+private function resourceParameterName(string $path): string
+{
+    $path = trim($path, '/');
 
-Должно быть примерно так:
+    if ($path === '') {
+        return 'id';
+    }
 
-<?php
+    $parts = explode('/', $path);
+    $last = (string)end($parts);
 
-if (!defined('B_PROLOG_INCLUDED') || B_PROLOG_INCLUDED !== true) {
-    die();
+    $last = str_replace('-', '_', $last);
+
+    /**
+     * Очень простое превращение множественного числа в единственное:
+     * notes => note
+     * users => user
+     *
+     * Для сложных слов можно использовать option:
+     * 'parameter' => 'category'
+     */
+    if (str_ends_with($last, 'ies')) {
+        return substr($last, 0, -3) . 'y';
+    }
+
+    if (str_ends_with($last, 's')) {
+        return substr($last, 0, -1);
+    }
+
+    return $last;
 }
 
-$canCreateNote = can('create', \Local\MvcDemo\Models\Note::class);
-$canUpdateNote = can('update', \Local\MvcDemo\Models\Note::class);
-$canDeleteNote = can('delete', \Local\MvcDemo\Models\Note::class);
+Теперь:
 
-?>
+Route::resource('/notes', NoteController::class)
 
+создаст параметр:
 
----
-
-4. Спрячь форму создания от тех, кто не может создавать
-
-Найди блок с формой создания заметки:
-
-<div class="mvc-info">
-    <form method="post" action="<?= e(route('notes.store')) ?>">
-        ...
-    </form>
-</div>
-
-Оберни его так:
-
-<?php if ($canCreateNote): ?>
-    <div class="mvc-info">
-        <form method="post" action="<?= e(route('notes.store')) ?>">
-            <?= csrf_field() ?>
-
-            <div style="margin-bottom: 14px;">
-                <label style="display:block;margin-bottom:6px;font-weight:600;">
-                    Название
-                </label>
-
-                <input
-                    type="text"
-                    name="title"
-                    value="<?= e(old('title')) ?>"
-                    style="width:100%;min-height:42px;padding:8px 12px;border:1px solid #d1d5db;border-radius:10px;"
-                >
-            </div>
-
-            <div style="margin-bottom: 14px;">
-                <label style="display:block;margin-bottom:6px;font-weight:600;">
-                    Текст
-                </label>
-
-                <textarea
-                    name="body"
-                    rows="4"
-                    style="width:100%;padding:8px 12px;border:1px solid #d1d5db;border-radius:10px;"
-                ><?= e(old('body')) ?></textarea>
-            </div>
-
-            <button
-                type="submit"
-                style="min-height:42px;padding:0 18px;border:0;border-radius:10px;background:#2563eb;color:#fff;font-weight:600;cursor:pointer;"
-            >
-                Создать заметку
-            </button>
-        </form>
-    </div>
-<?php else: ?>
-    <div class="mvc-info" style="border-color:#fde68a;background:#fffbeb;color:#92400e;">
-        У вас нет прав на создание заметок.
-    </div>
-<?php endif; ?>
+{note:\d+}
 
 
 ---
 
-5. Спрячь кнопку Factory
+3. Обнови Route Model Binding в /local/mvc/Core/Container.php
 
-Если ты добавлял блок:
+Найди в resolveParameters() кусок, где мы делали Model Binding:
 
-<form method="post" action="<?= e(route('notes.factory')) ?>">
+if (is_subclass_of($className, Model::class) && array_key_exists('id', $parameters)) {
+    $model = $className::findModel($parameters['id']);
 
-оберни его так:
+    if (!$model instanceof Model) {
+        throw new ModelNotFoundException($className, $parameters['id']);
+    }
 
-<?php if ($canCreateNote): ?>
-    <div class="mvc-info">
-        <form method="post" action="<?= e(route('notes.factory')) ?>">
-            <?= csrf_field() ?>
+    $dependencies[] = $model;
+    continue;
+}
 
-            <button
-                type="submit"
-                style="min-height:42px;padding:0 18px;border:0;border-radius:10px;background:#7c3aed;color:#fff;font-weight:600;cursor:pointer;"
-            >
-                Создать 5 заметок через Factory
-            </button>
-        </form>
-    </div>
-<?php endif; ?>
+Замени на:
+
+if (is_subclass_of($className, Model::class)) {
+    /**
+     * Laravel-like Route Model Binding.
+     *
+     * 1. Сначала ищем параметр по имени аргумента:
+     *    public function edit(Note $note)
+     *    маршрут: /notes/{note}
+     *
+     * 2. Потом fallback на старый вариант:
+     *    /notes/{id}
+     */
+    $modelId = null;
+
+    if (array_key_exists($name, $parameters)) {
+        $modelId = $parameters[$name];
+    } elseif (array_key_exists('id', $parameters)) {
+        $modelId = $parameters['id'];
+    } elseif (count($parameters) === 1) {
+        $modelId = reset($parameters);
+    }
+
+    if ($modelId !== null) {
+        $model = $className::findModel($modelId);
+
+        if (!$model instanceof Model) {
+            throw new ModelNotFoundException($className, $modelId);
+        }
+
+        $dependencies[] = $model;
+        continue;
+    }
+}
+
+Теперь контейнер понимает оба варианта:
+
+{id}
+{note}
+
+Но Laravel-like вариант — это {note}.
 
 
 ---
 
-6. Обнови колонку действий
+4. Обнови ссылки в /local/mvc_demo/Views/notes/index.php
 
-В таблице найди колонку с кнопками Изменить и Удалить.
+Теперь маршруты ждут параметр note, а не id.
 
-Сделай так:
+Найди:
 
-<td style="padding:8px;border-bottom:1px solid #e5e7eb;">
-    <?php if ($canUpdateNote || $canDeleteNote): ?>
-        <div style="display:flex;gap:8px;align-items:center;">
-            <?php if ($canUpdateNote): ?>
-                <a
-                    href="<?= e(route('notes.edit', ['id' => (int)($note['id'] ?? 0)])) ?>"
-                    style="padding:6px 10px;border-radius:8px;background:#2563eb;color:#fff;text-decoration:none;"
-                >
-                    Изменить
-                </a>
-            <?php endif; ?>
+route('notes.edit', ['id' => (int)($note['id'] ?? 0)])
 
-            <?php if ($canDeleteNote): ?>
-                <form method="post" action="<?= e(route('notes.destroy', ['id' => (int)($note['id'] ?? 0)])) ?>" style="margin:0;">
-                    <?= csrf_field() ?>
-                    <?= method_field('DELETE') ?>
+Замени на:
 
-                    <button
-                        type="submit"
-                        onclick="return confirm('Удалить заметку?')"
-                        style="padding:6px 10px;border:0;border-radius:8px;background:#dc2626;color:#fff;cursor:pointer;"
-                    >
-                        Удалить
-                    </button>
-                </form>
-            <?php endif; ?>
-        </div>
-    <?php else: ?>
-        <span style="color:#9ca3af;">Нет действий</span>
-    <?php endif; ?>
-</td>
+route('notes.edit', ['note' => (int)($note['id'] ?? 0)])
+
+Найди:
+
+route('notes.destroy', ['id' => (int)($note['id'] ?? 0)])
+
+Замени на:
+
+route('notes.destroy', ['note' => (int)($note['id'] ?? 0)])
+
+
+---
+
+5. Обнови ссылку в /local/mvc_demo/Views/notes/edit.php
+
+Найди:
+
+route('notes.update', ['id' => $noteId])
+
+Замени на:
+
+route('notes.update', ['note' => $noteId])
+
+
+---
+
+6. Проверь routes.php
+
+Блок должен остаться таким:
+
+Route::post('/notes/factory', [NoteController::class, 'factory'])
+    ->middleware(['auth', 'admin', 'csrf'])
+    ->name('notes.factory');
+
+Route::resource('/notes', NoteController::class, [
+    'only' => [
+        'index',
+        'store',
+        'edit',
+        'update',
+        'destroy',
+    ],
+    'middleware' => ['csrf'],
+]);
+
+Важно: notes.factory должен быть выше Route::resource('/notes', ...).
 
 
 ---
@@ -277,42 +292,63 @@ echo 'OPcache reset OK';
 
 Открой:
 
+/local/mvc_demo/debug/routes
+
+Теперь маршруты должны стать такими:
+
+GET     /notes                    notes.index
+POST    /notes                    notes.store
+GET     /notes/{note:\d+}/edit    notes.edit
+PUT     /notes/{note:\d+}         notes.update
+DELETE  /notes/{note:\d+}         notes.destroy
+
+Потом проверь:
+
 /local/mvc_demo/notes
 
-Если ты админ — кнопки создания, изменения, удаления должны быть видны.
+Сценарии:
 
-Если зайти обычным пользователем:
+1. Изменить заметку.
+2. Сохранить.
+3. Удалить.
+4. Открыть несуществующую заметку:
+   /local/mvc_demo/notes/999999/edit
 
-Создать заметку — скрыто
-Factory — скрыто
-Изменить / удалить — скрыто
+Для несуществующей заметки должен быть 404.
 
 
 ---
 
 Что мы сделали
 
-Раньше права проверялись только в контроллере:
+Раньше было просто:
 
-$this->authorize('update', $note);
+/notes/{id}
 
-Теперь view тоже может аккуратно проверять права:
+Теперь Laravel-like:
 
-can('update', Note::class)
+/notes/{note}
+
+И контроллер выглядит как в Laravel:
+
+public function edit(Note $note): Response
+{
+    //
+}
+
+public function update(Note $note, UpdateNoteRequest $request): Response
+{
+    //
+}
+
+public function destroy(Note $note): Response
+{
+    //
+}
 
 Главная мысль:
 
-Policy защищает действие.
-can() помогает не показывать лишние кнопки.
+{note} из URL превращается в объект Note.
+Контроллер получает уже готовую модель.
 
-Это похоже на Laravel:
-
-@can('update', $note)
-    ...
-@endcan
-
-Только у нас пока PHP-вариант:
-
-<?php if (can('update', Note::class)): ?>
-    ...
-<?php endif; ?>
+Это прям очень близко к Laravel Route Model Binding.
