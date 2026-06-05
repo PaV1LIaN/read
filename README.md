@@ -1,516 +1,991 @@
+* {
+    box-sizing: border-box;
+}
 
-/** @var array $vm */
+html,
+body {
+    margin: 0;
+    padding: 0;
+}
 
-$site = $vm['site'];
-$pages = $vm['pages'];
-$currentPage = $vm['currentPage'];
-$pageBlocks = $vm['pageBlocks'];
-$layout = $vm['layout'];
-$menu = $vm['menu'];
-$basePath = $vm['basePath'];
-$siteId = (int)$vm['siteId'];
+body {
+    font-family: Arial, sans-serif;
+    color: #1f2937;
+    background: #f5f7fb;
+    line-height: 1.5;
+}
 
-if (!function_exists('sb_public_appearance_file_url')) {
-    function sb_public_appearance_file_url(int $fileId): string
-    {
-        if ($fileId <= 0 || !class_exists('CFile')) {
-            return '';
-        }
+a {
+    color: var(--sb-accent);
+}
 
-        return (string)CFile::GetPath($fileId);
+.sb-public-shell {
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+}
+
+.sb-container {
+    width: 100%;
+    max-width: var(--sb-container-width);
+    margin: 0 auto;
+    padding: 0 20px;
+}
+
+.sb-public-header,
+.sb-public-footer {
+    background: #ffffff;
+    border-bottom: 1px solid #e5e7eb;
+}
+
+.sb-public-footer {
+    border-top: 1px solid #e5e7eb;
+    border-bottom: 0;
+    margin-top: auto;
+}
+
+.sb-public-header .sb-container,
+.sb-public-footer .sb-container {
+    padding-top: 18px;
+    padding-bottom: 18px;
+}
+
+.sb-public-main .sb-container {
+    padding-top: 24px;
+    padding-bottom: 24px;
+}
+
+.sb-brand {
+    font-size: 28px;
+    font-weight: 700;
+    color: var(--sb-accent);
+    margin-bottom: 14px;
+}
+
+.sb-public-menu {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+}
+
+.sb-public-menu__link {
+    display: inline-flex;
+    align-items: center;
+    min-height: 38px;
+    text-decoration: none;
+    color: var(--sb-accent);
+    font-weight: 600;
+    padding: 8px 12px;
+    border-radius: 10px;
+    transition: background .15s ease, color .15s ease;
+}
+
+.sb-public-menu__link:hover {
+    background: #eef2ff;
+}
+
+.sb-layout {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 20px;
+    align-items: start;
+}
+
+.sb-layout.sb-layout--left {
+    grid-template-columns: var(--sb-left-width) 1fr;
+}
+
+.sb-layout.sb-layout--right {
+    grid-template-columns: 1fr var(--sb-right-width);
+}
+
+.sb-layout.sb-layout--left.sb-layout--right {
+    grid-template-columns: var(--sb-left-width) 1fr var(--sb-right-width);
+}
+
+.sb-sidebar,
+.sb-content {
+    min-width: 0;
+}
+
+.sb-box {
+    background: #ffffff;
+    border: 1px solid #e5e7eb;
+    border-radius: 16px;
+    padding: 18px;
+    box-shadow: 0 2px 8px rgba(15, 23, 42, 0.04);
+}
+
+.sb-box--content {
+    padding: 24px;
+}
+
+.sb-page-title {
+    margin: 0 0 24px;
+    font-size: 20px;
+    line-height: 1.15;
+    font-weight: 700;
+    color: #111827;
+}
+
+.sb-block {
+    margin: 0 0 18px;
+}
+
+.sb-block:last-child {
+    margin-bottom: 0;
+}
+
+.sb-block__inner {
+    min-width: 0;
+}
+
+.sb-text {
+    font-size: 16px;
+    line-height: 1.7;
+    color: #374151;
+}
+
+.sb-text p {
+    margin: 0 0 14px;
+}
+
+.sb-text p:last-child {
+    margin-bottom: 0;
+}
+
+.sb-text ul,
+.sb-text ol {
+    margin: 0 0 14px 20px;
+    padding: 0;
+}
+
+.sb-text li + li {
+    margin-top: 6px;
+}
+
+.sb-heading {
+    margin: 0 0 12px;
+    line-height: 1.2;
+    color: #111827;
+}
+
+.sb-heading--h1 {
+    font-size: 40px;
+}
+
+.sb-heading--h2 {
+    font-size: 32px;
+}
+
+.sb-heading--h3 {
+    font-size: 26px;
+}
+
+.sb-heading--h4 {
+    font-size: 22px;
+}
+
+.sb-heading--h5 {
+    font-size: 18px;
+}
+
+.sb-heading--h6 {
+    font-size: 16px;
+}
+
+.sb-button-wrap {
+    margin: 0;
+}
+
+.sb-button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 42px;
+    padding: 12px 18px;
+    border-radius: 12px;
+    background: var(--sb-accent);
+    color: #ffffff;
+    text-decoration: none;
+    font-weight: 700;
+    transition: opacity .15s ease, transform .15s ease;
+}
+
+.sb-button:hover {
+    opacity: 0.94;
+    transform: translateY(-1px);
+}
+
+.sb-empty {
+    padding: 18px;
+    border: 1px dashed #d1d5db;
+    border-radius: 12px;
+    color: #6b7280;
+    background: #ffffff;
+}
+
+.sb-footer-note {
+    color: #6b7280;
+    font-size: 14px;
+}
+
+.sb-sidebar .sb-public-menu {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.sb-sidebar .sb-public-menu__link {
+    width: 100%;
+    border-radius: 10px;
+    padding: 10px 12px;
+}
+
+.sb-sidebar .sb-public-menu__link:hover {
+    background: #f3f4f6;
+}
+
+.sb-block--html table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 0 0 14px;
+    font-size: 14px;
+}
+
+.sb-block--html table th,
+.sb-block--html table td {
+    border: 1px solid #d1d5db;
+    padding: 10px 12px;
+    text-align: left;
+    vertical-align: top;
+}
+
+.sb-block--html table th {
+    background: #f9fafb;
+    font-weight: 700;
+}
+
+.sb-block--html img {
+    max-width: 100%;
+    height: auto;
+    border-radius: 12px;
+}
+
+.sb-block--html iframe {
+    max-width: 100%;
+}
+
+.sb-block--html pre {
+    overflow: auto;
+    background: #111827;
+    color: #f9fafb;
+    padding: 14px;
+    border-radius: 12px;
+    font-size: 13px;
+}
+
+.sb-block--html code {
+    font-family: Consolas, Monaco, monospace;
+}
+
+.sb-breadcrumbs {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    align-items: center;
+    margin-bottom: 16px;
+    font-size: 14px;
+    color: #6b7280;
+}
+
+.sb-breadcrumbs__link {
+    color: var(--sb-accent);
+    text-decoration: none;
+}
+
+.sb-breadcrumbs__sep {
+    color: #9ca3af;
+}
+
+.sb-breadcrumbs__current {
+    color: #111827;
+    font-weight: 600;
+}
+
+.sb-section-nav {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.sb-section-nav__title-row {
+    padding-bottom: 4px;
+    border-bottom: 1px solid #f1f5f9;
+}
+
+.sb-section-nav__root-link {
+    display: inline-flex;
+    align-items: center;
+    text-decoration: none;
+    color: #111827;
+    font-size: 14px;
+    font-weight: 700;
+}
+
+.sb-section-nav__root-link:hover {
+    color: var(--sb-accent);
+}
+
+.sb-section-nav__tree {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.sb-tree-node {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.sb-tree-node__row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding-left: calc(var(--sb-nav-depth, 0) * 16px);
+}
+
+.sb-tree-node__toggle {
+    width: 18px;
+    min-width: 18px;
+    height: 18px;
+    border: 0;
+    border-radius: 4px;
+    background: transparent;
+    cursor: pointer;
+    position: relative;
+    padding: 0;
+    flex: 0 0 18px;
+}
+
+.sb-tree-node__toggle:hover {
+    background: #f3f4f6;
+}
+
+.sb-tree-node__toggle--empty {
+    cursor: default;
+    pointer-events: none;
+}
+
+.sb-tree-node__toggle-icon {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 6px;
+    height: 6px;
+    border-right: 2px solid #64748b;
+    border-bottom: 2px solid #64748b;
+    transform: translate(-50%, -60%) rotate(45deg);
+    transition: transform .15s ease;
+}
+
+.sb-tree-node.is-open > .sb-tree-node__row .sb-tree-node__toggle-icon {
+    transform: translate(-50%, -40%) rotate(225deg);
+}
+
+.sb-tree-node__children {
+    display: none;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.sb-tree-node.is-open > .sb-tree-node__children {
+    display: flex;
+}
+
+.sb-section-nav__link {
+    display: flex;
+    align-items: center;
+    min-height: 34px;
+    width: 100%;
+    text-decoration: none;
+    color: #374151;
+    padding: 6px 10px;
+    border-radius: 8px;
+    background: transparent;
+    border: 1px solid transparent;
+    transition: background .15s ease, color .15s ease, border-color .15s ease;
+}
+
+.sb-section-nav__link:hover {
+    background: #f8fafc;
+    border-color: #eef2f7;
+}
+
+.sb-section-nav__link.is-active {
+    color: var(--sb-accent);
+    background: #eef2ff;
+    border-color: #c7d2fe;
+    font-weight: 600;
+}
+
+.sb-section-nav__text {
+    display: inline-block;
+    font-size: 14px;
+    line-height: 1.35;
+}
+
+.sb-child-pages {
+    margin: 0 0 24px;
+}
+
+.sb-child-pages__title {
+    margin: 0 0 14px;
+    font-size: 20px;
+    line-height: 1.2;
+}
+
+.sb-child-pages__grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 14px;
+}
+
+.sb-child-pages__card {
+    display: block;
+    text-decoration: none;
+    color: inherit;
+    padding: 16px;
+    border-radius: 14px;
+    background: #f9fafb;
+    border: 1px solid #e5e7eb;
+    transition: transform .15s ease, box-shadow .15s ease, border-color .15s ease;
+}
+
+.sb-child-pages__card:hover {
+    transform: translateY(-1px);
+    border-color: #c7d2fe;
+    box-shadow: 0 4px 14px rgba(37, 99, 235, 0.08);
+}
+
+.sb-child-pages__name {
+    font-weight: 700;
+    margin-bottom: 6px;
+    color: #111827;
+}
+
+.sb-child-pages__slug {
+    color: #6b7280;
+    font-size: 13px;
+}
+
+@media (max-width: 1000px) {
+    .sb-layout,
+    .sb-layout.sb-layout--left,
+    .sb-layout.sb-layout--right,
+    .sb-layout.sb-layout--left.sb-layout--right {
+        grid-template-columns: 1fr;
+    }
+
+    .sb-page-title {
+        font-size: 28px;
+    }
+
+    .sb-heading--h1 {
+        font-size: 32px;
+    }
+
+    .sb-heading--h2 {
+        font-size: 26px;
+    }
+
+    .sb-box,
+    .sb-box--content {
+        padding: 18px;
     }
 }
 
-if (!function_exists('sb_public_appearance_color')) {
-    function sb_public_appearance_color(string $color, string $fallback): string
-    {
-        $color = trim($color);
+@media (max-width: 640px) {
+    .sb-container {
+        padding: 0 14px;
+    }
 
-        if (preg_match('/^#[0-9a-fA-F]{6}$/', $color) || preg_match('/^#[0-9a-fA-F]{3}$/', $color)) {
-            return strtolower($color);
-        }
+    .sb-public-header .sb-container,
+    .sb-public-footer .sb-container {
+        padding-top: 14px;
+        padding-bottom: 14px;
+    }
 
-        return $fallback;
+    .sb-public-main .sb-container {
+        padding-top: 16px;
+        padding-bottom: 16px;
+    }
+
+    .sb-brand {
+        font-size: 24px;
+    }
+
+    .sb-page-title {
+        font-size: 24px;
+        margin-bottom: 18px;
+    }
+
+    .sb-public-menu {
+        gap: 8px;
+    }
+
+    .sb-public-menu__link {
+        min-height: 34px;
+        padding: 7px 10px;
+        font-size: 14px;
     }
 }
 
-if (!function_exists('sb_public_appearance_background_size')) {
-    function sb_public_appearance_background_size(string $mode): string
-    {
-        switch ($mode) {
-            case 'contain':
-                return 'contain';
+.sb-public-menu {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-wrap: wrap;
+}
 
-            case 'auto':
-                return 'auto';
+.sb-public-menu__item {
+    position: relative;
+}
 
-            case 'stretch':
-                return '100% 100%';
+.sb-public-menu__link {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    min-height: 36px;
+    padding: 0 12px;
+    border-radius: 10px;
+    color: #111827;
+    text-decoration: none;
+    font-size: 14px;
+    font-weight: 600;
+    transition: background .15s ease, color .15s ease;
+}
 
-            case 'cover':
-            default:
-                return 'cover';
-        }
+.sb-public-menu__link:hover,
+.sb-public-menu__item.is-active > .sb-public-menu__link {
+    background: rgba(37, 99, 235, 0.08);
+    color: var(--sb-accent, #2563eb);
+}
+
+.sb-public-menu__arrow {
+    font-size: 11px;
+    opacity: .7;
+}
+
+.sb-public-menu__dropdown {
+    position: absolute;
+    left: 0;
+    top: calc(100% + 6px);
+    z-index: 50;
+    min-width: 220px;
+    display: none;
+    flex-direction: column;
+    gap: 2px;
+    padding: 8px;
+    border: 1px solid #e5e7eb;
+    border-radius: 14px;
+    background: #fff;
+    box-shadow: 0 18px 45px rgba(15, 23, 42, .14);
+}
+
+.sb-public-menu__dropdown .sb-public-menu__item {
+    width: 100%;
+}
+
+.sb-public-menu__dropdown .sb-public-menu__link {
+    width: 100%;
+    justify-content: space-between;
+    min-height: 34px;
+    padding: 0 10px;
+    border-radius: 9px;
+    white-space: nowrap;
+}
+
+.sb-public-menu__item:hover > .sb-public-menu__dropdown {
+    display: flex;
+}
+
+.sb-public-menu__dropdown .sb-public-menu__dropdown {
+    left: calc(100% + 8px);
+    top: 0;
+}
+
+@media (max-width: 760px) {
+    .sb-public-menu {
+        align-items: stretch;
+        width: 100%;
+        flex-direction: column;
+        gap: 4px;
+    }
+
+    .sb-public-menu__item {
+        width: 100%;
+    }
+
+    .sb-public-menu__link {
+        width: 100%;
+        justify-content: space-between;
+    }
+
+    .sb-public-menu__dropdown {
+        position: static;
+        display: flex;
+        box-shadow: none;
+        border-radius: 12px;
+        margin: 4px 0 4px 12px;
+        min-width: 0;
+    }
+
+    .sb-public-menu__dropdown .sb-public-menu__dropdown {
+        position: static;
+        margin-left: 12px;
     }
 }
 
-if (!function_exists('sb_public_appearance_background_position')) {
-    function sb_public_appearance_background_position(string $position): string
-    {
-        $allowed = [
-            'center center',
-            'top center',
-            'bottom center',
-            'left center',
-            'right center',
-        ];
+.sb-public-root {
+    min-height: 100vh;
+    background-attachment: fixed;
+}
 
-        return in_array($position, $allowed, true) ? $position : 'center center';
+.sb-public-header {
+    background: rgba(255, 255, 255, .92);
+    backdrop-filter: blur(10px);
+}
+
+.sb-public-brand {
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    min-width: 0;
+    color: #111827;
+    text-decoration: none;
+    font-weight: 800;
+}
+
+.sb-public-brand:hover {
+    color: var(--sb-accent, #2563eb);
+}
+
+.sb-public-brand__logo {
+    width: 42px;
+    height: 42px;
+    border-radius: 12px;
+    overflow: hidden;
+    background: #fff;
+    border: 1px solid #e5e7eb;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex: 0 0 auto;
+}
+
+.sb-public-brand__logo img {
+    max-width: 100%;
+    max-height: 100%;
+    object-fit: contain;
+    display: block;
+}
+
+.sb-public-brand__text {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.sb-public-main,
+.sb-public-page,
+.sb-public-content {
+    position: relative;
+}
+
+@media (max-width: 760px) {
+    .sb-public-root {
+        background-attachment: scroll;
+    }
+
+    .sb-public-brand__logo {
+        width: 36px;
+        height: 36px;
+        border-radius: 10px;
     }
 }
 
-if (!function_exists('sb_public_appearance_background_repeat')) {
-    function sb_public_appearance_background_repeat(string $repeat): string
-    {
-        $allowed = [
-            'no-repeat',
-            'repeat',
-            'repeat-x',
-            'repeat-y',
-        ];
+.sb-public-shell {
+    min-height: 100vh;
+    background-attachment: fixed;
+}
 
-        return in_array($repeat, $allowed, true) ? $repeat : 'no-repeat';
+.sb-brand {
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    min-width: 0;
+}
+
+.sb-brand__logo {
+    width: 42px;
+    height: 42px;
+    border-radius: 12px;
+    overflow: hidden;
+    background: #fff;
+    border: 1px solid #e5e7eb;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex: 0 0 auto;
+}
+
+.sb-brand__logo img {
+    max-width: 100%;
+    max-height: 100%;
+    object-fit: contain;
+    display: block;
+}
+
+.sb-brand__text {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* =========================================================
+   BRAND / LOGO SIZE / LONG SITE NAME FIX
+   ========================================================= */
+
+.sb-public-header .sb-container {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 18px;
+    min-width: 0;
+}
+
+.sb-brand {
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    min-width: 0;
+    max-width: 55%;
+    flex: 1 1 auto;
+    flex-wrap: nowrap;
+}
+
+.sb-brand__logo {
+    width: var(--sb-logo-size, 42px);
+    height: var(--sb-logo-size, 42px);
+    min-width: var(--sb-logo-size, 42px);
+    max-width: var(--sb-logo-size, 42px);
+    min-height: var(--sb-logo-size, 42px);
+    max-height: var(--sb-logo-size, 42px);
+    flex: 0 0 var(--sb-logo-size, 42px);
+}
+
+.sb-brand__text {
+    display: block;
+    min-width: 0;
+    max-width: 100%;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.sb-public-menu {
+    flex: 0 1 auto;
+    min-width: 0;
+}
+
+/* =========================================================
+   HEADER FIX: бренд сверху, меню под ним
+   ========================================================= */
+
+.sb-public-header .sb-container.sb-header-container {
+    display: flex !important;
+    flex-direction: column !important;
+    align-items: flex-start !important;
+    justify-content: flex-start !important;
+    gap: 10px !important;
+    min-width: 0 !important;
+}
+
+.sb-header-brand-row {
+    width: 100%;
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    justify-content: flex-start;
+    gap: 16px;
+}
+
+.sb-header-custom {
+	display: flex;
+	margin-right: 100px; 
+    min-width: 0;
+    flex: 1 1 auto;
+	flex-direction: row-reverse;
+}
+
+.sb-header-menu-row {
+    width: 100%;
+    min-width: 0;
+    display: flex;
+    justify-content: flex-start;
+}
+
+.sb-header-menu-row .sb-public-menu {
+    justify-content: flex-start !important;
+    align-items: center;
+    width: auto;
+    max-width: 100%;
+}
+
+.sb-brand {
+    display: inline-flex !important;
+    align-items: center !important;
+    justify-content: flex-start !important;
+    gap: 10px !important;
+    min-width: 0 !important;
+    max-width: 100% !important;
+    flex: 0 1 auto !important;
+    flex-wrap: nowrap !important;
+}
+
+.sb-brand__logo {
+    width: var(--sb-logo-size, 42px) !important;
+    height: var(--sb-logo-size, 42px) !important;
+    min-width: var(--sb-logo-size, 42px) !important;
+    max-width: var(--sb-logo-size, 42px) !important;
+    min-height: var(--sb-logo-size, 42px) !important;
+    max-height: var(--sb-logo-size, 42px) !important;
+    flex: 0 0 var(--sb-logo-size, 42px) !important;
+}
+
+.sb-brand__text {
+    display: block !important;
+    min-width: 0 !important;
+    max-width: min(760px, calc(100vw - 160px)) !important;
+    white-space: nowrap !important;
+    overflow: hidden !important;
+    text-overflow: ellipsis !important;
+}
+
+/* Перебиваем старое правило, которое уводило меню вправо */
+.sb-public-header .sb-public-menu {
+    margin-left: 0 !important;
+}
+
+@media (max-width: 760px) {
+    .sb-header-brand-row {
+        align-items: flex-start;
+        flex-direction: column;
+        gap: 10px;
+    }
+
+    .sb-brand {
+        width: 100% !important;
+    }
+
+    .sb-brand__text {
+        max-width: calc(100vw - 96px) !important;
+    }
+
+    .sb-header-menu-row {
+        width: 100%;
+    }
+
+    .sb-header-menu-row .sb-public-menu {
+        width: 100%;
     }
 }
 
-if (!function_exists('sb_public_appearance_get')) {
-    function sb_public_appearance_get(array $site, array $vm): array
-    {
-        $settings = is_array($site['settings'] ?? null) ? $site['settings'] : [];
+@media (max-width: 760px) {
+    .sb-public-header .sb-container {
+        align-items: flex-start;
+        flex-direction: column;
+    }
 
-        $logoFileId = (int)($settings['logoFileId'] ?? 0);
-        $backgroundFileId = (int)($settings['backgroundFileId'] ?? 0);
+    .sb-brand {
+        max-width: 100%;
+        width: 100%;
+    }
 
-        $headerLogoMode = (string)($settings['headerLogoMode'] ?? 'image');
-        if (!in_array($headerLogoMode, ['image', 'text', 'both'], true)) {
-            $headerLogoMode = 'image';
-        }
-
-        return [
-            'accent' => sb_public_appearance_color(
-                (string)($settings['accent'] ?? ($vm['accent'] ?? '#2563eb')),
-                '#2563eb'
-            ),
-
-            'logoFileId' => $logoFileId,
-            'logoUrl' => sb_public_appearance_file_url($logoFileId),
-
-            'backgroundFileId' => $backgroundFileId,
-            'backgroundUrl' => sb_public_appearance_file_url($backgroundFileId),
-
-            'backgroundColor' => sb_public_appearance_color(
-                (string)($settings['backgroundColor'] ?? '#f8fafc'),
-                '#f8fafc'
-            ),
-
-            'backgroundMode' => (string)($settings['backgroundMode'] ?? 'cover'),
-
-            'backgroundPosition' => sb_public_appearance_background_position(
-                (string)($settings['backgroundPosition'] ?? 'center center')
-            ),
-
-            'backgroundRepeat' => sb_public_appearance_background_repeat(
-                (string)($settings['backgroundRepeat'] ?? 'no-repeat')
-            ),
-
-            'headerLogoMode' => $headerLogoMode,
-
-            'logoSize' => max(24, min(160, (int)($settings['logoSize'] ?? 42))),
-        ];
+    .sb-public-menu {
+        width: 100%;
     }
 }
 
-if (!function_exists('sb_public_appearance_style')) {
-    function sb_public_appearance_style(array $appearance): string
-    {
-        $styles = [];
+@media (max-width: 760px) {
+    .sb-public-shell {
+        background-attachment: scroll;
+    }
 
-        $styles[] = '--sb-accent: ' . sb_public_h((string)($appearance['accent'] ?? '#2563eb'));
-        $styles[] = '--sb-logo-size: ' . max(24, min(160, (int)($appearance['logoSize'] ?? 42))) . 'px';
-        $styles[] = 'background-color: ' . sb_public_h((string)($appearance['backgroundColor'] ?? '#f8fafc'));
-
-        $backgroundUrl = (string)($appearance['backgroundUrl'] ?? '');
-
-        if ($backgroundUrl !== '') {
-            $styles[] = 'background-image: url("' . sb_public_h($backgroundUrl) . '")';
-            $styles[] = 'background-size: ' . sb_public_appearance_background_size((string)($appearance['backgroundMode'] ?? 'cover'));
-            $styles[] = 'background-position: ' . sb_public_h((string)($appearance['backgroundPosition'] ?? 'center center'));
-            $styles[] = 'background-repeat: ' . sb_public_h((string)($appearance['backgroundRepeat'] ?? 'no-repeat'));
-        }
-
-        return implode('; ', $styles);
+    .sb-brand__logo {
+        width: 36px;
+        height: 36px;
+        border-radius: 10px;
     }
 }
 
-if (!function_exists('sb_public_appearance_brand')) {
-    function sb_public_appearance_brand(array $site, array $appearance): string
-    {
-        $siteName = (string)($site['name'] ?? 'SiteBuilder');
-        $logoUrl = (string)($appearance['logoUrl'] ?? '');
-        $mode = (string)($appearance['headerLogoMode'] ?? 'image');
+/* =========================================================
+   SITEBUILDER PAGE SECTIONS FIX
+   Секции и колонки на публичной странице. Добавлено в конец,
+   чтобы не ломать существующий визуал сайта.
+   ========================================================= */
 
-        if (!in_array($mode, ['image', 'text', 'both'], true)) {
-            $mode = 'image';
-        }
-
-        $html = '';
-
-        if (($mode === 'image' || $mode === 'both') && $logoUrl !== '') {
-            $html .= '<span class="sb-brand__logo">';
-            $html .= '<img src="' . sb_public_h($logoUrl) . '" alt="' . sb_public_h($siteName) . '">';
-            $html .= '</span>';
-        }
-
-        if ($mode === 'text' || $mode === 'both' || $logoUrl === '') {
-            $html .= '<span class="sb-brand__text">' . sb_public_h($siteName) . '</span>';
-        }
-
-        return $html;
-    }
+.sb-page-sections {
+    width: 100%;
+    min-width: 0;
 }
 
-if (!function_exists('sb_public_auto_menu_is_page_visible')) {
-    function sb_public_auto_menu_is_page_visible(array $page, int $currentPageId = 0): bool
-    {
-        $status = (string)($page['status'] ?? 'published');
-        $pageId = (int)($page['id'] ?? 0);
-
-        if ($pageId === $currentPageId) {
-            return true;
-        }
-
-        return $status === 'published';
-    }
+.sb-page-section {
+    width: 100%;
+    min-width: 0;
+    box-sizing: border-box;
 }
 
-if (!function_exists('sb_public_auto_menu_children')) {
-    function sb_public_auto_menu_children(array $pages, int $parentId, int $currentPageId = 0): array
-    {
-        $items = [];
-
-        foreach ($pages as $page) {
-            if ((int)($page['parentId'] ?? 0) !== $parentId) {
-                continue;
-            }
-
-            if (!sb_public_auto_menu_is_page_visible($page, $currentPageId)) {
-                continue;
-            }
-
-            $items[] = $page;
-        }
-
-        usort($items, static function ($a, $b) {
-            $sortCmp = (int)($a['sort'] ?? 500) <=> (int)($b['sort'] ?? 500);
-
-            if ($sortCmp !== 0) {
-                return $sortCmp;
-            }
-
-            return (int)($a['id'] ?? 0) <=> (int)($b['id'] ?? 0);
-        });
-
-        return $items;
-    }
+.sb-page-section + .sb-page-section {
+    margin-top: 24px;
 }
 
-if (!function_exists('sb_public_auto_menu_has_active_child')) {
-    function sb_public_auto_menu_has_active_child(array $pages, int $pageId, int $currentPageId): bool
-    {
-        foreach ($pages as $page) {
-            if ((int)($page['parentId'] ?? 0) !== $pageId) {
-                continue;
-            }
-
-            $childId = (int)($page['id'] ?? 0);
-
-            if ($childId === $currentPageId) {
-                return true;
-            }
-
-            if (sb_public_auto_menu_has_active_child($pages, $childId, $currentPageId)) {
-                return true;
-            }
-        }
-
-        return false;
-    }
+.sb-page-section__grid,
+.sb-section-grid {
+    display: grid !important;
+    grid-template-columns: repeat(var(--sb-section-columns, 1), minmax(0, 1fr)) !important;
+    gap: var(--sb-section-gap, 24px) !important;
+    width: 100% !important;
+    min-width: 0 !important;
+    align-items: start !important;
+    box-sizing: border-box !important;
 }
 
-if (!function_exists('sb_public_render_auto_menu_level')) {
-    function sb_public_render_auto_menu_level(array $pages, int $parentId, string $basePath, int $siteId, int $currentPageId, int $level = 0): string
-    {
-        $children = sb_public_auto_menu_children($pages, $parentId, $currentPageId);
-
-        if (empty($children)) {
-            return '';
-        }
-
-        $class = $level === 0 ? 'sb-public-menu' : 'sb-public-menu__dropdown';
-
-        $html = '<nav class="' . $class . '">';
-
-        foreach ($children as $page) {
-            $pageId = (int)($page['id'] ?? 0);
-            $title = (string)($page['title'] ?? 'Страница');
-            $url = sb_public_page_url($basePath, $siteId, $pageId);
-
-            $childHtml = '';
-            $hasChildren = false;
-
-            $isActive = $pageId === $currentPageId || sb_public_auto_menu_has_active_child($pages, $pageId, $currentPageId);
-
-            $html .= '<div class="sb-public-menu__item' . ($hasChildren ? ' has-children' : '') . ($isActive ? ' is-active' : '') . '">';
-            $html .= '<a class="sb-public-menu__link" href="' . sb_public_h($url) . '">';
-            $html .= sb_public_h($title);
-
-            if ($hasChildren) {
-                $html .= ' <span class="sb-public-menu__arrow">▾</span>';
-            }
-
-            $html .= '</a>';
-
-            if ($hasChildren) {
-                $html .= $childHtml;
-            }
-
-            $html .= '</div>';
-        }
-
-        $html .= '</nav>';
-
-        return $html;
-    }
+.sb-page-section__column,
+.sb-section-column {
+    min-width: 0 !important;
+    box-sizing: border-box !important;
 }
 
-if (!function_exists('sb_public_render_auto_pages_menu')) {
-    function sb_public_render_auto_pages_menu(array $pages, string $basePath, int $siteId, int $currentPageId = 0): string
-    {
-        return sb_public_render_auto_menu_level($pages, 0, $basePath, $siteId, $currentPageId, 0);
-    }
+.sb-page-section__column > *,
+.sb-section-column > * {
+    max-width: 100%;
+    min-width: 0;
+    box-sizing: border-box;
 }
 
-$appearance = sb_public_appearance_get($site, $vm);
-$appearanceStyle = sb_public_appearance_style($appearance);
-
-$headerBlocks = $layout['zones']['header'] ?? [];
-$footerBlocks = $layout['zones']['footer'] ?? [];
-$leftBlocks = $layout['zones']['left'] ?? [];
-$rightBlocks = $layout['zones']['right'] ?? [];
-
-$headerHtml = sb_public_render_blocks($headerBlocks, $vm);
-$footerHtml = sb_public_render_blocks($footerBlocks, $vm);
-$leftHtml = sb_public_render_blocks($leftBlocks, $vm);
-$rightHtml = sb_public_render_blocks($rightBlocks, $vm);
-$pageSections = is_array($vm['pageSections'] ?? null) ? $vm['pageSections'] : [];
-
-if (empty($pageSections) && function_exists('sb_public_page_sections')) {
-    $pageSections = sb_public_page_sections($siteId, (int)($currentPage['id'] ?? 0));
+.sb-page-section__column > * + *,
+.sb-section-column > * + * {
+    margin-top: 16px;
 }
 
-$pageHtml = function_exists('sb_public_render_page_sections')
-    ? sb_public_render_page_sections($pageSections, $pageBlocks, $vm)
-    : sb_public_render_blocks($pageBlocks, $vm);
-$menuHtml = sb_public_render_auto_pages_menu($pages, $basePath, $siteId, (int)($currentPage['id'] ?? 0));
-
-$pageHasDiskBlock = false;
-
-foreach ($pageBlocks as $pageBlock) {
-    if ((string)($pageBlock['type'] ?? '') === 'disk') {
-        $pageHasDiskBlock = true;
-        break;
+@media (max-width: 900px) {
+    .sb-page-section__grid,
+    .sb-section-grid {
+        grid-template-columns: 1fr !important;
     }
 }
-
-if (!$pageHasDiskBlock) {
-    foreach ($headerBlocks as $layoutBlock) {
-        if ((string)($layoutBlock['type'] ?? '') === 'disk') {
-            $pageHasDiskBlock = true;
-            break;
-        }
-    }
-}
-
-if (!$pageHasDiskBlock) {
-    foreach ($footerBlocks as $layoutBlock) {
-        if ((string)($layoutBlock['type'] ?? '') === 'disk') {
-            $pageHasDiskBlock = true;
-            break;
-        }
-    }
-}
-
-if (!$pageHasDiskBlock) {
-    foreach ($leftBlocks as $layoutBlock) {
-        if ((string)($layoutBlock['type'] ?? '') === 'disk') {
-            $pageHasDiskBlock = true;
-            break;
-        }
-    }
-}
-
-if (!$pageHasDiskBlock) {
-    foreach ($rightBlocks as $layoutBlock) {
-        if ((string)($layoutBlock['type'] ?? '') === 'disk') {
-            $pageHasDiskBlock = true;
-            break;
-        }
-    }
-}
-
-$leftContentHtml = $vm['leftMode'] === 'menu' && $menuHtml !== '' ? $menuHtml : $leftHtml;
-
-if ($vm['leftMode'] === 'menu' && $vm['sectionNavHtml'] !== '') {
-    $leftContentHtml = $vm['sectionNavHtml'];
-}
-
-global $APPLICATION;
-
-if ($pageHasDiskBlock) {
-    \CJSCore::Init([
-        'viewer',
-        'ui.viewer',
-    ]);
-
-    if (\Bitrix\Main\Loader::includeModule('disk')) {
-        \Bitrix\Main\UI\Extension::load([
-            'disk.viewer.document-item',
-        ]);
-    }
-}
-?>
-<!doctype html>
-<html lang="ru">
-<head>
-    <meta charset="UTF-8">
-
-    <?php $APPLICATION->ShowHead(); ?>
-
-    <title><?= sb_public_h((string)($currentPage['title'] ?? $site['name'] ?? 'SiteBuilder')) ?></title>
-
-    <link rel="stylesheet" href="<?= sb_public_h($basePath) ?>/assets/public/public.css?v=9">
-
-    <?php if ($pageHasDiskBlock): ?>
-        <link rel="stylesheet" href="<?= sb_public_h($basePath) ?>/components/disk/styles.css?v=4">
-    <?php endif; ?>
-
-    <style>
-        :root {
-            --sb-accent: <?= sb_public_h($appearance['accent']) ?>;
-            --sb-container-width: <?= (int)$vm['containerWidth'] ?>px;
-            --sb-left-width: <?= (int)$vm['leftWidth'] ?>px;
-            --sb-right-width: <?= (int)$vm['rightWidth'] ?>px;
-        }
-    </style>
-</head>
-<body>
-<div class="sb-public-shell" style="<?= sb_public_h($appearanceStyle) ?>">
-    <?php if ($vm['showHeader']): ?>
-        <header class="sb-public-header">
-            <div class="sb-container sb-header-container">
-                <div class="sb-header-brand-row">
-                    <div class="sb-brand">
-                        <?= sb_public_appearance_brand($site, $appearance) ?>
-                    </div>
-
-                    <?php if ($headerHtml !== ''): ?>
-                        <div class="sb-header-custom">
-                            <?= $headerHtml ?>
-                        </div>
-                    <?php endif; ?>
-                </div>
-
-                <?php if ($menuHtml !== ''): ?>
-                    <div class="sb-header-menu-row">
-                        <?= $menuHtml ?>
-                    </div>
-                <?php endif; ?>
-            </div>
-        </header>
-    <?php endif; ?>
-
-    <main class="sb-public-main">
-        <div class="sb-container">
-            
-
-            <div class="sb-layout <?= $vm['showLeft'] ? 'sb-layout--left' : '' ?> <?= $vm['showRight'] ? 'sb-layout--right' : '' ?>">
-                <?php if ($vm['showLeft'] && trim($leftContentHtml) !== ''): ?>
-                    <aside class="sb-sidebar sb-sidebar--left">
-                        <div class="sb-box">
-                            <?= $leftContentHtml !== '' ? $leftContentHtml : '<div class="sb-empty">Левая зона пуста</div>' ?>
-                        </div>
-                    </aside>
-                <?php endif; ?>
-
-                <section class="sb-content">
-                    <div class="sb-box sb-box--content">
-                        <?php if ($currentPage): ?>
-                            <h1 class="sb-page-title">
-                                <?= sb_public_h((string)($currentPage['title'] ?? 'Страница')) ?>
-                            </h1>
-
-                            <?php if (!empty($vm['childPagesHtml'])): ?>
-                                <?= $vm['childPagesHtml'] ?>
-                            <?php endif; ?>
-
-                            <?= $pageHtml !== '' ? $pageHtml : '<div class="sb-empty">На странице пока нет блоков</div>' ?>
-                        <?php else: ?>
-                            <div class="sb-empty">У сайта пока нет страниц</div>
-                        <?php endif; ?>
-                    </div>
-                </section>
-
-                <?php if ($vm['showRight']): ?>
-                    <aside class="sb-sidebar sb-sidebar--right">
-                        <div class="sb-box">
-                            <?= $rightHtml !== '' ? $rightHtml : '<div class="sb-empty">Правая зона пуста</div>' ?>
-                        </div>
-                    </aside>
-                <?php endif; ?>
-            </div>
-        </div>
-    </main>
-
-    <?php if ($vm['showFooter'] && $footerHtml !== ''): ?>
-        <footer class="sb-public-footer">
-            <div class="sb-container">
-                <?= $footerHtml !== '' ? $footerHtml : '' ?>
-            </div>
-        </footer>
-    <?php endif; ?>
-</div>
-
-<script>
-document.addEventListener('click', function (e) {
-    var toggle = e.target.closest('[data-role="toggle"]');
-    if (!toggle) {
-        return;
-    }
-
-    var node = toggle.closest('.sb-tree-node');
-    if (!node) {
-        return;
-    }
-
-    var isOpen = node.classList.contains('is-open');
-    node.classList.toggle('is-open', !isOpen);
-    toggle.setAttribute('aria-expanded', !isOpen ? 'true' : 'false');
-});
-</script>
-
-<?php if ($pageHasDiskBlock): ?>
-    <script src="<?= sb_public_h($basePath) ?>/components/disk/script.js?v=4"></script>
-<?php endif; ?>
-
-</body>
-</html>
