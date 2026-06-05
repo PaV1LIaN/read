@@ -1,3 +1,11 @@
+Да, в твоём случае проще заменить весь 30-blocks.js целиком, чтобы не ловить, куда именно вставлять куски.
+
+Файл:
+
+/local/sitebuilder/assets/admin/editor/30-blocks.js
+
+Замени полностью на это:
+
 function blockPreviewText(block) {
     var type = String(block.type || '');
     var content = block.content || {};
@@ -21,6 +29,17 @@ function blockPreviewText(block) {
 
     if (type === 'html') {
         return ((content.html || '').slice(0, 220) || '[пустой HTML]') + placementText;
+    }
+
+    if (type === 'table') {
+        var columnsCount = Array.isArray(content.columns) ? content.columns.length : 0;
+        var rowsCount = Array.isArray(content.rows) ? content.rows.length : 0;
+
+        return 'Таблица: '
+            + (content.title || 'Без названия')
+            + ' · столбцов: ' + columnsCount
+            + ' · строк: ' + rowsCount
+            + placementText;
     }
 
     if (type === 'disk') {
@@ -156,6 +175,7 @@ function hideAllBlockTypeForms() {
         'textBlockForm',
         'buttonBlockForm',
         'htmlBlockForm',
+        'tableBlockForm',
         'diskBlockForm',
         'unknownBlockForm'
     ].forEach(function (id) {
@@ -173,6 +193,233 @@ function showBlockTypeForm(id) {
 
     node.classList.add('is-active');
     node.classList.remove('sb-hidden');
+}
+
+/* =========================================================
+   TABLE BLOCK
+   ========================================================= */
+
+function normalizeTableContent(content) {
+    content = content || {};
+
+    var columns = Array.isArray(content.columns) ? content.columns : [];
+    var rows = Array.isArray(content.rows) ? content.rows : [];
+
+    if (!columns.length) {
+        columns = [
+            {id: 'col_1', label: 'Столбец 1'},
+            {id: 'col_2', label: 'Столбец 2'},
+            {id: 'col_3', label: 'Столбец 3'}
+        ];
+    }
+
+    columns = columns.map(function (column, index) {
+        var id = String(column.id || '').trim();
+
+        if (!id) {
+            id = 'col_' + (index + 1);
+        }
+
+        return {
+            id: id,
+            label: String(column.label || ('Столбец ' + (index + 1)))
+        };
+    });
+
+    rows = rows.map(function (row) {
+        var cells = row && row.cells && typeof row.cells === 'object' ? row.cells : {};
+
+        return {
+            id: String((row && row.id) || ('row_' + Date.now() + '_' + Math.random().toString(16).slice(2))),
+            cells: cells
+        };
+    });
+
+    return {
+        title: String(content.title || 'Таблица'),
+        columns: columns,
+        rows: rows
+    };
+}
+
+function renderTableEditor(content) {
+    content = normalizeTableContent(content);
+
+    var titleInput = document.getElementById('tableTitleInput');
+    var columnsNode = document.getElementById('tableColumnsEditor');
+    var rowsNode = document.getElementById('tableRowsEditor');
+
+    if (titleInput) {
+        titleInput.value = content.title || '';
+    }
+
+    if (columnsNode) {
+        columnsNode.innerHTML = content.columns.map(function (column, index) {
+            return ''
+                + '<div class="sb-table-editor__column" data-table-column-id="' + escapeHtml(column.id) + '">'
+                + '  <span class="sb-table-editor__column-index">' + (index + 1) + '</span>'
+                + '  <input class="sb-input sb-table-column-label" type="text" value="' + escapeHtml(column.label) + '" placeholder="Название столбца">'
+                + '  <button class="sb-btn sb-btn-danger sb-btn-small" type="button" data-table-action="delete-column">×</button>'
+                + '</div>';
+        }).join('');
+    }
+
+    if (rowsNode) {
+        rowsNode.innerHTML = content.rows.map(function (row, rowIndex) {
+            var cells = row.cells || {};
+
+            var rowHtml = ''
+                + '<div class="sb-table-editor__row" data-table-row-id="' + escapeHtml(row.id) + '">'
+                + '  <div class="sb-table-editor__row-head">'
+                + '      <strong>Строка ' + (rowIndex + 1) + '</strong>'
+                + '      <button class="sb-btn sb-btn-danger sb-btn-small" type="button" data-table-action="delete-row">Удалить</button>'
+                + '  </div>'
+                + '  <div class="sb-table-editor__row-cells" style="grid-template-columns: repeat(' + content.columns.length + ', minmax(0, 1fr));">';
+
+            content.columns.forEach(function (column) {
+                rowHtml += ''
+                    + '<label class="sb-table-editor__cell">'
+                    + '  <span>' + escapeHtml(column.label) + '</span>'
+                    + '  <input class="sb-input sb-table-cell-input" type="text" data-column-id="' + escapeHtml(column.id) + '" value="' + escapeHtml(cells[column.id] || '') + '">'
+                    + '</label>';
+            });
+
+            rowHtml += ''
+                + '  </div>'
+                + '</div>';
+
+            return rowHtml;
+        }).join('');
+    }
+}
+
+function collectTableContentFromEditor() {
+    var titleInput = document.getElementById('tableTitleInput');
+    var columnsNode = document.getElementById('tableColumnsEditor');
+    var rowsNode = document.getElementById('tableRowsEditor');
+
+    var columns = [];
+    var rows = [];
+
+    if (columnsNode) {
+        columnsNode.querySelectorAll('[data-table-column-id]').forEach(function (columnNode, index) {
+            var oldId = String(columnNode.getAttribute('data-table-column-id') || '').trim();
+            var labelInput = columnNode.querySelector('.sb-table-column-label');
+            var label = labelInput ? String(labelInput.value || '').trim() : '';
+
+            if (!label) {
+                label = 'Столбец ' + (index + 1);
+            }
+
+            columns.push({
+                id: oldId || ('col_' + (Date.now() + index)),
+                label: label
+            });
+        });
+    }
+
+    if (!columns.length) {
+        columns = [
+            {id: 'col_1', label: 'Столбец 1'},
+            {id: 'col_2', label: 'Столбец 2'},
+            {id: 'col_3', label: 'Столбец 3'}
+        ];
+    }
+
+    if (rowsNode) {
+        rowsNode.querySelectorAll('[data-table-row-id]').forEach(function (rowNode, rowIndex) {
+            var rowId = String(rowNode.getAttribute('data-table-row-id') || '').trim();
+
+            if (!rowId) {
+                rowId = 'row_' + (Date.now() + rowIndex);
+            }
+
+            var cells = {};
+
+            columns.forEach(function (column) {
+                var input = rowNode.querySelector('[data-column-id="' + column.id + '"]');
+                cells[column.id] = input ? String(input.value || '') : '';
+            });
+
+            rows.push({
+                id: rowId,
+                cells: cells
+            });
+        });
+    }
+
+    return {
+        title: titleInput ? String(titleInput.value || '').trim() : '',
+        columns: columns,
+        rows: rows
+    };
+}
+
+function addTableColumn() {
+    var current = collectTableContentFromEditor();
+    var newId = 'col_' + Date.now();
+
+    current.columns.push({
+        id: newId,
+        label: 'Столбец ' + (current.columns.length + 1)
+    });
+
+    current.rows = current.rows.map(function (row) {
+        row.cells = row.cells || {};
+        row.cells[newId] = '';
+        return row;
+    });
+
+    renderTableEditor(current);
+}
+
+function deleteTableColumn(columnId) {
+    var current = collectTableContentFromEditor();
+
+    if (current.columns.length <= 1) {
+        alert('Нельзя удалить последний столбец');
+        return;
+    }
+
+    current.columns = current.columns.filter(function (column) {
+        return column.id !== columnId;
+    });
+
+    current.rows = current.rows.map(function (row) {
+        if (row.cells) {
+            delete row.cells[columnId];
+        }
+
+        return row;
+    });
+
+    renderTableEditor(current);
+}
+
+function addTableRow() {
+    var current = collectTableContentFromEditor();
+    var cells = {};
+
+    current.columns.forEach(function (column) {
+        cells[column.id] = '';
+    });
+
+    current.rows.push({
+        id: 'row_' + Date.now(),
+        cells: cells
+    });
+
+    renderTableEditor(current);
+}
+
+function deleteTableRow(rowId) {
+    var current = collectTableContentFromEditor();
+
+    current.rows = current.rows.filter(function (row) {
+        return row.id !== rowId;
+    });
+
+    renderTableEditor(current);
 }
 
 function fillVisualBlockForm(block) {
@@ -233,6 +480,12 @@ function fillVisualBlockForm(block) {
             htmlInput.value = content.html || '';
         }
 
+        return;
+    }
+
+    if (type === 'table') {
+        showBlockTypeForm('tableBlockForm');
+        renderTableEditor(content);
         return;
     }
 
@@ -458,6 +711,13 @@ function collectVisualBlockData(block) {
         };
     }
 
+    if (type === 'table') {
+        return {
+            content: collectTableContentFromEditor(),
+            props: props
+        };
+    }
+
     if (type === 'disk') {
         return {
             content: block.content || {},
@@ -506,6 +766,44 @@ async function createBlock(type) {
         };
     } else if (type === 'html') {
         content = {html: '<div>Новый HTML блок</div>'};
+    } else if (type === 'table') {
+        var columnsCountRaw = window.prompt('Сколько столбцов создать?', '3');
+        var columnsCount = Number(columnsCountRaw || 3);
+
+        if (!columnsCount || isNaN(columnsCount) || columnsCount < 1) {
+            columnsCount = 3;
+        }
+
+        if (columnsCount > 12) {
+            columnsCount = 12;
+        }
+
+        columnsCount = Math.floor(columnsCount);
+
+        var tableColumns = [];
+        var tableCells = {};
+
+        for (var i = 1; i <= columnsCount; i++) {
+            var columnId = 'col_' + i;
+
+            tableColumns.push({
+                id: columnId,
+                label: 'Столбец ' + i
+            });
+
+            tableCells[columnId] = '';
+        }
+
+        content = {
+            title: 'Таблица',
+            columns: tableColumns,
+            rows: [
+                {
+                    id: 'row_1',
+                    cells: tableCells
+                }
+            ]
+        };
     } else if (type === 'disk') {
         content = {};
         props = {
@@ -627,3 +925,5 @@ async function moveBlock(dir) {
 
     await loadBlocks();
 }
+
+После этого не забудь добавить обработчик в 60-events.js, иначе кнопки + Столбец, + Строка, удаления не будут работать.
