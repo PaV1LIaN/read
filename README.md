@@ -1,148 +1,262 @@
-Смотрел архив. У тебя нужная функция есть, но не в public_page.php, а здесь:
+Отлично. Следующий логичный шаг — сделать перетаскивание компонентов мышкой между секциями и колонками.
 
-/local/sitebuilder/lib/public_render.php
+Сначала делаем простую, но полезную версию:
 
-Именно там надо править. В твоём архиве она примерно на строке 387.
+зажал блок → перетащил в нужную колонку → отпустил → блок перенёсся
 
-1. Замени функцию в lib/public_render.php
+Пока без изменения порядка внутри колонки. Сначала перенос между колонками/секциями, потом отдельно сделаем сортировку внутри колонки.
 
-Файл:
+Что сейчас правим
 
-/local/sitebuilder/lib/public_render.php
+Нужно изменить только 2 файла:
 
-Найди:
+/local/sitebuilder/assets/admin/editor.js
+/local/sitebuilder/assets/admin/editor.css
 
-if (!function_exists('sb_public_render_page_sections')) {
 
-и замени весь блок функции на этот:
+---
 
-if (!function_exists('sb_public_render_page_sections')) {
-    function sb_public_render_page_sections(array $sections, array $pageBlocks, array $context = []): string
-    {
-        if (empty($sections)) {
-            return sb_public_render_blocks($pageBlocks, $context);
+1. В editor.js делаем блоки перетаскиваемыми
+
+Найди в renderBlocks() все места, где создаётся блок:
+
+'<div class="sb-editor-block' + active + '" data-block-id="' + Number(block.id || 0) + '">'
+
+Таких мест обычно 2.
+
+Замени каждое на:
+
+'<div class="sb-editor-block' + active + '" draggable="true" data-block-id="' + Number(block.id || 0) + '">'
+
+То есть мы просто добавляем:
+
+draggable="true"
+
+
+---
+
+2. В editor.js добавь переменную в state
+
+Вверху в state найди:
+
+currentColumn: 1,
+
+Сразу после добавь:
+
+draggedBlockId: 0,
+
+Должно стать так:
+
+currentSectionId: 0,
+currentColumn: 1,
+draggedBlockId: 0,
+accessItems: [],
+
+
+---
+
+3. В editor.js добавь обработчики drag-and-drop
+
+Найди место, где у тебя уже есть:
+
+blocksList.addEventListener('click', function (e) {
+
+После всего этого обработчика, то есть после его закрытия:
+
+});
+
+вставь:
+
+blocksList.addEventListener('dragstart', function (e) {
+    var blockNode = e.target.closest('.sb-editor-block[data-block-id]');
+    if (!blockNode) {
+        return;
+    }
+
+    var blockId = Number(blockNode.getAttribute('data-block-id') || 0);
+
+    if (blockId <= 0) {
+        return;
+    }
+
+    state.draggedBlockId = blockId;
+    blockNode.classList.add('is-dragging');
+
+    if (e.dataTransfer) {
+        e.dataTransfer.effectAllowed = 'move';
+        e.dataTransfer.setData('text/plain', String(blockId));
+    }
+});
+
+blocksList.addEventListener('dragend', function (e) {
+    var blockNode = e.target.closest('.sb-editor-block[data-block-id]');
+    if (blockNode) {
+        blockNode.classList.remove('is-dragging');
+    }
+
+    state.draggedBlockId = 0;
+
+    blocksList.querySelectorAll('.sb-editor-section-preview__column.is-drag-over').forEach(function (columnNode) {
+        columnNode.classList.remove('is-drag-over');
+    });
+});
+
+blocksList.addEventListener('dragover', function (e) {
+    var columnNode = e.target.closest('.sb-editor-section-preview__column[data-section-id][data-column]');
+    if (!columnNode) {
+        return;
+    }
+
+    e.preventDefault();
+
+    if (e.dataTransfer) {
+        e.dataTransfer.dropEffect = 'move';
+    }
+
+    blocksList.querySelectorAll('.sb-editor-section-preview__column.is-drag-over').forEach(function (node) {
+        if (node !== columnNode) {
+            node.classList.remove('is-drag-over');
         }
+    });
 
-        $blocksBySection = sb_public_group_blocks_by_section($pageBlocks, $sections);
-        $html = '<div class="sb-page-sections">';
+    columnNode.classList.add('is-drag-over');
+});
 
-        foreach ($sections as $section) {
-            $sectionId = (int)($section['id'] ?? 0);
-
-            if ($sectionId <= 0) {
-                continue;
-            }
-
-            $layout = sb_public_to_array($section['layout'] ?? []);
-            $columns = sb_public_clamp_int($layout['columns'] ?? 1, 1, 4);
-            $gap = sb_public_clamp_int($layout['gap'] ?? 24, 0, 120);
-
-            $sectionBlocks = $blocksBySection[$sectionId] ?? [];
-            $columnBlocks = sb_public_group_blocks_by_column($sectionBlocks, $columns);
-
-            $gridStyle = implode('', [
-                '--sb-section-columns:' . $columns . ';',
-                '--sb-section-gap:' . $gap . 'px;',
-                'display:grid !important;',
-                'grid-template-columns:repeat(' . $columns . ',minmax(0,1fr)) !important;',
-                'gap:' . $gap . 'px !important;',
-                'width:100% !important;',
-                'min-width:0 !important;',
-                'align-items:start !important;',
-                'box-sizing:border-box !important;',
-            ]);
-
-            $html .= '<section class="sb-page-section sb-page-section--columns-' . $columns . '">';
-            $html .= '<div class="sb-page-section__grid" style="' . sb_public_h($gridStyle) . '">';
-
-            for ($column = 1; $column <= $columns; $column++) {
-                $columnStyle = implode('', [
-                    'min-width:0 !important;',
-                    'box-sizing:border-box !important;',
-                ]);
-
-                $html .= '<div class="sb-page-section__column sb-page-section__column--' . $column . '" style="' . sb_public_h($columnStyle) . '">';
-                $html .= sb_public_render_blocks($columnBlocks[$column] ?? [], $context);
-                $html .= '</div>';
-            }
-
-            $html .= '</div>';
-            $html .= '</section>';
-        }
-
-        $html .= '</div>';
-
-        return $html;
+blocksList.addEventListener('dragleave', function (e) {
+    var columnNode = e.target.closest('.sb-editor-section-preview__column[data-section-id][data-column]');
+    if (!columnNode) {
+        return;
     }
-}
 
-Главное отличие: теперь grid-template-columns идёт с !important, поэтому CSS больше не сможет сложить 3 колонки в одну.
+    var related = e.relatedTarget;
+
+    if (related && columnNode.contains(related)) {
+        return;
+    }
+
+    columnNode.classList.remove('is-drag-over');
+});
+
+blocksList.addEventListener('drop', async function (e) {
+    var columnNode = e.target.closest('.sb-editor-section-preview__column[data-section-id][data-column]');
+    if (!columnNode) {
+        return;
+    }
+
+    e.preventDefault();
+
+    columnNode.classList.remove('is-drag-over');
+
+    var blockId = Number(state.draggedBlockId || 0);
+
+    if (!blockId && e.dataTransfer) {
+        blockId = Number(e.dataTransfer.getData('text/plain') || 0);
+    }
+
+    var sectionId = Number(columnNode.getAttribute('data-section-id') || 0);
+    var column = Number(columnNode.getAttribute('data-column') || 1);
+
+    if (blockId <= 0 || sectionId <= 0) {
+        return;
+    }
+
+    try {
+        await assignBlockToSection(blockId, sectionId, column);
+
+        state.currentBlockId = blockId;
+        state.currentSectionId = sectionId;
+        state.currentColumn = column;
+
+        await loadBlocks();
+
+        setPageSectionsMessage('Блок перенесён в секцию #' + sectionId + ', колонку ' + column, 'success');
+    } catch (err) {
+        console.error(err);
+        setPageSectionsMessage('Не удалось перенести блок', 'error');
+    }
+});
 
 
 ---
 
-2. В public.css убери складывание колонок на 640px
+4. В editor.css добавь стили
 
 Файл:
 
-/local/sitebuilder/assets/public/public.css
+/local/sitebuilder/assets/admin/editor.css
 
-В самом конце у тебя сейчас есть:
+В самый конец добавь:
 
-@media (max-width: 640px) {
-    .sb-page-section__grid,
-    .sb-section-grid {
-        grid-template-columns: 1fr !important;
-    }
+/* =========================================================
+   Drag and drop blocks
+   ========================================================= */
+
+.sb-editor-block[draggable="true"] {
+    cursor: grab;
 }
 
-Временно закомментируй его:
-
-/*
-@media (max-width: 640px) {
-    .sb-page-section__grid,
-    .sb-section-grid {
-        grid-template-columns: 1fr !important;
-    }
+.sb-editor-block[draggable="true"]:active {
+    cursor: grabbing;
 }
-*/
 
-Потом, когда всё заработает, адаптив можно вернуть аккуратнее.
+.sb-editor-block.is-dragging {
+    opacity: 0.45;
+    transform: scale(0.98);
+}
 
+.sb-editor-section-preview__column.is-drag-over {
+    outline: 2px dashed #2563eb;
+    outline-offset: -6px;
+    background: rgba(37, 99, 235, 0.06);
+}
 
----
-
-3. Обнови версию CSS в public_page.php
-
-Файл:
-
-/local/sitebuilder/views/layout/public_page.php
-
-Найди:
-
-/assets/public/public.css?v=9
-
-замени на:
-
-/assets/public/public.css?v=10
+.sb-editor-section-preview__column.is-drag-over .sb-editor-section-preview__empty {
+    color: #2563eb;
+    border-color: rgba(37, 99, 235, 0.35);
+    background: rgba(37, 99, 235, 0.08);
+}
 
 
 ---
 
-4. Проверь синтаксис
+5. Обнови версию JS/CSS
 
-На сервере выполни:
+В editor.php найди подключение:
 
-php -l /srv/bx/docroot/local/sitebuilder/lib/public_render.php
-php -l /srv/bx/docroot/local/sitebuilder/views/layout/public_page.php
+/assets/admin/editor.js?v=...
+
+Поставь новую версию, например:
+
+<script src="<?= htmlspecialchars($basePath, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?>/assets/admin/editor.js?v=2"></script>
+
+Если editor.css подключён без версии, лучше тоже сделать:
+
+<link rel="stylesheet" href="<?= htmlspecialchars($basePath, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?>/assets/admin/editor.css?v=2">
 
 
 ---
 
-5. Что должно появиться в Ctrl+U
+Что должно заработать
 
-После Ctrl + F5 в исходнике должно быть:
+Теперь в редакторе:
 
-<div class="sb-page-section__grid" style="--sb-section-columns:3;--sb-section-gap:24px;display:grid !important;grid-template-columns:repeat(3,minmax(0,1fr)) !important;gap:24px !important;...">
+1. зажимаешь блок мышкой;
 
-Если эта строка есть, секция принудительно рисуется в 3 колонки.
+
+2. тащишь в другую колонку;
+
+
+3. колонка подсвечивается;
+
+
+4. отпускаешь;
+
+
+5. блок переносится в эту секцию/колонку;
+
+
+6. после обновления страницы блок остаётся там же.
+
+
+
+После этого следующим шагом сделаем изменение порядка блоков внутри одной колонки перетаскиванием, чтобы можно было ставить блок выше/ниже прямо мышкой.
