@@ -1,262 +1,245 @@
-Отлично. Следующий логичный шаг — сделать перетаскивание компонентов мышкой между секциями и колонками.
+Создай файл:
 
-Сначала делаем простую, но полезную версию:
+/local/sitebuilder/assets/admin/editor/00-core.js
 
-зажал блок → перетащил в нужную колонку → отпустил → блок перенёсся
+И вставь в него вот это:
 
-Пока без изменения порядка внутри колонки. Сначала перенос между колонками/секциями, потом отдельно сделаем сортировку внутри колонки.
+var config = window.SB_EDITOR_CONFIG || {};
 
-Что сейчас правим
+var BASE_PATH = config.basePath || '';
+var API_URL = config.apiUrl || (BASE_PATH + '/api.php');
+var siteId = Number(config.siteId || 0);
+var IS_BITRIX_ADMIN = !!config.isBitrixAdmin;
 
-Нужно изменить только 2 файла:
+var state = {
+    site: null,
+    pages: [],
+    currentPageId: 0,
+    blocks: [],
+    currentBlockId: 0,
+    pageSections: [],
+    currentSectionId: 0,
+    currentColumn: 1,
+    draggedBlockId: 0,
+    accessItems: [],
+    userSearchResults: [],
+    selectedAccessUser: null,
+    userSearchTimer: null
+};
 
-/local/sitebuilder/assets/admin/editor.js
-/local/sitebuilder/assets/admin/editor.css
+var output = document.getElementById('output') || document.getElementById('outputFallback');
+var pagesList = document.getElementById('pagesList');
+var blocksList = document.getElementById('blocksList');
+var newPageParentId = document.getElementById('newPageParentId');
 
-
----
-
-1. В editor.js делаем блоки перетаскиваемыми
-
-Найди в renderBlocks() все места, где создаётся блок:
-
-'<div class="sb-editor-block' + active + '" data-block-id="' + Number(block.id || 0) + '">'
-
-Таких мест обычно 2.
-
-Замени каждое на:
-
-'<div class="sb-editor-block' + active + '" draggable="true" data-block-id="' + Number(block.id || 0) + '">'
-
-То есть мы просто добавляем:
-
-draggable="true"
-
-
----
-
-2. В editor.js добавь переменную в state
-
-Вверху в state найди:
-
-currentColumn: 1,
-
-Сразу после добавь:
-
-draggedBlockId: 0,
-
-Должно стать так:
-
-currentSectionId: 0,
-currentColumn: 1,
-draggedBlockId: 0,
-accessItems: [],
-
-
----
-
-3. В editor.js добавь обработчики drag-and-drop
-
-Найди место, где у тебя уже есть:
-
-blocksList.addEventListener('click', function (e) {
-
-После всего этого обработчика, то есть после его закрытия:
-
-});
-
-вставь:
-
-blocksList.addEventListener('dragstart', function (e) {
-    var blockNode = e.target.closest('.sb-editor-block[data-block-id]');
-    if (!blockNode) {
-        return;
-    }
-
-    var blockId = Number(blockNode.getAttribute('data-block-id') || 0);
-
-    if (blockId <= 0) {
-        return;
-    }
-
-    state.draggedBlockId = blockId;
-    blockNode.classList.add('is-dragging');
-
-    if (e.dataTransfer) {
-        e.dataTransfer.effectAllowed = 'move';
-        e.dataTransfer.setData('text/plain', String(blockId));
-    }
-});
-
-blocksList.addEventListener('dragend', function (e) {
-    var blockNode = e.target.closest('.sb-editor-block[data-block-id]');
-    if (blockNode) {
-        blockNode.classList.remove('is-dragging');
-    }
-
-    state.draggedBlockId = 0;
-
-    blocksList.querySelectorAll('.sb-editor-section-preview__column.is-drag-over').forEach(function (columnNode) {
-        columnNode.classList.remove('is-drag-over');
-    });
-});
-
-blocksList.addEventListener('dragover', function (e) {
-    var columnNode = e.target.closest('.sb-editor-section-preview__column[data-section-id][data-column]');
-    if (!columnNode) {
-        return;
-    }
-
-    e.preventDefault();
-
-    if (e.dataTransfer) {
-        e.dataTransfer.dropEffect = 'move';
-    }
-
-    blocksList.querySelectorAll('.sb-editor-section-preview__column.is-drag-over').forEach(function (node) {
-        if (node !== columnNode) {
-            node.classList.remove('is-drag-over');
-        }
-    });
-
-    columnNode.classList.add('is-drag-over');
-});
-
-blocksList.addEventListener('dragleave', function (e) {
-    var columnNode = e.target.closest('.sb-editor-section-preview__column[data-section-id][data-column]');
-    if (!columnNode) {
-        return;
-    }
-
-    var related = e.relatedTarget;
-
-    if (related && columnNode.contains(related)) {
-        return;
-    }
-
-    columnNode.classList.remove('is-drag-over');
-});
-
-blocksList.addEventListener('drop', async function (e) {
-    var columnNode = e.target.closest('.sb-editor-section-preview__column[data-section-id][data-column]');
-    if (!columnNode) {
-        return;
-    }
-
-    e.preventDefault();
-
-    columnNode.classList.remove('is-drag-over');
-
-    var blockId = Number(state.draggedBlockId || 0);
-
-    if (!blockId && e.dataTransfer) {
-        blockId = Number(e.dataTransfer.getData('text/plain') || 0);
-    }
-
-    var sectionId = Number(columnNode.getAttribute('data-section-id') || 0);
-    var column = Number(columnNode.getAttribute('data-column') || 1);
-
-    if (blockId <= 0 || sectionId <= 0) {
-        return;
-    }
+function print(data) {
+    if (!output) return;
 
     try {
-        await assignBlockToSection(blockId, sectionId, column);
-
-        state.currentBlockId = blockId;
-        state.currentSectionId = sectionId;
-        state.currentColumn = column;
-
-        await loadBlocks();
-
-        setPageSectionsMessage('Блок перенесён в секцию #' + sectionId + ', колонку ' + column, 'success');
-    } catch (err) {
-        console.error(err);
-        setPageSectionsMessage('Не удалось перенести блок', 'error');
+        output.textContent = typeof data === 'string' ? data : JSON.stringify(data, null, 2);
+    } catch (e) {
+        output.textContent = String(data);
     }
-});
-
-
----
-
-4. В editor.css добавь стили
-
-Файл:
-
-/local/sitebuilder/assets/admin/editor.css
-
-В самый конец добавь:
-
-/* =========================================================
-   Drag and drop blocks
-   ========================================================= */
-
-.sb-editor-block[draggable="true"] {
-    cursor: grab;
 }
 
-.sb-editor-block[draggable="true"]:active {
-    cursor: grabbing;
+function escapeHtml(value) {
+    return String(value == null ? '' : value)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#039;');
 }
 
-.sb-editor-block.is-dragging {
-    opacity: 0.45;
-    transform: scale(0.98);
+function userAvatarHtml(user, className) {
+    user = user || {};
+    className = className || '';
+
+    var avatar = user.avatarUrl || user.avatar || user.photoUrl || user.userAvatarUrl || '';
+    var title = user.title || user.name || user.userName || '';
+    var initials = 'U';
+
+    if (title) {
+        var parts = String(title).trim().split(/\s+/).filter(Boolean);
+
+        if (parts.length === 1) {
+            initials = parts[0].substring(0, 1).toUpperCase();
+        } else if (parts.length >= 2) {
+            initials = (parts[0].substring(0, 1) + parts[1].substring(0, 1)).toUpperCase();
+        }
+    }
+
+    var size = '32px';
+
+    if (className.indexOf('selected') !== -1) {
+        size = '42px';
+    }
+
+    var wrapStyle = [
+        'width:' + size,
+        'height:' + size,
+        'min-width:' + size,
+        'max-width:' + size,
+        'min-height:' + size,
+        'max-height:' + size,
+        'border-radius:50%',
+        'overflow:hidden',
+        'display:flex',
+        'align-items:center',
+        'justify-content:center',
+        'background:#eef2ff',
+        'color:#3730a3',
+        'font-size:11px',
+        'font-weight:700',
+        'line-height:1'
+    ].join(';');
+
+    if (avatar) {
+        return ''
+            + '<div class="' + className + '" style="' + wrapStyle + '">'
+            + '  <img src="' + escapeHtml(avatar) + '" alt="" style="width:' + size + ';height:' + size + ';min-width:' + size + ';max-width:' + size + ';min-height:' + size + ';max-height:' + size + ';object-fit:cover;display:block;">'
+            + '</div>';
+    }
+
+    return ''
+        + '<div class="' + className + '" style="' + wrapStyle + '">'
+        + escapeHtml(initials)
+        + '</div>';
 }
 
-.sb-editor-section-preview__column.is-drag-over {
-    outline: 2px dashed #2563eb;
-    outline-offset: -6px;
-    background: rgba(37, 99, 235, 0.06);
+function getSessid() {
+    if (window.BX && typeof BX.bitrix_sessid === 'function') {
+        return BX.bitrix_sessid();
+    }
+
+    return config.sessid || '';
 }
 
-.sb-editor-section-preview__column.is-drag-over .sb-editor-section-preview__empty {
-    color: #2563eb;
-    border-color: rgba(37, 99, 235, 0.35);
-    background: rgba(37, 99, 235, 0.08);
+function api(action, data) {
+    return new Promise(function (resolve, reject) {
+        BX.ajax({
+            url: API_URL,
+            method: 'POST',
+            dataType: 'json',
+            timeout: 60,
+            data: Object.assign({
+                action: action,
+                sessid: getSessid()
+            }, data || {}),
+            onsuccess: function (res) {
+                print(res);
+
+                if (res && res.ok) {
+                    resolve(res);
+                } else {
+                    reject(res || {error: 'UNKNOWN'});
+                }
+            },
+            onfailure: function (err) {
+                print({
+                    ok: false,
+                    error: 'AJAX_ERROR',
+                    detail: err
+                });
+
+                reject(err);
+            }
+        });
+    });
 }
 
+function apiData(res) {
+    return res && res.data ? res.data : res;
+}
 
----
+function getInputValue(id) {
+    var el = document.getElementById(id);
+    return el ? String(el.value || '') : '';
+}
 
-5. Обнови версию JS/CSS
+function getChecked(id) {
+    var el = document.getElementById(id);
+    return !!(el && el.checked);
+}
 
-В editor.php найди подключение:
+function getCurrentPage() {
+    return state.pages.find(function (page) {
+        return Number(page.id || 0) === state.currentPageId;
+    }) || null;
+}
 
-/assets/admin/editor.js?v=...
+function getCurrentBlock() {
+    return state.blocks.find(function (block) {
+        return Number(block.id || 0) === state.currentBlockId;
+    }) || null;
+}
 
-Поставь новую версию, например:
+function getBlockSectionId(block) {
+    block = block || {};
 
-<script src="<?= htmlspecialchars($basePath, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?>/assets/admin/editor.js?v=2"></script>
+    var props = block.props || {};
+    var placement = props._placement || {};
 
-Если editor.css подключён без версии, лучше тоже сделать:
+    return Number(
+        block.sectionId ||
+        props.sectionId ||
+        placement.sectionId ||
+        0
+    );
+}
 
-<link rel="stylesheet" href="<?= htmlspecialchars($basePath, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?>/assets/admin/editor.css?v=2">
+function getBlockColumn(block) {
+    block = block || {};
 
+    var props = block.props || {};
+    var placement = props._placement || {};
 
----
+    return Number(
+        block.column ||
+        props.column ||
+        placement.column ||
+        1
+    );
+}
 
-Что должно заработать
+function pageHasChildren(pageId) {
+    return state.pages.some(function (page) {
+        return Number(page.parentId || 0) === Number(pageId || 0);
+    });
+}
 
-Теперь в редакторе:
+function buildPageTree(pages, parentId, depth, result) {
+    result = result || [];
+    depth = depth || 0;
 
-1. зажимаешь блок мышкой;
+    var branch = pages
+        .filter(function (page) {
+            return Number(page.parentId || 0) === Number(parentId || 0);
+        })
+        .sort(function (a, b) {
+            var sortCmp = Number(a.sort || 0) - Number(b.sort || 0);
+            if (sortCmp !== 0) return sortCmp;
+            return Number(a.id || 0) - Number(b.id || 0);
+        });
 
+    branch.forEach(function (page) {
+        result.push({
+            page: page,
+            depth: depth
+        });
 
-2. тащишь в другую колонку;
+        buildPageTree(pages, Number(page.id || 0), depth + 1, result);
+    });
 
+    return result;
+}
 
-3. колонка подсвечивается;
+Важно: в начале файла не должно быть:
 
+(function () {
 
-4. отпускаешь;
+и в конце не должно быть:
 
+})();
 
-5. блок переносится в эту секцию/колонку;
-
-
-6. после обновления страницы блок остаётся там же.
-
-
-
-После этого следующим шагом сделаем изменение порядка блоков внутри одной колонки перетаскиванием, чтобы можно было ставить блок выше/ниже прямо мышкой.
+Если вставил — напиши, и я пришлю следующий файл 10-sections.js.
