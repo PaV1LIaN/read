@@ -1,129 +1,496 @@
-Создай файл:
+Создай последний файл:
 
-/local/sitebuilder/assets/admin/editor/50-template.js
+/local/sitebuilder/assets/admin/editor/60-events.js
 
 И вставь туда:
 
-function openTemplateModal() {
-    if (!IS_BITRIX_ADMIN) {
-        alert('Создавать шаблоны может только администратор Битрикса');
-        return;
-    }
+if (pagesList) {
+    pagesList.addEventListener('click', async function (e) {
+        var item = e.target.closest('[data-page-id]');
+        if (!item) return;
 
-    var modal = document.getElementById('saveTemplateModal');
-    if (!modal) return;
+        state.currentPageId = Number(item.getAttribute('data-page-id') || 0);
+        state.currentBlockId = 0;
+        state.currentSectionId = 0;
+        state.currentColumn = 1;
 
-    var nameInput = document.getElementById('templateNameInput');
-    var descInput = document.getElementById('templateDescriptionInput');
-    var message = document.getElementById('templateMessage');
+        renderPages();
+        fillPageForm();
 
-    if (nameInput && !nameInput.value) {
-        var siteName = state.site && state.site.name ? state.site.name : 'Сайт';
-        nameInput.value = siteName;
-    }
+        await loadBlocks();
+    });
+}
 
-    if (descInput && !descInput.value) {
-        descInput.value = '';
-    }
+if (blocksList) {
+    blocksList.addEventListener('click', function (e) {
+        var item = e.target.closest('[data-block-id]');
+        if (!item) return;
 
-    if (message) {
-        message.hidden = true;
-        message.textContent = '';
-        message.className = 'sb-template-message';
-    }
+        state.currentBlockId = Number(item.getAttribute('data-block-id') || 0);
 
-    modal.hidden = false;
+        var selectedBlock = getCurrentBlock();
 
-    setTimeout(function () {
-        if (nameInput) {
-            nameInput.focus();
-            nameInput.select();
+        if (selectedBlock) {
+            var selectedSectionId = getBlockSectionId(selectedBlock);
+            var selectedColumn = getBlockColumn(selectedBlock);
+
+            if (selectedSectionId > 0) {
+                state.currentSectionId = selectedSectionId;
+            }
+
+            state.currentColumn = selectedColumn > 0 ? selectedColumn : 1;
         }
-    }, 50);
-}
 
-function closeTemplateModal() {
-    var modal = document.getElementById('saveTemplateModal');
-    if (!modal) return;
-
-    modal.hidden = true;
-}
-
-function setTemplateMessage(text, type) {
-    var message = document.getElementById('templateMessage');
-    if (!message) return;
-
-    message.hidden = !text;
-    message.textContent = text || '';
-    message.className = 'sb-template-message' + (type ? ' is-' + type : '');
-}
-
-async function createTemplateFromSite() {
-    if (!IS_BITRIX_ADMIN) {
-        alert('Создавать шаблоны может только администратор Битрикса');
-        return;
-    }
-
-    var nameInput = document.getElementById('templateNameInput');
-    var descInput = document.getElementById('templateDescriptionInput');
-    var btn = document.getElementById('createTemplateBtn');
-
-    var name = nameInput ? String(nameInput.value || '').trim() : '';
-    var description = descInput ? String(descInput.value || '').trim() : '';
-
-    if (!name) {
-        alert('Введите название шаблона');
-        if (nameInput) nameInput.focus();
-        return;
-    }
-
-    if (btn) {
-        btn.disabled = true;
-        btn.textContent = 'Создаю...';
-    }
-
-    setTemplateMessage('Создаю шаблон...', 'info');
-
-    try {
-        await api('template.createFromSite', {
-            siteId: siteId,
-            name: name,
-            description: description
-        });
-
-        setTemplateMessage('Шаблон создан', 'success');
-
-        setTimeout(function () {
-            closeTemplateModal();
-        }, 350);
-    } catch (e) {
-        var message = e && (e.message || e.error) ? (e.message || e.error) : 'UNKNOWN_ERROR';
-        setTemplateMessage('Не удалось создать шаблон: ' + message, 'error');
-    } finally {
-        if (btn) {
-            btn.disabled = false;
-            btn.textContent = 'Создать шаблон';
-        }
-    }
-}
-
-async function deleteSite() {
-    var siteName = state.site && state.site.name ? state.site.name : ('siteId ' + siteId);
-
-    if (!confirm('Удалить сайт "' + siteName + '"?')) {
-        return;
-    }
-
-    if (!confirm('Подтверди удаление ещё раз. Это действие нельзя отменить через интерфейс.')) {
-        return;
-    }
-
-    await api('site.delete', {
-        id: siteId
+        renderPageSectionsPanel();
+        renderBlocks();
+        fillBlockForm();
     });
 
-    alert('Сайт удалён');
-    window.location.href = BASE_PATH + '/index.php';
+    blocksList.addEventListener('dragstart', function (e) {
+        var blockNode = e.target.closest('.sb-editor-block[data-block-id]');
+        if (!blockNode) {
+            return;
+        }
+
+        var blockId = Number(blockNode.getAttribute('data-block-id') || 0);
+
+        if (blockId <= 0) {
+            return;
+        }
+
+        state.draggedBlockId = blockId;
+        blockNode.classList.add('is-dragging');
+
+        if (e.dataTransfer) {
+            e.dataTransfer.effectAllowed = 'move';
+            e.dataTransfer.setData('text/plain', String(blockId));
+        }
+    });
+
+    blocksList.addEventListener('dragend', function (e) {
+        var blockNode = e.target.closest('.sb-editor-block[data-block-id]');
+        if (blockNode) {
+            blockNode.classList.remove('is-dragging');
+        }
+
+        state.draggedBlockId = 0;
+
+        blocksList.querySelectorAll('.sb-editor-section-preview__column.is-drag-over').forEach(function (columnNode) {
+            columnNode.classList.remove('is-drag-over');
+        });
+    });
+
+    blocksList.addEventListener('dragover', function (e) {
+        var columnNode = e.target.closest('.sb-editor-section-preview__column[data-section-id][data-column]');
+        if (!columnNode) {
+            return;
+        }
+
+        e.preventDefault();
+
+        if (e.dataTransfer) {
+            e.dataTransfer.dropEffect = 'move';
+        }
+
+        blocksList.querySelectorAll('.sb-editor-section-preview__column.is-drag-over').forEach(function (node) {
+            if (node !== columnNode) {
+                node.classList.remove('is-drag-over');
+            }
+        });
+
+        columnNode.classList.add('is-drag-over');
+    });
+
+    blocksList.addEventListener('dragleave', function (e) {
+        var columnNode = e.target.closest('.sb-editor-section-preview__column[data-section-id][data-column]');
+        if (!columnNode) {
+            return;
+        }
+
+        var related = e.relatedTarget;
+
+        if (related && columnNode.contains(related)) {
+            return;
+        }
+
+        columnNode.classList.remove('is-drag-over');
+    });
+
+    blocksList.addEventListener('drop', async function (e) {
+        var columnNode = e.target.closest('.sb-editor-section-preview__column[data-section-id][data-column]');
+        if (!columnNode) {
+            return;
+        }
+
+        e.preventDefault();
+
+        columnNode.classList.remove('is-drag-over');
+
+        var blockId = Number(state.draggedBlockId || 0);
+
+        if (!blockId && e.dataTransfer) {
+            blockId = Number(e.dataTransfer.getData('text/plain') || 0);
+        }
+
+        var sectionId = Number(columnNode.getAttribute('data-section-id') || 0);
+        var column = Number(columnNode.getAttribute('data-column') || 1);
+
+        if (blockId <= 0 || sectionId <= 0) {
+            return;
+        }
+
+        try {
+            await assignBlockToSection(blockId, sectionId, column);
+
+            state.currentBlockId = blockId;
+            state.currentSectionId = sectionId;
+            state.currentColumn = column;
+
+            await loadBlocks();
+
+            setPageSectionsMessage('Блок перенесён в секцию #' + sectionId + ', колонку ' + column, 'success');
+        } catch (err) {
+            console.error(err);
+            setPageSectionsMessage('Не удалось перенести блок', 'error');
+        }
+    });
 }
 
-Когда вставишь, напиши — пришлю последний файл 60-events.js.
+var addPageSectionBtn = document.getElementById('addPageSectionBtn');
+if (addPageSectionBtn) {
+    addPageSectionBtn.addEventListener('click', createPageSection);
+}
+
+document.addEventListener('click', function (e) {
+    var addTargetBtn = e.target.closest('[data-set-add-target]');
+    if (addTargetBtn) {
+        var targetSectionId = Number(addTargetBtn.getAttribute('data-set-add-target') || 0);
+        var targetColumn = Number(addTargetBtn.getAttribute('data-column') || 1);
+
+        if (targetSectionId > 0) {
+            state.currentSectionId = targetSectionId;
+            state.currentColumn = targetColumn > 0 ? targetColumn : 1;
+
+            renderPageSectionsPanel();
+            renderBlocks();
+
+            setPageSectionsMessage(
+                'Новые компоненты будут добавляться в секцию #' + targetSectionId + ', колонку ' + state.currentColumn,
+                'success'
+            );
+        }
+
+        return;
+    }
+
+    var selectSection = e.target.closest('[data-page-section-select], [data-add-block-to-section]');
+
+    if (selectSection) {
+        var sectionId = Number(
+            selectSection.getAttribute('data-page-section-select') ||
+            selectSection.getAttribute('data-add-block-to-section') ||
+            0
+        );
+
+        if (sectionId > 0) {
+            state.currentSectionId = sectionId;
+            state.currentColumn = 1;
+            renderPageSectionsPanel();
+            renderBlocks();
+        }
+
+        return;
+    }
+
+    var sectionBtn = e.target.closest('[data-section-action]');
+
+    if (!sectionBtn) {
+        return;
+    }
+
+    var action = sectionBtn.getAttribute('data-section-action');
+    var sectionActionId = Number(sectionBtn.getAttribute('data-section-id') || 0);
+
+    if (action === 'move-up') {
+        movePageSection(sectionActionId, 'up');
+        return;
+    }
+
+    if (action === 'move-down') {
+        movePageSection(sectionActionId, 'down');
+        return;
+    }
+
+    if (action === 'save') {
+        savePageSection(sectionActionId);
+        return;
+    }
+
+    if (action === 'delete') {
+        deletePageSection(sectionActionId);
+    }
+});
+
+document.addEventListener('change', function (e) {
+    var sectionField = e.target.closest('[data-section-field="columns"], [data-section-field="container"]');
+
+    if (sectionField) {
+        var sectionId = Number(sectionField.getAttribute('data-section-id') || 0);
+
+        if (sectionId > 0) {
+            savePageSection(sectionId);
+        }
+
+        return;
+    }
+
+    if (e.target && e.target.id === 'blockSectionInput') {
+        var block = getCurrentBlock();
+        var newSectionId = Number(e.target.value || 0);
+
+        if (block) {
+            state.currentSectionId = newSectionId;
+            state.currentColumn = 1;
+
+            fillBlockPlacementForm(Object.assign({}, block, {
+                sectionId: newSectionId,
+                column: 1,
+                props: Object.assign({}, block.props || {}, {
+                    sectionId: newSectionId,
+                    column: 1,
+                    _placement: {
+                        sectionId: newSectionId,
+                        column: 1
+                    }
+                })
+            }));
+
+            renderPageSectionsPanel();
+            renderBlocks();
+        }
+
+        return;
+    }
+
+    if (e.target && e.target.id === 'blockColumnInput') {
+        var columnValue = Number(e.target.value || 1);
+
+        state.currentColumn = columnValue > 0 ? columnValue : 1;
+
+        renderBlocks();
+    }
+});
+
+var createPageBtn = document.getElementById('createPageBtn');
+if (createPageBtn) {
+    createPageBtn.addEventListener('click', createPage);
+}
+
+var savePageBtn = document.getElementById('savePageBtn');
+if (savePageBtn) {
+    savePageBtn.addEventListener('click', savePage);
+}
+
+var deletePageBtn = document.getElementById('deletePageBtn');
+if (deletePageBtn) {
+    deletePageBtn.addEventListener('click', deletePage);
+}
+
+var movePageUpBtn = document.getElementById('movePageUpBtn');
+if (movePageUpBtn) {
+    movePageUpBtn.addEventListener('click', function () {
+        movePage('up');
+    });
+}
+
+var movePageDownBtn = document.getElementById('movePageDownBtn');
+if (movePageDownBtn) {
+    movePageDownBtn.addEventListener('click', function () {
+        movePage('down');
+    });
+}
+
+var publishPageBtn = document.getElementById('publishPageBtn');
+if (publishPageBtn) {
+    publishPageBtn.addEventListener('click', async function () {
+        if (!state.currentPageId) return;
+
+        await api('page.setStatus', {
+            id: state.currentPageId,
+            status: 'published'
+        });
+
+        await loadPages();
+    });
+}
+
+document.querySelectorAll('[data-add-block]').forEach(function (btn) {
+    btn.addEventListener('click', function () {
+        createBlock(btn.getAttribute('data-add-block'));
+    });
+});
+
+var saveBlockBtn = document.getElementById('saveBlockBtn');
+if (saveBlockBtn) {
+    saveBlockBtn.addEventListener('click', saveBlock);
+}
+
+var duplicateBlockBtn = document.getElementById('duplicateBlockBtn');
+if (duplicateBlockBtn) {
+    duplicateBlockBtn.addEventListener('click', duplicateBlock);
+}
+
+var deleteBlockBtn = document.getElementById('deleteBlockBtn');
+if (deleteBlockBtn) {
+    deleteBlockBtn.addEventListener('click', deleteBlock);
+}
+
+var moveBlockUpBtn = document.getElementById('moveBlockUpBtn');
+if (moveBlockUpBtn) {
+    moveBlockUpBtn.addEventListener('click', function () {
+        moveBlock('up');
+    });
+}
+
+var moveBlockDownBtn = document.getElementById('moveBlockDownBtn');
+if (moveBlockDownBtn) {
+    moveBlockDownBtn.addEventListener('click', function () {
+        moveBlock('down');
+    });
+}
+
+var deleteSiteBtn = document.getElementById('deleteSiteBtn');
+if (deleteSiteBtn) {
+    deleteSiteBtn.addEventListener('click', deleteSite);
+}
+
+var saveAsTemplateBtn = document.getElementById('saveAsTemplateBtn');
+if (saveAsTemplateBtn) {
+    saveAsTemplateBtn.addEventListener('click', openTemplateModal);
+}
+
+var createTemplateBtn = document.getElementById('createTemplateBtn');
+if (createTemplateBtn) {
+    createTemplateBtn.addEventListener('click', createTemplateFromSite);
+}
+
+document.querySelectorAll('[data-close-template-modal]').forEach(function (btn) {
+    btn.addEventListener('click', closeTemplateModal);
+});
+
+var syncAccessBtn = document.getElementById('syncAccessBtn');
+if (syncAccessBtn) {
+    syncAccessBtn.addEventListener('click', syncAccess);
+}
+
+var ensureBitrixGroupBtn = document.getElementById('ensureBitrixGroupBtn');
+if (ensureBitrixGroupBtn) {
+    ensureBitrixGroupBtn.addEventListener('click', ensureBitrixGroup);
+}
+
+var grantAccessBtn = document.getElementById('grantAccessBtn');
+if (grantAccessBtn) {
+    grantAccessBtn.addEventListener('click', grantAccessRole);
+}
+
+var reloadAccessBtn = document.getElementById('reloadAccessBtn');
+if (reloadAccessBtn) {
+    reloadAccessBtn.addEventListener('click', loadAccessList);
+}
+
+var accessUserSearchInput = document.getElementById('accessUserSearchInput');
+if (accessUserSearchInput) {
+    accessUserSearchInput.addEventListener('input', function () {
+        clearTimeout(state.userSearchTimer);
+
+        state.userSearchTimer = setTimeout(function () {
+            searchAccessUsers();
+        }, 300);
+    });
+
+    accessUserSearchInput.addEventListener('keydown', function (e) {
+        if (e.key === 'Enter') {
+            e.preventDefault();
+
+            if (state.userSearchResults.length) {
+                selectAccessUser(state.userSearchResults[0]);
+            }
+        }
+    });
+}
+
+document.addEventListener('click', function (e) {
+    var selectBtn = e.target.closest('[data-select-access-user]');
+    if (selectBtn) {
+        var userId = Number(selectBtn.getAttribute('data-select-access-user') || 0);
+        var user = (state.userSearchResults || []).find(function (item) {
+            return Number(item.id || 0) === userId;
+        });
+
+        if (user) {
+            selectAccessUser(user);
+        }
+
+        return;
+    }
+
+    var clearBtn = e.target.closest('[data-clear-access-user]');
+    if (clearBtn) {
+        clearSelectedAccessUser();
+        return;
+    }
+
+    var removeBtn = e.target.closest('[data-access-remove-user]');
+    if (removeBtn) {
+        removeAccessRole(Number(removeBtn.getAttribute('data-access-remove-user') || 0));
+        return;
+    }
+});
+
+document.addEventListener('mousedown', function (e) {
+    var wrap = e.target.closest('.sb-access-search-wrap');
+    if (!wrap) {
+        renderAccessUserSearchResults([]);
+    }
+});
+
+window.onerror = function (message, source, lineno, colno, error) {
+    print({
+        jsError: true,
+        message: message,
+        source: source,
+        line: lineno,
+        column: colno,
+        stack: error && error.stack ? error.stack : null
+    });
+};
+
+(async function init() {
+    try {
+        setManagementPanelsVisible(false);
+
+        await loadSite();
+        await loadPages();
+        await loadBlocks();
+        await loadAccessList();
+    } catch (e) {
+        print(e);
+        alert('Не удалось загрузить редактор');
+    }
+})();
+
+Теперь в editor.php замени старое подключение:
+
+<script src="<?= htmlspecialchars($basePath, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?>/assets/admin/editor.js?v=1"></script>
+
+на новые:
+
+<script src="<?= htmlspecialchars($basePath, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?>/assets/admin/editor/00-core.js?v=1"></script>
+<script src="<?= htmlspecialchars($basePath, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?>/assets/admin/editor/10-sections.js?v=1"></script>
+<script src="<?= htmlspecialchars($basePath, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?>/assets/admin/editor/20-pages.js?v=1"></script>
+<script src="<?= htmlspecialchars($basePath, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?>/assets/admin/editor/30-blocks.js?v=1"></script>
+<script src="<?= htmlspecialchars($basePath, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?>/assets/admin/editor/40-access.js?v=1"></script>
+<script src="<?= htmlspecialchars($basePath, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?>/assets/admin/editor/50-template.js?v=1"></script>
+<script src="<?= htmlspecialchars($basePath, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?>/assets/admin/editor/60-events.js?v=1"></script>
+
+Старый editor.js вместе с ними не подключай. Потом Ctrl + F5 в редакторе.
