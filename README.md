@@ -1,550 +1,304 @@
 Создай файл:
 
-/local/sitebuilder/assets/admin/editor/10-sections.js
+/local/sitebuilder/assets/admin/editor/20-pages.js
 
 И вставь туда:
 
-/* =========================================================
-   PAGE SECTIONS
-   ========================================================= */
+async function loadSite() {
+    var res = await api('site.get', {
+        siteId: siteId
+    });
 
-function getCurrentPageId() {
-    return Number(state.currentPageId || 0);
+    state.site = res.site || null;
 }
 
-function getDefaultSectionId() {
-    if (state.currentSectionId > 0) {
-        return Number(state.currentSectionId);
+async function loadPages() {
+    var res = await api('page.list', {
+        siteId: siteId
+    });
+
+    state.pages = Array.isArray(res.pages) ? res.pages : [];
+
+    if (!state.currentPageId && state.pages.length) {
+        state.currentPageId = Number(state.pages[0].id || 0);
     }
 
-    if (state.pageSections.length) {
-        return Number(state.pageSections[0].id || 0);
-    }
-
-    return 0;
+    fillParentOptions();
+    renderPages();
+    fillPageForm();
+    updateCanvasHeader();
 }
 
-function getDefaultColumn() {
-    var sectionId = getDefaultSectionId();
-    var columns = getSectionColumns(sectionId);
-    var column = Number(state.currentColumn || 1);
-
-    if (column < 1) column = 1;
-    if (column > columns) column = columns;
-
-    return column;
-}
-
-function getSectionById(sectionId) {
-    sectionId = Number(sectionId || 0);
-
-    return state.pageSections.find(function (section) {
-        return Number(section.id || 0) === sectionId;
-    }) || null;
-}
-
-function getSectionColumns(sectionId) {
-    var section = getSectionById(sectionId);
-
-    if (!section) {
-        return 1;
-    }
-
-    var layout = section.layout || {};
-    var columns = Number(layout.columns || 1);
-
-    if (columns < 1) columns = 1;
-    if (columns > 4) columns = 4;
-
-    return columns;
-}
-
-function setPageSectionsMessage(text, type) {
-    var node = document.getElementById('pageSectionsMessage');
-
-    if (!node) {
-        return;
-    }
-
-    node.hidden = !text;
-    node.textContent = text || '';
-    node.className = 'sb-page-sections-message' + (type ? ' is-' + type : '');
-}
-
-async function loadPageSections() {
-    var pageId = getCurrentPageId();
-    var list = document.getElementById('pageSectionsList');
-
-    if (!pageId) {
+async function loadBlocks() {
+    if (!state.currentPageId) {
+        state.blocks = [];
+        state.currentBlockId = 0;
         state.pageSections = [];
         state.currentSectionId = 0;
         state.currentColumn = 1;
-
-        if (list) {
-            list.innerHTML = '<div class="sb-empty">Выберите страницу</div>';
-        }
-
+        renderPageSectionsPanel();
+        renderBlocks();
+        fillBlockForm();
         return;
     }
 
-    try {
-        var res = await api('pageSection.list', {
-            siteId: siteId,
-            pageId: pageId
+    await loadPageSections();
+
+    var res = await api('block.list', {
+        pageId: state.currentPageId
+    });
+
+    state.blocks = Array.isArray(res.blocks) ? res.blocks : [];
+
+    await ensureUnsectionedBlocksAssigned();
+
+    if (state.currentBlockId) {
+        var exists = state.blocks.some(function (b) {
+            return Number(b.id || 0) === state.currentBlockId;
         });
 
-        var data = apiData(res);
+        if (!exists) {
+            state.currentBlockId = 0;
+        }
+    }
 
-        state.pageSections = Array.isArray(data.sections) ? data.sections : [];
+    renderBlocks();
+    fillBlockForm();
+    updateCanvasHeader();
+}
 
-        if (!state.currentSectionId && state.pageSections.length) {
-            state.currentSectionId = Number(state.pageSections[0].id || 0);
-            state.currentColumn = 1;
+function fillParentOptions() {
+    if (!newPageParentId) {
+        return;
+    }
+
+    var currentValue = String(newPageParentId.value || '0');
+    var html = '<option value="0">Без родителя</option>';
+
+    state.pages.forEach(function (page) {
+        html += '<option value="' + Number(page.id || 0) + '">' + escapeHtml(page.title || ('Страница #' + page.id)) + '</option>';
+    });
+
+    newPageParentId.innerHTML = html;
+    newPageParentId.value = currentValue;
+}
+
+function fillPageParentEditorOptions() {
+    var select = document.getElementById('pageParentInput');
+    if (!select) return;
+
+    var currentPageId = Number(state.currentPageId || 0);
+    var currentValue = String(select.value || '0');
+
+    var html = '<option value="0">Без родителя</option>';
+
+    state.pages.forEach(function (page) {
+        var id = Number(page.id || 0);
+
+        if (id === currentPageId) {
+            return;
         }
 
-        if (
-            state.currentSectionId &&
-            !state.pageSections.some(function (section) {
-                return Number(section.id || 0) === Number(state.currentSectionId);
-            })
-        ) {
-            state.currentSectionId = state.pageSections.length ? Number(state.pageSections[0].id || 0) : 0;
-            state.currentColumn = 1;
-        }
+        html += '<option value="' + id + '">' + escapeHtml(page.title || ('Страница #' + id)) + '</option>';
+    });
 
-        if (state.currentColumn < 1) {
-            state.currentColumn = 1;
-        }
+    select.innerHTML = html;
 
-        if (state.currentColumn > getSectionColumns(state.currentSectionId)) {
-            state.currentColumn = getSectionColumns(state.currentSectionId);
-        }
-
-        renderPageSectionsPanel();
-    } catch (e) {
-        console.error(e);
-
-        if (list) {
-            list.innerHTML = '<div class="sb-empty">Не удалось загрузить секции</div>';
-        }
-
-        setPageSectionsMessage('Ошибка загрузки секций: ' + ((e && (e.error || e.message)) || 'UNKNOWN_ERROR'), 'error');
+    if (currentValue && select.querySelector('option[value="' + currentValue + '"]')) {
+        select.value = currentValue;
     }
 }
 
-function renderPageSectionsPanel() {
-    var list = document.getElementById('pageSectionsList');
-
-    if (!list) {
+function renderPages() {
+    if (!pagesList) {
         return;
     }
 
-    if (!state.currentPageId) {
-        list.innerHTML = '<div class="sb-empty">Выберите страницу</div>';
+    if (!state.pages.length) {
+        pagesList.innerHTML = '<div class="sb-empty">Страниц пока нет</div>';
         return;
     }
 
-    if (!state.pageSections.length) {
-        list.innerHTML = '<div class="sb-empty">Секций пока нет</div>';
-        return;
-    }
+    var tree = buildPageTree(state.pages, 0, 0, []);
 
-    list.innerHTML = state.pageSections.map(function (section, index) {
-        var id = Number(section.id || 0);
-        var title = section.title || 'Секция';
-        var layout = section.layout || {};
-        var props = section.props || {};
-        var columns = Number(layout.columns || 1);
-        var container = String(layout.container || 'default');
-        var paddingTop = Number(props.paddingTop || 0);
-        var paddingBottom = Number(props.paddingBottom || 0);
-        var active = Number(state.currentSectionId || 0) === id ? ' is-active' : '';
+    pagesList.innerHTML = tree.map(function (item) {
+        var page = item.page;
+        var depth = item.depth;
+        var active = Number(page.id || 0) === state.currentPageId ? ' is-active' : '';
+        var hasChildren = pageHasChildren(page.id);
+        var status = String(page.status || 'draft');
 
         return ''
-            + '<div class="sb-page-section-card' + active + '" data-page-section-id="' + id + '">'
-            + '  <div class="sb-page-section-card__top" data-page-section-select="' + id + '">'
-            + '      <div class="sb-page-section-card__index">' + (index + 1) + '</div>'
-            + '      <div class="sb-page-section-card__main">'
-            + '          <input class="sb-page-section-card__title-input" '
-            + '                 type="text" '
-            + '                 value="' + escapeHtml(title) + '" '
-            + '                 data-section-field="title" '
-            + '                 data-section-id="' + id + '">'
-            + '          <div class="sb-page-section-card__meta">'
-            + '              <span>' + columns + ' кол.</span>'
-            + '              <span>' + escapeHtml(container) + '</span>'
-            + '              <span>' + paddingTop + '/' + paddingBottom + 'px</span>'
+            + '<div class="sb-editor-page-item' + active + '" data-page-id="' + Number(page.id || 0) + '" style="margin-left:' + (depth * 18) + 'px;">'
+            + '  <div class="sb-editor-page-top">'
+            + '      <div>'
+            + '          <h3 class="sb-editor-page-title">' + escapeHtml(page.title || '') + '</h3>'
+            + '          <div class="sb-editor-page-meta">'
+            +               '<span class="sb-editor-chip">' + escapeHtml(page.slug || '') + '</span>'
+            +               '<span class="sb-editor-chip ' + (status === 'published' ? 'sb-editor-chip--green' : 'sb-editor-chip--yellow') + '">' + escapeHtml(status) + '</span>'
+            +               (hasChildren ? '<span class="sb-editor-chip sb-editor-chip--blue">section</span>' : '')
             + '          </div>'
             + '      </div>'
-            + '  </div>'
-
-            + '  <div class="sb-page-section-card__settings">'
-            + '      <label>'
-            + '          Колонки'
-            + '          <select data-section-field="columns" data-section-id="' + id + '">'
-            + '              <option value="1"' + (columns === 1 ? ' selected' : '') + '>1</option>'
-            + '              <option value="2"' + (columns === 2 ? ' selected' : '') + '>2</option>'
-            + '              <option value="3"' + (columns === 3 ? ' selected' : '') + '>3</option>'
-            + '              <option value="4"' + (columns === 4 ? ' selected' : '') + '>4</option>'
-            + '          </select>'
-            + '      </label>'
-
-            + '      <label>'
-            + '          Ширина'
-            + '          <select data-section-field="container" data-section-id="' + id + '">'
-            + '              <option value="default"' + (container === 'default' ? ' selected' : '') + '>Обычная</option>'
-            + '              <option value="wide"' + (container === 'wide' ? ' selected' : '') + '>Широкая</option>'
-            + '              <option value="full"' + (container === 'full' ? ' selected' : '') + '>На всю ширину</option>'
-            + '          </select>'
-            + '      </label>'
-            + '  </div>'
-
-            + '  <div class="sb-page-section-card__actions">'
-            + '      <button class="sb-btn sb-btn-light sb-btn-small" type="button" data-section-action="move-up" data-section-id="' + id + '">↑</button>'
-            + '      <button class="sb-btn sb-btn-light sb-btn-small" type="button" data-section-action="move-down" data-section-id="' + id + '">↓</button>'
-            + '      <button class="sb-btn sb-btn-light sb-btn-small" type="button" data-section-action="save" data-section-id="' + id + '">Сохранить</button>'
-            + '      <button class="sb-btn sb-btn-danger sb-btn-small" type="button" data-section-action="delete" data-section-id="' + id + '">Удалить</button>'
             + '  </div>'
             + '</div>';
     }).join('');
 }
 
-function groupBlocksBySectionAndColumn() {
-    var result = {};
-    var firstSectionId = state.pageSections.length ? Number(state.pageSections[0].id || 0) : 0;
+function updateCanvasHeader() {
+    var page = getCurrentPage();
+    var pageTitle = document.getElementById('canvasPageTitle');
+    var pageMeta = document.getElementById('canvasPageMeta');
+    var previewHeading = document.getElementById('pagePreviewHeading');
 
-    state.pageSections.forEach(function (section) {
-        var sectionId = Number(section.id || 0);
-        var columns = getSectionColumns(sectionId);
-
-        result[sectionId] = {};
-
-        for (var i = 1; i <= columns; i++) {
-            result[sectionId][i] = [];
-        }
-    });
-
-    state.blocks.forEach(function (block) {
-        var sectionId = getBlockSectionId(block);
-
-        if (!sectionId || !result[sectionId]) {
-            sectionId = firstSectionId;
+    if (!page) {
+        if (pageTitle) {
+            pageTitle.textContent = 'Страница';
         }
 
-        if (!sectionId || !result[sectionId]) {
-            return;
+        if (pageMeta) {
+            pageMeta.textContent = 'Выберите страницу слева';
         }
 
-        var columns = getSectionColumns(sectionId);
-        var column = getBlockColumn(block);
-
-        if (column < 1) column = 1;
-        if (column > columns) column = columns;
-
-        result[sectionId][column].push(block);
-    });
-
-    return result;
-}
-
-function fillBlockPlacementForm(block) {
-    var sectionSelect = document.getElementById('blockSectionInput');
-    var columnSelect = document.getElementById('blockColumnInput');
-
-    if (!sectionSelect || !columnSelect) {
-        return;
-    }
-
-    if (!block) {
-        sectionSelect.innerHTML = '<option value="0">Нет секций</option>';
-        columnSelect.innerHTML = '<option value="1">Колонка 1</option>';
-        return;
-    }
-
-    if (!state.pageSections.length) {
-        sectionSelect.innerHTML = '<option value="0">Нет секций</option>';
-        columnSelect.innerHTML = '<option value="1">Колонка 1</option>';
-        return;
-    }
-
-    var currentSectionId = getBlockSectionId(block);
-
-    if (!currentSectionId || !getSectionById(currentSectionId)) {
-        currentSectionId = getDefaultSectionId();
-    }
-
-    sectionSelect.innerHTML = state.pageSections.map(function (section) {
-        var id = Number(section.id || 0);
-        var title = section.title || ('Секция #' + id);
-
-        return '<option value="' + id + '"' + (id === currentSectionId ? ' selected' : '') + '>' + escapeHtml(title) + '</option>';
-    }).join('');
-
-    var columns = getSectionColumns(currentSectionId);
-    var currentColumn = getBlockColumn(block);
-
-    if (currentColumn < 1) currentColumn = 1;
-    if (currentColumn > columns) currentColumn = columns;
-
-    var columnHtml = '';
-
-    for (var i = 1; i <= columns; i++) {
-        columnHtml += '<option value="' + i + '"' + (i === currentColumn ? ' selected' : '') + '>Колонка ' + i + '</option>';
-    }
-
-    columnSelect.innerHTML = columnHtml;
-}
-
-async function saveBlockPlacement(block) {
-    if (!block) {
-        return;
-    }
-
-    var sectionSelect = document.getElementById('blockSectionInput');
-    var columnSelect = document.getElementById('blockColumnInput');
-
-    if (!sectionSelect || !columnSelect) {
-        return;
-    }
-
-    var sectionId = Number(sectionSelect.value || 0);
-    var column = Number(columnSelect.value || 1);
-
-    if (sectionId <= 0) {
-        return;
-    }
-
-    await api('pageSection.assignBlock', {
-        blockId: Number(block.id || 0),
-        sectionId: sectionId,
-        column: column
-    });
-}
-
-async function assignBlockToSection(blockId, sectionId, column) {
-    blockId = Number(blockId || 0);
-    sectionId = Number(sectionId || 0);
-    column = Number(column || 1);
-
-    if (blockId <= 0 || sectionId <= 0) {
-        return;
-    }
-
-    await api('pageSection.assignBlock', {
-        blockId: blockId,
-        sectionId: sectionId,
-        column: column
-    });
-}
-
-async function ensureUnsectionedBlocksAssigned() {
-    var sectionId = getDefaultSectionId();
-
-    if (!sectionId) {
-        return;
-    }
-
-    var changed = false;
-
-    for (var i = 0; i < state.blocks.length; i++) {
-        var block = state.blocks[i];
-
-        if (getBlockSectionId(block) > 0) {
-            continue;
+        if (previewHeading) {
+            previewHeading.textContent = 'Выберите страницу';
         }
 
-        await assignBlockToSection(Number(block.id || 0), sectionId, 1);
-        changed = true;
+        return;
     }
 
-    if (changed) {
-        var res = await api('block.list', {
-            pageId: state.currentPageId
-        });
+    if (pageTitle) {
+        pageTitle.textContent = page.title || 'Страница';
+    }
 
-        state.blocks = Array.isArray(res.blocks) ? res.blocks : [];
+    if (pageMeta) {
+        pageMeta.textContent = 'slug: ' + (page.slug || '') + ' · статус: ' + (page.status || 'draft') + ' · блоков: ' + state.blocks.length;
+    }
+
+    if (previewHeading) {
+        previewHeading.textContent = page.title || 'Страница';
     }
 }
 
-async function createPageSection() {
-    var pageId = getCurrentPageId();
+function fillPageForm() {
+    var page = getCurrentPage();
 
-    if (!pageId) {
-        alert('Сначала выберите страницу');
-        return;
+    fillPageParentEditorOptions();
+
+    var titleInput = document.getElementById('pageTitleInput');
+    var slugInput = document.getElementById('pageSlugInput');
+    var statusInput = document.getElementById('pageStatusInput');
+    var parentSelect = document.getElementById('pageParentInput');
+
+    if (titleInput) {
+        titleInput.value = page ? (page.title || '') : '';
     }
 
-    var title = prompt('Название секции', 'Новая секция');
-
-    if (title === null) {
-        return;
+    if (slugInput) {
+        slugInput.value = page ? (page.slug || '') : '';
     }
 
-    title = String(title || '').trim();
+    if (statusInput) {
+        statusInput.value = page ? (page.status || 'draft') : 'draft';
+    }
+
+    if (parentSelect) {
+        parentSelect.value = page ? String(page.parentId || 0) : '0';
+    }
+}
+
+async function createPage() {
+    var title = getInputValue('newPageTitle').trim();
+    var slug = getInputValue('newPageSlug').trim();
+    var parentId = Number(getInputValue('newPageParentId') || 0);
 
     if (!title) {
-        title = 'Новая секция';
-    }
+        alert('Введите название страницы');
 
-    setPageSectionsMessage('Создаю секцию...', 'info');
+        var titleInput = document.getElementById('newPageTitle');
+        if (titleInput) {
+            titleInput.focus();
+        }
 
-    try {
-        var res = await api('pageSection.create', {
-            siteId: siteId,
-            pageId: pageId,
-            title: title,
-            layout: JSON.stringify({
-                container: 'default',
-                columns: 1,
-                gap: 24
-            }),
-            props: JSON.stringify({
-                backgroundColor: '',
-                backgroundImage: '',
-                paddingTop: 40,
-                paddingBottom: 40,
-                minHeight: 0
-            })
-        });
-
-        var data = apiData(res);
-
-        state.pageSections = Array.isArray(data.sections) ? data.sections : [];
-        state.currentSectionId = data.section && data.section.id ? Number(data.section.id) : getDefaultSectionId();
-        state.currentColumn = 1;
-
-        renderPageSectionsPanel();
-        renderBlocks();
-
-        setPageSectionsMessage('Секция создана', 'success');
-    } catch (e) {
-        console.error(e);
-        setPageSectionsMessage('Не удалось создать секцию: ' + ((e && (e.error || e.message)) || 'UNKNOWN_ERROR'), 'error');
-    }
-}
-
-async function savePageSection(sectionId) {
-    sectionId = Number(sectionId || 0);
-
-    var section = getSectionById(sectionId);
-
-    if (!section) {
-        alert('Секция не найдена');
         return;
     }
 
-    var card = document.querySelector('[data-page-section-id="' + sectionId + '"]');
-
-    if (!card) {
-        return;
-    }
-
-    var titleInput = card.querySelector('[data-section-field="title"]');
-    var columnsSelect = card.querySelector('[data-section-field="columns"]');
-    var containerSelect = card.querySelector('[data-section-field="container"]');
-
-    var title = titleInput ? String(titleInput.value || '').trim() : section.title;
-    var columns = columnsSelect ? Number(columnsSelect.value || 1) : Number((section.layout || {}).columns || 1);
-    var container = containerSelect ? String(containerSelect.value || 'default') : String((section.layout || {}).container || 'default');
-
-    var layout = Object.assign({}, section.layout || {}, {
-        columns: columns,
-        container: container
+    await api('page.create', {
+        siteId: siteId,
+        title: title,
+        slug: slug,
+        parentId: parentId
     });
 
-    setPageSectionsMessage('Сохраняю секцию...', 'info');
+    var newTitleInput = document.getElementById('newPageTitle');
+    var newSlugInput = document.getElementById('newPageSlug');
+    var newParentInput = document.getElementById('newPageParentId');
 
-    try {
-        var res = await api('pageSection.update', {
-            sectionId: sectionId,
-            title: title,
-            layout: JSON.stringify(layout)
-        });
-
-        var data = apiData(res);
-
-        state.pageSections = Array.isArray(data.sections) ? data.sections : [];
-
-        if (state.currentColumn > getSectionColumns(state.currentSectionId)) {
-            state.currentColumn = getSectionColumns(state.currentSectionId);
-        }
-
-        renderPageSectionsPanel();
-        await loadBlocks();
-
-        setPageSectionsMessage('Секция сохранена', 'success');
-    } catch (e) {
-        console.error(e);
-        setPageSectionsMessage('Не удалось сохранить секцию: ' + ((e && (e.error || e.message)) || 'UNKNOWN_ERROR'), 'error');
+    if (newTitleInput) {
+        newTitleInput.value = '';
     }
+
+    if (newSlugInput) {
+        newSlugInput.value = '';
+    }
+
+    if (newParentInput) {
+        newParentInput.value = '0';
+    }
+
+    await loadPages();
+    await loadBlocks();
 }
 
-async function movePageSection(sectionId, dir) {
-    sectionId = Number(sectionId || 0);
+async function savePage() {
+    if (!state.currentPageId) return;
 
-    if (!sectionId) {
-        return;
-    }
+    var parentId = Number(getInputValue('pageParentInput') || 0);
 
-    try {
-        var res = await api('pageSection.move', {
-            sectionId: sectionId,
-            dir: dir
-        });
+    await api('page.updateMeta', {
+        id: state.currentPageId,
+        title: getInputValue('pageTitleInput').trim(),
+        slug: getInputValue('pageSlugInput').trim(),
+        parentId: parentId
+    });
 
-        var data = apiData(res);
+    await api('page.setStatus', {
+        id: state.currentPageId,
+        status: getInputValue('pageStatusInput')
+    });
 
-        state.pageSections = Array.isArray(data.sections) ? data.sections : state.pageSections;
-
-        renderPageSectionsPanel();
-        renderBlocks();
-    } catch (e) {
-        console.error(e);
-        setPageSectionsMessage('Не удалось переместить секцию: ' + ((e && (e.error || e.message)) || 'UNKNOWN_ERROR'), 'error');
-    }
+    await loadPages();
+    await loadBlocks();
 }
 
-async function deletePageSection(sectionId) {
-    sectionId = Number(sectionId || 0);
+async function deletePage() {
+    if (!state.currentPageId) return;
+    if (!confirm('Удалить страницу? Дочерние страницы и блоки этой страницы тоже будут удалены.')) return;
 
-    if (!sectionId) {
-        return;
+    var idToDelete = state.currentPageId;
+
+    await api('page.delete', {
+        id: idToDelete
+    });
+
+    if (state.currentPageId === idToDelete) {
+        state.currentPageId = 0;
+        state.currentSectionId = 0;
+        state.currentColumn = 1;
     }
 
-    var section = getSectionById(sectionId);
-    var title = section && section.title ? section.title : 'секцию';
-
-    if (!confirm('Удалить "' + title + '"? Компоненты будут перенесены в другую секцию.')) {
-        return;
-    }
-
-    try {
-        var res = await api('pageSection.delete', {
-            sectionId: sectionId
-        });
-
-        var data = apiData(res);
-
-        state.pageSections = Array.isArray(data.sections) ? data.sections : [];
-
-        if (
-            state.currentSectionId === sectionId ||
-            !state.pageSections.some(function (s) {
-                return Number(s.id || 0) === Number(state.currentSectionId);
-            })
-        ) {
-            state.currentSectionId = state.pageSections.length ? Number(state.pageSections[0].id || 0) : 0;
-            state.currentColumn = 1;
-        }
-
-        renderPageSectionsPanel();
-        await loadBlocks();
-
-        setPageSectionsMessage('Секция удалена', 'success');
-    } catch (e) {
-        console.error(e);
-        setPageSectionsMessage('Не удалось удалить секцию: ' + ((e && (e.error || e.message)) || 'UNKNOWN_ERROR'), 'error');
-    }
+    await loadPages();
+    await loadBlocks();
 }
 
-Когда вставишь, напиши — пришлю следующий файл 20-pages.js.
+async function movePage(dir) {
+    if (!state.currentPageId) return;
+
+    await api('page.move', {
+        id: state.currentPageId,
+        dir: dir
+    });
+
+    await loadPages();
+}
+
+Когда вставишь, напиши — дальше пришлю 30-blocks.js.
