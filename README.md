@@ -1,272 +1,13 @@
-Да, сделаем так:
+Понял. Раз ширина работает, значит table-edit.js подключен. А вот + Столбец и выравнивание не работают из-за обработчиков. Сделаем надёжнее: не через привязку внутри initTable, а через общий document.addEventListener, чтобы кнопки и select ловились всегда.
 
-1. В public edit-mode появится кнопка “+ Столбец”.
-2. У каждого столбца появится выбор выравнивания: слева / центр / справа.
-3. Выравнивание будет сохраняться в content.columns[].align.
-4. На обычной public-странице таблица тоже будет показываться с этим выравниванием.
-
-
----
-
-1. Замени table.php
-
-Файл:
-
-/local/sitebuilder/views/blocks/table.php
-
-Полностью замени на этот код:
-
-<?php
-global $USER;
-
-$title = trim((string)($content['title'] ?? ''));
-
-$columns = is_array($content['columns'] ?? null) ? $content['columns'] : [];
-$rows = is_array($content['rows'] ?? null) ? $content['rows'] : [];
-
-if (empty($columns)) {
-    return;
-}
-
-$isEditMode = (
-    (string)($_GET['edit'] ?? '') === 'Y'
-    && is_object($USER)
-    && method_exists($USER, 'IsAuthorized')
-    && $USER->IsAuthorized()
-    && method_exists($USER, 'IsAdmin')
-    && $USER->IsAdmin()
-);
-
-$normalizeAlign = static function ($align): string {
-    $align = (string)$align;
-
-    if (!in_array($align, ['left', 'center', 'right'], true)) {
-        return 'left';
-    }
-
-    return $align;
-};
-
-$columns = array_values(array_map(static function ($column, $index) use ($normalizeAlign) {
-    $id = trim((string)($column['id'] ?? ''));
-
-    if ($id === '') {
-        $id = 'col_' . ($index + 1);
-    }
-
-    $label = trim((string)($column['label'] ?? ''));
-
-    if ($label === '') {
-        $label = 'Столбец ' . ($index + 1);
-    }
-
-    $width = (int)($column['width'] ?? 0);
-
-    if ($width < 40) {
-        $width = 0;
-    }
-
-    if ($width > 1200) {
-        $width = 1200;
-    }
-
-    return [
-        'id' => $id,
-        'label' => $label,
-        'width' => $width,
-        'align' => $normalizeAlign($column['align'] ?? 'left'),
-    ];
-}, $columns, array_keys($columns)));
-
-$normalizedRows = [];
-
-foreach ($rows as $rowIndex => $row) {
-    $cells = is_array($row['cells'] ?? null) ? $row['cells'] : [];
-    $rowId = trim((string)($row['id'] ?? ''));
-
-    if ($rowId === '') {
-        $rowId = 'row_' . ($rowIndex + 1);
-    }
-
-    $normalizedRows[] = [
-        'id' => $rowId,
-        'cells' => $cells,
-    ];
-}
-
-$tableContent = [
-    'title' => $title !== '' ? $title : 'Таблица',
-    'columns' => $columns,
-    'rows' => $normalizedRows,
-];
-
-$contentJson = json_encode($tableContent, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
-$propsJson = json_encode(is_array($props ?? null) ? $props : [], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
-
-$blockId = (int)($block['id'] ?? 0);
-?>
-
-<section
-    class="sb-block sb-block--table<?= $isEditMode ? ' is-public-editable-table' : '' ?>"
-    <?php if ($isEditMode): ?>
-        data-public-editable-table
-        data-block-id="<?= $blockId ?>"
-        data-content="<?= sb_public_h((string)$contentJson) ?>"
-        data-props="<?= sb_public_h((string)$propsJson) ?>"
-    <?php endif; ?>
->
-    <?php if ($isEditMode): ?>
-        <div class="sb-public-table-editbar">
-            <div class="sb-public-table-editbar__main">
-                <label class="sb-public-table-editbar__label">
-                    Название таблицы
-                    <input
-                        class="sb-public-table-title-input"
-                        type="text"
-                        value="<?= sb_public_h($title !== '' ? $title : 'Таблица') ?>"
-                        data-table-title-input
-                    >
-                </label>
-            </div>
-
-            <div class="sb-public-table-editbar__actions">
-                <button class="sb-public-table-editbar__btn sb-public-table-editbar__btn--light" type="button" data-table-add-column>
-                    + Столбец
-                </button>
-
-                <button class="sb-public-table-editbar__btn sb-public-table-editbar__btn--light" type="button" data-table-add-row>
-                    + Строка
-                </button>
-
-                <button class="sb-public-table-editbar__btn" type="button" data-table-save-all>
-                    Сохранить изменения
-                </button>
-            </div>
-        </div>
-    <?php else: ?>
-        <?php if ($title !== ''): ?>
-            <h2 class="sb-public-table__title"><?= sb_public_h($title) ?></h2>
-        <?php endif; ?>
-    <?php endif; ?>
-
-    <div class="sb-public-table-wrap">
-        <table class="sb-public-table<?= $isEditMode ? ' sb-public-table--editable' : '' ?>">
-            <colgroup>
-                <?php if ($isEditMode): ?>
-                    <col class="sb-public-table__control-col" style="width:72px;">
-                <?php endif; ?>
-
-                <?php foreach ($columns as $column): ?>
-                    <?php
-                    $style = '';
-
-                    if ((int)$column['width'] > 0) {
-                        $style = ' style="width:' . (int)$column['width'] . 'px;"';
-                    }
-                    ?>
-                    <col data-column-id="<?= sb_public_h($column['id']) ?>"<?= $style ?>>
-                <?php endforeach; ?>
-            </colgroup>
-
-            <thead>
-                <tr>
-                    <?php if ($isEditMode): ?>
-                        <th class="sb-public-table__control-th">№</th>
-                    <?php endif; ?>
-
-                    <?php foreach ($columns as $column): ?>
-                        <?php
-                        $styleParts = [
-                            'text-align:' . $column['align'],
-                        ];
-
-                        if ((int)$column['width'] > 0) {
-                            $styleParts[] = 'width:' . (int)$column['width'] . 'px';
-                        }
-
-                        $style = ' style="' . sb_public_h(implode(';', $styleParts)) . '"';
-                        ?>
-                        <th
-                            data-column-id="<?= sb_public_h($column['id']) ?>"
-                            data-column-align-value="<?= sb_public_h($column['align']) ?>"
-                            <?= $style ?>
-                        >
-                            <div class="sb-public-table-th-inner">
-                                <span
-                                    class="sb-public-table__th-text"
-                                    <?php if ($isEditMode): ?>
-                                        contenteditable="true"
-                                        data-column-label
-                                    <?php endif; ?>
-                                ><?= sb_public_h($column['label']) ?></span>
-
-                                <?php if ($isEditMode): ?>
-                                    <select class="sb-public-table-align-select" data-column-align>
-                                        <option value="left"<?= $column['align'] === 'left' ? ' selected' : '' ?>>Слева</option>
-                                        <option value="center"<?= $column['align'] === 'center' ? ' selected' : '' ?>>Центр</option>
-                                        <option value="right"<?= $column['align'] === 'right' ? ' selected' : '' ?>>Справа</option>
-                                    </select>
-                                <?php endif; ?>
-                            </div>
-
-                            <?php if ($isEditMode): ?>
-                                <span class="sb-public-table-resizer" data-column-resizer></span>
-                            <?php endif; ?>
-                        </th>
-                    <?php endforeach; ?>
-                </tr>
-            </thead>
-
-            <tbody>
-                <?php if (!empty($normalizedRows)): ?>
-                    <?php foreach ($normalizedRows as $rowIndex => $row): ?>
-                        <?php $cells = is_array($row['cells'] ?? null) ? $row['cells'] : []; ?>
-
-                        <tr data-row-id="<?= sb_public_h((string)$row['id']) ?>">
-                            <?php if ($isEditMode): ?>
-                                <td class="sb-public-table__control-td">
-                                    <div class="sb-public-table-row-actions">
-                                        <span class="sb-public-table-row-num"><?= $rowIndex + 1 ?></span>
-                                        <button type="button" class="sb-public-table-row-delete" data-table-delete-row title="Удалить строку">×</button>
-                                    </div>
-                                </td>
-                            <?php endif; ?>
-
-                            <?php foreach ($columns as $column): ?>
-                                <td
-                                    data-column-id="<?= sb_public_h($column['id']) ?>"
-                                    style="text-align:<?= sb_public_h($column['align']) ?>"
-                                    <?php if ($isEditMode): ?>
-                                        contenteditable="true"
-                                        data-cell-editable
-                                    <?php endif; ?>
-                                ><?= nl2br(sb_public_h((string)($cells[$column['id']] ?? ''))) ?></td>
-                            <?php endforeach; ?>
-                        </tr>
-                    <?php endforeach; ?>
-                <?php else: ?>
-                    <tr data-empty-row>
-                        <td colspan="<?= count($columns) + ($isEditMode ? 1 : 0) ?>">Нет данных</td>
-                    </tr>
-                <?php endif; ?>
-            </tbody>
-        </table>
-    </div>
-</section>
-
-
----
-
-2. Замени table-edit.js
-
-Файл:
+Замени полностью файл:
 
 /local/sitebuilder/assets/public/table-edit.js
 
-Полностью замени на:
+на этот:
 
 (function () {
-    window.SB_TABLE_EDIT_LOADED = 'v6-inline-columns-align';
+    window.SB_TABLE_EDIT_LOADED = 'v7-delegated-columns-align';
 
     var config = window.SB_PUBLIC_EDIT_CONFIG || {};
     var API_URL = config.apiUrl || '/local/sitebuilder/api.php';
@@ -301,18 +42,12 @@ $blockId = (int)($block['id'] ?? 0);
     }
 
     function textValue(node) {
-        return String(node ? (node.innerText || node.textContent || '') : '').replace(/\u00a0/g, ' ').trim();
+        return String(node ? (node.innerText || node.textContent || '') : '')
+            .replace(/\u00a0/g, ' ')
+            .trim();
     }
 
     function getClientX(e) {
-        if (e.touches && e.touches[0]) {
-            return e.touches[0].clientX;
-        }
-
-        if (e.changedTouches && e.changedTouches[0]) {
-            return e.changedTouches[0].clientX;
-        }
-
         return e.clientX;
     }
 
@@ -580,7 +315,6 @@ $blockId = (int)($block['id'] ?? 0);
 
         content.columns = columns;
         content.rows = rows;
-
         setContent(root, content);
 
         var colgroup = table.querySelector('colgroup');
@@ -601,6 +335,7 @@ $blockId = (int)($block['id'] ?? 0);
             th.setAttribute('data-column-id', newColumnId);
             th.setAttribute('data-column-align-value', 'left');
             th.style.textAlign = 'left';
+
             th.innerHTML = ''
                 + '<div class="sb-public-table-th-inner">'
                 + '  <span class="sb-public-table__th-text" contenteditable="true" data-column-label>Столбец ' + newIndex + '</span>'
@@ -638,6 +373,7 @@ $blockId = (int)($block['id'] ?? 0);
 
         applyWidths(root);
         applyAllAligns(root);
+
         setContent(root, collectContentFromDom(root));
         setDirty(root, true);
     }
@@ -668,15 +404,19 @@ $blockId = (int)($block['id'] ?? 0);
 
         tr.setAttribute('data-row-id', rowId);
 
-        var controlTd = document.createElement('td');
-        controlTd.className = 'sb-public-table__control-td';
-        controlTd.innerHTML = ''
-            + '<div class="sb-public-table-row-actions">'
-            + '  <span class="sb-public-table-row-num"></span>'
-            + '  <button type="button" class="sb-public-table-row-delete" data-table-delete-row title="Удалить строку">×</button>'
-            + '</div>';
+        var hasControlCol = !!root.querySelector('.sb-public-table__control-col');
 
-        tr.appendChild(controlTd);
+        if (hasControlCol) {
+            var controlTd = document.createElement('td');
+            controlTd.className = 'sb-public-table__control-td';
+            controlTd.innerHTML = ''
+                + '<div class="sb-public-table-row-actions">'
+                + '  <span class="sb-public-table-row-num"></span>'
+                + '  <button type="button" class="sb-public-table-row-delete" data-table-delete-row title="Удалить строку">×</button>'
+                + '</div>';
+
+            tr.appendChild(controlTd);
+        }
 
         columns.forEach(function (column) {
             var td = document.createElement('td');
@@ -825,77 +565,91 @@ $blockId = (int)($block['id'] ?? 0);
         applyWidths(root);
         applyAllAligns(root);
         renumberRows(root);
-
-        root.addEventListener('input', function (e) {
-            if (
-                e.target.matches('[data-table-title-input]') ||
-                e.target.matches('[data-column-label]') ||
-                e.target.matches('[data-cell-editable]')
-            ) {
-                setContent(root, collectContentFromDom(root));
-                setDirty(root, true);
-            }
-        });
-
-        root.addEventListener('change', function (e) {
-            if (e.target.matches('[data-column-align]')) {
-                var th = e.target.closest('th[data-column-id]');
-                var columnId = th ? String(th.getAttribute('data-column-id') || '') : '';
-                var align = normalizeAlign(e.target.value);
-
-                if (columnId) {
-                    applyColumnAlign(root, columnId, align);
-                    setContent(root, collectContentFromDom(root));
-                    setDirty(root, true);
-                }
-            }
-        });
-
-        root.addEventListener('keydown', function (e) {
-            if (e.target.matches('[data-cell-editable], [data-column-label]')) {
-                if (e.key === 'Enter' && !e.shiftKey) {
-                    e.preventDefault();
-                    e.target.blur();
-                }
-            }
-        });
-
-        var saveBtn = root.querySelector('[data-table-save-all]');
-
-        if (saveBtn) {
-            saveBtn.addEventListener('click', function () {
-                saveBlock(root);
-            });
-        }
-
-        var addRowBtn = root.querySelector('[data-table-add-row]');
-
-        if (addRowBtn) {
-            addRowBtn.addEventListener('click', function () {
-                addRow(root);
-            });
-        }
-
-        var addColumnBtn = root.querySelector('[data-table-add-column]');
-
-        if (addColumnBtn) {
-            addColumnBtn.addEventListener('click', function () {
-                addColumn(root);
-            });
-        }
-
-        root.addEventListener('click', function (e) {
-            var deleteBtn = e.target.closest('[data-table-delete-row]');
-
-            if (deleteBtn) {
-                deleteRow(root, deleteBtn);
-            }
-        });
     }
 
     function initAllTables() {
         document.querySelectorAll('[data-public-editable-table]').forEach(initTable);
     }
+
+    document.addEventListener('input', function (e) {
+        var root = e.target.closest('[data-public-editable-table]');
+
+        if (!root) {
+            return;
+        }
+
+        if (
+            e.target.matches('[data-table-title-input]') ||
+            e.target.matches('[data-column-label]') ||
+            e.target.matches('[data-cell-editable]')
+        ) {
+            setContent(root, collectContentFromDom(root));
+            setDirty(root, true);
+        }
+    }, true);
+
+    document.addEventListener('change', function (e) {
+        var select = e.target.closest('[data-column-align]');
+
+        if (!select) {
+            return;
+        }
+
+        var root = select.closest('[data-public-editable-table]');
+        var th = select.closest('th[data-column-id]');
+        var columnId = th ? String(th.getAttribute('data-column-id') || '') : '';
+
+        if (!root || !columnId) {
+            return;
+        }
+
+        applyColumnAlign(root, columnId, normalizeAlign(select.value));
+
+        setContent(root, collectContentFromDom(root));
+        setDirty(root, true);
+    }, true);
+
+    document.addEventListener('click', function (e) {
+        var root = e.target.closest('[data-public-editable-table]');
+
+        if (!root) {
+            return;
+        }
+
+        if (e.target.closest('[data-table-add-column]')) {
+            e.preventDefault();
+            addColumn(root);
+            return;
+        }
+
+        if (e.target.closest('[data-table-add-row]')) {
+            e.preventDefault();
+            addRow(root);
+            return;
+        }
+
+        if (e.target.closest('[data-table-save-all]')) {
+            e.preventDefault();
+            saveBlock(root);
+            return;
+        }
+
+        var deleteBtn = e.target.closest('[data-table-delete-row]');
+
+        if (deleteBtn) {
+            e.preventDefault();
+            deleteRow(root, deleteBtn);
+        }
+    }, true);
+
+    document.addEventListener('keydown', function (e) {
+        if (e.target.matches('[data-cell-editable], [data-column-label]')) {
+            if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                e.target.blur();
+            }
+        }
+    }, true);
 
     document.addEventListener('mousedown', function (e) {
         var resizer = e.target.closest('[data-column-resizer]');
@@ -934,73 +688,18 @@ $blockId = (int)($block['id'] ?? 0);
     }
 })();
 
+Теперь обнови версию в layout:
 
----
+<script src="<?= sb_public_h($basePath) ?>/assets/public/table-edit.js?v=13"></script>
 
-3. Добавь CSS в public.css
+И сделай Ctrl + F5.
 
-Файл:
-
-/local/sitebuilder/assets/public/public.css
-
-В самый конец добавь:
-
-/* =========================================================
-   Public table columns and align
-   ========================================================= */
-
-.sb-public-table-th-inner {
-    display: grid;
-    gap: 6px;
-    min-width: 0;
-}
-
-.sb-public-table-align-select {
-    width: 100%;
-    min-height: 28px;
-    box-sizing: border-box;
-    padding: 3px 7px;
-    border: 1px solid rgba(148, 163, 184, .7);
-    border-radius: 8px;
-    background: #fff;
-    color: #334155;
-    font-size: 12px;
-    font-weight: 800;
-}
-
-.sb-public-table-align-select:focus {
-    outline: none;
-    border-color: #2563eb;
-    box-shadow: 0 0 0 3px rgba(37, 99, 235, .12);
-}
-
-.sb-public-table-editbar__actions {
-    flex-wrap: wrap;
-}
-
-
----
-
-4. Обнови версии подключения
-
-В файле:
-
-/local/sitebuilder/views/layout/public_page.php
-
-Поставь:
-
-<script src="<?= sb_public_h($basePath) ?>/assets/public/table-edit.js?v=12"></script>
-
-И CSS:
-
-<link rel="stylesheet" href="<?= sb_public_h($basePath) ?>/assets/public/public.css?v=18">
-
-После этого сделай Ctrl + F5.
-
-Проверка в консоли:
+Проверь в консоли:
 
 window.SB_TABLE_EDIT_LOADED
 
-Должно быть:
+Должно вернуть:
 
-"v6-inline-columns-align"
+"v7-delegated-columns-align"
+
+Если после этого не заработает, пришли Ctrl+U кусок именно с таблицей: от <section class="sb-block sb-block--table... до </section>.
