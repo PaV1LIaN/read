@@ -1,1638 +1,441 @@
-Да, идём дальше. Сейчас замени полностью файл:
+Да, по скрину видно 3 проблемы:
+
+1. Коды столбцов огромные: col_1780654750135 — неудобно для формул.
+2. Формулу руками писать неудобно.
+3. Поля внутри ячеек слишком короткие, должны растягиваться на ширину столбца.
+
+Делаем так:
+
+1. Для пользователя показываем короткие коды: c1, c2, c3.
+2. Формула будет работать и с короткими кодами: c1 * c2.
+3. В столбце типа “Формула” появится выбор столбца и кнопка “Вставить”.
+4. Поля ввода в ячейках растянем на 100% ширины столбца.
+
+1. Добавь CSS
+
+В конец файла:
+
+/local/sitebuilder/assets/public/public.css
+
+добавь:
+
+/* =========================================================
+   Public table UX improvements
+   ========================================================= */
+
+.sb-public-table th {
+    vertical-align: top;
+}
+
+.sb-public-table-th-inner {
+    display: grid;
+    gap: 6px;
+    min-width: 0;
+}
+
+.sb-public-table-column-code {
+    display: inline-flex;
+    width: fit-content;
+    max-width: 100%;
+    padding: 2px 7px;
+    border-radius: 999px;
+    background: #e2e8f0;
+    color: #475569;
+    font-size: 10px;
+    font-weight: 900;
+    line-height: 1.3;
+}
+
+.sb-public-table-column-code::before {
+    content: "Код: ";
+    opacity: .75;
+}
+
+.sb-public-table-cell-input,
+.sb-public-table-cell-link input,
+.sb-public-table-cell-image input {
+    display: block;
+    width: 100% !important;
+    min-width: 100% !important;
+    max-width: 100% !important;
+    min-height: 32px;
+    box-sizing: border-box;
+}
+
+.sb-public-table--editable td {
+    min-width: 0;
+}
+
+.sb-public-table--editable td[data-column-id] {
+    padding: 8px;
+}
+
+.sb-public-table-formula-tools {
+    display: grid;
+    gap: 5px;
+    padding: 6px;
+    border-radius: 10px;
+    background: #f8fafc;
+    border: 1px solid rgba(148, 163, 184, .45);
+}
+
+.sb-public-table-formula-tools__row {
+    display: flex;
+    gap: 5px;
+}
+
+.sb-public-table-formula-tools select,
+.sb-public-table-formula-tools button {
+    min-height: 26px;
+    box-sizing: border-box;
+    border-radius: 8px;
+    font-size: 11px;
+    font-weight: 800;
+}
+
+.sb-public-table-formula-tools select {
+    width: 100%;
+    min-width: 0;
+    border: 1px solid rgba(148, 163, 184, .7);
+    background: #fff;
+    color: #334155;
+}
+
+.sb-public-table-formula-tools button {
+    border: 0;
+    padding: 3px 7px;
+    background: #dbeafe;
+    color: #1e40af;
+    cursor: pointer;
+}
+
+.sb-public-table-formula-tools button:hover {
+    background: #bfdbfe;
+}
+
+
+---
+
+2. В table-edit.js добавь короткие коды c1, c2, c3
+
+Файл:
 
 /local/sitebuilder/assets/public/table-edit.js
 
-на этот. Он уже рассчитан на:
+Найди функцию:
 
-text
-number
-date в формате dd.mm.yyyy
-link
-image
-formula
+function collectContentFromDom(root) {
 
-(function () {
-    window.SB_TABLE_EDIT_LOADED = 'v10-types-ddmmyyyy';
+Внутри неё найди место, где в columns.push сейчас добавляется столбец:
 
-    var config = window.SB_PUBLIC_EDIT_CONFIG || {};
-    var API_URL = config.apiUrl || '/local/sitebuilder/api.php';
-    var sessid = config.sessid || '';
+columns.push({
+    id: columnId,
+    label: label,
+    width: clampWidth(width),
+    align: getColumnAlignFromTh(th),
+    type: getColumnTypeFromTh(th),
+    formula: getColumnFormulaFromTh(th)
+});
 
-    var activeResize = null;
+Замени на:
 
-    function parseJson(value, fallback) {
-        try {
-            return JSON.parse(value || '');
-        } catch (e) {
-            return fallback;
-        }
-    }
+var oldCode = oldColumn && oldColumn.code ? String(oldColumn.code) : '';
 
-    function cssEscape(value) {
-        if (window.CSS && typeof window.CSS.escape === 'function') {
-            return window.CSS.escape(value);
-        }
+columns.push({
+    id: columnId,
+    code: oldCode || ('c' + (index + 1)),
+    label: label,
+    width: clampWidth(width),
+    align: getColumnAlignFromTh(th),
+    type: getColumnTypeFromTh(th),
+    formula: getColumnFormulaFromTh(th)
+});
 
-        return String(value).replace(/"/g, '\\"');
-    }
 
-    function normalizeAlign(align) {
-        align = String(align || 'left');
+---
 
-        if (align !== 'left' && align !== 'center' && align !== 'right') {
-            return 'left';
-        }
+3. Формулы должны понимать c1, c2, c3
 
-        return align;
-    }
+Найди функцию:
 
-    function normalizeType(type) {
-        type = String(type || 'text');
+function calculateFormula(content, row, formula) {
 
-        if (['text', 'number', 'date', 'link', 'image', 'formula'].indexOf(type) === -1) {
-            return 'text';
-        }
+Полностью замени её на:
 
-        return type;
-    }
+function calculateFormula(content, row, formula) {
+    formula = String(formula || '').trim();
 
-    function textValue(node) {
-        return String(node ? (node.innerText || node.textContent || '') : '')
-            .replace(/\u00a0/g, ' ')
-            .trim();
-    }
-
-    function getClientX(e) {
-        if (e.touches && e.touches[0]) {
-            return e.touches[0].clientX;
-        }
-
-        if (e.changedTouches && e.changedTouches[0]) {
-            return e.changedTouches[0].clientX;
-        }
-
-        return e.clientX;
-    }
-
-    function getContent(root) {
-        return parseJson(root.getAttribute('data-content'), {});
-    }
-
-    function setContent(root, content) {
-        root.setAttribute('data-content', JSON.stringify(content || {}));
-    }
-
-    function setDirty(root, isDirty) {
-        root.classList.toggle('is-dirty', !!isDirty);
-
-        var btn = root.querySelector('[data-table-save-all]');
-
-        if (btn) {
-            btn.textContent = isDirty ? 'Сохранить изменения *' : 'Сохранить изменения';
-        }
-    }
-
-    function clampWidth(width) {
-        width = Math.round(Number(width || 0));
-
-        if (width < 80) {
-            width = 80;
-        }
-
-        if (width > 1200) {
-            width = 1200;
-        }
-
-        return width;
-    }
-
-    function valueToText(value) {
-        if (value && typeof value === 'object') {
-            if (value.text) {
-                return String(value.text);
-            }
-
-            if (value.url) {
-                return String(value.url);
-            }
-
-            if (value.src) {
-                return String(value.src);
-            }
-
-            if (value.alt) {
-                return String(value.alt);
-            }
-
-            return '';
-        }
-
-        return String(value || '');
-    }
-
-    function isSafeLinkUrl(url) {
-        url = String(url || '').trim();
-
-        return /^(https?:\/\/|\/|mailto:)/i.test(url);
-    }
-
-    function isSafeImageSrc(src) {
-        src = String(src || '').trim();
-
-        return /^(https?:\/\/|\/)/i.test(src);
-    }
-
-    function looksLikeUrl(value) {
-        value = String(value || '').trim();
-
-        return /^(https?:\/\/|\/|mailto:)/i.test(value);
-    }
-
-    function looksLikeImageSrc(value) {
-        value = String(value || '').trim();
-
-        return /^(https?:\/\/|\/)/i.test(value) && /\.(png|jpe?g|gif|webp|svg)(\?.*)?$/i.test(value);
-    }
-
-    function normalizeNumberValue(value) {
-        value = String(value || '')
-            .replace(/\s+/g, '')
-            .replace(',', '.');
-
-        if (value === '') {
-            return '';
-        }
-
-        var match = value.match(/-?\d+(?:\.\d+)?/);
-
-        if (!match) {
-            return '';
-        }
-
-        var number = Number(match[0]);
-
-        if (!Number.isFinite(number)) {
-            return '';
-        }
-
-        return String(number);
-    }
-
-    function formatNumberInputLive(value) {
-        value = String(value || '')
-            .replace(/\s+/g, '')
-            .replace(',', '.')
-            .replace(/[^0-9.\-]/g, '');
-
-        value = value.replace(/(?!^)-/g, '');
-
-        var minus = value.charAt(0) === '-' ? '-' : '';
-
-        if (minus) {
-            value = value.slice(1);
-        }
-
-        var parts = value.split('.');
-
-        if (parts.length > 2) {
-            value = parts.shift() + '.' + parts.join('');
-        }
-
-        return minus + value;
-    }
-
-    function isValidDateParts(day, month, year) {
-        day = Number(day);
-        month = Number(month);
-        year = Number(year);
-
-        if (!day || !month || !year) {
-            return false;
-        }
-
-        if (year < 1900 || year > 2200) {
-            return false;
-        }
-
-        var date = new Date(year, month - 1, day);
-
-        return date.getFullYear() === year
-            && date.getMonth() === month - 1
-            && date.getDate() === day;
-    }
-
-    function normalizeDateValue(value) {
-        value = valueToText(value).trim();
-
-        if (!value) {
-            return '';
-        }
-
-        var matchRu = value.match(/^(\d{1,2})\.(\d{1,2})\.(\d{4})$/);
-
-        if (matchRu) {
-            var dayRu = matchRu[1].padStart(2, '0');
-            var monthRu = matchRu[2].padStart(2, '0');
-            var yearRu = matchRu[3];
-
-            if (isValidDateParts(dayRu, monthRu, yearRu)) {
-                return dayRu + '.' + monthRu + '.' + yearRu;
-            }
-
-            return '';
-        }
-
-        var matchIso = value.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
-
-        if (matchIso) {
-            var yearIso = matchIso[1];
-            var monthIso = matchIso[2].padStart(2, '0');
-            var dayIso = matchIso[3].padStart(2, '0');
-
-            if (isValidDateParts(dayIso, monthIso, yearIso)) {
-                return dayIso + '.' + monthIso + '.' + yearIso;
-            }
-
-            return '';
-        }
-
-        var digits = value.replace(/\D/g, '');
-
-        if (digits.length === 8) {
-            var day = digits.slice(0, 2);
-            var month = digits.slice(2, 4);
-            var year = digits.slice(4, 8);
-
-            if (isValidDateParts(day, month, year)) {
-                return day + '.' + month + '.' + year;
-            }
-        }
-
+    if (!formula) {
         return '';
     }
 
-    function formatDateInputLive(value) {
-        value = String(value || '').trim();
+    var cells = row && row.cells ? row.cells : {};
+    var columns = Array.isArray(content.columns) ? content.columns : [];
 
-        var iso = value.match(/^(\d{4})-(\d{2})-(\d{2})$/);
-
-        if (iso) {
-            return iso[3] + '.' + iso[2] + '.' + iso[1];
-        }
-
-        var digits = value.replace(/\D/g, '').slice(0, 8);
-
-        if (digits.length <= 2) {
-            return digits;
-        }
-
-        if (digits.length <= 4) {
-            return digits.slice(0, 2) + '.' + digits.slice(2);
-        }
-
-        return digits.slice(0, 2) + '.' + digits.slice(2, 4) + '.' + digits.slice(4);
-    }
-
-    function valueToNumber(value) {
-        var normalized = normalizeNumberValue(valueToText(value));
-
-        if (normalized === '') {
-            return 0;
-        }
-
-        var number = Number(normalized);
-
-        return Number.isFinite(number) ? number : 0;
-    }
-
-    function evaluateMathExpression(expression) {
-        expression = String(expression || '').replace(/,/g, '.').trim();
-
-        if (!expression) {
-            return '';
-        }
-
-        if (!/^[0-9+\-*\/().\s]+$/.test(expression)) {
-            return 'Ошибка';
-        }
-
-        var tokens = expression.match(/\d+(?:\.\d+)?|[+\-*\/()]/g) || [];
-
-        if (!tokens.length) {
-            return '';
-        }
-
-        var raw = expression.replace(/\s+/g, '');
-        var joined = tokens.join('');
-
-        if (raw !== joined) {
-            return 'Ошибка';
-        }
-
-        var i = 0;
-        var hasError = false;
-
-        function parseFactor() {
-            if (i >= tokens.length) {
-                hasError = true;
-                return 0;
-            }
-
-            var token = tokens[i];
-
-            if (token === '+') {
-                i++;
-                return parseFactor();
-            }
-
-            if (token === '-') {
-                i++;
-                return -parseFactor();
-            }
-
-            if (token === '(') {
-                i++;
-
-                var value = parseExpression();
-
-                if (tokens[i] === ')') {
-                    i++;
-                } else {
-                    hasError = true;
-                }
-
-                return value;
-            }
-
-            if (!/^\d+(?:\.\d+)?$/.test(token)) {
-                hasError = true;
-                return 0;
-            }
-
-            i++;
-
-            return Number(token);
-        }
-
-        function parseTerm() {
-            var value = parseFactor();
-
-            while (tokens[i] === '*' || tokens[i] === '/') {
-                var op = tokens[i];
-                i++;
-
-                var right = parseFactor();
-
-                if (op === '*') {
-                    value *= right;
-                } else {
-                    if (Math.abs(right) < 0.0000001) {
-                        hasError = true;
-                        return 0;
-                    }
-
-                    value /= right;
-                }
-            }
-
-            return value;
-        }
-
-        function parseExpression() {
-            var value = parseTerm();
-
-            while (tokens[i] === '+' || tokens[i] === '-') {
-                var op = tokens[i];
-                i++;
-
-                var right = parseTerm();
-
-                if (op === '+') {
-                    value += right;
-                } else {
-                    value -= right;
-                }
-            }
-
-            return value;
-        }
-
-        var result = parseExpression();
-
-        if (hasError || i < tokens.length || !Number.isFinite(result)) {
-            return 'Ошибка';
-        }
-
-        result = Math.round(result * 1000000) / 1000000;
-
-        var text = String(result);
-
-        if (text.indexOf('.') !== -1) {
-            text = text.replace(/0+$/, '').replace(/\.$/, '');
-        }
-
-        return text === '-0' ? '0' : text;
-    }
-
-    function calculateFormula(content, row, formula) {
-        formula = String(formula || '').trim();
-
-        if (!formula) {
-            return '';
-        }
-
-        var cells = row && row.cells ? row.cells : {};
-
-        var expression = formula.replace(/\b[A-Za-z_][A-Za-z0-9_]*\b/g, function (columnId) {
-            return String(valueToNumber(cells[columnId]));
-        });
-
-        return evaluateMathExpression(expression);
-    }
-
-    function getColumnCurrentWidth(table, columnId) {
-        var th = table.querySelector('th[data-column-id="' + cssEscape(columnId) + '"]');
-
-        if (!th) {
-            return 160;
-        }
-
-        return clampWidth(th.getBoundingClientRect().width || 160);
-    }
-
-    function getColumnAlignFromTh(th) {
-        var select = th.querySelector('[data-column-align]');
-
-        if (select) {
-            return normalizeAlign(select.value);
-        }
-
-        return normalizeAlign(th.getAttribute('data-column-align-value') || 'left');
-    }
-
-    function getColumnTypeFromTh(th) {
-        var select = th.querySelector('[data-column-type]');
-
-        if (select) {
-            return normalizeType(select.value);
-        }
-
-        return normalizeType(th.getAttribute('data-column-type-value') || 'text');
-    }
-
-    function getColumnFormulaFromTh(th) {
-        var input = th.querySelector('[data-column-formula]');
-
-        if (input) {
-            return String(input.value || '').trim();
-        }
-
-        return '';
-    }
-
-    function getRawCellValueFromTd(td, oldValue) {
-        var linkText = td.querySelector('[data-link-text]');
-        var linkUrl = td.querySelector('[data-link-url]');
-
-        if (linkText || linkUrl) {
-            return {
-                text: String(linkText ? linkText.value : '').trim(),
-                url: String(linkUrl ? linkUrl.value : '').trim()
-            };
-        }
-
-        var imageSrc = td.querySelector('[data-image-src]');
-        var imageAlt = td.querySelector('[data-image-alt]');
-
-        if (imageSrc || imageAlt) {
-            return {
-                src: String(imageSrc ? imageSrc.value : '').trim(),
-                alt: String(imageAlt ? imageAlt.value : '').trim()
-            };
-        }
-
-        var numberInput = td.querySelector('[data-number-cell]');
-
-        if (numberInput) {
-            return normalizeNumberValue(numberInput.value);
-        }
-
-        var dateInput = td.querySelector('[data-date-cell]');
-
-        if (dateInput) {
-            return normalizeDateValue(dateInput.value);
-        }
-
-        if (td.querySelector('[data-formula-cell]')) {
-            return '';
-        }
-
-        var value = textValue(td);
-
-        if (value !== '') {
-            return value;
-        }
-
-        return oldValue;
-    }
-
-    function convertCellValueToType(rawValue, type) {
-        type = normalizeType(type);
-
-        if (type === 'formula') {
-            return '';
-        }
-
-        if (type === 'number') {
-            return normalizeNumberValue(valueToText(rawValue));
-        }
-
-        if (type === 'date') {
-            return normalizeDateValue(valueToText(rawValue));
-        }
-
-        if (type === 'link') {
-            if (rawValue && typeof rawValue === 'object') {
-                return {
-                    text: String(rawValue.text || rawValue.url || '').trim(),
-                    url: String(rawValue.url || '').trim()
-                };
-            }
-
-            var linkText = valueToText(rawValue);
-
-            return {
-                text: linkText,
-                url: looksLikeUrl(linkText) ? linkText : ''
-            };
-        }
-
-        if (type === 'image') {
-            if (rawValue && typeof rawValue === 'object') {
-                return {
-                    src: String(rawValue.src || '').trim(),
-                    alt: String(rawValue.alt || rawValue.text || '').trim()
-                };
-            }
-
-            var imageText = valueToText(rawValue);
-
-            return {
-                src: looksLikeImageSrc(imageText) ? imageText : '',
-                alt: looksLikeImageSrc(imageText) ? '' : imageText
-            };
-        }
-
-        return valueToText(rawValue);
-    }
-
-    function findOldColumn(oldContent, columnId) {
-        var columns = Array.isArray(oldContent.columns) ? oldContent.columns : [];
-
-        return columns.find(function (column) {
-            return String(column.id || '') === String(columnId);
-        }) || null;
-    }
-
-    function findOldRow(oldContent, rowId) {
-        var rows = Array.isArray(oldContent.rows) ? oldContent.rows : [];
-
-        return rows.find(function (row) {
-            return String(row.id || '') === String(rowId);
-        }) || null;
-    }
-
-    function collectContentFromDom(root) {
-        var oldContent = getContent(root);
-        var table = root.querySelector('.sb-public-table');
-        var titleInput = root.querySelector('[data-table-title-input]');
-
-        var columns = [];
-        var rows = [];
-
-        if (!table) {
-            return oldContent;
-        }
-
-        table.querySelectorAll('thead th[data-column-id]').forEach(function (th, index) {
-            var columnId = String(th.getAttribute('data-column-id') || '').trim();
-
-            if (!columnId) {
-                columnId = 'col_' + (index + 1);
-                th.setAttribute('data-column-id', columnId);
-            }
-
-            var labelNode = th.querySelector('[data-column-label]') || th.querySelector('.sb-public-table__th-text');
-            var label = textValue(labelNode);
-
-            if (!label) {
-                label = 'Столбец ' + (index + 1);
-            }
-
-            var oldColumn = findOldColumn(oldContent, columnId);
-            var width = oldColumn && oldColumn.width
-                ? Number(oldColumn.width)
-                : getColumnCurrentWidth(table, columnId);
-
-            columns.push({
-                id: columnId,
-                label: label,
-                width: clampWidth(width),
-                align: getColumnAlignFromTh(th),
-                type: getColumnTypeFromTh(th),
-                formula: getColumnFormulaFromTh(th)
-            });
-        });
-
-        table.querySelectorAll('tbody tr[data-row-id]').forEach(function (tr, rowIndex) {
-            var rowId = String(tr.getAttribute('data-row-id') || '').trim();
-
-            if (!rowId) {
-                rowId = 'row_' + (Date.now() + rowIndex);
-                tr.setAttribute('data-row-id', rowId);
-            }
-
-            var oldRow = findOldRow(oldContent, rowId);
-            var oldCells = oldRow && oldRow.cells ? oldRow.cells : {};
-            var cells = {};
-
-            columns.forEach(function (column) {
-                if (column.type === 'formula') {
-                    return;
-                }
-
-                var td = tr.querySelector('td[data-column-id="' + cssEscape(column.id) + '"]');
-                var oldValue = oldCells[column.id] !== undefined ? oldCells[column.id] : '';
-
-                if (!td) {
-                    cells[column.id] = convertCellValueToType(oldValue, column.type);
-                    return;
-                }
-
-                var rawValue = getRawCellValueFromTd(td, oldValue);
-                cells[column.id] = convertCellValueToType(rawValue, column.type);
-            });
-
-            rows.push({
-                id: rowId,
-                cells: cells
-            });
-        });
-
-        return {
-            title: titleInput ? String(titleInput.value || '').trim() || 'Таблица' : (oldContent.title || 'Таблица'),
-            columns: columns,
-            rows: rows
-        };
-    }
-
-    function applyColumnAlign(root, columnId, align) {
-        var table = root.querySelector('.sb-public-table');
-
-        if (!table) {
-            return;
-        }
-
-        align = normalizeAlign(align);
-
-        var th = table.querySelector('th[data-column-id="' + cssEscape(columnId) + '"]');
-
-        if (th) {
-            th.style.textAlign = align;
-            th.setAttribute('data-column-align-value', align);
-
-            var select = th.querySelector('[data-column-align]');
-
-            if (select) {
-                select.value = align;
-            }
-        }
-
-        table.querySelectorAll('td[data-column-id="' + cssEscape(columnId) + '"]').forEach(function (td) {
-            td.style.textAlign = align;
-        });
-    }
-
-    function applyAllAligns(root) {
-        var content = getContent(root);
-        var columns = Array.isArray(content.columns) ? content.columns : [];
-
-        columns.forEach(function (column) {
-            applyColumnAlign(root, String(column.id || ''), normalizeAlign(column.align || 'left'));
-        });
-    }
-
-    function applyWidths(root) {
-        var table = root.querySelector('.sb-public-table');
-        var content = getContent(root);
-        var columns = Array.isArray(content.columns) ? content.columns : [];
-
-        if (!table || !columns.length) {
-            return;
-        }
-
-        var total = root.querySelector('.sb-public-table__control-col') ? 72 : 0;
-
-        columns.forEach(function (column) {
-            var columnId = String(column.id || '');
-            var width = clampWidth(column.width || getColumnCurrentWidth(table, columnId));
-
-            column.width = width;
-            total += width;
-
-            var col = table.querySelector('col[data-column-id="' + cssEscape(columnId) + '"]');
-            var th = table.querySelector('th[data-column-id="' + cssEscape(columnId) + '"]');
-
-            if (col) {
-                col.style.setProperty('width', width + 'px', 'important');
-                col.setAttribute('width', String(width));
-            }
-
-            if (th) {
-                th.style.setProperty('width', width + 'px', 'important');
-                th.style.setProperty('min-width', width + 'px', 'important');
-                th.style.setProperty('max-width', width + 'px', 'important');
-            }
-        });
-
-        table.style.setProperty('table-layout', 'fixed', 'important');
-        table.style.setProperty('width', total + 'px', 'important');
-        table.style.setProperty('min-width', total + 'px', 'important');
-
-        content.columns = columns;
-        setContent(root, content);
-    }
-
-    function createTypeSelect(value) {
-        var select = document.createElement('select');
-
-        select.className = 'sb-public-table-type-select';
-        select.setAttribute('data-column-type', '');
-
-        select.innerHTML = ''
-            + '<option value="text">Текст</option>'
-            + '<option value="number">Число</option>'
-            + '<option value="date">Дата</option>'
-            + '<option value="link">Гиперссылка</option>'
-            + '<option value="image">Рисунок</option>'
-            + '<option value="formula">Формула</option>';
-
-        select.value = normalizeType(value);
-
-        return select;
-    }
-
-    function createAlignSelect(value) {
-        var select = document.createElement('select');
-
-        select.className = 'sb-public-table-align-select';
-        select.setAttribute('data-column-align', '');
-
-        select.innerHTML = ''
-            + '<option value="left">Слева</option>'
-            + '<option value="center">Центр</option>'
-            + '<option value="right">Справа</option>';
-
-        select.value = normalizeAlign(value);
-
-        return select;
-    }
-
-    function renderCellEditor(td, column, row, content) {
-        var type = normalizeType(column.type);
-        var value = row.cells ? row.cells[column.id] : '';
-
-        td.innerHTML = '';
-        td.removeAttribute('contenteditable');
-        td.removeAttribute('data-cell-editable');
-
-        td.setAttribute('data-column-id', column.id);
-        td.setAttribute('data-column-type', type);
-        td.style.textAlign = normalizeAlign(column.align);
-
-        if (type === 'text') {
-            td.setAttribute('contenteditable', 'true');
-            td.setAttribute('data-cell-editable', '');
-            td.textContent = valueToText(value);
-            return;
-        }
-
-        if (type === 'number') {
-            var numberInput = document.createElement('input');
-
-            numberInput.className = 'sb-public-table-cell-input';
-            numberInput.type = 'text';
-            numberInput.inputMode = 'decimal';
-            numberInput.placeholder = '0';
-            numberInput.setAttribute('data-number-cell', '');
-            numberInput.value = normalizeNumberValue(value);
-
-            td.appendChild(numberInput);
-            return;
-        }
-
-        if (type === 'date') {
-            var dateInput = document.createElement('input');
-
-            dateInput.className = 'sb-public-table-cell-input';
-            dateInput.type = 'text';
-            dateInput.placeholder = 'дд.мм.гггг';
-            dateInput.maxLength = 10;
-            dateInput.setAttribute('data-date-cell', '');
-            dateInput.value = normalizeDateValue(value);
-
-            td.appendChild(dateInput);
-            return;
-        }
-
-        if (type === 'link') {
-            var linkValue = convertCellValueToType(value, 'link');
-
-            var linkWrap = document.createElement('div');
-            linkWrap.className = 'sb-public-table-cell-link';
-            linkWrap.setAttribute('data-link-cell', '');
-
-            var linkText = document.createElement('input');
-            linkText.type = 'text';
-            linkText.setAttribute('data-link-text', '');
-            linkText.placeholder = 'Текст ссылки';
-            linkText.value = String(linkValue.text || '');
-
-            var linkUrl = document.createElement('input');
-            linkUrl.type = 'text';
-            linkUrl.setAttribute('data-link-url', '');
-            linkUrl.placeholder = 'https://...';
-            linkUrl.value = String(linkValue.url || '');
-
-            linkWrap.appendChild(linkText);
-            linkWrap.appendChild(linkUrl);
-            td.appendChild(linkWrap);
-            return;
-        }
-
-        if (type === 'image') {
-            var imageValue = convertCellValueToType(value, 'image');
-
-            var imageWrap = document.createElement('div');
-            imageWrap.className = 'sb-public-table-cell-image';
-            imageWrap.setAttribute('data-image-cell', '');
-
-            var imageSrc = document.createElement('input');
-            imageSrc.type = 'text';
-            imageSrc.setAttribute('data-image-src', '');
-            imageSrc.placeholder = '/upload/... или https://...';
-            imageSrc.value = String(imageValue.src || '');
-
-            var imageAlt = document.createElement('input');
-            imageAlt.type = 'text';
-            imageAlt.setAttribute('data-image-alt', '');
-            imageAlt.placeholder = 'Описание';
-            imageAlt.value = String(imageValue.alt || '');
-
-            imageWrap.appendChild(imageSrc);
-            imageWrap.appendChild(imageAlt);
-            td.appendChild(imageWrap);
-            return;
-        }
-
-        if (type === 'formula') {
-            var formulaSpan = document.createElement('span');
-
-            formulaSpan.className = 'sb-public-table-formula-value';
-            formulaSpan.setAttribute('data-formula-cell', '');
-            formulaSpan.textContent = calculateFormula(content, row, column.formula || '');
-
-            td.appendChild(formulaSpan);
-        }
-    }
-
-    function renderTableFromContent(root) {
-        var content = getContent(root);
-        var table = root.querySelector('.sb-public-table');
-
-        if (!table) {
-            return;
-        }
-
-        var columns = Array.isArray(content.columns) ? content.columns : [];
-        var rows = Array.isArray(content.rows) ? content.rows : [];
-        var hasControlCol = true;
-
-        var colgroup = table.querySelector('colgroup');
-
-        if (!colgroup) {
-            colgroup = document.createElement('colgroup');
-            table.insertBefore(colgroup, table.firstChild);
-        }
-
-        colgroup.innerHTML = '';
-
-        var controlCol = document.createElement('col');
-        controlCol.className = 'sb-public-table__control-col';
-        controlCol.style.width = '72px';
-        colgroup.appendChild(controlCol);
-
-        columns.forEach(function (column) {
-            column.type = normalizeType(column.type);
-            column.align = normalizeAlign(column.align);
-            column.width = clampWidth(column.width || 160);
-
-            var col = document.createElement('col');
-            col.setAttribute('data-column-id', column.id);
-            col.setAttribute('width', String(column.width));
-            col.style.width = column.width + 'px';
-
-            colgroup.appendChild(col);
-        });
-
-        var thead = table.querySelector('thead');
-
-        if (!thead) {
-            thead = document.createElement('thead');
-            table.appendChild(thead);
-        }
-
-        var headRow = thead.querySelector('tr');
-
-        if (!headRow) {
-            headRow = document.createElement('tr');
-            thead.appendChild(headRow);
-        }
-
-        headRow.innerHTML = '';
-
-        var controlTh = document.createElement('th');
-        controlTh.className = 'sb-public-table__control-th';
-        controlTh.textContent = '№';
-        headRow.appendChild(controlTh);
-
-        columns.forEach(function (column) {
-            var th = document.createElement('th');
-
-            th.setAttribute('data-column-id', column.id);
-            th.setAttribute('data-column-align-value', column.align);
-            th.setAttribute('data-column-type-value', column.type);
-            th.style.textAlign = column.align;
-
-            var inner = document.createElement('div');
-            inner.className = 'sb-public-table-th-inner';
-
-            var label = document.createElement('span');
-            label.className = 'sb-public-table__th-text';
-            label.setAttribute('contenteditable', 'true');
-            label.setAttribute('data-column-label', '');
-            label.textContent = column.label || 'Столбец';
-
-            var code = document.createElement('span');
-            code.className = 'sb-public-table-column-code';
-            code.textContent = column.id;
-
-            var typeSelect = createTypeSelect(column.type);
-
-            var formulaInput = document.createElement('input');
-            formulaInput.className = 'sb-public-table-formula-input';
-            formulaInput.type = 'text';
-            formulaInput.placeholder = 'Например: col_1 * col_2';
-            formulaInput.value = column.formula || '';
-            formulaInput.setAttribute('data-column-formula', '');
-
-            if (column.type !== 'formula') {
-                formulaInput.style.display = 'none';
-            }
-
-            var alignSelect = createAlignSelect(column.align);
-
-            var deleteButton = document.createElement('button');
-            deleteButton.className = 'sb-public-table-column-delete';
-            deleteButton.type = 'button';
-            deleteButton.setAttribute('data-table-delete-column', '');
-            deleteButton.title = 'Удалить столбец';
-            deleteButton.textContent = 'Удалить столбец';
-
-            inner.appendChild(label);
-            inner.appendChild(code);
-            inner.appendChild(typeSelect);
-            inner.appendChild(formulaInput);
-            inner.appendChild(alignSelect);
-            inner.appendChild(deleteButton);
-
-            var resizer = document.createElement('span');
-            resizer.className = 'sb-public-table-resizer';
-            resizer.setAttribute('data-column-resizer', '');
-
-            th.appendChild(inner);
-            th.appendChild(resizer);
-
-            headRow.appendChild(th);
-        });
-
-        var tbody = table.querySelector('tbody');
-
-        if (!tbody) {
-            tbody = document.createElement('tbody');
-            table.appendChild(tbody);
-        }
-
-        tbody.innerHTML = '';
-
-        if (!rows.length) {
-            var emptyTr = document.createElement('tr');
-            emptyTr.setAttribute('data-empty-row', '');
-
-            var emptyTd = document.createElement('td');
-            emptyTd.setAttribute('colspan', String(columns.length + (hasControlCol ? 1 : 0)));
-            emptyTd.textContent = 'Нет данных';
-
-            emptyTr.appendChild(emptyTd);
-            tbody.appendChild(emptyTr);
-        } else {
-            rows.forEach(function (row, rowIndex) {
-                row.cells = row.cells || {};
-
-                var tr = document.createElement('tr');
-                tr.setAttribute('data-row-id', row.id || ('row_' + (rowIndex + 1)));
-
-                var controlTd = document.createElement('td');
-                controlTd.className = 'sb-public-table__control-td';
-                controlTd.innerHTML = ''
-                    + '<div class="sb-public-table-row-actions">'
-                    + '  <span class="sb-public-table-row-num">' + (rowIndex + 1) + '</span>'
-                    + '  <button type="button" class="sb-public-table-row-delete" data-table-delete-row title="Удалить строку">×</button>'
-                    + '</div>';
-
-                tr.appendChild(controlTd);
-
-                columns.forEach(function (column) {
-                    var td = document.createElement('td');
-
-                    renderCellEditor(td, column, row, content);
-
-                    tr.appendChild(td);
-                });
-
-                tbody.appendChild(tr);
-            });
-        }
-
-        setContent(root, collectContentFromDom(root));
-        applyWidths(root);
-        applyAllAligns(root);
-        renumberRows(root);
-        updateFormulaCells(root);
-    }
-
-    function updateFormulaCells(root) {
-        var content = collectContentFromDom(root);
-        var table = root.querySelector('.sb-public-table');
-
-        if (!table) {
-            return;
-        }
-
-        var formulaColumns = content.columns.filter(function (column) {
-            return column.type === 'formula';
-        });
-
-        table.querySelectorAll('tbody tr[data-row-id]').forEach(function (tr) {
-            var rowId = String(tr.getAttribute('data-row-id') || '');
-            var row = content.rows.find(function (item) {
-                return String(item.id || '') === rowId;
-            });
-
-            if (!row) {
-                return;
-            }
-
-            formulaColumns.forEach(function (column) {
-                var td = tr.querySelector('td[data-column-id="' + cssEscape(column.id) + '"]');
-                var cell = td ? td.querySelector('[data-formula-cell]') : null;
-
-                if (cell) {
-                    cell.textContent = calculateFormula(content, row, column.formula);
-                }
-            });
-        });
-
-        setContent(root, content);
-    }
-
-    function updateColumnWidth(root, columnId, width) {
-        var content = collectContentFromDom(root);
-        var columns = Array.isArray(content.columns) ? content.columns : [];
-
-        width = clampWidth(width);
-
-        columns = columns.map(function (column) {
-            if (String(column.id || '') === String(columnId)) {
-                column.width = width;
-            }
-
-            return column;
-        });
-
-        content.columns = columns;
-        setContent(root, content);
-
-        applyWidths(root);
-        applyAllAligns(root);
-        setDirty(root, true);
-    }
-
-    function renumberRows(root) {
-        root.querySelectorAll('tbody tr[data-row-id]').forEach(function (tr, index) {
-            var num = tr.querySelector('.sb-public-table-row-num');
-
-            if (num) {
-                num.textContent = String(index + 1);
-            }
-        });
-    }
-
-    function generateColumnId(columns) {
-        var used = {};
-
-        columns.forEach(function (column) {
-            used[String(column.id || '')] = true;
-        });
-
-        for (var i = 1; i <= 9999; i++) {
-            var id = 'col_' + i;
-
-            if (!used[id]) {
-                return id;
-            }
-        }
-
-        return 'col_' + Date.now();
-    }
-
-    function addColumn(root) {
-        var content = collectContentFromDom(root);
-        var columns = Array.isArray(content.columns) ? content.columns : [];
-        var rows = Array.isArray(content.rows) ? content.rows : [];
-
-        var newIndex = columns.length + 1;
-        var newColumnId = generateColumnId(columns);
-
-        columns.push({
-            id: newColumnId,
-            label: 'Столбец ' + newIndex,
-            width: 160,
-            align: 'left',
-            type: 'text',
-            formula: ''
-        });
-
-        rows = rows.map(function (row) {
-            row.cells = row.cells || {};
-            row.cells[newColumnId] = '';
-            return row;
-        });
-
-        content.columns = columns;
-        content.rows = rows;
-
-        setContent(root, content);
-        renderTableFromContent(root);
-        setDirty(root, true);
-    }
-
-    function deleteColumn(root, columnId) {
-        var content = collectContentFromDom(root);
-        var columns = Array.isArray(content.columns) ? content.columns : [];
-        var rows = Array.isArray(content.rows) ? content.rows : [];
-
-        if (columns.length <= 1) {
-            alert('Нельзя удалить последний столбец');
-            return;
-        }
-
+    var expression = formula.replace(/\b[A-Za-z_][A-Za-z0-9_]*\b/g, function (token) {
         var column = columns.find(function (item) {
-            return String(item.id || '') === String(columnId);
+            return String(item.id || '') === token || String(item.code || '') === token;
         });
 
-        var columnName = column && column.label ? column.label : columnId;
-
-        if (!confirm('Удалить столбец "' + columnName + '"? Данные в этом столбце будут удалены.')) {
-            return;
+        if (!column) {
+            return '0';
         }
 
-        columns = columns.filter(function (item) {
-            return String(item.id || '') !== String(columnId);
-        });
+        return String(valueToNumber(cells[column.id]));
+    });
 
-        rows = rows.map(function (row) {
-            row.cells = row.cells || {};
-            delete row.cells[columnId];
-            return row;
-        });
+    return evaluateMathExpression(expression);
+}
 
-        content.columns = columns;
-        content.rows = rows;
+Теперь формула:
 
-        setContent(root, content);
-        renderTableFromContent(root);
-        setDirty(root, true);
+c1 * c2
+
+будет работать так же, как:
+
+col_1780654750135 * col_1781155812339
+
+
+---
+
+4. В шапке показываем короткий код
+
+Найди в renderTableFromContent(root) кусок:
+
+var code = document.createElement('span');
+code.className = 'sb-public-table-column-code';
+code.textContent = column.id;
+
+Замени на:
+
+var code = document.createElement('span');
+code.className = 'sb-public-table-column-code';
+code.textContent = column.code || column.id;
+
+
+---
+
+5. При добавлении столбца сохраняем code
+
+Найди в addColumn(root):
+
+columns.push({
+    id: newColumnId,
+    label: 'Столбец ' + newIndex,
+    width: 160,
+    align: 'left',
+    type: 'text',
+    formula: ''
+});
+
+Замени на:
+
+columns.push({
+    id: newColumnId,
+    code: 'c' + newIndex,
+    label: 'Столбец ' + newIndex,
+    width: 160,
+    align: 'left',
+    type: 'text',
+    formula: ''
+});
+
+
+---
+
+6. Добавь выбор столбца для формулы
+
+Найди в renderTableFromContent(root) кусок:
+
+var formulaInput = document.createElement('input');
+formulaInput.className = 'sb-public-table-formula-input';
+formulaInput.type = 'text';
+formulaInput.placeholder = 'Например: col_1 * col_2';
+formulaInput.value = column.formula || '';
+formulaInput.setAttribute('data-column-formula', '');
+
+if (column.type !== 'formula') {
+    formulaInput.style.display = 'none';
+}
+
+Сразу после него вставь:
+
+var formulaTools = document.createElement('div');
+formulaTools.className = 'sb-public-table-formula-tools';
+formulaTools.setAttribute('data-formula-tools', '');
+
+if (column.type !== 'formula') {
+    formulaTools.style.display = 'none';
+}
+
+var formulaColumnSelect = document.createElement('select');
+formulaColumnSelect.setAttribute('data-formula-insert-column', '');
+
+columns.forEach(function (item) {
+    if (item.id === column.id) {
+        return;
     }
 
-    function addRow(root) {
-        var content = collectContentFromDom(root);
-        var columns = Array.isArray(content.columns) ? content.columns : [];
-        var rows = Array.isArray(content.rows) ? content.rows : [];
+    var option = document.createElement('option');
+    option.value = item.code || item.id;
+    option.textContent = (item.code || item.id) + ' — ' + (item.label || 'Столбец');
 
-        var rowId = 'row_' + Date.now();
-        var cells = {};
+    formulaColumnSelect.appendChild(option);
+});
 
-        columns.forEach(function (column) {
-            if (column.type !== 'formula') {
-                cells[column.id] = convertCellValueToType('', column.type);
-            }
-        });
+var formulaInsertBtn = document.createElement('button');
+formulaInsertBtn.type = 'button';
+formulaInsertBtn.setAttribute('data-formula-insert-btn', '');
+formulaInsertBtn.textContent = 'Вставить';
 
-        rows.push({
-            id: rowId,
-            cells: cells
-        });
+var formulaOps = document.createElement('div');
+formulaOps.className = 'sb-public-table-formula-tools__row';
 
-        content.rows = rows;
+['+', '-', '*', '/', '(', ')'].forEach(function (op) {
+    var btn = document.createElement('button');
+    btn.type = 'button';
+    btn.setAttribute('data-formula-op', op);
+    btn.textContent = op;
+    formulaOps.appendChild(btn);
+});
 
-        setContent(root, content);
-        renderTableFromContent(root);
-        setDirty(root, true);
-    }
+var formulaInsertRow = document.createElement('div');
+formulaInsertRow.className = 'sb-public-table-formula-tools__row';
+formulaInsertRow.appendChild(formulaColumnSelect);
+formulaInsertRow.appendChild(formulaInsertBtn);
 
-    function deleteRow(root, btn) {
-        var tr = btn.closest('tr[data-row-id]');
+formulaTools.appendChild(formulaInsertRow);
+formulaTools.appendChild(formulaOps);
 
-        if (!tr) {
-            return;
-        }
+Потом ниже найди:
 
-        var rowId = String(tr.getAttribute('data-row-id') || '');
+inner.appendChild(typeSelect);
+inner.appendChild(formulaInput);
+inner.appendChild(alignSelect);
 
-        if (!confirm('Удалить строку?')) {
-            return;
-        }
+Замени на:
 
-        var content = collectContentFromDom(root);
-        var rows = Array.isArray(content.rows) ? content.rows : [];
+inner.appendChild(typeSelect);
+inner.appendChild(formulaInput);
+inner.appendChild(formulaTools);
+inner.appendChild(alignSelect);
 
-        content.rows = rows.filter(function (row) {
-            return String(row.id || '') !== rowId;
-        });
 
-        setContent(root, content);
-        renderTableFromContent(root);
-        setDirty(root, true);
-    }
+---
 
-    function saveBlock(root) {
-        var blockId = Number(root.getAttribute('data-block-id') || 0);
-        var content = collectContentFromDom(root);
-        var props = parseJson(root.getAttribute('data-props'), {});
+7. При смене типа показываем/скрываем помощник формулы
 
-        if (!blockId) {
-            alert('Не найден ID блока таблицы');
-            return;
-        }
+В обработчике change найди часть:
 
-        setContent(root, content);
+if (typeSelect) {
 
-        var formData = new FormData();
+Внутри она у тебя вызывает renderTableFromContent(typeRoot);. Это нормально, потому что при смене типа таблица перерисуется уже с помощником формулы.
 
-        formData.append('action', 'block.update');
-        formData.append('sessid', sessid);
-        formData.append('id', String(blockId));
-        formData.append('content', JSON.stringify(content));
-        formData.append('props', JSON.stringify(props || {}));
 
-        var btn = root.querySelector('[data-table-save-all]');
+---
 
-        if (btn) {
-            btn.disabled = true;
-            btn.textContent = 'Сохраняю...';
-        }
+8. Добавь обработчик вставки в формулу
 
-        fetch(API_URL, {
-            method: 'POST',
-            body: formData,
-            credentials: 'same-origin'
-        })
-            .then(function (response) {
-                return response.json();
-            })
-            .then(function (res) {
-                if (!res || !res.ok) {
-                    throw new Error((res && (res.message || res.error)) || 'SAVE_ERROR');
-                }
+В table-edit.js найди обработчик:
 
-                setDirty(root, false);
+document.addEventListener('click', function (e) {
 
-                if (btn) {
-                    btn.textContent = 'Сохранено';
+В самое начало этого обработчика вставь:
 
-                    setTimeout(function () {
-                        btn.textContent = 'Сохранить изменения';
-                    }, 1000);
-                }
-            })
-            .catch(function (err) {
-                console.error(err);
-                alert('Не удалось сохранить таблицу: ' + err.message);
-                setDirty(root, true);
-            })
-            .finally(function () {
-                if (btn) {
-                    btn.disabled = false;
-                }
-            });
-    }
+var formulaInsertBtn = e.target.closest('[data-formula-insert-btn]');
 
-    function startResize(e, th) {
-        var root = th.closest('[data-public-editable-table]');
-        var table = root ? root.querySelector('.sb-public-table') : null;
-        var columnId = String(th.getAttribute('data-column-id') || '');
+if (formulaInsertBtn) {
+    var formulaRoot = formulaInsertBtn.closest('[data-public-editable-table]');
+    var formulaTh = formulaInsertBtn.closest('th[data-column-id]');
+    var formulaInput = formulaTh ? formulaTh.querySelector('[data-column-formula]') : null;
+    var formulaSelect = formulaTh ? formulaTh.querySelector('[data-formula-insert-column]') : null;
 
-        if (!root || !table || !columnId) {
-            return;
-        }
-
+    if (formulaRoot && formulaInput && formulaSelect && formulaSelect.value) {
         e.preventDefault();
-        e.stopPropagation();
-
-        activeResize = {
-            root: root,
-            table: table,
-            columnId: columnId,
-            startX: getClientX(e),
-            startWidth: getColumnCurrentWidth(table, columnId)
-        };
-
-        document.body.classList.add('sb-public-table-resizing');
-    }
-
-    function moveResize(e) {
-        if (!activeResize) {
-            return;
-        }
-
-        e.preventDefault();
-
-        var diff = getClientX(e) - activeResize.startX;
-        var newWidth = activeResize.startWidth + diff;
-
-        updateColumnWidth(activeResize.root, activeResize.columnId, newWidth);
-    }
-
-    function stopResize() {
-        if (!activeResize) {
-            return;
-        }
-
-        activeResize = null;
-        document.body.classList.remove('sb-public-table-resizing');
-    }
-
-    function initTable(root) {
-        var content = collectContentFromDom(root);
-
-        setContent(root, content);
-        applyWidths(root);
-        applyAllAligns(root);
-        renumberRows(root);
-        updateFormulaCells(root);
-    }
-
-    function initAllTables() {
-        document.querySelectorAll('[data-public-editable-table]').forEach(initTable);
-    }
-
-    document.addEventListener('input', function (e) {
-        var root = e.target.closest('[data-public-editable-table]');
-
-        if (!root) {
-            return;
-        }
-
-        if (e.target.matches('[data-number-cell]')) {
-            e.target.value = formatNumberInputLive(e.target.value);
-        }
-
-        if (e.target.matches('[data-date-cell]')) {
-            e.target.value = formatDateInputLive(e.target.value);
-        }
-
-        if (
-            e.target.matches('[data-table-title-input]') ||
-            e.target.matches('[data-column-label]') ||
-            e.target.matches('[data-cell-editable]') ||
-            e.target.matches('[data-column-formula]') ||
-            e.target.matches('[data-link-text]') ||
-            e.target.matches('[data-link-url]') ||
-            e.target.matches('[data-image-src]') ||
-            e.target.matches('[data-image-alt]') ||
-            e.target.matches('[data-number-cell]') ||
-            e.target.matches('[data-date-cell]')
-        ) {
-            var content = collectContentFromDom(root);
-
-            setContent(root, content);
-            updateFormulaCells(root);
-            setDirty(root, true);
-        }
-    }, true);
-
-    document.addEventListener('blur', function (e) {
-        var root = e.target.closest('[data-public-editable-table]');
-
-        if (!root) {
-            return;
-        }
-
-        if (e.target.matches('[data-number-cell]')) {
-            e.target.value = normalizeNumberValue(e.target.value);
-        }
-
-        if (e.target.matches('[data-date-cell]')) {
-            e.target.value = normalizeDateValue(e.target.value);
-        }
-
-        if (e.target.matches('[data-number-cell], [data-date-cell]')) {
-            var content = collectContentFromDom(root);
-
-            setContent(root, content);
-            updateFormulaCells(root);
-            setDirty(root, true);
-        }
-    }, true);
-
-    document.addEventListener('change', function (e) {
-        var typeSelect = e.target.closest('[data-column-type]');
-
-        if (typeSelect) {
-            var typeRoot = typeSelect.closest('[data-public-editable-table]');
-
-            if (!typeRoot) {
-                return;
-            }
-
-            e.stopImmediatePropagation();
-
-            var typeContent = collectContentFromDom(typeRoot);
-
-            setContent(typeRoot, typeContent);
-            renderTableFromContent(typeRoot);
-            setDirty(typeRoot, true);
-            return;
-        }
-
-        var select = e.target.closest('[data-column-align]');
-
-        if (!select) {
-            return;
-        }
-
-        var root = select.closest('[data-public-editable-table]');
-        var th = select.closest('th[data-column-id]');
-        var columnId = th ? String(th.getAttribute('data-column-id') || '') : '';
-
-        if (!root || !columnId) {
-            return;
-        }
-
         e.stopImmediatePropagation();
 
-        applyColumnAlign(root, columnId, normalizeAlign(select.value));
+        formulaInput.value = String(formulaInput.value || '').trim();
 
-        setContent(root, collectContentFromDom(root));
-        setDirty(root, true);
-    }, true);
-
-    document.addEventListener('click', function (e) {
-        var deleteColumnBtn = e.target.closest('[data-table-delete-column]');
-
-        if (deleteColumnBtn) {
-            var deleteRoot = deleteColumnBtn.closest('[data-public-editable-table]');
-            var deleteTh = deleteColumnBtn.closest('th[data-column-id]');
-            var deleteColumnId = deleteTh ? String(deleteTh.getAttribute('data-column-id') || '') : '';
-
-            if (deleteRoot && deleteColumnId) {
-                e.preventDefault();
-                e.stopImmediatePropagation();
-                deleteColumn(deleteRoot, deleteColumnId);
-            }
-
-            return;
+        if (formulaInput.value !== '') {
+            formulaInput.value += ' ';
         }
 
-        var root = e.target.closest('[data-public-editable-table]');
+        formulaInput.value += formulaSelect.value;
 
-        if (!root) {
-            return;
-        }
-
-        if (e.target.closest('[data-table-add-column]')) {
-            e.preventDefault();
-            e.stopImmediatePropagation();
-            addColumn(root);
-            return;
-        }
-
-        if (e.target.closest('[data-table-add-row]')) {
-            e.preventDefault();
-            e.stopImmediatePropagation();
-            addRow(root);
-            return;
-        }
-
-        if (e.target.closest('[data-table-save-all]')) {
-            e.preventDefault();
-            e.stopImmediatePropagation();
-            saveBlock(root);
-            return;
-        }
-
-        var deleteBtn = e.target.closest('[data-table-delete-row]');
-
-        if (deleteBtn) {
-            e.preventDefault();
-            e.stopImmediatePropagation();
-            deleteRow(root, deleteBtn);
-        }
-    }, true);
-
-    document.addEventListener('keydown', function (e) {
-        if (e.target.matches('[data-cell-editable], [data-column-label]')) {
-            if (e.key === 'Enter' && !e.shiftKey) {
-                e.preventDefault();
-                e.target.blur();
-            }
-        }
-    }, true);
-
-    document.addEventListener('mousedown', function (e) {
-        if (
-            e.target.closest('[data-column-align]') ||
-            e.target.closest('[data-column-type]') ||
-            e.target.closest('[data-column-formula]') ||
-            e.target.closest('[data-table-delete-column]') ||
-            e.target.closest('[data-link-text]') ||
-            e.target.closest('[data-link-url]') ||
-            e.target.closest('[data-image-src]') ||
-            e.target.closest('[data-image-alt]') ||
-            e.target.closest('[data-number-cell]') ||
-            e.target.closest('[data-date-cell]')
-        ) {
-            return;
-        }
-
-        var resizer = e.target.closest('[data-column-resizer]');
-
-        if (resizer) {
-            var thFromResizer = resizer.closest('th[data-column-id]');
-
-            if (thFromResizer) {
-                startResize(e, thFromResizer);
-            }
-
-            return;
-        }
-
-        var th = e.target.closest('.sb-public-table--editable th[data-column-id]');
-
-        if (!th) {
-            return;
-        }
-
-        var rect = th.getBoundingClientRect();
-        var distanceFromRight = rect.right - e.clientX;
-
-        if (distanceFromRight >= 0 && distanceFromRight <= 18) {
-            startResize(e, th);
-        }
-    }, true);
-
-    document.addEventListener('mousemove', moveResize, true);
-    document.addEventListener('mouseup', stopResize, true);
-
-    if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', initAllTables);
-    } else {
-        initAllTables();
+        setContent(formulaRoot, collectContentFromDom(formulaRoot));
+        updateFormulaCells(formulaRoot);
+        setDirty(formulaRoot, true);
     }
-})();
 
-В консоли после Ctrl + F5 должно быть:
+    return;
+}
 
-window.SB_TABLE_EDIT_LOADED
+var formulaOpBtn = e.target.closest('[data-formula-op]');
 
-v10-types-ddmmyyyy
+if (formulaOpBtn) {
+    var opRoot = formulaOpBtn.closest('[data-public-editable-table]');
+    var opTh = formulaOpBtn.closest('th[data-column-id]');
+    var opInput = opTh ? opTh.querySelector('[data-column-formula]') : null;
+    var op = formulaOpBtn.getAttribute('data-formula-op') || '';
 
-Проверь сначала 4 вещи:
+    if (opRoot && opInput && op) {
+        e.preventDefault();
+        e.stopImmediatePropagation();
 
-1. Тип “Число” — буквы удаляются.
-2. Тип “Дата” — вводится как 11.06.2026.
-3. Тип “Гиперссылка” — появляются два поля: текст и URL.
-4. Тип “Формула” — например col_1 * col_2 считает значение.
+        opInput.value = String(opInput.value || '').trim();
 
-Если это ок, дальше добавим лимит строк, пагинацию и сортировку.
+        if (opInput.value !== '' && op !== ')') {
+            opInput.value += ' ';
+        }
+
+        opInput.value += op;
+
+        if (op !== '(') {
+            opInput.value += ' ';
+        }
+
+        setContent(opRoot, collectContentFromDom(opRoot));
+        updateFormulaCells(opRoot);
+        setDirty(opRoot, true);
+    }
+
+    return;
+}
+
+
+---
+
+9. Добавь исключение для клика мышкой
+
+В mousedown-обработчике найди список исключений:
+
+e.target.closest('[data-date-cell]')
+
+После него добавь:
+
+||
+e.target.closest('[data-formula-insert-column]') ||
+e.target.closest('[data-formula-insert-btn]') ||
+e.target.closest('[data-formula-op]')
+
+Чтобы кнопки формулы не конфликтовали с изменением ширины столбца.
+
+
+---
+
+После этого на экране будет так:
+
+Столбец 1
+Код: c1
+Тип: Число
+
+Столбец 2
+Код: c2
+Тип: Число
+
+Столбец 3
+Код: c3
+Тип: Формула
+Формула: c1 * c2
+
+И формулу можно будет собирать кнопками, не вводя длинные col_1780654750135.
