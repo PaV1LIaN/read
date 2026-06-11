@@ -1,322 +1,359 @@
-Скрин понятный. Сейчас две проблемы:
+Да, повторяю.
 
-1. В edit=Y настройки пагинации дублируются.
-2. Без edit=Y пагинация не работает, потому что table-edit.js подключается только в режиме редактирования.
+Идея правильная: сейчас у тебя компоненты частично лежат тут:
 
-Для обычной страницы нужен отдельный лёгкий файл, например:
+/local/sitebuilder/views/blocks/
 
-/local/sitebuilder/assets/public/table-view.js
+А disk уже живёт нормально как отдельный компонент:
 
-Он будет отвечать только за просмотр: скрывать лишние строки и показывать Назад / Вперёд.
+/local/sitebuilder/components/disk/
+
+Нужно привести всё к единой структуре:
+
+/local/sitebuilder/components/
+    heading/
+        render.php
+    text/
+        render.php
+    button/
+        render.php
+    html/
+        render.php
+    spacer/
+        render.php
+    table/
+        render.php
+    disk/
+        render.php
+        class.php
+        template.php
+        ...
+
+Старую папку:
+
+/local/sitebuilder/views/blocks/
+
+пока не удаляем. Сделаем fallback: если новый компонент не найден, сайт берёт старый файл.
 
 
 ---
 
-1. Исправь дубль настроек в table-edit.js
+1. Правим public_render.php
 
 Файл:
 
-/local/sitebuilder/assets/public/table-edit.js
+/local/sitebuilder/lib/public_render.php
 
 Найди функцию:
 
-function ensureSettingsControls(root) {
+sb_public_render_block
 
-Внутри неё найди:
+И замени её блок на это:
 
-if (root.querySelector('[data-public-table-settings]')) {
-    return;
+if (!function_exists('sb_public_component_render_file')) {
+    function sb_public_component_render_file(string $type): string
+    {
+        $type = strtolower(trim($type));
+        $type = preg_replace('/[^a-z0-9_-]/i', '', $type);
+
+        if ($type === '') {
+            $type = 'text';
+        }
+
+        $root = dirname(__DIR__);
+
+        $candidates = [
+            $root . '/components/' . $type . '/render.php',
+            $root . '/views/blocks/' . $type . '.php',
+        ];
+
+        foreach ($candidates as $file) {
+            if (is_file($file)) {
+                return $file;
+            }
+        }
+
+        $fallbacks = [
+            $root . '/components/text/render.php',
+            $root . '/views/blocks/text.php',
+        ];
+
+        foreach ($fallbacks as $file) {
+            if (is_file($file)) {
+                return $file;
+            }
+        }
+
+        throw new RuntimeException('SiteBuilder component renderer not found: ' . $type);
+    }
 }
 
-Замени на:
+if (!function_exists('sb_public_render_block')) {
+    function sb_public_render_block(array $block, array $context = []): string
+    {
+        $block = sb_normalize_block_record($block);
 
-if (
-    root.querySelector('[data-public-table-settings]') ||
-    root.querySelector('[data-table-max-rows]') ||
-    root.querySelector('[data-table-page-size]') ||
-    root.querySelector('[data-table-pagination-enabled]')
-) {
-    return;
+        $type = (string)($block['type'] ?? 'text');
+        $template = sb_public_component_render_file($type);
+
+        $content = (array)($block['content'] ?? []);
+        $props = (array)($block['props'] ?? []);
+
+        ob_start();
+        include $template;
+        return (string)ob_get_clean();
+    }
 }
 
-Так JS больше не будет создавать второй блок настроек, если он уже есть из table.php.
+Теперь рендер будет искать так:
+
+1. /components/table/render.php
+2. /views/blocks/table.php
+3. /components/text/render.php
+4. /views/blocks/text.php
 
 
 ---
 
-2. В table.php добавь атрибуты для просмотра
+2. Создай папки
+
+Создай:
+
+/local/sitebuilder/components/heading/
+/local/sitebuilder/components/text/
+/local/sitebuilder/components/button/
+/local/sitebuilder/components/html/
+/local/sitebuilder/components/spacer/
+/local/sitebuilder/components/table/
+
+Папка disk уже есть.
+
+
+---
+
+3. Компонент heading
 
 Файл:
 
-/local/sitebuilder/views/blocks/table.php
+/local/sitebuilder/components/heading/render.php
 
-Найди начало секции:
+Код:
 
-<section
-    class="sb-block sb-block--table<?= $isEditMode ? ' is-public-editable-table' : '' ?>"
+<?php
 
-Замени на:
+$level = strtolower((string)($content['level'] ?? 'h2'));
 
-<section
-    class="sb-block sb-block--table<?= $isEditMode ? ' is-public-editable-table' : '' ?>"
-    data-public-table-view
-    data-table-view-pagination="<?= $paginationEnabled ? '1' : '0' ?>"
-    data-table-view-page-size="<?= (int)$pageSize ?>"
+if (!in_array($level, ['h1', 'h2', 'h3', 'h4', 'h5', 'h6'], true)) {
+    $level = 'h2';
+}
 
-То есть атрибуты data-public-table-view, data-table-view-pagination, data-table-view-page-size должны быть всегда, даже без edit=Y.
+$text = sb_public_h((string)($content['text'] ?? ''));
 
+$align = (string)($content['align'] ?? 'left');
 
----
+if (!in_array($align, ['left', 'center', 'right'], true)) {
+    $align = 'left';
+}
+?>
 
-3. В table.php поправь блок настроек
-
-Найди:
-
-<div class="sb-public-table-settings">
-
-Замени на:
-
-<div class="sb-public-table-settings" data-public-table-settings>
-
-Это тоже уберёт дублирование настроек.
+<section class="sb-block sb-block--heading">
+    <<?= $level ?> class="sb-heading sb-heading--<?= sb_public_h($level) ?>" style="text-align:<?= sb_public_h($align) ?>;">
+        <?= $text ?>
+    </<?= $level ?>>
+</section>
 
 
 ---
 
-4. В table.php контейнер пагинации должен быть всегда
+4. Компонент text
 
-После:
+Файл:
 
-</table>
+/local/sitebuilder/components/text/render.php
 
-должно быть:
+Код:
 
-<div class="sb-public-table-pagination" data-table-pagination></div>
+<?php
 
-Не оборачивай его в:
+$html = (string)($content['html'] ?? '');
+?>
 
-<?php if ($isEditMode): ?>
-
-Нужно именно так:
-
-</table>
-
-        <div class="sb-public-table-pagination" data-table-pagination></div>
+<section class="sb-block sb-block--text">
+    <div class="sb-block__inner sb-text">
+        <?= $html ?>
     </div>
 </section>
 
 
 ---
 
-5. Создай файл table-view.js
+5. Компонент button
 
 Файл:
 
-/local/sitebuilder/assets/public/table-view.js
+/local/sitebuilder/components/button/render.php
 
-Вставь:
+Код:
 
-(function () {
-    window.SB_TABLE_VIEW_LOADED = 'v1-public-pagination';
+<?php
 
-    function getPageSize(root) {
-        var value = Number(root.getAttribute('data-table-view-page-size') || 10);
+$text = sb_public_h((string)($content['text'] ?? 'Кнопка'));
+$href = sb_public_h((string)($content['href'] ?? '#'));
+$target = sb_public_h((string)($content['target'] ?? '_self'));
 
-        if (!Number.isFinite(value) || value < 1) {
-            value = 10;
-        }
+$align = (string)($content['align'] ?? 'left');
 
-        if (value > 200) {
-            value = 200;
-        }
+if (!in_array($align, ['left', 'center', 'right'], true)) {
+    $align = 'left';
+}
+?>
 
-        return Math.floor(value);
-    }
-
-    function isPaginationEnabled(root) {
-        return String(root.getAttribute('data-table-view-pagination') || '') === '1';
-    }
-
-    function ensurePaginationBox(root) {
-        var box = root.querySelector('[data-table-pagination]');
-
-        if (box) {
-            return box;
-        }
-
-        box = document.createElement('div');
-        box.className = 'sb-public-table-pagination';
-        box.setAttribute('data-table-pagination', '');
-
-        var wrap = root.querySelector('.sb-public-table-wrap');
-
-        if (wrap) {
-            wrap.appendChild(box);
-        } else {
-            root.appendChild(box);
-        }
-
-        return box;
-    }
-
-    function getRows(root) {
-        return Array.prototype.slice.call(root.querySelectorAll('tbody tr[data-row-id]'));
-    }
-
-    function renderPagination(root) {
-        if (root.hasAttribute('data-public-editable-table')) {
-            return;
-        }
-
-        var enabled = isPaginationEnabled(root);
-        var rows = getRows(root);
-        var paginationBox = ensurePaginationBox(root);
-
-        if (!enabled || rows.length === 0) {
-            paginationBox.innerHTML = '';
-
-            rows.forEach(function (tr) {
-                tr.style.display = '';
-            });
-
-            return;
-        }
-
-        var pageSize = getPageSize(root);
-        var totalPages = Math.max(1, Math.ceil(rows.length / pageSize));
-        var currentPage = Number(root.getAttribute('data-table-view-current-page') || 1);
-
-        if (!Number.isFinite(currentPage) || currentPage < 1) {
-            currentPage = 1;
-        }
-
-        if (currentPage > totalPages) {
-            currentPage = totalPages;
-        }
-
-        root.setAttribute('data-table-view-current-page', String(currentPage));
-
-        var start = (currentPage - 1) * pageSize;
-        var end = start + pageSize;
-
-        rows.forEach(function (tr, index) {
-            tr.style.display = index >= start && index < end ? '' : 'none';
-        });
-
-        paginationBox.innerHTML = '';
-
-        if (totalPages <= 1) {
-            return;
-        }
-
-        var prevBtn = document.createElement('button');
-        prevBtn.type = 'button';
-        prevBtn.textContent = 'Назад';
-        prevBtn.disabled = currentPage <= 1;
-        prevBtn.setAttribute('data-table-view-page-prev', '');
-
-        var info = document.createElement('span');
-        info.className = 'sb-public-table-pagination__info';
-        info.textContent = 'Страница ' + currentPage + ' из ' + totalPages + ', строк: ' + rows.length;
-
-        var nextBtn = document.createElement('button');
-        nextBtn.type = 'button';
-        nextBtn.textContent = 'Вперёд';
-        nextBtn.disabled = currentPage >= totalPages;
-        nextBtn.setAttribute('data-table-view-page-next', '');
-
-        paginationBox.appendChild(prevBtn);
-        paginationBox.appendChild(info);
-        paginationBox.appendChild(nextBtn);
-    }
-
-    function initAll() {
-        document.querySelectorAll('[data-public-table-view]').forEach(function (root) {
-            renderPagination(root);
-        });
-    }
-
-    document.addEventListener('click', function (e) {
-        var prevBtn = e.target.closest('[data-table-view-page-prev]');
-        var nextBtn = e.target.closest('[data-table-view-page-next]');
-
-        if (!prevBtn && !nextBtn) {
-            return;
-        }
-
-        var root = e.target.closest('[data-public-table-view]');
-
-        if (!root) {
-            return;
-        }
-
-        e.preventDefault();
-
-        var currentPage = Number(root.getAttribute('data-table-view-current-page') || 1);
-
-        if (!Number.isFinite(currentPage) || currentPage < 1) {
-            currentPage = 1;
-        }
-
-        if (prevBtn) {
-            currentPage -= 1;
-        }
-
-        if (nextBtn) {
-            currentPage += 1;
-        }
-
-        root.setAttribute('data-table-view-current-page', String(currentPage));
-
-        renderPagination(root);
-    }, true);
-
-    if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', initAll);
-    } else {
-        initAll();
-    }
-})();
+<section class="sb-block sb-block--button">
+    <div class="sb-button-wrap" style="text-align:<?= sb_public_h($align) ?>;">
+        <a class="sb-button" href="<?= $href ?>" target="<?= $target ?>">
+            <?= $text ?>
+        </a>
+    </div>
+</section>
 
 
 ---
 
-6. Подключи table-view.js всегда
+6. Компонент html
 
 Файл:
 
-/local/sitebuilder/views/layout/public_page.php
+/local/sitebuilder/components/html/render.php
 
-Найди, где подключаются public-скрипты.
+Код:
 
-Добавь вне условия edit=Y, чтобы файл грузился и на обычной странице:
+<?php
 
-<script src="<?= sb_public_h($basePath) ?>/assets/public/table-view.js"></script>
+$html = (string)($content['html'] ?? '');
+?>
 
-Например:
-
-<script src="<?= sb_public_h($basePath) ?>/assets/public/table-view.js"></script>
-
-<?php if ($isPublicEditMode): ?>
-    <script>
-        window.SB_PUBLIC_EDIT_CONFIG = <?= json_encode([
-            'apiUrl' => $basePath . '/api.php',
-            'sessid' => bitrix_sessid(),
-        ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) ?>;
-    </script>
-
-    <script src="<?= sb_public_h($basePath) ?>/assets/public/table-edit.js"></script>
-<?php endif; ?>
+<section class="sb-block sb-block--html">
+    <div class="sb-block__inner">
+        <?= $html ?>
+    </div>
+</section>
 
 
 ---
 
-После этого:
+7. Компонент spacer
 
-1. Открой edit=Y.
-2. Включи пагинацию.
-3. Строк на странице = 2.
-4. Нажми “Сохранить изменения”.
-5. Открой без edit=Y.
+Файл:
 
-На обычной странице должно показывать только 2 строки и кнопки Назад / Вперёд.
+/local/sitebuilder/components/spacer/render.php
+
+Код:
+
+<?php
+
+$height = max(0, (int)($content['height'] ?? 30));
+?>
+
+<div class="sb-block sb-block--spacer" style="height:<?= $height ?>px;"></div>
+
+
+---
+
+8. Компонент disk
+
+Файл:
+
+/local/sitebuilder/components/disk/render.php
+
+Код:
+
+<?php
+
+global $USER;
+
+$site = $context['site'] ?? [];
+$currentPage = $context['currentPage'] ?? [];
+
+$siteId = (int)($site['id'] ?? 0);
+$pageId = (int)($currentPage['id'] ?? 0);
+$blockId = (int)($block['id'] ?? 0);
+
+require_once $_SERVER['DOCUMENT_ROOT'] . '/local/sitebuilder/components/disk/class.php';
+
+$component = new SitebuilderDiskComponent([
+    'SITE_ID' => $siteId,
+    'PAGE_ID' => $pageId,
+    'BLOCK_ID' => $blockId,
+    'CURRENT_USER_ID' => is_object($USER) ? (int)$USER->GetID() : 0,
+]);
+
+$component->execute();
+
+
+---
+
+9. Компонент table
+
+Таблица у тебя сейчас большая и рабочая, поэтому руками её лучше не переписывать.
+
+Просто скопируй весь файл:
+
+/local/sitebuilder/views/blocks/table.php
+
+в новый файл:
+
+/local/sitebuilder/components/table/render.php
+
+Старый файл пока оставь.
+
+
+---
+
+10. Проверка
+
+После этого открой public-страницу.
+
+Должны работать:
+
+heading
+text
+button
+html
+spacer
+table
+disk
+
+Если какой-то новый компонент не найден, рендер возьмёт старый файл из:
+
+/local/sitebuilder/views/blocks/
+
+
+---
+
+Что это даст
+
+Было:
+
+views/blocks/heading.php
+views/blocks/text.php
+views/blocks/button.php
+views/blocks/table.php
+
+Станет:
+
+components/heading/render.php
+components/text/render.php
+components/button/render.php
+components/table/render.php
+components/disk/render.php
+
+Следующим шагом можно будет разнести стили и JS по компонентам:
+
+components/table/styles.css
+components/table/edit.js
+components/table/view.js
+
+components/disk/styles.css
+components/disk/script.js
+
+Но сначала лучше безопасно перенести только render.php, чтобы не сломать текущую таблицу и диск.
