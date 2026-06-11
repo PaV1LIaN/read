@@ -1,443 +1,224 @@
-Да, я вижу главную ошибку.
+Да, это уже понятная ошибка.
 
-В edit=Y формулу считает JS, он уже понимает c1 + c2.
+Когда ты меняешь тип данных, у нас сейчас вызывается:
 
-А без edit=Y формулу считает PHP в table.php, и он пока ищет только реальные id столбцов, типа:
+renderTableFromContent(typeRoot);
 
-c_1
-c_2
-col_178065...
+То есть JS полностью перерисовывает таблицу. В какой-то момент он собирает columns пустыми, и поэтому остаётся только служебный столбец №.
 
-Поэтому в режиме редактирования получается 110, а на обычной странице становится 0.
-
-Нужно сделать одно правило:
-
-Пользователь видит и пишет в формуле c1, c2, c3.
-Внутри таблицы могут быть любые id, но у каждого столбца есть короткий code.
-PHP и JS оба понимают code.
+Нужно сделать правильно: при смене типа данных не перерисовывать всю таблицу, а менять только ячейки этого конкретного столбца.
 
 
 ---
 
-1. Правка table.php
-
-Файл:
-
-/local/sitebuilder/views/blocks/table.php
-
-1.1. Добавь функцию короткого кода
-
-После функции:
-
-$normalizeType = static function ($type): string {
-
-после её закрытия добавь:
-
-$normalizeColumnCode = static function (array $column, int $index): string {
-    $code = trim((string)($column['code'] ?? ''));
-
-    if ($code === '') {
-        $id = trim((string)($column['id'] ?? ''));
-
-        if (preg_match('/^c_?(\d+)$/i', $id, $m)) {
-            $code = 'c' . $m[1];
-        } else {
-            $code = 'c' . ($index + 1);
-        }
-    }
-
-    if (preg_match('/^c_(\d+)$/i', $code, $m)) {
-        $code = 'c' . $m[1];
-    }
-
-    $code = preg_replace('/[^A-Za-z0-9_]/', '', $code);
-
-    if ($code === '') {
-        $code = 'c' . ($index + 1);
-    }
-
-    return $code;
-};
-
-
----
-
-1.2. В нормализации колонок добавь code
-
-Найди:
-
-$columns = array_values(array_map(static function ($column, $index) use ($normalizeAlign, $normalizeType) {
-
-Замени на:
-
-$columns = array_values(array_map(static function ($column, $index) use ($normalizeAlign, $normalizeType, $normalizeColumnCode) {
-
-Ниже в return [ добавь code.
-
-Было примерно так:
-
-return [
-    'id' => $id,
-    'label' => $label,
-    'width' => $width,
-    'align' => $normalizeAlign($column['align'] ?? 'left'),
-    'type' => $normalizeType($column['type'] ?? 'text'),
-    'formula' => trim((string)($column['formula'] ?? '')),
-];
-
-Замени на:
-
-return [
-    'id' => $id,
-    'code' => $normalizeColumnCode($column, $index),
-    'label' => $label,
-    'width' => $width,
-    'align' => $normalizeAlign($column['align'] ?? 'left'),
-    'type' => $normalizeType($column['type'] ?? 'text'),
-    'formula' => trim((string)($column['formula'] ?? '')),
-];
-
-
----
-
-1.3. Замени функцию $calculateFormula
-
-Найди старую функцию:
-
-$calculateFormula = static function (string $formula, array $row) use ($valueToNumber, $evalMathExpression): string {
-
-И замени её полностью на:
-
-$calculateFormula = static function (string $formula, array $row, array $columns) use ($valueToNumber, $evalMathExpression): string {
-    $formula = trim($formula);
-
-    if ($formula === '') {
-        return '';
-    }
-
-    $cells = is_array($row['cells'] ?? null) ? $row['cells'] : [];
-
-    $tokenMap = [];
-
-    foreach ($columns as $index => $column) {
-        $id = (string)($column['id'] ?? '');
-        $code = (string)($column['code'] ?? ('c' . ($index + 1)));
-
-        if ($id !== '') {
-            $tokenMap[$id] = $id;
-        }
-
-        if ($code !== '') {
-            $tokenMap[$code] = $id;
-        }
-
-        if (preg_match('/^c(\d+)$/i', $code, $m)) {
-            $tokenMap['c_' . $m[1]] = $id;
-        }
-
-        if (preg_match('/^c_(\d+)$/i', $id, $m)) {
-            $tokenMap['c' . $m[1]] = $id;
-        }
-    }
-
-    $expression = preg_replace_callback('/\b[A-Za-z_][A-Za-z0-9_]*\b/', static function ($matches) use ($cells, $tokenMap, $valueToNumber) {
-        $token = $matches[0];
-
-        if (!isset($tokenMap[$token])) {
-            return '0';
-        }
-
-        $columnId = $tokenMap[$token];
-
-        return (string)$valueToNumber($cells[$columnId] ?? '');
-    }, $formula);
-
-    return (string)$evalMathExpression((string)$expression);
-};
-
-
----
-
-1.4. Исправь вызовы $calculateFormula
-
-Найди:
-
-$renderViewCell = static function (array $column, array $row) use ($valueToText, $normalizeDate, $calculateFormula): string {
-
-Замени на:
-
-$renderViewCell = static function (array $column, array $row) use ($valueToText, $normalizeDate, $calculateFormula, $columns): string {
-
-Внутри найди:
-
-return sb_public_h($calculateFormula((string)($column['formula'] ?? ''), $row));
-
-Замени на:
-
-return sb_public_h($calculateFormula((string)($column['formula'] ?? ''), $row, $columns));
-
-Ниже в edit-режиме найди:
-
-<?= sb_public_h($calculateFormula($column['formula'], $row)) ?>
-
-Замени на:
-
-<?= sb_public_h($calculateFormula($column['formula'], $row, $columns)) ?>
-
-
----
-
-1.5. В шапке показывай code, а не id
-
-Найди:
-
-<span class="sb-public-table-column-code"><?= sb_public_h($column['id']) ?></span>
-
-Замени на:
-
-<span class="sb-public-table-column-code" data-column-code><?= sb_public_h($column['code']) ?></span>
-
-После этого PHP уже будет понимать формулу:
-
-c1 + c2
-
-и без edit=Y.
-
-
----
-
-2. Правка table-edit.js
+1. В table-edit.js добавь защиту от пустых columns
 
 Файл:
 
 /local/sitebuilder/assets/public/table-edit.js
 
-2.1. Добавь функцию нормализации кода
-
-После функции:
-
-function normalizeType(type) {
-
-после её закрытия добавь:
-
-function normalizeColumnCode(code, index, id) {
-    code = String(code || '').trim();
-    id = String(id || '').trim();
-
-    if (!code) {
-        var idMatch = id.match(/^c_?(\d+)$/i);
-
-        if (idMatch) {
-            code = 'c' + idMatch[1];
-        } else {
-            code = 'c' + (index + 1);
-        }
-    }
-
-    var codeMatch = code.match(/^c_(\d+)$/i);
-
-    if (codeMatch) {
-        code = 'c' + codeMatch[1];
-    }
-
-    code = code.replace(/[^A-Za-z0-9_]/g, '');
-
-    if (!code) {
-        code = 'c' + (index + 1);
-    }
-
-    return code;
-}
-
-
----
-
-2.2. В collectContentFromDom() сохраняй code
-
-Найди внутри collectContentFromDom() место:
-
-var oldColumn = findOldColumn(oldContent, columnId);
-var width = oldColumn && oldColumn.width
-    ? Number(oldColumn.width)
-    : getColumnCurrentWidth(table, columnId);
-
-columns.push({
-    id: columnId,
-    label: label,
-    width: clampWidth(width),
-    align: getColumnAlignFromTh(th),
-    type: getColumnTypeFromTh(th),
-    formula: getColumnFormulaFromTh(th)
-});
-
-Замени на:
-
-var oldColumn = findOldColumn(oldContent, columnId);
-var width = oldColumn && oldColumn.width
-    ? Number(oldColumn.width)
-    : getColumnCurrentWidth(table, columnId);
-
-var codeNode = th.querySelector('[data-column-code]');
-var codeFromDom = codeNode ? textValue(codeNode).replace(/^Код:\s*/i, '') : '';
-var oldCode = oldColumn && oldColumn.code ? String(oldColumn.code) : '';
-var columnCode = normalizeColumnCode(oldCode || codeFromDom, index, columnId);
-
-columns.push({
-    id: columnId,
-    code: columnCode,
-    label: label,
-    width: clampWidth(width),
-    align: getColumnAlignFromTh(th),
-    type: getColumnTypeFromTh(th),
-    formula: getColumnFormulaFromTh(th)
-});
-
-
----
-
-2.3. Замени calculateFormula()
-
 Найди функцию:
 
-function calculateFormula(content, row, formula) {
+function renderTableFromContent(root) {
 
-Полностью замени её на:
+Внутри неё найди:
 
-function calculateFormula(content, row, formula) {
-    formula = String(formula || '').trim();
+var columns = Array.isArray(content.columns) ? content.columns : [];
+var rows = Array.isArray(content.rows) ? content.rows : [];
+var hasControlCol = true;
 
-    if (!formula) {
-        return '';
-    }
+Сразу после этого добавь:
 
-    var cells = row && row.cells ? row.cells : {};
-    var columns = Array.isArray(content.columns) ? content.columns : [];
+if (!columns.length) {
+    console.warn('SiteBuilder table: render stopped because columns is empty');
+    return;
+}
 
-    var expression = formula.replace(/\b[A-Za-z_][A-Za-z0-9_]*\b/g, function (token) {
-        var column = null;
+Должно стать так:
 
-        columns.some(function (item, index) {
-            var id = String(item.id || '');
-            var code = normalizeColumnCode(item.code || '', index, id);
-            var legacyCode = code.replace(/^c(\d+)$/i, 'c_$1');
+var columns = Array.isArray(content.columns) ? content.columns : [];
+var rows = Array.isArray(content.rows) ? content.rows : [];
+var hasControlCol = true;
 
-            if (token === id || token === code || token === legacyCode) {
-                column = item;
-                return true;
-            }
-
-            return false;
-        });
-
-        if (!column) {
-            return '0';
-        }
-
-        return String(valueToNumber(cells[column.id]));
-    });
-
-    return evaluateMathExpression(expression);
+if (!columns.length) {
+    console.warn('SiteBuilder table: render stopped because columns is empty');
+    return;
 }
 
 
 ---
 
-2.4. В renderTableFromContent() показывай нормальный код
+2. Добавь функцию смены типа столбца
 
-Найди:
+В table-edit.js найди функцию:
 
-columns.forEach(function (column) {
+function renderCellEditor(td, column, row, content) {
 
-Внутри renderTableFromContent() замени на:
+После всей этой функции вставь:
 
-columns.forEach(function (column, columnIndex) {
+function changeColumnType(root, th, newType) {
+    if (!root || !th) {
+        return;
+    }
 
-Ниже найди:
+    newType = normalizeType(newType);
 
-var code = document.createElement('span');
-code.className = 'sb-public-table-column-code';
-code.textContent = column.id;
+    var columnId = String(th.getAttribute('data-column-id') || '');
 
-Замени на:
+    if (!columnId) {
+        return;
+    }
 
-column.code = normalizeColumnCode(column.code || '', columnIndex, column.id);
+    th.setAttribute('data-column-type-value', newType);
 
-var code = document.createElement('span');
-code.className = 'sb-public-table-column-code';
-code.setAttribute('data-column-code', '');
-code.textContent = column.code;
+    var typeSelect = th.querySelector('[data-column-type]');
+
+    if (typeSelect) {
+        typeSelect.value = newType;
+    }
+
+    var formulaInput = th.querySelector('[data-column-formula]');
+
+    if (formulaInput) {
+        formulaInput.style.display = newType === 'formula' ? '' : 'none';
+    }
+
+    var formulaTools = th.querySelector('[data-formula-tools]');
+
+    if (formulaTools) {
+        formulaTools.style.display = newType === 'formula' ? '' : 'none';
+    }
+
+    var content = collectContentFromDom(root);
+    var columns = Array.isArray(content.columns) ? content.columns : [];
+    var rows = Array.isArray(content.rows) ? content.rows : [];
+
+    var column = columns.find(function (item) {
+        return String(item.id || '') === columnId;
+    });
+
+    if (!column) {
+        return;
+    }
+
+    column.type = newType;
+
+    rows.forEach(function (row, rowIndex) {
+        row.cells = row.cells || {};
+
+        var tr = root.querySelector('tbody tr[data-row-id="' + cssEscape(row.id) + '"]');
+
+        if (!tr) {
+            return;
+        }
+
+        var td = tr.querySelector('td[data-column-id="' + cssEscape(columnId) + '"]');
+
+        if (!td) {
+            td = document.createElement('td');
+            tr.appendChild(td);
+        }
+
+        renderCellEditor(td, column, row, content);
+    });
+
+    setContent(root, collectContentFromDom(root));
+    applyWidths(root);
+    applyAllAligns(root);
+    updateFormulaCells(root);
+    setDirty(root, true);
+}
 
 
 ---
 
-2.5. В помощнике формулы тоже используй code
+3. Замени обработчик смены типа
 
-Внутри создания formulaColumnSelect найди:
+В table-edit.js найди блок:
 
-columns.forEach(function (item) {
+var typeSelect = e.target.closest('[data-column-type]');
 
-Замени на:
+if (typeSelect) {
+    var typeRoot = typeSelect.closest('[data-public-editable-table]');
 
-columns.forEach(function (item, itemIndex) {
+    if (!typeRoot) {
+        return;
+    }
 
-Ниже замени:
+    e.stopImmediatePropagation();
 
-option.value = item.code || item.id;
-option.textContent = (item.code || item.id) + ' — ' + (item.label || 'Столбец');
+    var typeContent = collectContentFromDom(typeRoot);
 
-на:
+    setContent(typeRoot, typeContent);
+    renderTableFromContent(typeRoot);
+    setDirty(typeRoot, true);
+    return;
+}
 
-var optionCode = normalizeColumnCode(item.code || '', itemIndex, item.id);
+Полностью замени его на:
 
-option.value = optionCode;
-option.textContent = optionCode + ' — ' + (item.label || 'Столбец');
+var typeSelect = e.target.closest('[data-column-type]');
+
+if (typeSelect) {
+    var typeRoot = typeSelect.closest('[data-public-editable-table]');
+    var typeTh = typeSelect.closest('th[data-column-id]');
+
+    if (!typeRoot || !typeTh) {
+        return;
+    }
+
+    e.stopImmediatePropagation();
+
+    changeColumnType(typeRoot, typeTh, typeSelect.value);
+    return;
+}
 
 
 ---
 
-2.6. В addColumn() оставь code
+4. Почему так произошло
 
-Проверь, чтобы в addColumn() было так:
+Сейчас при смене типа было так:
 
-columns.push({
-    id: newColumnId,
-    code: 'c' + newIndex,
-    label: 'Столбец ' + newIndex,
-    width: 160,
-    align: 'left',
-    type: 'text',
-    formula: ''
-});
+1. выбрал тип “Число”;
+2. JS собрал данные;
+3. JS полностью очистил thead/tbody;
+4. потом попытался заново построить таблицу;
+5. columns где-то стал пустым;
+6. остался только №.
+
+После правки будет так:
+
+1. выбрал тип “Число”;
+2. JS нашёл только этот столбец;
+3. заменил только ячейки этого столбца на input для числа;
+4. остальные столбцы не трогает.
 
 
 ---
 
-3. Почему на обычной странице было 0
+5. Ещё одна ошибка, которую видно по скрину
 
-Потому что формула была:
+У тебя сейчас в шапке показывается:
 
-c1 + c2
+Код:c1
+Код:c2
+Код:c3
 
-Но PHP искал ячейки с ключами:
+Это нормально, но лучше визуально сделать с пробелом. В CSS у нас уже было:
+
+.sb-public-table-column-code::before {
+    content: "Код: ";
+}
+
+Значит в самом HTML/JS внутри textContent должно быть только:
 
 c1
-c2
 
-А реальные ключи в строке были:
+А не:
 
-c_1
-c_2
+Код:c1
 
-или длинные col_....
+Если у тебя после правок вдруг будет показываться Код: Код:c1, значит где-то в JS/PHP в textContent попал уже готовый текст с “Код:”. Тогда скажи, поправим.
 
-Теперь будет так:
-
-c1 → находим настоящий id столбца → берём значение из cells[настоящий id]
-
-То есть пользователь пишет коротко:
-
-c1 + c2
-
-а код сам понимает, где лежат данные.
-
-После правок открой таблицу в edit=Y, нажми Сохранить изменения, потом открой без edit=Y. Формула должна остаться 110, а не 0.
+После этих трёх правок поменяй тип данных ещё раз. Таблица не должна схлопываться до одного №.
