@@ -1,132 +1,265 @@
-Да, по скрину видно 3 проблемы:
+Да, я вижу главную ошибку.
 
-1. Коды столбцов огромные: col_1780654750135 — неудобно для формул.
-2. Формулу руками писать неудобно.
-3. Поля внутри ячеек слишком короткие, должны растягиваться на ширину столбца.
+В edit=Y формулу считает JS, он уже понимает c1 + c2.
 
-Делаем так:
+А без edit=Y формулу считает PHP в table.php, и он пока ищет только реальные id столбцов, типа:
 
-1. Для пользователя показываем короткие коды: c1, c2, c3.
-2. Формула будет работать и с короткими кодами: c1 * c2.
-3. В столбце типа “Формула” появится выбор столбца и кнопка “Вставить”.
-4. Поля ввода в ячейках растянем на 100% ширины столбца.
+c_1
+c_2
+col_178065...
 
-1. Добавь CSS
+Поэтому в режиме редактирования получается 110, а на обычной странице становится 0.
 
-В конец файла:
+Нужно сделать одно правило:
 
-/local/sitebuilder/assets/public/public.css
-
-добавь:
-
-/* =========================================================
-   Public table UX improvements
-   ========================================================= */
-
-.sb-public-table th {
-    vertical-align: top;
-}
-
-.sb-public-table-th-inner {
-    display: grid;
-    gap: 6px;
-    min-width: 0;
-}
-
-.sb-public-table-column-code {
-    display: inline-flex;
-    width: fit-content;
-    max-width: 100%;
-    padding: 2px 7px;
-    border-radius: 999px;
-    background: #e2e8f0;
-    color: #475569;
-    font-size: 10px;
-    font-weight: 900;
-    line-height: 1.3;
-}
-
-.sb-public-table-column-code::before {
-    content: "Код: ";
-    opacity: .75;
-}
-
-.sb-public-table-cell-input,
-.sb-public-table-cell-link input,
-.sb-public-table-cell-image input {
-    display: block;
-    width: 100% !important;
-    min-width: 100% !important;
-    max-width: 100% !important;
-    min-height: 32px;
-    box-sizing: border-box;
-}
-
-.sb-public-table--editable td {
-    min-width: 0;
-}
-
-.sb-public-table--editable td[data-column-id] {
-    padding: 8px;
-}
-
-.sb-public-table-formula-tools {
-    display: grid;
-    gap: 5px;
-    padding: 6px;
-    border-radius: 10px;
-    background: #f8fafc;
-    border: 1px solid rgba(148, 163, 184, .45);
-}
-
-.sb-public-table-formula-tools__row {
-    display: flex;
-    gap: 5px;
-}
-
-.sb-public-table-formula-tools select,
-.sb-public-table-formula-tools button {
-    min-height: 26px;
-    box-sizing: border-box;
-    border-radius: 8px;
-    font-size: 11px;
-    font-weight: 800;
-}
-
-.sb-public-table-formula-tools select {
-    width: 100%;
-    min-width: 0;
-    border: 1px solid rgba(148, 163, 184, .7);
-    background: #fff;
-    color: #334155;
-}
-
-.sb-public-table-formula-tools button {
-    border: 0;
-    padding: 3px 7px;
-    background: #dbeafe;
-    color: #1e40af;
-    cursor: pointer;
-}
-
-.sb-public-table-formula-tools button:hover {
-    background: #bfdbfe;
-}
+Пользователь видит и пишет в формуле c1, c2, c3.
+Внутри таблицы могут быть любые id, но у каждого столбца есть короткий code.
+PHP и JS оба понимают code.
 
 
 ---
 
-2. В table-edit.js добавь короткие коды c1, c2, c3
+1. Правка table.php
+
+Файл:
+
+/local/sitebuilder/views/blocks/table.php
+
+1.1. Добавь функцию короткого кода
+
+После функции:
+
+$normalizeType = static function ($type): string {
+
+после её закрытия добавь:
+
+$normalizeColumnCode = static function (array $column, int $index): string {
+    $code = trim((string)($column['code'] ?? ''));
+
+    if ($code === '') {
+        $id = trim((string)($column['id'] ?? ''));
+
+        if (preg_match('/^c_?(\d+)$/i', $id, $m)) {
+            $code = 'c' . $m[1];
+        } else {
+            $code = 'c' . ($index + 1);
+        }
+    }
+
+    if (preg_match('/^c_(\d+)$/i', $code, $m)) {
+        $code = 'c' . $m[1];
+    }
+
+    $code = preg_replace('/[^A-Za-z0-9_]/', '', $code);
+
+    if ($code === '') {
+        $code = 'c' . ($index + 1);
+    }
+
+    return $code;
+};
+
+
+---
+
+1.2. В нормализации колонок добавь code
+
+Найди:
+
+$columns = array_values(array_map(static function ($column, $index) use ($normalizeAlign, $normalizeType) {
+
+Замени на:
+
+$columns = array_values(array_map(static function ($column, $index) use ($normalizeAlign, $normalizeType, $normalizeColumnCode) {
+
+Ниже в return [ добавь code.
+
+Было примерно так:
+
+return [
+    'id' => $id,
+    'label' => $label,
+    'width' => $width,
+    'align' => $normalizeAlign($column['align'] ?? 'left'),
+    'type' => $normalizeType($column['type'] ?? 'text'),
+    'formula' => trim((string)($column['formula'] ?? '')),
+];
+
+Замени на:
+
+return [
+    'id' => $id,
+    'code' => $normalizeColumnCode($column, $index),
+    'label' => $label,
+    'width' => $width,
+    'align' => $normalizeAlign($column['align'] ?? 'left'),
+    'type' => $normalizeType($column['type'] ?? 'text'),
+    'formula' => trim((string)($column['formula'] ?? '')),
+];
+
+
+---
+
+1.3. Замени функцию $calculateFormula
+
+Найди старую функцию:
+
+$calculateFormula = static function (string $formula, array $row) use ($valueToNumber, $evalMathExpression): string {
+
+И замени её полностью на:
+
+$calculateFormula = static function (string $formula, array $row, array $columns) use ($valueToNumber, $evalMathExpression): string {
+    $formula = trim($formula);
+
+    if ($formula === '') {
+        return '';
+    }
+
+    $cells = is_array($row['cells'] ?? null) ? $row['cells'] : [];
+
+    $tokenMap = [];
+
+    foreach ($columns as $index => $column) {
+        $id = (string)($column['id'] ?? '');
+        $code = (string)($column['code'] ?? ('c' . ($index + 1)));
+
+        if ($id !== '') {
+            $tokenMap[$id] = $id;
+        }
+
+        if ($code !== '') {
+            $tokenMap[$code] = $id;
+        }
+
+        if (preg_match('/^c(\d+)$/i', $code, $m)) {
+            $tokenMap['c_' . $m[1]] = $id;
+        }
+
+        if (preg_match('/^c_(\d+)$/i', $id, $m)) {
+            $tokenMap['c' . $m[1]] = $id;
+        }
+    }
+
+    $expression = preg_replace_callback('/\b[A-Za-z_][A-Za-z0-9_]*\b/', static function ($matches) use ($cells, $tokenMap, $valueToNumber) {
+        $token = $matches[0];
+
+        if (!isset($tokenMap[$token])) {
+            return '0';
+        }
+
+        $columnId = $tokenMap[$token];
+
+        return (string)$valueToNumber($cells[$columnId] ?? '');
+    }, $formula);
+
+    return (string)$evalMathExpression((string)$expression);
+};
+
+
+---
+
+1.4. Исправь вызовы $calculateFormula
+
+Найди:
+
+$renderViewCell = static function (array $column, array $row) use ($valueToText, $normalizeDate, $calculateFormula): string {
+
+Замени на:
+
+$renderViewCell = static function (array $column, array $row) use ($valueToText, $normalizeDate, $calculateFormula, $columns): string {
+
+Внутри найди:
+
+return sb_public_h($calculateFormula((string)($column['formula'] ?? ''), $row));
+
+Замени на:
+
+return sb_public_h($calculateFormula((string)($column['formula'] ?? ''), $row, $columns));
+
+Ниже в edit-режиме найди:
+
+<?= sb_public_h($calculateFormula($column['formula'], $row)) ?>
+
+Замени на:
+
+<?= sb_public_h($calculateFormula($column['formula'], $row, $columns)) ?>
+
+
+---
+
+1.5. В шапке показывай code, а не id
+
+Найди:
+
+<span class="sb-public-table-column-code"><?= sb_public_h($column['id']) ?></span>
+
+Замени на:
+
+<span class="sb-public-table-column-code" data-column-code><?= sb_public_h($column['code']) ?></span>
+
+После этого PHP уже будет понимать формулу:
+
+c1 + c2
+
+и без edit=Y.
+
+
+---
+
+2. Правка table-edit.js
 
 Файл:
 
 /local/sitebuilder/assets/public/table-edit.js
 
-Найди функцию:
+2.1. Добавь функцию нормализации кода
 
-function collectContentFromDom(root) {
+После функции:
 
-Внутри неё найди место, где в columns.push сейчас добавляется столбец:
+function normalizeType(type) {
+
+после её закрытия добавь:
+
+function normalizeColumnCode(code, index, id) {
+    code = String(code || '').trim();
+    id = String(id || '').trim();
+
+    if (!code) {
+        var idMatch = id.match(/^c_?(\d+)$/i);
+
+        if (idMatch) {
+            code = 'c' + idMatch[1];
+        } else {
+            code = 'c' + (index + 1);
+        }
+    }
+
+    var codeMatch = code.match(/^c_(\d+)$/i);
+
+    if (codeMatch) {
+        code = 'c' + codeMatch[1];
+    }
+
+    code = code.replace(/[^A-Za-z0-9_]/g, '');
+
+    if (!code) {
+        code = 'c' + (index + 1);
+    }
+
+    return code;
+}
+
+
+---
+
+2.2. В collectContentFromDom() сохраняй code
+
+Найди внутри collectContentFromDom() место:
+
+var oldColumn = findOldColumn(oldContent, columnId);
+var width = oldColumn && oldColumn.width
+    ? Number(oldColumn.width)
+    : getColumnCurrentWidth(table, columnId);
 
 columns.push({
     id: columnId,
@@ -139,11 +272,19 @@ columns.push({
 
 Замени на:
 
+var oldColumn = findOldColumn(oldContent, columnId);
+var width = oldColumn && oldColumn.width
+    ? Number(oldColumn.width)
+    : getColumnCurrentWidth(table, columnId);
+
+var codeNode = th.querySelector('[data-column-code]');
+var codeFromDom = codeNode ? textValue(codeNode).replace(/^Код:\s*/i, '') : '';
 var oldCode = oldColumn && oldColumn.code ? String(oldColumn.code) : '';
+var columnCode = normalizeColumnCode(oldCode || codeFromDom, index, columnId);
 
 columns.push({
     id: columnId,
-    code: oldCode || ('c' + (index + 1)),
+    code: columnCode,
     label: label,
     width: clampWidth(width),
     align: getColumnAlignFromTh(th),
@@ -154,7 +295,7 @@ columns.push({
 
 ---
 
-3. Формулы должны понимать c1, c2, c3
+2.3. Замени calculateFormula()
 
 Найди функцию:
 
@@ -173,8 +314,19 @@ function calculateFormula(content, row, formula) {
     var columns = Array.isArray(content.columns) ? content.columns : [];
 
     var expression = formula.replace(/\b[A-Za-z_][A-Za-z0-9_]*\b/g, function (token) {
-        var column = columns.find(function (item) {
-            return String(item.id || '') === token || String(item.code || '') === token;
+        var column = null;
+
+        columns.some(function (item, index) {
+            var id = String(item.id || '');
+            var code = normalizeColumnCode(item.code || '', index, id);
+            var legacyCode = code.replace(/^c(\d+)$/i, 'c_$1');
+
+            if (token === id || token === code || token === legacyCode) {
+                column = item;
+                return true;
+            }
+
+            return false;
         });
 
         if (!column) {
@@ -187,20 +339,20 @@ function calculateFormula(content, row, formula) {
     return evaluateMathExpression(expression);
 }
 
-Теперь формула:
-
-c1 * c2
-
-будет работать так же, как:
-
-col_1780654750135 * col_1781155812339
-
 
 ---
 
-4. В шапке показываем короткий код
+2.4. В renderTableFromContent() показывай нормальный код
 
-Найди в renderTableFromContent(root) кусок:
+Найди:
+
+columns.forEach(function (column) {
+
+Внутри renderTableFromContent() замени на:
+
+columns.forEach(function (column, columnIndex) {
+
+Ниже найди:
 
 var code = document.createElement('span');
 code.className = 'sb-public-table-column-code';
@@ -208,27 +360,44 @@ code.textContent = column.id;
 
 Замени на:
 
+column.code = normalizeColumnCode(column.code || '', columnIndex, column.id);
+
 var code = document.createElement('span');
 code.className = 'sb-public-table-column-code';
-code.textContent = column.code || column.id;
+code.setAttribute('data-column-code', '');
+code.textContent = column.code;
 
 
 ---
 
-5. При добавлении столбца сохраняем code
+2.5. В помощнике формулы тоже используй code
 
-Найди в addColumn(root):
+Внутри создания formulaColumnSelect найди:
 
-columns.push({
-    id: newColumnId,
-    label: 'Столбец ' + newIndex,
-    width: 160,
-    align: 'left',
-    type: 'text',
-    formula: ''
-});
+columns.forEach(function (item) {
 
 Замени на:
+
+columns.forEach(function (item, itemIndex) {
+
+Ниже замени:
+
+option.value = item.code || item.id;
+option.textContent = (item.code || item.id) + ' — ' + (item.label || 'Столбец');
+
+на:
+
+var optionCode = normalizeColumnCode(item.code || '', itemIndex, item.id);
+
+option.value = optionCode;
+option.textContent = optionCode + ' — ' + (item.label || 'Столбец');
+
+
+---
+
+2.6. В addColumn() оставь code
+
+Проверь, чтобы в addColumn() было так:
 
 columns.push({
     id: newColumnId,
@@ -243,199 +412,32 @@ columns.push({
 
 ---
 
-6. Добавь выбор столбца для формулы
+3. Почему на обычной странице было 0
 
-Найди в renderTableFromContent(root) кусок:
+Потому что формула была:
 
-var formulaInput = document.createElement('input');
-formulaInput.className = 'sb-public-table-formula-input';
-formulaInput.type = 'text';
-formulaInput.placeholder = 'Например: col_1 * col_2';
-formulaInput.value = column.formula || '';
-formulaInput.setAttribute('data-column-formula', '');
+c1 + c2
 
-if (column.type !== 'formula') {
-    formulaInput.style.display = 'none';
-}
+Но PHP искал ячейки с ключами:
 
-Сразу после него вставь:
+c1
+c2
 
-var formulaTools = document.createElement('div');
-formulaTools.className = 'sb-public-table-formula-tools';
-formulaTools.setAttribute('data-formula-tools', '');
+А реальные ключи в строке были:
 
-if (column.type !== 'formula') {
-    formulaTools.style.display = 'none';
-}
+c_1
+c_2
 
-var formulaColumnSelect = document.createElement('select');
-formulaColumnSelect.setAttribute('data-formula-insert-column', '');
+или длинные col_....
 
-columns.forEach(function (item) {
-    if (item.id === column.id) {
-        return;
-    }
+Теперь будет так:
 
-    var option = document.createElement('option');
-    option.value = item.code || item.id;
-    option.textContent = (item.code || item.id) + ' — ' + (item.label || 'Столбец');
+c1 → находим настоящий id столбца → берём значение из cells[настоящий id]
 
-    formulaColumnSelect.appendChild(option);
-});
+То есть пользователь пишет коротко:
 
-var formulaInsertBtn = document.createElement('button');
-formulaInsertBtn.type = 'button';
-formulaInsertBtn.setAttribute('data-formula-insert-btn', '');
-formulaInsertBtn.textContent = 'Вставить';
+c1 + c2
 
-var formulaOps = document.createElement('div');
-formulaOps.className = 'sb-public-table-formula-tools__row';
+а код сам понимает, где лежат данные.
 
-['+', '-', '*', '/', '(', ')'].forEach(function (op) {
-    var btn = document.createElement('button');
-    btn.type = 'button';
-    btn.setAttribute('data-formula-op', op);
-    btn.textContent = op;
-    formulaOps.appendChild(btn);
-});
-
-var formulaInsertRow = document.createElement('div');
-formulaInsertRow.className = 'sb-public-table-formula-tools__row';
-formulaInsertRow.appendChild(formulaColumnSelect);
-formulaInsertRow.appendChild(formulaInsertBtn);
-
-formulaTools.appendChild(formulaInsertRow);
-formulaTools.appendChild(formulaOps);
-
-Потом ниже найди:
-
-inner.appendChild(typeSelect);
-inner.appendChild(formulaInput);
-inner.appendChild(alignSelect);
-
-Замени на:
-
-inner.appendChild(typeSelect);
-inner.appendChild(formulaInput);
-inner.appendChild(formulaTools);
-inner.appendChild(alignSelect);
-
-
----
-
-7. При смене типа показываем/скрываем помощник формулы
-
-В обработчике change найди часть:
-
-if (typeSelect) {
-
-Внутри она у тебя вызывает renderTableFromContent(typeRoot);. Это нормально, потому что при смене типа таблица перерисуется уже с помощником формулы.
-
-
----
-
-8. Добавь обработчик вставки в формулу
-
-В table-edit.js найди обработчик:
-
-document.addEventListener('click', function (e) {
-
-В самое начало этого обработчика вставь:
-
-var formulaInsertBtn = e.target.closest('[data-formula-insert-btn]');
-
-if (formulaInsertBtn) {
-    var formulaRoot = formulaInsertBtn.closest('[data-public-editable-table]');
-    var formulaTh = formulaInsertBtn.closest('th[data-column-id]');
-    var formulaInput = formulaTh ? formulaTh.querySelector('[data-column-formula]') : null;
-    var formulaSelect = formulaTh ? formulaTh.querySelector('[data-formula-insert-column]') : null;
-
-    if (formulaRoot && formulaInput && formulaSelect && formulaSelect.value) {
-        e.preventDefault();
-        e.stopImmediatePropagation();
-
-        formulaInput.value = String(formulaInput.value || '').trim();
-
-        if (formulaInput.value !== '') {
-            formulaInput.value += ' ';
-        }
-
-        formulaInput.value += formulaSelect.value;
-
-        setContent(formulaRoot, collectContentFromDom(formulaRoot));
-        updateFormulaCells(formulaRoot);
-        setDirty(formulaRoot, true);
-    }
-
-    return;
-}
-
-var formulaOpBtn = e.target.closest('[data-formula-op]');
-
-if (formulaOpBtn) {
-    var opRoot = formulaOpBtn.closest('[data-public-editable-table]');
-    var opTh = formulaOpBtn.closest('th[data-column-id]');
-    var opInput = opTh ? opTh.querySelector('[data-column-formula]') : null;
-    var op = formulaOpBtn.getAttribute('data-formula-op') || '';
-
-    if (opRoot && opInput && op) {
-        e.preventDefault();
-        e.stopImmediatePropagation();
-
-        opInput.value = String(opInput.value || '').trim();
-
-        if (opInput.value !== '' && op !== ')') {
-            opInput.value += ' ';
-        }
-
-        opInput.value += op;
-
-        if (op !== '(') {
-            opInput.value += ' ';
-        }
-
-        setContent(opRoot, collectContentFromDom(opRoot));
-        updateFormulaCells(opRoot);
-        setDirty(opRoot, true);
-    }
-
-    return;
-}
-
-
----
-
-9. Добавь исключение для клика мышкой
-
-В mousedown-обработчике найди список исключений:
-
-e.target.closest('[data-date-cell]')
-
-После него добавь:
-
-||
-e.target.closest('[data-formula-insert-column]') ||
-e.target.closest('[data-formula-insert-btn]') ||
-e.target.closest('[data-formula-op]')
-
-Чтобы кнопки формулы не конфликтовали с изменением ширины столбца.
-
-
----
-
-После этого на экране будет так:
-
-Столбец 1
-Код: c1
-Тип: Число
-
-Столбец 2
-Код: c2
-Тип: Число
-
-Столбец 3
-Код: c3
-Тип: Формула
-Формула: c1 * c2
-
-И формулу можно будет собирать кнопками, не вводя длинные col_1780654750135.
+После правок открой таблицу в edit=Y, нажми Сохранить изменения, потом открой без edit=Y. Формула должна остаться 110, а не 0.
