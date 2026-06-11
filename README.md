@@ -1,207 +1,277 @@
-Да, причина найдена.
+Идём дальше. Сейчас сделаем Laravel-like поиск + when() в QueryBuilder.
 
-У тебя pagination приходит так:
+В Laravel часто пишут так:
 
-[total_pages] => 3
-[pages] => Array
-(
-    [0] => 1
-    [1] => 2
-    [2] => 3
-)
+Note::query()
+    ->when($search, function ($query) use ($search) {
+        $query->where('title', 'like', "%{$search}%");
+    })
+    ->paginate(10);
 
-А в нашем partial было так:
+Сделаем похожее для наших заметок.
 
-$lastPage = (int)(
-    $pagination['last_page']
-    ?? $pagination['pages']
-    ?? $pagination['total_pages']
-    ?? 1
-);
 
-Из-за этого PHP брал pages, а это массив. Массив при (int) превращается в 1, поэтому partial думал:
+---
 
-lastPage = 1
+1. Обнови /local/mvc/Core/QueryBuilder.php
 
-и не показывал пагинацию.
-
-Замени файл полностью.
-
-/local/mvc_demo/Views/partials/pagination.php
-
-<?php
-
-if (!defined('B_PROLOG_INCLUDED') || B_PROLOG_INCLUDED !== true) {
-    die();
-}
-
-$pagination = is_array($pagination ?? null) ? $pagination : [];
-
-$routeName = (string)($routeName ?? '');
-$routeParams = is_array($routeParams ?? null) ? $routeParams : [];
-$query = is_array($query ?? null) ? $query : [];
-
-$currentPage = (int)(
-    $pagination['current_page']
-    ?? $pagination['page']
-    ?? 1
-);
-
-$total = (int)(
-    $pagination['total']
-    ?? $pagination['items_total']
-    ?? 0
-);
-
-$perPage = (int)(
-    $pagination['per_page']
-    ?? $pagination['perPage']
-    ?? $pagination['limit']
-    ?? 10
-);
+Внутрь класса QueryBuilder добавь метод, например рядом с where() / orWhere():
 
 /**
- * Важно:
- * pages у нас может быть массивом [1,2,3],
- * поэтому нельзя делать (int)$pagination['pages'].
+ * Laravel-like when().
+ *
+ * Пример:
+ * $query->when($search !== '', function ($query) use ($search) {
+ *     $query->whereLike('title', $search);
+ * });
  */
-if (isset($pagination['last_page'])) {
-    $lastPage = (int)$pagination['last_page'];
-} elseif (isset($pagination['total_pages'])) {
-    $lastPage = (int)$pagination['total_pages'];
-} elseif (isset($pagination['pages']) && is_array($pagination['pages'])) {
-    $lastPage = count($pagination['pages']);
-} elseif (isset($pagination['pages'])) {
-    $lastPage = (int)$pagination['pages'];
-} else {
-    $lastPage = 1;
+public function when(mixed $value, callable $callback, ?callable $default = null): self
+{
+    if ($value) {
+        $callback($this, $value);
+        return $this;
+    }
+
+    if ($default !== null) {
+        $default($this, $value);
+    }
+
+    return $this;
 }
 
-if ($currentPage < 1) {
-    $currentPage = 1;
+Теперь можно будет условно добавлять фильтры.
+
+
+---
+
+2. Обнови /local/mvc_demo/Models/Note.php
+
+Замени методы пагинации на эти:
+
+public static function paginateLatest(int $page = 1, int $perPage = 10, string $search = ''): array
+{
+    $search = trim($search);
+
+    $result = self::query()
+        ->when($search !== '', function (\Local\Mvc\Core\QueryBuilder $query) use ($search) {
+            $query->where(function (\Local\Mvc\Core\QueryBuilder $query) use ($search) {
+                $query
+                    ->whereRaw('CAST(id AS TEXT) LIKE :q', [
+                        'q' => '%' . $search . '%',
+                    ])
+                    ->orWhereLike('title', $search)
+                    ->orWhereLike('body', $search);
+            });
+        })
+        ->orderBy('id', 'desc')
+        ->paginate($page, $perPage);
+
+    $result['items'] = array_map([self::class, 'normalize'], $result['items']);
+
+    return $result;
 }
 
-if ($lastPage < 1) {
-    $lastPage = 1;
+public static function paginateTrashedLatest(int $page = 1, int $perPage = 10, string $search = ''): array
+{
+    $search = trim($search);
+
+    $result = self::onlyTrashed()
+        ->when($search !== '', function (\Local\Mvc\Core\QueryBuilder $query) use ($search) {
+            $query->where(function (\Local\Mvc\Core\QueryBuilder $query) use ($search) {
+                $query
+                    ->whereRaw('CAST(id AS TEXT) LIKE :q', [
+                        'q' => '%' . $search . '%',
+                    ])
+                    ->orWhereLike('title', $search)
+                    ->orWhereLike('body', $search);
+            });
+        })
+        ->orderBy('id', 'desc')
+        ->paginate($page, $perPage);
+
+    $result['items'] = array_map([self::class, 'normalize'], $result['items']);
+
+    return $result;
 }
 
-if ($perPage < 1) {
-    $perPage = 10;
+
+---
+
+3. Обнови NoteController
+
+В /local/mvc_demo/Controllers/NoteController.php замени метод index() на:
+
+public function index(): Response
+{
+    $this->authorize('viewAny', Note::class);
+
+    $page = (int)request('page', 1);
+    $search = trim((string)request('q', ''));
+
+    $result = Note::paginateLatest($page, 10, $search);
+
+    return $this->render('notes/index', [
+        'title' => 'Заметки',
+        'notes' => $result['items'],
+        'pagination' => $result['pagination'],
+        'search' => $search,
+    ]);
 }
 
-if ($routeName === '') {
-    return;
+И метод trash() на:
+
+public function trash(): Response
+{
+    $this->authorize('viewAny', Note::class);
+
+    $page = (int)request('page', 1);
+    $search = trim((string)request('q', ''));
+
+    $result = Note::paginateTrashedLatest($page, 10, $search);
+
+    return $this->render('notes/trash', [
+        'title' => 'Удалённые заметки',
+        'notes' => $result['items'],
+        'pagination' => $result['pagination'],
+        'search' => $search,
+    ]);
 }
 
-if ($lastPage < 2) {
-    return;
-}
 
-$from = (int)(
-    $pagination['from']
-    ?? ($total > 0 ? (($currentPage - 1) * $perPage + 1) : 0)
-);
+---
 
-$to = (int)(
-    $pagination['to']
-    ?? ($total > 0 ? min($currentPage * $perPage, $total) : 0)
-);
+4. Добавь форму поиска в notes/index.php
 
-?>
+В файле:
 
-<div class="mvc-info" style="display:flex;justify-content:space-between;gap:12px;align-items:center;flex-wrap:wrap;">
-    <div style="color:#6b7280;">
-        Показано <?= e($from) ?>–<?= e($to) ?> из <?= e($total) ?>
-    </div>
+/local/mvc_demo/Views/notes/index.php
 
-    <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;">
-        <?php if ($currentPage > 1): ?>
-            <a
-                href="<?= e(route($routeName, $routeParams, array_merge($query, ['page' => $currentPage - 1]))) ?>"
-                style="padding:6px 10px;border:1px solid #d1d5db;border-radius:8px;text-decoration:none;"
-            >
-                ← Назад
+после блока со ссылкой на корзину добавь:
+
+<div class="mvc-info">
+    <form method="get" action="<?= e(route('notes.index')) ?>" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
+        <input
+            type="text"
+            name="q"
+            value="<?= e($search ?? '') ?>"
+            placeholder="Поиск по ID, названию или тексту"
+            style="flex:1;min-width:260px;min-height:42px;padding:8px 12px;border:1px solid #d1d5db;border-radius:10px;"
+        >
+
+        <button
+            type="submit"
+            style="min-height:42px;padding:0 18px;border:0;border-radius:10px;background:#2563eb;color:#fff;font-weight:600;cursor:pointer;"
+        >
+            Найти
+        </button>
+
+        <?php if (!empty($search)): ?>
+            <a href="<?= e(route('notes.index')) ?>">
+                Сбросить
             </a>
         <?php endif; ?>
-
-        <?php
-        $start = max(1, $currentPage - 2);
-        $end = min($lastPage, $currentPage + 2);
-        ?>
-
-        <?php if ($start > 1): ?>
-            <a
-                href="<?= e(route($routeName, $routeParams, array_merge($query, ['page' => 1]))) ?>"
-                style="padding:6px 10px;border:1px solid #d1d5db;border-radius:8px;text-decoration:none;"
-            >
-                1
-            </a>
-
-            <?php if ($start > 2): ?>
-                <span style="padding:6px;color:#6b7280;">...</span>
-            <?php endif; ?>
-        <?php endif; ?>
-
-        <?php for ($page = $start; $page <= $end; $page++): ?>
-            <?php if ($page === $currentPage): ?>
-                <span
-                    style="padding:6px 10px;border-radius:8px;background:#2563eb;color:#fff;font-weight:600;"
-                >
-                    <?= e($page) ?>
-                </span>
-            <?php else: ?>
-                <a
-                    href="<?= e(route($routeName, $routeParams, array_merge($query, ['page' => $page]))) ?>"
-                    style="padding:6px 10px;border:1px solid #d1d5db;border-radius:8px;text-decoration:none;"
-                >
-                    <?= e($page) ?>
-                </a>
-            <?php endif; ?>
-        <?php endfor; ?>
-
-        <?php if ($end < $lastPage): ?>
-            <?php if ($end < $lastPage - 1): ?>
-                <span style="padding:6px;color:#6b7280;">...</span>
-            <?php endif; ?>
-
-            <a
-                href="<?= e(route($routeName, $routeParams, array_merge($query, ['page' => $lastPage]))) ?>"
-                style="padding:6px 10px;border:1px solid #d1d5db;border-radius:8px;text-decoration:none;"
-            >
-                <?= e($lastPage) ?>
-            </a>
-        <?php endif; ?>
-
-        <?php if ($currentPage < $lastPage): ?>
-            <a
-                href="<?= e(route($routeName, $routeParams, array_merge($query, ['page' => $currentPage + 1]))) ?>"
-                style="padding:6px 10px;border:1px solid #d1d5db;border-radius:8px;text-decoration:none;"
-            >
-                Вперёд →
-            </a>
-        <?php endif; ?>
-    </div>
+    </form>
 </div>
 
-После этого убери временный debug-блок:
+И внизу, где подключается пагинация, замени:
 
-<pre>
-<?= e(print_r($pagination ?? null, true)) ?>
-</pre>
+$query = [];
+
+на:
+
+$query = [];
+
+if (!empty($search)) {
+    $query['q'] = $search;
+}
+
+Должно получиться так:
+
+<?php
+$routeName = 'notes.index';
+$routeParams = [];
+$query = [];
+
+if (!empty($search)) {
+    $query['q'] = $search;
+}
+
+require $_SERVER['DOCUMENT_ROOT'] . '/local/mvc_demo/Views/partials/pagination.php';
+?>
+
+
+---
+
+5. Добавь поиск в notes/trash.php
+
+В файле:
+
+/local/mvc_demo/Views/notes/trash.php
+
+после ссылки назад добавь:
+
+<div class="mvc-info">
+    <form method="get" action="<?= e(route('notes.trash')) ?>" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
+        <input
+            type="text"
+            name="q"
+            value="<?= e($search ?? '') ?>"
+            placeholder="Поиск по удалённым заметкам"
+            style="flex:1;min-width:260px;min-height:42px;padding:8px 12px;border:1px solid #d1d5db;border-radius:10px;"
+        >
+
+        <button
+            type="submit"
+            style="min-height:42px;padding:0 18px;border:0;border-radius:10px;background:#2563eb;color:#fff;font-weight:600;cursor:pointer;"
+        >
+            Найти
+        </button>
+
+        <?php if (!empty($search)): ?>
+            <a href="<?= e(route('notes.trash')) ?>">
+                Сбросить
+            </a>
+        <?php endif; ?>
+    </form>
+</div>
+
+И внизу перед подключением пагинации замени:
+
+$query = [];
+
+на:
+
+$query = [];
+
+if (!empty($search)) {
+    $query['q'] = $search;
+}
+
+
+---
+
+6. Проверка
 
 Сбрось OPcache:
 
 opcache_reset();
 echo 'OPcache reset OK';
 
-И открой:
+Проверь:
 
-/local/mvc_demo/notes
+/local/mvc_demo/notes?q=test
+/local/mvc_demo/notes?page=2&q=test
+/local/mvc_demo/notes/trash?q=test
 
-Теперь при твоих данных:
+Теперь поиск должен работать вместе с пагинацией: при переходе на страницу 2 параметр q не должен пропадать.
 
-total = 26
-page = 1
-total_pages = 3
 
-должны появиться страницы 1 2 3 и кнопка Вперёд →.
+---
+
+Что мы добавили:
+
+$query->when($search !== '', function ($query) {
+    ...
+});
+
+Это очень похоже на Laravel-подход: фильтры добавляются только если они нужны.
