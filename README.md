@@ -1,88 +1,21 @@
-Да, сделаем нормальное модальное окно прогресса загрузки.
+Да, сделаем такое же модальное окно, как при загрузке, только для распаковки ZIP.
 
-Будет так:
+Так как распаковка идёт одним серверным запросом, настоящий процент по каждому файлу без фоновой очереди получить сложно. Поэтому сделаем нормально для пользователя:
 
-1. Выбираешь файл / перетаскиваешь файл.
-2. Открывается модальное окно “Загрузка файлов”.
-3. Показывается список файлов.
-4. Показывается общий прогресс в процентах.
-5. После загрузки пишет “Загрузка завершена”.
-6. Потом обновляет список файлов.
+1. Открывается окно “Распаковка архива”.
+2. Прогресс плавно идёт до 90%.
+3. Когда сервер закончил — ставим 100%.
+4. Показываем: сколько файлов распаковано и сколько папок создано.
+5. Потом открываем созданную папку.
 
 
 ---
 
-1. Правим script.js
+1. script.js — добавь методы модального окна
 
 Файл:
 
 /local/sitebuilder/components/disk/script.js
-
-
----
-
-1.1. Добавь метод загрузки с прогрессом
-
-Найди метод:
-
-DiskComponent.prototype.api = async function (action, payload, isFormData) {
-
-После всего этого метода, сразу после его закрытия, вставь:
-
-DiskComponent.prototype.apiUploadWithProgress = function (action, formData, onProgress) {
-  return new Promise(function (resolve, reject) {
-    var xhr = new XMLHttpRequest();
-
-    xhr.open(
-      'POST',
-      '/local/sitebuilder/components/disk/api.php?action=' + encodeURIComponent(action),
-      true
-    );
-
-    xhr.upload.addEventListener('progress', function (event) {
-      if (!event.lengthComputable) {
-        return;
-      }
-
-      if (typeof onProgress === 'function') {
-        onProgress({
-          loaded: event.loaded,
-          total: event.total,
-          percent: event.total > 0 ? Math.round((event.loaded / event.total) * 100) : 0
-        });
-      }
-    });
-
-    xhr.addEventListener('load', function () {
-      var text = xhr.responseText || '';
-      var json = null;
-
-      try {
-        json = JSON.parse(text);
-      } catch (e) {
-        reject(new Error('UPLOAD_BAD_RESPONSE'));
-        return;
-      }
-
-      resolve(json);
-    });
-
-    xhr.addEventListener('error', function () {
-      reject(new Error('UPLOAD_NETWORK_ERROR'));
-    });
-
-    xhr.addEventListener('abort', function () {
-      reject(new Error('UPLOAD_ABORTED'));
-    });
-
-    xhr.send(formData);
-  });
-};
-
-
----
-
-2. Добавь методы модального окна
 
 Найди секцию:
 
@@ -90,20 +23,20 @@ DiskComponent.prototype.apiUploadWithProgress = function (action, formData, onPr
    EVENTS
    ========================================================= */
 
-Сразу перед ней вставь:
+Перед ней вставь:
 
 /* =========================================================
-   UPLOAD STATUS MODAL
+   UNPACK STATUS MODAL
    ========================================================= */
 
-DiskComponent.prototype.ensureUploadStatusModal = function () {
-  if (this.uploadStatusModal && document.body.contains(this.uploadStatusModal)) {
-    return this.uploadStatusModal;
+DiskComponent.prototype.ensureUnpackStatusModal = function () {
+  if (this.unpackStatusModal && document.body.contains(this.unpackStatusModal)) {
+    return this.unpackStatusModal;
   }
 
   var modal = document.createElement('div');
 
-  modal.className = 'sb-disk-upload-status-modal';
+  modal.className = 'sb-disk-upload-status-modal sb-disk-unpack-status-modal';
   modal.hidden = true;
 
   modal.innerHTML = ''
@@ -111,29 +44,34 @@ DiskComponent.prototype.ensureUploadStatusModal = function () {
     + '<div class="sb-disk-upload-status-modal__dialog">'
     + '  <div class="sb-disk-upload-status-modal__head">'
     + '    <div>'
-    + '      <div class="sb-disk-upload-status-modal__title">Загрузка файлов</div>'
-    + '      <div class="sb-disk-upload-status-modal__subtitle" data-upload-status-subtitle>Подготовка...</div>'
+    + '      <div class="sb-disk-upload-status-modal__title">Распаковка архива</div>'
+    + '      <div class="sb-disk-upload-status-modal__subtitle" data-unpack-status-subtitle>Подготовка...</div>'
     + '    </div>'
-    + '    <button type="button" class="sb-disk-upload-status-modal__close" data-upload-status-close hidden>×</button>'
+    + '    <button type="button" class="sb-disk-upload-status-modal__close" data-unpack-status-close hidden>×</button>'
     + '  </div>'
     + ''
     + '  <div class="sb-disk-upload-status-modal__body">'
     + '    <div class="sb-disk-upload-progress">'
     + '      <div class="sb-disk-upload-progress__top">'
-    + '        <span data-upload-status-message>Подготовка файлов...</span>'
-    + '        <strong data-upload-status-percent>0%</strong>'
+    + '        <span data-unpack-status-message>Подготовка архива...</span>'
+    + '        <strong data-unpack-status-percent>0%</strong>'
     + '      </div>'
     + '      <div class="sb-disk-upload-progress__track">'
-    + '        <div class="sb-disk-upload-progress__bar" data-upload-status-bar></div>'
+    + '        <div class="sb-disk-upload-progress__bar" data-unpack-status-bar></div>'
     + '      </div>'
-    + '      <div class="sb-disk-upload-progress__size" data-upload-status-size>0 Б / 0 Б</div>'
+    + '      <div class="sb-disk-upload-progress__size" data-unpack-status-info>Ожидание...</div>'
     + '    </div>'
     + ''
-    + '    <div class="sb-disk-upload-file-list" data-upload-status-files></div>'
+    + '    <div class="sb-disk-upload-file-list">'
+    + '      <div class="sb-disk-upload-file">'
+    + '        <div class="sb-disk-upload-file__name" data-unpack-status-file>Архив</div>'
+    + '        <div class="sb-disk-upload-file__size">ZIP</div>'
+    + '      </div>'
+    + '    </div>'
     + '  </div>'
     + '</div>';
 
-  var closeBtn = modal.querySelector('[data-upload-status-close]');
+  var closeBtn = modal.querySelector('[data-unpack-status-close]');
 
   if (closeBtn) {
     closeBtn.addEventListener('click', function () {
@@ -143,33 +81,28 @@ DiskComponent.prototype.ensureUploadStatusModal = function () {
 
   document.body.appendChild(modal);
 
-  this.uploadStatusModal = modal;
+  this.unpackStatusModal = modal;
 
   return modal;
 };
 
-DiskComponent.prototype.showUploadStatusModal = function (files) {
-  files = Array.prototype.slice.call(files || []);
+DiskComponent.prototype.showUnpackStatusModal = function (fileName) {
+  var modal = this.ensureUnpackStatusModal();
 
-  var modal = this.ensureUploadStatusModal();
-  var subtitle = modal.querySelector('[data-upload-status-subtitle]');
-  var message = modal.querySelector('[data-upload-status-message]');
-  var percent = modal.querySelector('[data-upload-status-percent]');
-  var bar = modal.querySelector('[data-upload-status-bar]');
-  var size = modal.querySelector('[data-upload-status-size]');
-  var list = modal.querySelector('[data-upload-status-files]');
-  var closeBtn = modal.querySelector('[data-upload-status-close]');
-
-  var totalSize = files.reduce(function (sum, file) {
-    return sum + Number(file && file.size ? file.size : 0);
-  }, 0);
+  var subtitle = modal.querySelector('[data-unpack-status-subtitle]');
+  var message = modal.querySelector('[data-unpack-status-message]');
+  var percent = modal.querySelector('[data-unpack-status-percent]');
+  var bar = modal.querySelector('[data-unpack-status-bar]');
+  var info = modal.querySelector('[data-unpack-status-info]');
+  var file = modal.querySelector('[data-unpack-status-file]');
+  var closeBtn = modal.querySelector('[data-unpack-status-close]');
 
   if (subtitle) {
-    subtitle.textContent = 'Файлов: ' + files.length;
+    subtitle.textContent = 'Файл: ' + (fileName || 'архив.zip');
   }
 
   if (message) {
-    message.textContent = 'Начинаю загрузку...';
+    message.textContent = 'Начинаю распаковку...';
   }
 
   if (percent) {
@@ -180,18 +113,12 @@ DiskComponent.prototype.showUploadStatusModal = function (files) {
     bar.style.width = '0%';
   }
 
-  if (size) {
-    size.textContent = '0 Б / ' + formatBytes(totalSize);
+  if (info) {
+    info.textContent = 'Создаю папку и проверяю архив...';
   }
 
-  if (list) {
-    list.innerHTML = files.map(function (file) {
-      return ''
-        + '<div class="sb-disk-upload-file">'
-        + '  <div class="sb-disk-upload-file__name">' + escapeHtml(file.name || 'file') + '</div>'
-        + '  <div class="sb-disk-upload-file__size">' + escapeHtml(formatBytes(file.size || 0)) + '</div>'
-        + '</div>';
-    }).join('');
+  if (file) {
+    file.textContent = fileName || 'архив.zip';
   }
 
   if (closeBtn) {
@@ -200,19 +127,19 @@ DiskComponent.prototype.showUploadStatusModal = function (files) {
 
   modal.classList.remove('is-success', 'is-error');
   modal.hidden = false;
+
+  this.startUnpackProgressTicker();
 };
 
-DiskComponent.prototype.updateUploadStatusModal = function (data) {
+DiskComponent.prototype.updateUnpackStatusModal = function (data) {
   data = data || {};
 
-  var modal = this.ensureUploadStatusModal();
-  var message = modal.querySelector('[data-upload-status-message]');
-  var percent = modal.querySelector('[data-upload-status-percent]');
-  var bar = modal.querySelector('[data-upload-status-bar]');
-  var size = modal.querySelector('[data-upload-status-size]');
+  var modal = this.ensureUnpackStatusModal();
+  var message = modal.querySelector('[data-unpack-status-message]');
+  var percent = modal.querySelector('[data-unpack-status-percent]');
+  var bar = modal.querySelector('[data-unpack-status-bar]');
+  var info = modal.querySelector('[data-unpack-status-info]');
 
-  var loaded = Number(data.loaded || 0);
-  var total = Number(data.total || 0);
   var progress = Number(data.percent || 0);
 
   if (progress < 0) {
@@ -224,7 +151,7 @@ DiskComponent.prototype.updateUploadStatusModal = function (data) {
   }
 
   if (message) {
-    message.textContent = data.message || 'Загружаю файлы...';
+    message.textContent = data.message || 'Распаковываю архив...';
   }
 
   if (percent) {
@@ -235,23 +162,67 @@ DiskComponent.prototype.updateUploadStatusModal = function (data) {
     bar.style.width = progress + '%';
   }
 
-  if (size) {
-    size.textContent = formatBytes(loaded) + ' / ' + formatBytes(total);
+  if (info) {
+    info.textContent = data.info || 'Пожалуйста, подождите...';
   }
 };
 
-DiskComponent.prototype.finishUploadStatusModal = function (success, messageText) {
-  var modal = this.ensureUploadStatusModal();
-  var message = modal.querySelector('[data-upload-status-message]');
-  var percent = modal.querySelector('[data-upload-status-percent]');
-  var bar = modal.querySelector('[data-upload-status-bar]');
-  var closeBtn = modal.querySelector('[data-upload-status-close]');
+DiskComponent.prototype.startUnpackProgressTicker = function () {
+  var self = this;
+
+  this.stopUnpackProgressTicker();
+
+  this.unpackProgressValue = 0;
+
+  this.unpackProgressTimer = setInterval(function () {
+    var value = Number(self.unpackProgressValue || 0);
+
+    if (value < 30) {
+      value += 7;
+    } else if (value < 60) {
+      value += 4;
+    } else if (value < 85) {
+      value += 2;
+    } else if (value < 90) {
+      value += 1;
+    } else {
+      value = 90;
+    }
+
+    self.unpackProgressValue = value;
+
+    self.updateUnpackStatusModal({
+      percent: value,
+      message: value < 40 ? 'Проверяю архив...' : 'Распаковываю файлы...',
+      info: 'Это может занять несколько секунд.'
+    });
+  }, 350);
+};
+
+DiskComponent.prototype.stopUnpackProgressTicker = function () {
+  if (this.unpackProgressTimer) {
+    clearInterval(this.unpackProgressTimer);
+    this.unpackProgressTimer = null;
+  }
+};
+
+DiskComponent.prototype.finishUnpackStatusModal = function (success, messageText, data) {
+  data = data || {};
+
+  this.stopUnpackProgressTicker();
+
+  var modal = this.ensureUnpackStatusModal();
+  var message = modal.querySelector('[data-unpack-status-message]');
+  var percent = modal.querySelector('[data-unpack-status-percent]');
+  var bar = modal.querySelector('[data-unpack-status-bar]');
+  var info = modal.querySelector('[data-unpack-status-info]');
+  var closeBtn = modal.querySelector('[data-unpack-status-close]');
 
   modal.classList.toggle('is-success', !!success);
   modal.classList.toggle('is-error', !success);
 
   if (message) {
-    message.textContent = messageText || (success ? 'Загрузка завершена' : 'Ошибка загрузки');
+    message.textContent = messageText || (success ? 'Распаковка завершена' : 'Ошибка распаковки');
   }
 
   if (success) {
@@ -263,308 +234,151 @@ DiskComponent.prototype.finishUploadStatusModal = function (success, messageText
       bar.style.width = '100%';
     }
 
+    if (info) {
+      var extractedFiles = Number(data.extractedFiles || 0);
+      var createdFolders = Number(data.createdFolders || 0);
+
+      info.textContent = 'Файлов: ' + extractedFiles + ' · Папок: ' + createdFolders;
+    }
+
     setTimeout(function () {
       modal.hidden = true;
-    }, 900);
-  } else if (closeBtn) {
-    closeBtn.hidden = false;
+    }, 1200);
+  } else {
+    if (info) {
+      info.textContent = 'Проверьте архив или настройки сервера.';
+    }
+
+    if (closeBtn) {
+      closeBtn.hidden = false;
+    }
   }
 };
 
 
 ---
 
-3. Замени функцию uploadFiles
+2. Замени обработчик unpack
 
-В твоём script.js найди функцию:
+В этом же файле найди блок:
 
-DiskComponent.prototype.uploadFiles = async function (files) {
+var unpackBtn = e.target.closest('[data-row-action="unpack"]');
 
-И замени её целиком на эту:
+И замени весь блок unpack на этот:
 
-DiskComponent.prototype.uploadFiles = async function (files) {
-  files = Array.prototype.slice.call(files || []);
+var unpackBtn = e.target.closest('[data-row-action="unpack"]');
 
-  if (!files.length) {
+if (unpackBtn) {
+  var unpackRow = e.target.closest('[data-id][data-entity-type="file"]');
+
+  if (!unpackRow) {
     return;
   }
 
-  if (!this.state.permissions.canUpload) {
-    alert('У вас нет прав на загрузку файлов');
+  var fileName = unpackRow.getAttribute('data-name') || 'архив';
+
+  var confirmUnpack = window.confirm(
+    'Распаковать архив "' + fileName + '"?\n\n' +
+    'Будет создана новая папка с содержимым архива.'
+  );
+
+  if (!confirmUnpack) {
     return;
   }
-
-  var preparedFiles = [];
 
   try {
-    for (var i = 0; i < files.length; i++) {
-      var file = files[i];
+    self.setLoading(true);
+    self.showUnpackStatusModal(fileName);
 
-      if (!file || !file.name) {
-        continue;
-      }
+    var unpackPayload = self.getBasePayload();
 
-      var existingItem = this.findExistingFileByName(file.name);
+    unpackPayload.fileId = Number(unpackRow.getAttribute('data-id') || 0);
+    unpackPayload.currentFolderId = self.state.currentFolderId || self.state.rootFolderId;
+    unpackPayload.sessid = self.getSessid();
 
-      if (!existingItem) {
-        preparedFiles.push(file);
-        continue;
-      }
+    var unpackRes = await self.api('unpackArchive', unpackPayload);
 
-      var decision = await this.askDuplicateUploadAction(file, existingItem);
-
-      if (!decision || decision.action === 'cancel') {
-        continue;
-      }
-
-      if (decision.action === 'replace') {
-        await this.archiveExistingFileToHistory(existingItem);
-
-        preparedFiles.push(file);
-        continue;
-      }
-
-      if (decision.action === 'rename') {
-        preparedFiles.push(this.makeRenamedFile(file, decision.name));
-      }
-    }
-
-    if (!preparedFiles.length) {
+    if (!unpackRes || !unpackRes.ok) {
+      self.finishUnpackStatusModal(
+        false,
+        (unpackRes && (unpackRes.message || unpackRes.error)) || 'Ошибка распаковки'
+      );
       return;
     }
 
-    this.showUploadStatusModal(preparedFiles);
+    var unpackData = unpackRes.data || {};
+    var targetFolder = unpackData.targetFolder || null;
 
-    var formData = new FormData();
-
-    formData.append('siteId', this.state.siteId);
-    formData.append('pageId', this.state.pageId);
-    formData.append('blockId', this.state.blockId);
-    formData.append('currentFolderId', this.state.currentFolderId);
-    formData.append('sessid', this.getSessid());
-
-    preparedFiles.forEach(function (file) {
-      formData.append('files[]', file);
+    self.finishUnpackStatusModal(true, 'Распаковка завершена', {
+      extractedFiles: unpackData.extractedFiles || 0,
+      createdFolders: unpackData.createdFolders || 0,
+      totalSize: unpackData.totalSize || 0
     });
 
-    var self = this;
-
-    var res = await this.apiUploadWithProgress('upload', formData, function (progress) {
-      self.updateUploadStatusModal({
-        loaded: progress.loaded,
-        total: progress.total,
-        percent: progress.percent,
-        message: 'Загружаю файлы...'
-      });
-    });
-
-    if (!res || !res.ok) {
-      this.finishUploadStatusModal(false, (res && (res.message || res.error)) || 'Ошибка загрузки');
-      return;
-    }
-
-    this.updateUploadStatusModal({
-      loaded: 1,
-      total: 1,
-      percent: 100,
-      message: 'Загрузка завершена. Обновляю список...'
-    });
-
-    await this.loadFolder(this.state.currentFolderId);
-
-    this.finishUploadStatusModal(true, 'Загрузка завершена');
+    setTimeout(async function () {
+      if (targetFolder && targetFolder.id) {
+        await self.loadFolder(Number(targetFolder.id));
+      } else {
+        await self.loadFolder(self.state.currentFolderId || self.state.rootFolderId);
+      }
+    }, 700);
   } catch (err) {
     console.error(err);
 
-    this.finishUploadStatusModal(false, err && err.message ? err.message : 'Ошибка загрузки');
+    self.finishUnpackStatusModal(
+      false,
+      err && err.message ? err.message : 'Ошибка распаковки'
+    );
+  } finally {
+    self.setLoading(false);
   }
-};
+
+  return;
+}
 
 
 ---
 
-4. Добавь CSS
+3. CSS можно почти не добавлять
 
-Файл:
+Мы используем те же классы, что и окно загрузки:
+
+sb-disk-upload-status-modal
+sb-disk-upload-progress
+sb-disk-upload-file
+
+Поэтому если окно загрузки уже стилизовано, окно распаковки тоже будет красивым.
+
+Но добавь в конец:
 
 /local/sitebuilder/components/disk/styles.css
 
-В конец добавь:
+вот это:
 
 /* =========================================================
-   Disk upload status modal
+   Disk unpack status modal
    ========================================================= */
 
-.sb-disk-upload-status-modal[hidden] {
-    display: none !important;
+.sb-disk-unpack-status-modal .sb-disk-upload-progress__bar {
+    background: linear-gradient(90deg, #7c3aed, #38bdf8);
 }
 
-.sb-disk-upload-status-modal {
-    position: fixed;
-    inset: 0;
-    z-index: 99999;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    padding: 24px;
-}
-
-.sb-disk-upload-status-modal__backdrop {
-    position: absolute;
-    inset: 0;
-    background: rgba(15, 23, 42, .55);
-    backdrop-filter: blur(4px);
-}
-
-.sb-disk-upload-status-modal__dialog {
-    position: relative;
-    width: min(520px, 100%);
-    max-height: min(680px, calc(100vh - 48px));
-    overflow: auto;
-    background: #fff;
-    border-radius: 22px;
-    border: 1px solid rgba(226, 232, 240, .9);
-    box-shadow: 0 24px 80px rgba(15, 23, 42, .28);
-}
-
-.sb-disk-upload-status-modal__head {
-    display: flex;
-    justify-content: space-between;
-    gap: 16px;
-    padding: 20px 22px 14px;
-    border-bottom: 1px solid rgba(226, 232, 240, .9);
-}
-
-.sb-disk-upload-status-modal__title {
-    color: #0f172a;
-    font-size: 18px;
-    font-weight: 900;
-    line-height: 1.2;
-}
-
-.sb-disk-upload-status-modal__subtitle {
-    margin-top: 4px;
-    color: #64748b;
-    font-size: 13px;
-    font-weight: 700;
-}
-
-.sb-disk-upload-status-modal__close {
-    width: 34px;
-    height: 34px;
-    border: 0;
-    border-radius: 12px;
-    background: #f1f5f9;
-    color: #334155;
-    font-size: 22px;
-    line-height: 1;
-    cursor: pointer;
-}
-
-.sb-disk-upload-status-modal__body {
-    padding: 18px 22px 22px;
-}
-
-.sb-disk-upload-progress {
-    padding: 14px;
-    border-radius: 16px;
-    background: #f8fafc;
-    border: 1px solid rgba(226, 232, 240, .95);
-}
-
-.sb-disk-upload-progress__top {
-    display: flex;
-    justify-content: space-between;
-    gap: 12px;
-    margin-bottom: 10px;
-    color: #334155;
-    font-size: 13px;
-    font-weight: 800;
-}
-
-.sb-disk-upload-progress__top strong {
-    color: #1d4ed8;
-    font-size: 13px;
-    font-weight: 900;
-}
-
-.sb-disk-upload-progress__track {
-    height: 10px;
-    overflow: hidden;
-    border-radius: 999px;
-    background: #e2e8f0;
-}
-
-.sb-disk-upload-progress__bar {
-    height: 100%;
-    width: 0;
-    border-radius: inherit;
-    background: linear-gradient(90deg, #2563eb, #38bdf8);
-    transition: width .18s ease;
-}
-
-.sb-disk-upload-progress__size {
-    margin-top: 8px;
-    color: #64748b;
-    font-size: 12px;
-    font-weight: 800;
-}
-
-.sb-disk-upload-file-list {
-    display: grid;
-    gap: 8px;
-    margin-top: 14px;
-}
-
-.sb-disk-upload-file {
-    display: flex;
-    justify-content: space-between;
-    gap: 12px;
-    padding: 10px 12px;
-    border-radius: 12px;
-    background: #fff;
-    border: 1px solid rgba(226, 232, 240, .95);
-}
-
-.sb-disk-upload-file__name {
-    min-width: 0;
-    overflow: hidden;
-    color: #0f172a;
-    font-size: 13px;
-    font-weight: 800;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-}
-
-.sb-disk-upload-file__size {
-    flex: 0 0 auto;
-    color: #64748b;
-    font-size: 12px;
-    font-weight: 800;
-}
-
-.sb-disk-upload-status-modal.is-success .sb-disk-upload-progress__bar {
+.sb-disk-unpack-status-modal.is-success .sb-disk-upload-progress__bar {
     background: linear-gradient(90deg, #16a34a, #22c55e);
 }
 
-.sb-disk-upload-status-modal.is-error .sb-disk-upload-progress__bar {
+.sb-disk-unpack-status-modal.is-error .sb-disk-upload-progress__bar {
     background: linear-gradient(90deg, #dc2626, #fb7185);
-}
-
-.sb-disk-upload-status-modal.is-error .sb-disk-upload-progress__top strong {
-    color: #dc2626;
 }
 
 
 ---
 
-5. Проверка
-
-После правок:
+После этого:
 
 1. Ctrl + F5.
-2. Открой страницу с компонентом Диск.
-3. Нажми “Загрузить”.
-4. Выбери большой файл, чтобы прогресс было видно.
+2. Загрузи ZIP.
+3. Нажми “Распаковать”.
+4. Должно появиться окно распаковки с прогрессом.
 
-Должно появиться модальное окно с прогрессом загрузки.
+Если хочешь, следующим шагом сделаем реальную очередь распаковки с настоящим прогрессом по файлам, но там уже нужен отдельный unpack_start.php, unpack_status.php и временная таблица/файл статуса.
