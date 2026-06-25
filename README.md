@@ -1,63 +1,123 @@
-Запомнил, где остановились: мы перешли к компонентной структуре, таблицу вынесли в components/table, сделали автоподключение компонентных styles.css / view.js / edit.js. Теперь работаем над компонентом:
-
-/local/sitebuilder/components/disk/
-
-Добавим распаковку .zip архива прямо в Диске.
-
-Сделаем так:
-
-1. У zip-файла появится кнопка “Распаковать”.
-2. Архив будет распаковываться в новую папку с именем архива.
-3. Если папка уже есть, создастся “Имя архива (1)”.
-4. Защита от ../ внутри архива будет.
-5. Пока поддерживаем только ZIP, потому что rar/7z требуют отдельные серверные расширения.
+Ок, кодом. Давай сделаем без замены всего огромного script.js: ниже даю точные готовые вставки, чтобы не сломать текущий рабочий диск.
 
 
 ---
 
-1. В api.php добавь действие
+1. components/disk/api.php
 
 Файл:
 
 /local/sitebuilder/components/disk/api.php
 
-Найди блок switch ($action) и добавь новый case рядом с download:
+Замени целиком:
 
-case 'unpackArchive':
-    require __DIR__ . '/actions/unpack_archive.php';
-    break;
+<?php
 
-Например так:
+require_once __DIR__ . '/bootstrap.php';
 
-case 'download':
-    require __DIR__ . '/actions/download.php';
-    break;
+try {
+    $action = $_GET['action'] ?? '';
 
-case 'unpackArchive':
-    require __DIR__ . '/actions/unpack_archive.php';
-    break;
+    switch ($action) {
+        case 'resolveRoot':
+            require __DIR__ . '/actions/resolve_root.php';
+            break;
+
+        case 'getSettings':
+            require __DIR__ . '/actions/get_settings.php';
+            break;
+
+        case 'saveSettings':
+            require __DIR__ . '/actions/save_settings.php';
+            break;
+
+        case 'getPermissions':
+            require __DIR__ . '/actions/get_permissions.php';
+            break;
+
+        case 'getRootOptions':
+            require __DIR__ . '/actions/get_root_options.php';
+            break;
+
+        case 'list':
+            require __DIR__ . '/actions/list.php';
+            break;
+
+        case 'upload':
+            require __DIR__ . '/actions/upload.php';
+            break;
+
+        case 'createFolder':
+            require __DIR__ . '/actions/create_folder.php';
+            break;
+
+        case 'rename':
+            require __DIR__ . '/actions/rename.php';
+            break;
+
+        case 'delete':
+            require __DIR__ . '/actions/delete.php';
+            break;
+
+        case 'move':
+            require __DIR__ . '/actions/move.php';
+            break;
+
+        case 'copy':
+            require __DIR__ . '/actions/copy.php';
+            break;
+
+        case 'search':
+            require __DIR__ . '/actions/search.php';
+            break;
+
+        case 'download':
+            require __DIR__ . '/actions/download.php';
+            break;
+
+        case 'unpackArchive':
+            require __DIR__ . '/actions/unpack_archive.php';
+            break;
+
+        case 'initSiteRoot':
+            require __DIR__ . '/actions/init_site_root.php';
+            break;
+
+        case 'initBlockRoot':
+            require __DIR__ . '/actions/init_block_root.php';
+            break;
+
+        case 'bootstrap':
+            require __DIR__ . '/actions/bootstrap.php';
+            break;
+
+        default:
+            DiskResponse::error('UNKNOWN_ACTION', 'Неизвестное действие');
+    }
+} catch (Throwable $e) {
+    DiskResponse::error('SERVER_ERROR', $e->getMessage());
+}
 
 
 ---
 
-2. Создай action unpack_archive.php
+2. components/disk/actions/unpack_archive.php
 
-Файл:
+Создай файл:
 
 /local/sitebuilder/components/disk/actions/unpack_archive.php
 
-Вставь полностью:
+Вставь целиком:
 
 <?php
 
+use Bitrix\Disk\Driver;
 use Bitrix\Disk\File;
 use Bitrix\Disk\Folder;
-use Bitrix\Disk\Driver;
 
 DiskCsrf::validateFromRequest();
 
 $data = disk_read_json_body();
-
 $currentUserId = DiskCurrentUser::requireId();
 
 $context = DiskContextFactory::fromArray([
@@ -139,6 +199,7 @@ $archiveBaseName = pathinfo((string)$file->getName(), PATHINFO_FILENAME);
 $archiveBaseName = DiskNameSanitizer::sanitizeFolderName($archiveBaseName, 'Распакованный архив');
 
 $targetFolderName = sb_disk_archive_unique_name($currentFolder, $archiveBaseName, $securityContext);
+
 $targetFolder = $currentFolder->addSubFolder([
     'NAME' => $targetFolderName,
     'CREATED_BY' => $context->currentUserId,
@@ -191,7 +252,6 @@ try {
         }
 
         $isDir = str_ends_with($rawName, '/');
-
         $pathParts = sb_disk_archive_safe_path_parts($rawName);
 
         if (empty($pathParts)) {
@@ -199,7 +259,7 @@ try {
         }
 
         if ($isDir) {
-            [$folder, $newFolders] = sb_disk_archive_ensure_folder_path(
+            [, $newFolders] = sb_disk_archive_ensure_folder_path(
                 $context,
                 $securityContext,
                 $targetFolder,
@@ -519,17 +579,20 @@ function sb_disk_archive_detect_mime(string $name): string
 
 ---
 
-3. Добавь кнопку в script.js
+3. Правки в components/disk/script.js
 
 Файл:
 
 /local/sitebuilder/components/disk/script.js
 
-3.1. Добавь функцию проверки архива
+Тут лучше не менять весь файл. Вставь 3 готовых куска.
 
-Найди где-нибудь рядом с другими маленькими helper-функциями внизу файла. Если удобнее — перед закрытием })();.
 
-Добавь:
+---
+
+3.1. Добавь функцию проверки ZIP
+
+В самый низ файла, перед функцией formatBytes, вставь:
 
 function isArchiveItem(item) {
   if (!item || item.entityType !== 'file') {
@@ -537,38 +600,34 @@ function isArchiveItem(item) {
   }
 
   var extension = String(item.extension || '').toLowerCase();
+  var name = String(item.name || '').toLowerCase();
 
-  return extension === 'zip';
+  return extension === 'zip' || name.slice(-4) === '.zip';
+}
+
+Должно получиться примерно так:
+
+function isArchiveItem(item) {
+  if (!item || item.entityType !== 'file') {
+    return false;
+  }
+
+  var extension = String(item.extension || '').toLowerCase();
+  var name = String(item.name || '').toLowerCase();
+
+  return extension === 'zip' || name.slice(-4) === '.zip';
+}
+
+function formatBytes(bytes) {
+    ...
 }
 
 
 ---
 
-3.2. В таблице добавь кнопку “Распаковать”
+3.2. Добавь кнопку в список/таблицу
 
-Найди в renderItemsTable() вот этот кусок:
-
-(item.entityType === 'file'
-  ? '<button type="button" class="sb-disk__row-btn" data-row-action="download">Скачать</button>'
-  : '') +
-'<button type="button" class="sb-disk__row-btn" data-row-action="rename">Переим.</button>' +
-
-Замени на:
-
-(item.entityType === 'file'
-  ? '<button type="button" class="sb-disk__row-btn" data-row-action="download">Скачать</button>'
-  : '') +
-(isArchiveItem(item)
-  ? '<button type="button" class="sb-disk__row-btn" data-row-action="unpack">Распаковать</button>'
-  : '') +
-'<button type="button" class="sb-disk__row-btn" data-row-action="rename">Переим.</button>' +
-
-
----
-
-3.3. В плитках тоже добавь кнопку
-
-В renderItemsGrid() найди такой же кусок:
+Найди в renderItemsTable() кусок:
 
 (item.entityType === 'file'
   ? '<button type="button" class="sb-disk__row-btn" data-row-action="download">Скачать</button>'
@@ -588,15 +647,39 @@ function isArchiveItem(item) {
 
 ---
 
-4. Добавь обработчик кнопки
+3.3. Добавь кнопку в плитки
 
-В script.js найди обработчик кликов, где уже есть:
+Найди в renderItemsGrid() такой же кусок:
+
+(item.entityType === 'file'
+  ? '<button type="button" class="sb-disk__row-btn" data-row-action="download">Скачать</button>'
+  : '') +
+'<button type="button" class="sb-disk__row-btn" data-row-action="rename">Переим.</button>' +
+
+Замени на:
+
+(item.entityType === 'file'
+  ? '<button type="button" class="sb-disk__row-btn" data-row-action="download">Скачать</button>'
+  : '') +
+(isArchiveItem(item)
+  ? '<button type="button" class="sb-disk__row-btn" data-row-action="unpack">Распаковать</button>'
+  : '') +
+'<button type="button" class="sb-disk__row-btn" data-row-action="rename">Переим.</button>' +
+
+
+---
+
+3.4. Добавь обработчик кнопки
+
+Найди в script.js блок скачивания:
 
 var downloadBtn = e.target.closest('[data-row-action="download"]');
+if (downloadBtn) {
 
-Сразу после блока download, перед rename, вставь:
+После всего блока download, до блока rename, вставь:
 
 var unpackBtn = e.target.closest('[data-row-action="unpack"]');
+
 if (unpackBtn) {
   var unpackRow = e.target.closest('[data-id][data-entity-type="file"]');
 
@@ -619,6 +702,7 @@ if (unpackBtn) {
     self.setLoading(true);
 
     var unpackPayload = self.getBasePayload();
+
     unpackPayload.fileId = Number(unpackRow.getAttribute('data-id') || 0);
     unpackPayload.currentFolderId = self.state.currentFolderId || self.state.rootFolderId;
     unpackPayload.sessid = self.getSessid();
@@ -630,7 +714,9 @@ if (unpackBtn) {
       return;
     }
 
-    var targetFolder = unpackRes.data && unpackRes.data.targetFolder ? unpackRes.data.targetFolder : null;
+    var targetFolder = unpackRes.data && unpackRes.data.targetFolder
+      ? unpackRes.data.targetFolder
+      : null;
 
     if (targetFolder && targetFolder.id) {
       await self.loadFolder(Number(targetFolder.id));
@@ -650,31 +736,41 @@ if (unpackBtn) {
 
 ---
 
-5. Что проверить
+4. Важно: строка файла должна иметь data-name
 
-После правок:
+В script.js в рендере строки должно быть что-то похожее:
 
-1. Загрузи .zip в компонент Диск.
-2. У файла должна появиться кнопка “Распаковать”.
-3. Нажми её.
-4. Должна создаться папка с названием архива.
-5. Компонент должен открыть эту папку.
-6. Внутри должны быть файлы из архива.
+'<tr data-id="' + escapeHtml(item.id) + '" data-entity-type="' + escapeHtml(item.entityType) + '">'
+
+Нужно заменить на:
+
+'<tr data-id="' + escapeHtml(item.id) + '" data-entity-type="' + escapeHtml(item.entityType) + '" data-name="' + escapeHtml(item.name || '') + '">'
+
+И в плитке тоже должно быть что-то похожее:
+
+'<article class="sb-disk__card" data-id="' + escapeHtml(item.id) + '" data-entity-type="' + escapeHtml(item.entityType) + '">'
+
+Заменить на:
+
+'<article class="sb-disk__card" data-id="' + escapeHtml(item.id) + '" data-entity-type="' + escapeHtml(item.entityType) + '" data-name="' + escapeHtml(item.name || '') + '">'
 
 
 ---
 
-6. Важное ограничение
+После этого:
 
-Сейчас добавляем только:
+1. Загрузи .zip.
+2. У него появится кнопка “Распаковать”.
+3. Нажми.
+4. Создастся папка с названием архива.
 
-.zip
+Если выйдет ошибка:
 
-Не rar и не 7z.
+ZIP_EXTENSION_NOT_INSTALLED
 
-Для rar и 7z на сервере нужны отдельные утилиты или расширения:
+значит надо поставить модуль PHP ZIP:
 
-unrar
-7z
+sudo apt install php-zip
+sudo systemctl restart php8.1-fpm
 
-И там уже будет другой обработчик через системные команды. Для начала ZIP — самый безопасный и нормальный вариант для коробки.
+Если у тебя PHP не 8.1, рестарт нужен для твоей версии PHP-FPM.
