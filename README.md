@@ -1,169 +1,189 @@
-Да, так даже удобнее. Делаем так:
+Это всё ещё не ошибка архива. Это значит, что unpackArchive возвращает HTML вместо JSON. Скорее всего ты поменял api.php, но в script.js у тебя ещё старый метод api, который делает response.json() и поэтому показывает Unexpected token.
 
-Архив лежит в папке “Диск 2”
-Нажал “Распаковать”
-Файлы появляются прямо в “Диск 2”
-Новая папка с названием архива больше НЕ создаётся
+Сделай сейчас две точные правки.
 
 
 ---
 
-1. Правим unpack_archive.php
-
-Файл:
-
-/local/sitebuilder/components/disk/actions/unpack_archive.php
-
-1.1. Найди этот кусок
-
-$currentFolderId = (int)($data['currentFolderId'] ?? 0);
-
-if ($fileId <= 0) {
-    throw new RuntimeException('INVALID_FILE_ID');
-}
-
-if ($currentFolderId <= 0) {
-    throw new RuntimeException('INVALID_FOLDER_ID');
-}
-
-DiskValidator::assertFolderInsideRoot($currentFolderId, $rootFolderId, $context);
-
-Замени на:
-
-if ($fileId <= 0) {
-    throw new RuntimeException('INVALID_FILE_ID');
-}
-
-
----
-
-1.2. Найди этот большой блок
-
-$securityContext = Driver::getInstance()->getFakeSecurityContext($context->currentUserId);
-$currentFolder = Folder::loadById($currentFolderId);
-
-if (!$currentFolder instanceof Folder) {
-    $zip->close();
-    throw new RuntimeException('DISK_FOLDER_NOT_FOUND');
-}
-
-$archiveBaseName = pathinfo((string)$file->getName(), PATHINFO_FILENAME);
-$archiveBaseName = DiskNameSanitizer::sanitizeFolderName($archiveBaseName, 'Распакованный архив');
-
-$targetFolderName = sb_disk_archive_unique_name($currentFolder, $archiveBaseName, $securityContext);
-$targetFolder = $currentFolder->addSubFolder([
-    'NAME' => $targetFolderName,
-    'CREATED_BY' => $context->currentUserId,
-], [], true);
-
-if (!$targetFolder instanceof Folder) {
-    $zip->close();
-    throw new RuntimeException('CREATE_TARGET_FOLDER_ERROR');
-}
-
-Замени на:
-
-$securityContext = Driver::getInstance()->getFakeSecurityContext($context->currentUserId);
-
-/*
- * Распаковываем НЕ в новую папку,
- * а прямо туда, где лежит сам архив.
- */
-$targetFolder = Folder::loadById($sourceParentId);
-
-if (!$targetFolder instanceof Folder) {
-    $zip->close();
-    throw new RuntimeException('ARCHIVE_PARENT_FOLDER_NOT_FOUND');
-}
-
-
----
-
-1.3. Найди:
-
-$createdFolders = 1;
-
-Замени на:
-
-$createdFolders = 0;
-
-
----
-
-1.4. В конце ответ можно оставить как есть
-
-Найди:
-
-DiskResponse::success([
-    'targetFolder' => [
-        'id' => (int)$targetFolder->getId(),
-        'name' => (string)$targetFolder->getName(),
-    ],
-    'extractedFiles' => $extractedFiles,
-    'createdFolders' => $createdFolders,
-    'totalSize' => $totalSize,
-]);
-
-Оставь без изменений.
-
-Теперь после распаковки JS откроет ту же папку, где лежал архив.
-
-
----
-
-2. Правим текст в script.js
+1. Замени метод api в script.js
 
 Файл:
 
 /local/sitebuilder/components/disk/script.js
 
-Найди в обработчике unpack:
+Найди:
 
-var confirmUnpack = window.confirm(
-  'Распаковать архив "' + fileName + '"?\n\n' +
-  'Будет создана новая папка с содержимым архива.'
-);
+DiskComponent.prototype.api = async function (action, payload, isFormData) {
 
-Замени на:
+И замени весь метод целиком на этот:
 
-var confirmUnpack = window.confirm(
-  'Распаковать архив "' + fileName + '"?\n\n' +
-  'Файлы будут распакованы в текущую папку.'
-);
+DiskComponent.prototype.api = async function (action, payload, isFormData) {
+  var url = '/local/sitebuilder/components/disk/api.php?action=' + encodeURIComponent(action);
+
+  var response;
+
+  if (isFormData) {
+    response = await fetch(url, {
+      method: 'POST',
+      body: payload
+    });
+  } else {
+    response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(payload || {})
+    });
+  }
+
+  var text = await response.text();
+  var json = null;
+
+  try {
+    json = JSON.parse(text);
+  } catch (e) {
+    console.error('Disk API returned non JSON for action=' + action, text);
+
+    var cleanText = String(text || '')
+      .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+      .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+      .replace(/<[^>]*>/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .slice(0, 500);
+
+    throw new Error(
+      'API вернул HTML вместо JSON. action=' + action + '. Ответ: ' + cleanText
+    );
+  }
+
+  return json;
+};
+
+После этого ошибка в окне станет не Unexpected token, а нормальный текст: что именно сервер вернул.
 
 
 ---
 
-2.1. Если добавлял модальное окно распаковки
+2. Замени блок unpackBtn
 
-Найди в showUnpackStatusModal строку:
+В этом же файле найди блок:
 
-info.textContent = 'Создаю папку и проверяю архив...';
+var unpackBtn = e.target.closest('[data-row-action="unpack"]');
 
-Замени на:
+И замени весь блок распаковки на этот:
 
-info.textContent = 'Проверяю архив и подготавливаю распаковку...';
+var unpackBtn = e.target.closest('[data-row-action="unpack"]');
+
+if (unpackBtn) {
+  var unpackRow = e.target.closest('[data-id][data-entity-type="file"]');
+
+  if (!unpackRow) {
+    return;
+  }
+
+  var fileName = unpackRow.getAttribute('data-name') || 'архив';
+
+  var confirmUnpack = window.confirm(
+    'Распаковать архив "' + fileName + '"?\n\n' +
+    'Файлы будут распакованы в текущую папку.'
+  );
+
+  if (!confirmUnpack) {
+    return;
+  }
+
+  try {
+    self.setLoading(true);
+    self.showUnpackStatusModal(fileName);
+
+    var unpackPayload = self.getBasePayload();
+
+    unpackPayload.fileId = Number(unpackRow.getAttribute('data-id') || 0);
+    unpackPayload.currentFolderId = self.state.currentFolderId || self.state.rootFolderId;
+    unpackPayload.sessid = self.getSessid();
+
+    var unpackRes = await self.api('unpackArchive', unpackPayload);
+
+    if (!unpackRes || !unpackRes.ok) {
+      self.finishUnpackStatusModal(
+        false,
+        (unpackRes && (unpackRes.message || unpackRes.error)) || 'Ошибка распаковки',
+        {}
+      );
+      return;
+    }
+
+    var unpackData = unpackRes.data || {};
+    var targetFolder = unpackData.targetFolder || null;
+
+    self.finishUnpackStatusModal(true, 'Распаковка завершена', {
+      extractedFiles: unpackData.extractedFiles || 0,
+      createdFolders: unpackData.createdFolders || 0,
+      totalSize: unpackData.totalSize || 0
+    });
+
+    setTimeout(async function () {
+      if (targetFolder && targetFolder.id) {
+        await self.loadFolder(Number(targetFolder.id));
+      } else {
+        await self.loadFolder(self.state.currentFolderId || self.state.rootFolderId);
+      }
+    }, 700);
+  } catch (err) {
+    console.error(err);
+
+    self.finishUnpackStatusModal(
+      false,
+      err && err.message ? err.message : 'Ошибка распаковки',
+      {}
+    );
+  } finally {
+    self.setLoading(false);
+  }
+
+  return;
+}
 
 
 ---
 
-3. Что будет с одинаковыми именами
+3. Проверь, что api.php точно заменён
 
-Если в папке уже есть файл с таким именем, код не перезатрёт его, а создаст копию:
+Файл:
 
-document.docx
-document (1).docx
-document (2).docx
+/local/sitebuilder/components/disk/api.php
 
-Если в архиве есть папка:
+В самом верху должно быть примерно так:
 
-images/photo.jpg
+<?php
 
-то папка images будет создана прямо рядом с архивом.
+$action = (string)($_GET['action'] ?? '');
 
-Если папка images уже есть, файлы попадут в существующую images.
+$sbDiskShouldBuffer = $action !== 'download';
+
+if ($sbDiskShouldBuffer) {
+    ob_start();
+}
+
+Если у тебя сверху всё ещё так:
+
+<?php
+
+require_once __DIR__ . '/bootstrap.php';
+
+$action = (string)($_GET['action'] ?? '');
+
+значит api.php не заменён, и поэтому сервер всё ещё отдаёт HTML при fatal-ошибке.
 
 
 ---
 
-После правок сделай Ctrl + F5 и попробуй распаковать ZIP.
+После этого сделай Ctrl + F5 и попробуй распаковать снова.
+
+Если снова будет ошибка — она уже должна быть нормальной, например:
+
+API вернул HTML вместо JSON. action=unpackArchive. Ответ: ...
+
+Скинь этот текст, и я скажу точную причину. Сейчас мы пока видим только симптом: HTML вместо JSON.
