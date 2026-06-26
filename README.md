@@ -1,97 +1,31 @@
-Это точно session lock Bitrix.
+Да, для распаковки это тоже работает. Даже лучше, чем для загрузки, потому что распаковка у нас уже пошаговая:
 
-Ошибка прямо говорит:
+unpackArchiveStart  → проверяет архив и создаёт задачу
+unpackArchiveStep   → распаковывает по 1 файлу/папке за запрос
 
-Unable to get session lock within 60 seconds
-
-То есть один запрос, скорее всего загрузка файла, держит сессию пользователя. В это время другой запрос /local/sitebuilder/public.php пытается открыть ту же сессию и ждёт 60 секунд, потом падает.
-
-Нужно в upload/распаковке освобождать сессию после проверки прав.
+Чтобы Bitrix не блокировал сессию, нужно закрывать session lock после проверки авторизации/прав, но до работы с ZIP.
 
 
 ---
 
-1. Добавь helper в components/disk/bootstrap.php
+Куда ставить
 
-Файл:
-
-/local/sitebuilder/components/disk/bootstrap.php
-
-В самый конец файла добавь:
-
-if (!function_exists('sb_disk_release_session_lock')) {
-    function sb_disk_release_session_lock(): void
-    {
-        /*
-         * После проверки авторизации, sessid и прав
-         * освобождаем lock PHP/Bitrix-сессии.
-         *
-         * Иначе большой upload/распаковка держит сессию,
-         * а остальные страницы Bitrix в этом же браузере ждут 60 секунд
-         * и падают с "Unable to get session lock".
-         */
-        try {
-            if (class_exists('\Bitrix\Main\Application')) {
-                $session = \Bitrix\Main\Application::getInstance()->getSession();
-
-                if (method_exists($session, 'save')) {
-                    $session->save();
-                    return;
-                }
-            }
-        } catch (Throwable $e) {
-            // fallback ниже
-        }
-
-        if (session_status() === PHP_SESSION_ACTIVE) {
-            @session_write_close();
-        }
-    }
-}
-
-
----
-
-2. Исправь upload.php
-
-Файл:
-
-/local/sitebuilder/components/disk/actions/upload.php
-
-Найди место после проверки прав:
-
-DiskValidator::assertCan($permissions, 'canView');
-DiskValidator::assertCan($permissions, 'canUpload');
-
-Сразу после этого вставь:
-
-sb_disk_release_session_lock();
-
-Должно быть так:
-
-DiskValidator::assertCan($permissions, 'canView');
-DiskValidator::assertCan($permissions, 'canUpload');
-
-sb_disk_release_session_lock();
-
-Важно: вставлять после DiskCsrf::validateFromRequest(), DiskCurrentUser::requireId() и проверок прав, но до обработки $_FILES и загрузки в Диск.
-
-
----
-
-3. Исправь распаковку
-
-unpack_archive_start.php
+1. unpack_archive_start.php
 
 Файл:
 
 /local/sitebuilder/components/disk/actions/unpack_archive_start.php
 
-После проверок доступа и проверки архива вставь:
+После проверок:
+
+DiskValidator::assertCan($permissions, 'canView');
+DiskValidator::assertCan($permissions, 'canUpload');
+
+и после проверки, что архив лежит внутри нужного root, вставь:
 
 sb_disk_release_session_lock();
 
-Лучшее место — после этого блока:
+Нормальное место вот здесь:
 
 DiskValidator::assertFolderInsideRoot($sourceParentId, $rootFolderId, $context);
 
@@ -111,22 +45,21 @@ if (!class_exists('ZipArchive')) {
     throw new RuntimeException('ZIP_EXTENSION_NOT_INSTALLED');
 }
 
-Сразу после него:
-
+/*
+ * Освобождаем сессию до чтения ZIP.
+ */
 sb_disk_release_session_lock();
 
 
 ---
 
-unpack_archive_step.php
+2. unpack_archive_step.php
 
 Файл:
 
 /local/sitebuilder/components/disk/actions/unpack_archive_step.php
 
-Найди место после загрузки $file и $targetFolder.
-
-После этого блока:
+После загрузки файла и папки:
 
 $file = File::loadById($fileId);
 
@@ -144,49 +77,64 @@ if (!class_exists('ZipArchive')) {
     throw new RuntimeException('ZIP_EXTENSION_NOT_INSTALLED');
 }
 
-Вставь:
-
+/*
+ * Освобождаем сессию до чтения ZIP и загрузки файлов в Disk.
+ */
 sb_disk_release_session_lock();
 
 
 ---
 
-4. Проверь PHP upload progress
+Важно
 
-На сервере выполни:
+Не ставь sb_disk_release_session_lock() в самое начало файла.
 
-php -i | grep session.upload_progress
+Нельзя делать так:
 
-Если увидишь:
+sb_disk_release_session_lock();
 
-session.upload_progress.enabled => On
+DiskCsrf::validateFromRequest();
+$currentUserId = DiskCurrentUser::requireId();
 
-лучше выключить в php.ini:
+Правильно только так:
 
-session.upload_progress.enabled = Off
+DiskCsrf::validateFromRequest();
+$currentUserId = DiskCurrentUser::requireId();
 
-Потом перезапусти PHP-FPM:
+/* проверили контекст, root, права */
 
-sudo systemctl restart php8.1-fpm
+sb_disk_release_session_lock();
 
-Если версия PHP другая — замени 8.1 на свою.
+/* тяжёлая работа */
 
 
 ---
 
-5. Почему это происходит
+Если старый unpackArchive ещё используется
 
-Схема такая:
+Если где-то ещё вызывается старое действие:
 
-1. Ты начал загрузку большого файла.
-2. Bitrix открыл PHP-сессию пользователя.
-3. Пока upload-запрос работает, сессия заблокирована.
-4. Ты открываешь другую страницу Bitrix.
-5. Она тоже хочет открыть эту же сессию.
-6. Ждёт 60 секунд.
-7. Получаешь:
-   Unable to get session lock within 60 seconds.
+unpackArchive
 
-После sb_disk_release_session_lock() upload будет продолжаться, но остальные страницы Bitrix смогут открываться параллельно.
+то в файл тоже добавь:
 
-После правки сделай Ctrl + F5, начни загрузку большого файла и параллельно попробуй открыть любую страницу Bitrix.
+/local/sitebuilder/components/disk/actions/unpack_archive.php
+
+после проверки прав:
+
+DiskValidator::assertCan($permissions, 'canView');
+DiskValidator::assertCan($permissions, 'canUpload');
+
+sb_disk_release_session_lock();
+
+Но если JS уже вызывает только:
+
+unpackArchiveStart
+unpackArchiveStep
+
+то старый файл можно не трогать.
+
+
+---
+
+Итог: да, для распаковки работает. Для твоей пошаговой распаковки нужно поставить sb_disk_release_session_lock() в unpack_archive_start.php и unpack_archive_step.php.
