@@ -1,500 +1,354 @@
-Идём дальше. Следующий production-шаг — нормальные логи.
+Идём дальше. Следующий production-шаг — нормальная Session abstraction.
 
-Сейчас ошибки могут уходить просто в error_log(). Для production лучше иметь свои файлы:
+Сейчас у нас Flash, old(), ошибки форм и CSRF частично завязаны на сырые $_SESSION. Для production лучше сделать свой слой, как в Laravel:
 
-/local/mvc_demo/storage/logs/app-2026-07-09.log
-
-И писать туда:
-
-Log::info('Заметка создана', ['note_id' => 5]);
-Log::error('Ошибка БД', ['exception' => $e]);
+session()->get('key');
+session()->put('key', 'value');
+session()->flash('success', 'Готово');
+session()->pull('key');
 
 
 ---
 
-Шаг 1. Создай папки
+Шаг 1. Создай /local/mvc/Core/SessionManager.php
 
 Путь:
 
-/srv/bx/docroot/local/mvc_demo/storage/logs
+/srv/bx/docroot/local/mvc/Core/SessionManager.php
 
-Если через терминал:
-
-mkdir -p /srv/bx/docroot/local/mvc_demo/storage/logs
-chown -R bitrix:bitrix /srv/bx/docroot/local/mvc_demo/storage
-chmod -R 775 /srv/bx/docroot/local/mvc_demo/storage
-
-Если пользователь веб-сервера другой — ставь владельца под него.
-
-
----
-
-Шаг 2. Замени /local/mvc/Core/LogManager.php
-
-Путь:
-
-/srv/bx/docroot/local/mvc/Core/LogManager.php
-
-Полный файл:
+Код:
 
 <?php
 
 namespace Local\Mvc\Core;
 
-use Throwable;
-
-class LogManager
+class SessionManager
 {
-    private const LEVELS = [
-        'debug' => 100,
-        'info' => 200,
-        'notice' => 250,
-        'warning' => 300,
-        'error' => 400,
-        'critical' => 500,
-        'alert' => 550,
-        'emergency' => 600,
-    ];
-
-    public function debug(string $message, array $context = []): void
+    public function __construct()
     {
-        $this->log('debug', $message, $context);
+        $this->start();
     }
 
-    public function info(string $message, array $context = []): void
+    public function start(): void
     {
-        $this->log('info', $message, $context);
-    }
-
-    public function notice(string $message, array $context = []): void
-    {
-        $this->log('notice', $message, $context);
-    }
-
-    public function warning(string $message, array $context = []): void
-    {
-        $this->log('warning', $message, $context);
-    }
-
-    public function error(string $message, array $context = []): void
-    {
-        $this->log('error', $message, $context);
-    }
-
-    public function critical(string $message, array $context = []): void
-    {
-        $this->log('critical', $message, $context);
-    }
-
-    public function alert(string $message, array $context = []): void
-    {
-        $this->log('alert', $message, $context);
-    }
-
-    public function emergency(string $message, array $context = []): void
-    {
-        $this->log('emergency', $message, $context);
-    }
-
-    public function exception(Throwable $e, string $message = 'Unhandled exception', array $context = []): void
-    {
-        $context['exception'] = [
-            'class' => get_class($e),
-            'message' => $e->getMessage(),
-            'file' => $e->getFile(),
-            'line' => $e->getLine(),
-            'trace' => $e->getTraceAsString(),
-        ];
-
-        $this->error($message, $context);
-    }
-
-    public function log(string $level, string $message, array $context = []): void
-    {
-        $level = strtolower($level);
-
-        if (!isset(self::LEVELS[$level])) {
-            $level = 'info';
+        if (session_status() === PHP_SESSION_NONE && !headers_sent()) {
+            session_start();
         }
 
-        if (!$this->shouldLog($level)) {
-            return;
+        if (!isset($_SESSION) || !is_array($_SESSION)) {
+            $_SESSION = [];
         }
-
-        $line = $this->formatLine($level, $message, $context);
-
-        $path = $this->path();
-
-        $dir = dirname($path);
-
-        if (!is_dir($dir)) {
-            @mkdir($dir, 0775, true);
-        }
-
-        if (!is_writable($dir)) {
-            error_log($line);
-            return;
-        }
-
-        @file_put_contents($path, $line . PHP_EOL, FILE_APPEND | LOCK_EX);
     }
 
-    private function shouldLog(string $level): bool
+    public function has(string $key): bool
     {
-        $configuredLevel = strtolower((string)Config::get('logging.level', 'debug'));
+        $this->start();
 
-        if (!isset(self::LEVELS[$configuredLevel])) {
-            $configuredLevel = 'debug';
+        return array_key_exists($key, $_SESSION);
+    }
+
+    public function get(string $key, mixed $default = null): mixed
+    {
+        $this->start();
+
+        return $_SESSION[$key] ?? $default;
+    }
+
+    public function put(string $key, mixed $value): void
+    {
+        $this->start();
+
+        $_SESSION[$key] = $value;
+    }
+
+    public function forget(string $key): void
+    {
+        $this->start();
+
+        unset($_SESSION[$key]);
+    }
+
+    public function pull(string $key, mixed $default = null): mixed
+    {
+        $this->start();
+
+        $value = $_SESSION[$key] ?? $default;
+
+        unset($_SESSION[$key]);
+
+        return $value;
+    }
+
+    public function flash(string $key, mixed $value): void
+    {
+        $this->start();
+
+        $_SESSION['_flash'][$key] = $value;
+    }
+
+    public function getFlash(string $key, mixed $default = null): mixed
+    {
+        $this->start();
+
+        return $_SESSION['_flash'][$key] ?? $default;
+    }
+
+    public function pullFlash(string $key, mixed $default = null): mixed
+    {
+        $this->start();
+
+        $value = $_SESSION['_flash'][$key] ?? $default;
+
+        unset($_SESSION['_flash'][$key]);
+
+        if (empty($_SESSION['_flash'])) {
+            unset($_SESSION['_flash']);
         }
 
-        return self::LEVELS[$level] >= self::LEVELS[$configuredLevel];
+        return $value;
     }
 
-    private function path(): string
+    public function regenerate(): void
     {
-        $path = (string)Config::get('logging.path', '');
+        $this->start();
 
-        if ($path !== '') {
-            return $this->replaceDate($path);
+        if (!headers_sent()) {
+            session_regenerate_id(true);
+        }
+    }
+
+    public function all(): array
+    {
+        $this->start();
+
+        return $_SESSION;
+    }
+}
+
+
+---
+
+Шаг 2. Зарегистрируй SessionManager в App.php
+
+Путь:
+
+/srv/bx/docroot/local/mvc/Core/App.php
+
+В методе run() найди место, где регистрируются singleton:
+
+$container->singleton(\Local\Mvc\Core\LogManager::class, \Local\Mvc\Core\LogManager::class);
+$container->singleton(\Local\Mvc\Core\ConfigManager::class, \Local\Mvc\Core\ConfigManager::class);
+
+Добавь рядом:
+
+$container->singleton(\Local\Mvc\Core\SessionManager::class, \Local\Mvc\Core\SessionManager::class);
+
+
+---
+
+Шаг 3. Добавь helper session()
+
+Путь:
+
+/srv/bx/docroot/local/mvc/helpers.php
+
+В конец файла добавь:
+
+if (!function_exists('session')) {
+    /**
+     * Laravel-like session().
+     *
+     * Примеры:
+     * session()->get('key')
+     * session()->put('key', 'value')
+     * session('key', 'default')
+     */
+    function session(?string $key = null, mixed $default = null): mixed
+    {
+        $manager = \Local\Mvc\Core\App::make(\Local\Mvc\Core\SessionManager::class);
+
+        if ($key === null) {
+            return $manager;
         }
 
-        $root = defined('LOCAL_MVC_PROJECT_ROOT')
-            ? rtrim(LOCAL_MVC_PROJECT_ROOT, '/')
-            : rtrim($_SERVER['DOCUMENT_ROOT'] ?? sys_get_temp_dir(), '/');
+        return $manager->get($key, $default);
+    }
+}
 
-        return $root . '/storage/logs/app-' . date('Y-m-d') . '.log';
+Теперь можно писать:
+
+session()->put('test', 123);
+
+$value = session('test');
+
+
+---
+
+Шаг 4. Обнови /local/mvc/Core/Flash.php
+
+Полностью замени файл:
+
+<?php
+
+namespace Local\Mvc\Core;
+
+class Flash
+{
+    private const KEY_MESSAGES = 'messages';
+
+    private const KEY_OLD = 'old';
+
+    public static function success(string $message): void
+    {
+        self::message('success', $message);
     }
 
-    private function replaceDate(string $path): string
+    public static function error(string $message): void
     {
-        return str_replace(
-            ['{date}', '{Y-m-d}'],
-            [date('Y-m-d'), date('Y-m-d')],
-            $path
-        );
+        self::message('error', $message);
     }
 
-    private function formatLine(string $level, string $message, array $context): string
+    public static function info(string $message): void
     {
-        $context = $this->sanitizeContext($context);
+        self::message('info', $message);
+    }
 
-        $record = [
-            'time' => date('Y-m-d H:i:s'),
-            'level' => strtoupper($level),
+    public static function message(string $type, string $message): void
+    {
+        $messages = self::session()->getFlash(self::KEY_MESSAGES, []);
+
+        if (!is_array($messages)) {
+            $messages = [];
+        }
+
+        $messages[] = [
+            'type' => $type,
             'message' => $message,
-            'url' => $this->currentUrl(),
-            'method' => $_SERVER['REQUEST_METHOD'] ?? '',
-            'user_id' => $this->userId(),
-            'ip' => $_SERVER['REMOTE_ADDR'] ?? '',
-            'context' => $context,
         ];
 
-        return json_encode($record, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+        self::session()->flash(self::KEY_MESSAGES, $messages);
     }
 
-    private function currentUrl(): string
+    public static function all(): array
     {
-        $uri = (string)($_SERVER['REQUEST_URI'] ?? '');
+        $messages = self::session()->pullFlash(self::KEY_MESSAGES, []);
 
-        if ($uri === '') {
-            return '';
-        }
-
-        $host = (string)($_SERVER['HTTP_HOST'] ?? '');
-
-        return $host !== '' ? $host . $uri : $uri;
+        return is_array($messages) ? $messages : [];
     }
 
-    private function userId(): ?int
+    public static function old(array $data): void
     {
-        try {
-            if (class_exists(Auth::class) && Auth::check()) {
-                return Auth::id();
-            }
-        } catch (Throwable) {
-            return null;
-        }
-
-        return null;
+        self::session()->flash(self::KEY_OLD, $data);
     }
 
-    private function sanitizeContext(array $context): array
+    public static function getOld(): array
     {
-        $hiddenKeys = [
-            'password',
-            'pass',
-            'token',
-            'access_token',
-            'refresh_token',
-            'authorization',
-            'cookie',
-            'sessid',
-            'csrf',
-            'csrf_token',
-        ];
+        $old = self::session()->pullFlash(self::KEY_OLD, []);
 
-        foreach ($context as $key => $value) {
-            $lowerKey = strtolower((string)$key);
+        return is_array($old) ? $old : [];
+    }
 
-            foreach ($hiddenKeys as $hiddenKey) {
-                if (str_contains($lowerKey, $hiddenKey)) {
-                    $context[$key] = '[hidden]';
-                    continue 2;
-                }
-            }
-
-            if (is_array($value)) {
-                $context[$key] = $this->sanitizeContext($value);
-            }
-        }
-
-        return $context;
+    private static function session(): SessionManager
+    {
+        return App::make(SessionManager::class);
     }
 }
 
 
 ---
 
-Шаг 3. Замени /local/mvc/Core/Logger.php
+Шаг 5. Проверь Controller.php
 
 Путь:
 
-/srv/bx/docroot/local/mvc/Core/Logger.php
+/srv/bx/docroot/local/mvc/Core/Controller.php
 
-Полный файл:
+В render() должно быть что-то похожее:
 
-<?php
+$flash = Flash::all();
+$old = Flash::getOld();
 
-namespace Local\Mvc\Core;
+ViewData::set('old', $old);
 
-use Throwable;
+Если у тебя там уже это есть — ничего менять не надо.
 
-class Logger
-{
-    public static function debug(string $message, array $context = []): void
-    {
-        self::manager()->debug($message, $context);
-    }
+Главное, чтобы во view передавались:
 
-    public static function info(string $message, array $context = []): void
-    {
-        self::manager()->info($message, $context);
-    }
-
-    public static function notice(string $message, array $context = []): void
-    {
-        self::manager()->notice($message, $context);
-    }
-
-    public static function warning(string $message, array $context = []): void
-    {
-        self::manager()->warning($message, $context);
-    }
-
-    public static function error(string $message, array $context = []): void
-    {
-        self::manager()->error($message, $context);
-    }
-
-    public static function critical(string $message, array $context = []): void
-    {
-        self::manager()->critical($message, $context);
-    }
-
-    public static function exception(Throwable $e, string $message = 'Unhandled exception', array $context = []): void
-    {
-        self::manager()->exception($e, $message, $context);
-    }
-
-    private static function manager(): LogManager
-    {
-        try {
-            return App::make(LogManager::class);
-        } catch (Throwable) {
-            return new LogManager();
-        }
-    }
-}
+'flash' => $flash,
+'old' => $old,
 
 
 ---
 
-Шаг 4. Проверь facade Log
+Шаг 6. Добавь facade Session
 
-Файл:
+Создай файл:
 
-/srv/bx/docroot/local/mvc/Support/Facades/Log.php
+/srv/bx/docroot/local/mvc/Support/Facades/Session.php
 
-Должен быть такой:
+Код:
 
 <?php
 
 namespace Local\Mvc\Support\Facades;
 
-use Local\Mvc\Core\LogManager;
+use Local\Mvc\Core\SessionManager;
 
-class Log extends Facade
+class Session extends Facade
 {
     protected static function accessor(): string
     {
-        return LogManager::class;
+        return SessionManager::class;
     }
 }
 
+Теперь можно писать:
 
----
+use Local\Mvc\Support\Facades\Session;
 
-Шаг 5. Обнови config.php
-
-Путь:
-
-/srv/bx/docroot/local/mvc_demo/config.php
-
-Добавь блок:
-
-'logging' => [
-    'level' => env('LOG_LEVEL', 'debug'),
-    'path' => env(
-        'LOG_PATH',
-        rtrim(LOCAL_MVC_PROJECT_ROOT, '/') . '/storage/logs/app-{date}.log'
-    ),
-],
-
-Например:
-
-return [
-    'app' => [
-        'name' => env('APP_NAME', 'MVC Demo'),
-        'description' => 'Тестовый проект на общем MVC-фреймворке',
-    ],
-
-    'debug' => env('APP_DEBUG', false),
-
-    'logging' => [
-        'level' => env('LOG_LEVEL', 'debug'),
-        'path' => env(
-            'LOG_PATH',
-            rtrim(LOCAL_MVC_PROJECT_ROOT, '/') . '/storage/logs/app-{date}.log'
-        ),
-    ],
-
-    // остальные блоки ниже...
-];
+Session::put('key', 'value');
+$value = Session::get('key');
 
 
 ---
 
-Шаг 6. Обнови .env
-
-Путь:
-
-/srv/bx/docroot/local/mvc_demo/.env
-
-Добавь:
-
-LOG_LEVEL=debug
-
-Для production потом лучше:
-
-LOG_LEVEL=warning
-
-То есть на production будут писаться только:
-
-warning
-error
-critical
-alert
-emergency
-
-
----
-
-Шаг 7. Обнови ErrorHandler.php
-
-В файле:
-
-/srv/bx/docroot/local/mvc/Core/ErrorHandler.php
-
-Найди метод:
-
-private static function logThrowable(Throwable $e): void
-
-Замени его на:
-
-private static function logThrowable(Throwable $e): void
-{
-    try {
-        App::make(LogManager::class)->exception($e, 'Application exception');
-        return;
-    } catch (Throwable) {
-        // fallback ниже
-    }
-
-    $message = sprintf(
-        '[%s] %s in %s:%s',
-        get_class($e),
-        $e->getMessage(),
-        $e->getFile(),
-        $e->getLine()
-    );
-
-    error_log($message);
-}
-
-
----
-
-Шаг 8. Защити storage от браузера
-
-Так как storage внутри docroot, его обязательно закрыть.
-
-Для Nginx / Angie добавь:
-
-location ^~ /local/mvc_demo/storage/ {
-    deny all;
-}
-
-Проверка:
-
-nginx -t
-systemctl reload nginx
-
-или для Angie:
-
-angie -t
-systemctl reload angie
-
-
----
-
-Шаг 9. Проверка
+Шаг 7. Проверка
 
 Сбрось OPcache:
 
 opcache_reset();
 echo 'OPcache reset OK';
 
-Временно в любом контроллере можно добавить:
+Для проверки можешь временно в любом методе контроллера написать:
 
-\Local\Mvc\Support\Facades\Log::info('Проверка логов', [
-    'test' => true,
-    'password' => '123456',
-]);
+session()->put('mvc_test', 'Работает');
 
-Открой страницу, потом проверь файл:
+Flash::success('Session работает: ' . session('mvc_test'));
 
-/srv/bx/docroot/local/mvc_demo/storage/logs/app-2026-07-09.log
+return redirect()->route('notes.index');
 
-Внутри должно быть примерно так:
-
-{"time":"2026-07-09 12:00:00","level":"INFO","message":"Проверка логов","url":"bitrix24-stage.gaz.ru/local/mvc_demo/notes","method":"GET","user_id":1,"ip":"...","context":{"test":true,"password":"[hidden]"}}
+После перехода на /notes должен появиться flash-message.
 
 
 ---
 
-Что сделали:
+Что мы сделали
 
-Было: ошибки просто где-то в error_log.
-Стало: свой production-лог проекта, с уровнями, датами и защитой секретов.
+Было:
 
-Это важная часть production-фреймворка: теперь ошибки можно нормально расследовать.
+$_SESSION['_flash']
+$_SESSION['old']
+
+Стало Laravel-like:
+
+session()->put('key', 'value');
+session()->get('key');
+session()->flash('success', 'Готово');
+session()->pull('key');
+
+Главная мысль:
+
+Теперь ядро фреймворка не зависит напрямую от $_SESSION.
+У нас появился нормальный слой SessionManager.
+
+Это важный production-шаг, потому что дальше через него можно делать авторизацию, flash, remember-поля, CSRF и системные уведомления аккуратно.
