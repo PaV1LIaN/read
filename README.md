@@ -1,354 +1,392 @@
-Идём дальше. Следующий production-шаг — нормальная Session abstraction.
+Да, делаем страничные права отдельно от прав на весь сайт.
 
-Сейчас у нас Flash, old(), ошибки форм и CSRF частично завязаны на сырые $_SESSION. Для production лучше сделать свой слой, как в Laravel:
+Логика будет такая:
 
-session()->get('key');
-session()->put('key', 'value');
-session()->flash('success', 'Готово');
-session()->pull('key');
+Права на сайт — глобальные.
+Права на страницу — точечные.
+
+Можно выдать:
+1. Только на одну страницу.
+2. На страницу и все её подстраницы.
 
 
 ---
 
-Шаг 1. Создай /local/mvc/Core/SessionManager.php
+Как должно работать
 
-Путь:
+Например есть структура:
 
-/srv/bx/docroot/local/mvc/Core/SessionManager.php
+Сайт "Инструкция"
 
-Код:
+Главная
+├── Отдел продаж
+│   ├── Скрипты
+│   └── Документы
+└── Отдел кадров
 
-<?php
+Пользователю можно выдать:
 
-namespace Local\Mvc\Core;
+Страница: Отдел продаж
+Право: чтение
+Подстраницы: да
 
-class SessionManager
+Тогда он увидит:
+
+Отдел продаж
+├── Скрипты
+└── Документы
+
+Но не увидит:
+
+Главная
+Отдел кадров
+
+Если выдать:
+
+Страница: Отдел продаж
+Право: редактирование
+Подстраницы: да
+
+Он сможет редактировать:
+
+Отдел продаж
+Скрипты
+Документы
+
+
+---
+
+1. Какие права добавляем сейчас
+
+Минимально нужны два права:
+
+page.view — чтение страницы
+page.edit — редактирование страницы
+
+В интерфейсе можно показывать проще:
+
+Чтение
+Редактирование
+
+Важно:
+
+Редактирование автоматически включает чтение.
+
+То есть если у пользователя есть page.edit, он должен видеть страницу.
+
+
+---
+
+2. Новая таблица в БД
+
+Добавляем таблицу:
+
+CREATE TABLE IF NOT EXISTS sitebuilder.page_access (
+    id BIGSERIAL PRIMARY KEY,
+
+    site_id BIGINT NOT NULL,
+    page_id BIGINT NOT NULL,
+
+    access_code VARCHAR(64) NOT NULL,
+
+    can_view BOOLEAN NOT NULL DEFAULT TRUE,
+    can_edit BOOLEAN NOT NULL DEFAULT FALSE,
+
+    include_children BOOLEAN NOT NULL DEFAULT FALSE,
+
+    created_by BIGINT NULL,
+    created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMP NOT NULL DEFAULT NOW(),
+
+    UNIQUE (page_id, access_code)
+);
+
+CREATE INDEX IF NOT EXISTS ix_page_access_site_id
+    ON sitebuilder.page_access(site_id);
+
+CREATE INDEX IF NOT EXISTS ix_page_access_page_id
+    ON sitebuilder.page_access(page_id);
+
+CREATE INDEX IF NOT EXISTS ix_page_access_access_code
+    ON sitebuilder.page_access(access_code);
+
+access_code делаем как у нас уже было:
+
+U99 — пользователь с ID 99
+
+Позже можно добавить:
+
+G12 — группа Битрикс
+D45 — отдел
+
+Но сейчас начнём с пользователей.
+
+
+---
+
+3. Что означает include_children
+
+include_children = false
+
+Право действует только на выбранную страницу.
+
+include_children = true
+
+Право действует на выбранную страницу и все её дочерние страницы.
+
+
+---
+
+4. Правило проверки доступа
+
+Проверка должна идти так:
+
+Для просмотра страницы
+
+Пользователь может смотреть страницу, если:
+
+1. Он владелец сайта
+ИЛИ
+2. У него есть глобальное site.view
+ИЛИ
+3. У него есть page.view на эту страницу
+ИЛИ
+4. У него есть page.view на родительскую страницу с include_children = true
+ИЛИ
+5. У него есть page.edit на эту страницу или родителя
+
+
+---
+
+Для редактирования страницы
+
+Пользователь может редактировать страницу, если:
+
+1. Он владелец сайта
+ИЛИ
+2. У него есть глобальное site.edit
+ИЛИ
+3. У него есть page.edit на эту страницу
+ИЛИ
+4. У него есть page.edit на родительскую страницу с include_children = true
+
+
+---
+
+5. Важный момент
+
+Пока лучше сделать только выдачу доступа, без запрета.
+
+То есть страничные права будут давать дополнительный доступ.
+
+Например:
+
+Пользователь не имеет доступа ко всему сайту,
+но получил доступ к странице "Отдел продаж".
+
+Он увидит только эту страницу и подстраницы.
+
+А если пользователь уже имеет site.view, он всё равно видит весь сайт.
+
+Запреты типа:
+
+Видит весь сайт, кроме этой страницы
+
+лучше добавить позже отдельно как deny.
+
+
+---
+
+6. Какие API действия нужны
+
+Добавляем новые действия:
+
+pageAccess.list
+pageAccess.save
+pageAccess.delete
+
+
+---
+
+pageAccess.list
+
+Получить права по странице.
+
+Payload:
+
 {
-    public function __construct()
-    {
-        $this->start();
-    }
-
-    public function start(): void
-    {
-        if (session_status() === PHP_SESSION_NONE && !headers_sent()) {
-            session_start();
-        }
-
-        if (!isset($_SESSION) || !is_array($_SESSION)) {
-            $_SESSION = [];
-        }
-    }
-
-    public function has(string $key): bool
-    {
-        $this->start();
-
-        return array_key_exists($key, $_SESSION);
-    }
-
-    public function get(string $key, mixed $default = null): mixed
-    {
-        $this->start();
-
-        return $_SESSION[$key] ?? $default;
-    }
-
-    public function put(string $key, mixed $value): void
-    {
-        $this->start();
-
-        $_SESSION[$key] = $value;
-    }
-
-    public function forget(string $key): void
-    {
-        $this->start();
-
-        unset($_SESSION[$key]);
-    }
-
-    public function pull(string $key, mixed $default = null): mixed
-    {
-        $this->start();
-
-        $value = $_SESSION[$key] ?? $default;
-
-        unset($_SESSION[$key]);
-
-        return $value;
-    }
-
-    public function flash(string $key, mixed $value): void
-    {
-        $this->start();
-
-        $_SESSION['_flash'][$key] = $value;
-    }
-
-    public function getFlash(string $key, mixed $default = null): mixed
-    {
-        $this->start();
-
-        return $_SESSION['_flash'][$key] ?? $default;
-    }
-
-    public function pullFlash(string $key, mixed $default = null): mixed
-    {
-        $this->start();
-
-        $value = $_SESSION['_flash'][$key] ?? $default;
-
-        unset($_SESSION['_flash'][$key]);
-
-        if (empty($_SESSION['_flash'])) {
-            unset($_SESSION['_flash']);
-        }
-
-        return $value;
-    }
-
-    public function regenerate(): void
-    {
-        $this->start();
-
-        if (!headers_sent()) {
-            session_regenerate_id(true);
-        }
-    }
-
-    public function all(): array
-    {
-        $this->start();
-
-        return $_SESSION;
-    }
+  "siteId": 1,
+  "pageId": 10,
+  "sessid": "..."
 }
 
+Ответ:
 
----
-
-Шаг 2. Зарегистрируй SessionManager в App.php
-
-Путь:
-
-/srv/bx/docroot/local/mvc/Core/App.php
-
-В методе run() найди место, где регистрируются singleton:
-
-$container->singleton(\Local\Mvc\Core\LogManager::class, \Local\Mvc\Core\LogManager::class);
-$container->singleton(\Local\Mvc\Core\ConfigManager::class, \Local\Mvc\Core\ConfigManager::class);
-
-Добавь рядом:
-
-$container->singleton(\Local\Mvc\Core\SessionManager::class, \Local\Mvc\Core\SessionManager::class);
-
-
----
-
-Шаг 3. Добавь helper session()
-
-Путь:
-
-/srv/bx/docroot/local/mvc/helpers.php
-
-В конец файла добавь:
-
-if (!function_exists('session')) {
-    /**
-     * Laravel-like session().
-     *
-     * Примеры:
-     * session()->get('key')
-     * session()->put('key', 'value')
-     * session('key', 'default')
-     */
-    function session(?string $key = null, mixed $default = null): mixed
-    {
-        $manager = \Local\Mvc\Core\App::make(\Local\Mvc\Core\SessionManager::class);
-
-        if ($key === null) {
-            return $manager;
-        }
-
-        return $manager->get($key, $default);
-    }
-}
-
-Теперь можно писать:
-
-session()->put('test', 123);
-
-$value = session('test');
-
-
----
-
-Шаг 4. Обнови /local/mvc/Core/Flash.php
-
-Полностью замени файл:
-
-<?php
-
-namespace Local\Mvc\Core;
-
-class Flash
 {
-    private const KEY_MESSAGES = 'messages';
-
-    private const KEY_OLD = 'old';
-
-    public static function success(string $message): void
-    {
-        self::message('success', $message);
-    }
-
-    public static function error(string $message): void
-    {
-        self::message('error', $message);
-    }
-
-    public static function info(string $message): void
-    {
-        self::message('info', $message);
-    }
-
-    public static function message(string $type, string $message): void
-    {
-        $messages = self::session()->getFlash(self::KEY_MESSAGES, []);
-
-        if (!is_array($messages)) {
-            $messages = [];
-        }
-
-        $messages[] = [
-            'type' => $type,
-            'message' => $message,
-        ];
-
-        self::session()->flash(self::KEY_MESSAGES, $messages);
-    }
-
-    public static function all(): array
-    {
-        $messages = self::session()->pullFlash(self::KEY_MESSAGES, []);
-
-        return is_array($messages) ? $messages : [];
-    }
-
-    public static function old(array $data): void
-    {
-        self::session()->flash(self::KEY_OLD, $data);
-    }
-
-    public static function getOld(): array
-    {
-        $old = self::session()->pullFlash(self::KEY_OLD, []);
-
-        return is_array($old) ? $old : [];
-    }
-
-    private static function session(): SessionManager
-    {
-        return App::make(SessionManager::class);
-    }
+  "ok": true,
+  "data": {
+    "items": [
+      {
+        "id": 1,
+        "siteId": 1,
+        "pageId": 10,
+        "accessCode": "U99",
+        "canView": true,
+        "canEdit": false,
+        "includeChildren": true
+      }
+    ]
+  }
 }
 
 
 ---
 
-Шаг 5. Проверь Controller.php
+pageAccess.save
 
-Путь:
+Сохранить право.
 
-/srv/bx/docroot/local/mvc/Core/Controller.php
+Payload:
 
-В render() должно быть что-то похожее:
-
-$flash = Flash::all();
-$old = Flash::getOld();
-
-ViewData::set('old', $old);
-
-Если у тебя там уже это есть — ничего менять не надо.
-
-Главное, чтобы во view передавались:
-
-'flash' => $flash,
-'old' => $old,
-
-
----
-
-Шаг 6. Добавь facade Session
-
-Создай файл:
-
-/srv/bx/docroot/local/mvc/Support/Facades/Session.php
-
-Код:
-
-<?php
-
-namespace Local\Mvc\Support\Facades;
-
-use Local\Mvc\Core\SessionManager;
-
-class Session extends Facade
 {
-    protected static function accessor(): string
-    {
-        return SessionManager::class;
-    }
+  "siteId": 1,
+  "pageId": 10,
+  "accessCode": "U99",
+  "canView": true,
+  "canEdit": true,
+  "includeChildren": true,
+  "sessid": "..."
 }
 
-Теперь можно писать:
 
-use Local\Mvc\Support\Facades\Session;
+---
 
-Session::put('key', 'value');
-$value = Session::get('key');
+pageAccess.delete
+
+Удалить право.
+
+Payload:
+
+{
+  "id": 1,
+  "siteId": 1,
+  "pageId": 10,
+  "sessid": "..."
+}
 
 
 ---
 
-Шаг 7. Проверка
+7. Где надо проверять эти права
 
-Сбрось OPcache:
+Нужно будет поправить места:
 
-opcache_reset();
-echo 'OPcache reset OK';
-
-Для проверки можешь временно в любом методе контроллера написать:
-
-session()->put('mvc_test', 'Работает');
-
-Flash::success('Session работает: ' . session('mvc_test'));
-
-return redirect()->route('notes.index');
-
-После перехода на /notes должен появиться flash-message.
+1. Список сайтов
+2. Список страниц в редакторе
+3. Открытие страницы
+4. Сохранение страницы
+5. Сохранение блоков
+6. Создание/изменение блоков на странице
 
 
 ---
 
-Что мы сделали
+Просмотр сайта в списке
 
-Было:
+Сайт должен показываться пользователю, если:
 
-$_SESSION['_flash']
-$_SESSION['old']
+1. Есть доступ на весь сайт
+ИЛИ
+2. Есть доступ хотя бы к одной странице этого сайта
 
-Стало Laravel-like:
+То есть человек с правами только на страницу всё равно должен увидеть сайт в списке.
 
-session()->put('key', 'value');
-session()->get('key');
-session()->flash('success', 'Готово');
-session()->pull('key');
 
-Главная мысль:
+---
 
-Теперь ядро фреймворка не зависит напрямую от $_SESSION.
-У нас появился нормальный слой SessionManager.
+Дерево страниц
 
-Это важный production-шаг, потому что дальше через него можно делать авторизацию, flash, remember-поля, CSRF и системные уведомления аккуратно.
+В дереве страниц пользователь должен видеть только те страницы, на которые есть page.view.
+
+Но здесь есть нюанс.
+
+Если у пользователя доступ только к подстранице:
+
+Главная
+└── Компания
+    └── Документы
+
+И доступ выдан только на Документы, то для нормальной навигации можно показывать родителей как “путь”, но без редактирования:
+
+Компания
+└── Документы
+
+Или проще на первом этапе показывать только доступные страницы без полного дерева.
+
+Лучше сделать нормально: родители показываются как технические узлы, но без права редактирования.
+
+
+---
+
+8. Как будет выглядеть интерфейс
+
+В настройках страницы добавить вкладку:
+
+Доступ
+
+Там:
+
+Пользователь: [поиск пользователя]
+Права: [Чтение / Редактирование]
+☑ Распространить на подстраницы
+[Выдать доступ]
+
+Список ниже:
+
+Иванов Иван — Редактирование — Страница и подстраницы
+Петров Пётр — Чтение — Только эта страница
+
+
+---
+
+9. Итоговая модель прав
+
+Получается так:
+
+site.view
+site.edit
+site.delete
+site.publish
+site.settings
+
+page.view
+page.edit
+
+Позже можно добавить:
+
+page.create
+page.delete
+page.move
+
+Но сейчас для твоей задачи достаточно:
+
+page.view
+page.edit
+include_children
+
+
+---
+
+10. Какой следующий шаг
+
+Сначала лучше сделать backend:
+
+1. Таблица sitebuilder.page_access
+2. Функция проверки page.view/page.edit
+3. API pageAccess.list/save/delete
+4. Фильтрация дерева страниц
+5. Запрет сохранения страницы без page.edit
+
+Потом уже делаем UI для выдачи прав.
+
+Я бы начал с таблицы и функции проверки доступа, потому что после этого можно безопасно подключать проверки в API.
