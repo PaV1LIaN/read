@@ -1,243 +1,277 @@
-Да, это понятно: текст в базе сохранён **не строкой**, а массивом.
-А текущий `render.php` делает примерно так:
+Идём дальше. Сейчас сделаем Laravel-like поиск + when() в QueryBuilder.
 
-```php
-$text = (string)$props['text'];
-```
+В Laravel часто пишут так:
 
-Если там массив, PHP выводит:
+Note::query()
+    ->when($search, function ($query) use ($search) {
+        $query->where('title', 'like', "%{$search}%");
+    })
+    ->paginate(10);
 
-```text
-Array
-```
+Сделаем похожее для наших заметок.
 
-Нужно заменить `components/text/render.php` на версию, которая умеет доставать текст из массива.
 
 ---
 
-## Замени полностью `components/text/render.php`
+1. Обнови /local/mvc/Core/QueryBuilder.php
 
-Файл:
+Внутрь класса QueryBuilder добавь метод, например рядом с where() / orWhere():
 
-```text
-/local/sitebuilder/components/text/render.php
-```
+/**
+ * Laravel-like when().
+ *
+ * Пример:
+ * $query->when($search !== '', function ($query) use ($search) {
+ *     $query->whereLike('title', $search);
+ * });
+ */
+public function when(mixed $value, callable $callback, ?callable $default = null): self
+{
+    if ($value) {
+        $callback($this, $value);
+        return $this;
+    }
 
-Код:
+    if ($default !== null) {
+        $default($this, $value);
+    }
 
-```php
+    return $this;
+}
+
+Теперь можно будет условно добавлять фильтры.
+
+
+---
+
+2. Обнови /local/mvc_demo/Models/Note.php
+
+Замени методы пагинации на эти:
+
+public static function paginateLatest(int $page = 1, int $perPage = 10, string $search = ''): array
+{
+    $search = trim($search);
+
+    $result = self::query()
+        ->when($search !== '', function (\Local\Mvc\Core\QueryBuilder $query) use ($search) {
+            $query->where(function (\Local\Mvc\Core\QueryBuilder $query) use ($search) {
+                $query
+                    ->whereRaw('CAST(id AS TEXT) LIKE :q', [
+                        'q' => '%' . $search . '%',
+                    ])
+                    ->orWhereLike('title', $search)
+                    ->orWhereLike('body', $search);
+            });
+        })
+        ->orderBy('id', 'desc')
+        ->paginate($page, $perPage);
+
+    $result['items'] = array_map([self::class, 'normalize'], $result['items']);
+
+    return $result;
+}
+
+public static function paginateTrashedLatest(int $page = 1, int $perPage = 10, string $search = ''): array
+{
+    $search = trim($search);
+
+    $result = self::onlyTrashed()
+        ->when($search !== '', function (\Local\Mvc\Core\QueryBuilder $query) use ($search) {
+            $query->where(function (\Local\Mvc\Core\QueryBuilder $query) use ($search) {
+                $query
+                    ->whereRaw('CAST(id AS TEXT) LIKE :q', [
+                        'q' => '%' . $search . '%',
+                    ])
+                    ->orWhereLike('title', $search)
+                    ->orWhereLike('body', $search);
+            });
+        })
+        ->orderBy('id', 'desc')
+        ->paginate($page, $perPage);
+
+    $result['items'] = array_map([self::class, 'normalize'], $result['items']);
+
+    return $result;
+}
+
+
+---
+
+3. Обнови NoteController
+
+В /local/mvc_demo/Controllers/NoteController.php замени метод index() на:
+
+public function index(): Response
+{
+    $this->authorize('viewAny', Note::class);
+
+    $page = (int)request('page', 1);
+    $search = trim((string)request('q', ''));
+
+    $result = Note::paginateLatest($page, 10, $search);
+
+    return $this->render('notes/index', [
+        'title' => 'Заметки',
+        'notes' => $result['items'],
+        'pagination' => $result['pagination'],
+        'search' => $search,
+    ]);
+}
+
+И метод trash() на:
+
+public function trash(): Response
+{
+    $this->authorize('viewAny', Note::class);
+
+    $page = (int)request('page', 1);
+    $search = trim((string)request('q', ''));
+
+    $result = Note::paginateTrashedLatest($page, 10, $search);
+
+    return $this->render('notes/trash', [
+        'title' => 'Удалённые заметки',
+        'notes' => $result['items'],
+        'pagination' => $result['pagination'],
+        'search' => $search,
+    ]);
+}
+
+
+---
+
+4. Добавь форму поиска в notes/index.php
+
+В файле:
+
+/local/mvc_demo/Views/notes/index.php
+
+после блока со ссылкой на корзину добавь:
+
+<div class="mvc-info">
+    <form method="get" action="<?= e(route('notes.index')) ?>" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
+        <input
+            type="text"
+            name="q"
+            value="<?= e($search ?? '') ?>"
+            placeholder="Поиск по ID, названию или тексту"
+            style="flex:1;min-width:260px;min-height:42px;padding:8px 12px;border:1px solid #d1d5db;border-radius:10px;"
+        >
+
+        <button
+            type="submit"
+            style="min-height:42px;padding:0 18px;border:0;border-radius:10px;background:#2563eb;color:#fff;font-weight:600;cursor:pointer;"
+        >
+            Найти
+        </button>
+
+        <?php if (!empty($search)): ?>
+            <a href="<?= e(route('notes.index')) ?>">
+                Сбросить
+            </a>
+        <?php endif; ?>
+    </form>
+</div>
+
+И внизу, где подключается пагинация, замени:
+
+$query = [];
+
+на:
+
+$query = [];
+
+if (!empty($search)) {
+    $query['q'] = $search;
+}
+
+Должно получиться так:
+
 <?php
+$routeName = 'notes.index';
+$routeParams = [];
+$query = [];
 
-if (!defined('B_PROLOG_INCLUDED') || B_PROLOG_INCLUDED !== true) {
-    die();
+if (!empty($search)) {
+    $query['q'] = $search;
 }
 
-$block = is_array($block ?? null) ? $block : [];
-$props = is_array($block['props'] ?? null) ? $block['props'] : [];
-
-if (!function_exists('sb_text_is_list_array')) {
-    function sb_text_is_list_array(array $array): bool
-    {
-        if ($array === []) {
-            return true;
-        }
-
-        return array_keys($array) === range(0, count($array) - 1);
-    }
-}
-
-if (!function_exists('sb_text_value_to_string')) {
-    function sb_text_value_to_string($value): string
-    {
-        if ($value === null) {
-            return '';
-        }
-
-        if (is_string($value) || is_numeric($value)) {
-            return (string)$value;
-        }
-
-        if (is_bool($value)) {
-            return $value ? '1' : '';
-        }
-
-        if (!is_array($value)) {
-            return '';
-        }
-
-        /*
-         * Частые варианты хранения текста:
-         * text, content, html, value, body, children.
-         */
-        $preferredKeys = [
-            'html',
-            'text',
-            'content',
-            'value',
-            'body',
-            'children',
-            'items',
-        ];
-
-        foreach ($preferredKeys as $key) {
-            if (!array_key_exists($key, $value)) {
-                continue;
-            }
-
-            $result = sb_text_value_to_string($value[$key]);
-
-            if (trim(strip_tags($result)) !== '') {
-                return $result;
-            }
-        }
-
-        /*
-         * Если это список элементов, собираем их в один текст.
-         */
-        if (sb_text_is_list_array($value)) {
-            $parts = [];
-
-            foreach ($value as $item) {
-                $part = sb_text_value_to_string($item);
-
-                if (trim(strip_tags($part)) !== '') {
-                    $parts[] = $part;
-                }
-            }
-
-            return implode("\n", $parts);
-        }
-
-        /*
-         * Последний fallback:
-         * аккуратно собираем строковые значения из массива.
-         */
-        $parts = [];
-
-        foreach ($value as $key => $item) {
-            if (in_array((string)$key, ['align', 'size', 'color', 'lineHeight', 'maxWidth'], true)) {
-                continue;
-            }
-
-            $part = sb_text_value_to_string($item);
-
-            if (trim(strip_tags($part)) !== '') {
-                $parts[] = $part;
-            }
-        }
-
-        return implode("\n", $parts);
-    }
-}
-
-if (!function_exists('sb_text_get_content')) {
-    function sb_text_get_content(array $block, array $props): string
-    {
-        $keys = [
-            'text',
-            'content',
-            'html',
-            'value',
-            'body',
-        ];
-
-        foreach ($keys as $key) {
-            if (array_key_exists($key, $props)) {
-                $result = sb_text_value_to_string($props[$key]);
-
-                if (trim(strip_tags($result)) !== '') {
-                    return $result;
-                }
-            }
-        }
-
-        foreach ($keys as $key) {
-            if (array_key_exists($key, $block)) {
-                $result = sb_text_value_to_string($block[$key]);
-
-                if (trim(strip_tags($result)) !== '') {
-                    return $result;
-                }
-            }
-        }
-
-        return '';
-    }
-}
-
-$text = sb_text_get_content($block, $props);
-
-$align = (string)($props['align'] ?? 'left');
-$size = (string)($props['size'] ?? '16');
-$color = (string)($props['color'] ?? '#111827');
-$lineHeight = (string)($props['lineHeight'] ?? '1.6');
-$maxWidth = (string)($props['maxWidth'] ?? '');
-
-if (!in_array($align, ['left', 'center', 'right', 'justify'], true)) {
-    $align = 'left';
-}
-
-$sizeNumber = (int)$size;
-
-if ($sizeNumber <= 0) {
-    $sizeNumber = 16;
-}
-
-$allowedTags = '<br><b><strong><i><em><u><s><p><span><ul><ol><li><a>';
-
-$safeText = strip_tags($text, $allowedTags);
-
-$style = [
-    'text-align:' . $align,
-    'font-size:' . $sizeNumber . 'px',
-    'line-height:' . htmlspecialchars($lineHeight, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8'),
-    'color:' . htmlspecialchars($color, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8'),
-];
-
-if ($maxWidth !== '') {
-    $style[] = 'max-width:' . htmlspecialchars($maxWidth, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
-}
-
+require $_SERVER['DOCUMENT_ROOT'] . '/local/mvc_demo/Views/partials/pagination.php';
 ?>
 
-<div class="sb-text-block" style="<?= implode(';', $style) ?>">
-    <?= $safeText !== '' ? nl2br($safeText) : '' ?>
-</div>
-```
 
 ---
 
-## Почему было `Array`
+5. Добавь поиск в notes/trash.php
 
-Потому что текст у тебя, скорее всего, хранится примерно так:
+В файле:
 
-```php
-$props['text'] = [
-    'content' => 'Мой текст'
-];
-```
+/local/mvc_demo/Views/notes/trash.php
 
-или так:
+после ссылки назад добавь:
 
-```php
-$props['text'] = [
-    [
-        'text' => 'Мой текст'
-    ]
-];
-```
+<div class="mvc-info">
+    <form method="get" action="<?= e(route('notes.trash')) ?>" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
+        <input
+            type="text"
+            name="q"
+            value="<?= e($search ?? '') ?>"
+            placeholder="Поиск по удалённым заметкам"
+            style="flex:1;min-width:260px;min-height:42px;padding:8px 12px;border:1px solid #d1d5db;border-radius:10px;"
+        >
 
-А старый код превращал массив в строку:
+        <button
+            type="submit"
+            style="min-height:42px;padding:0 18px;border:0;border-radius:10px;background:#2563eb;color:#fff;font-weight:600;cursor:pointer;"
+        >
+            Найти
+        </button>
 
-```php
-(string)$props['text']
-```
+        <?php if (!empty($search)): ?>
+            <a href="<?= e(route('notes.trash')) ?>">
+                Сбросить
+            </a>
+        <?php endif; ?>
+    </form>
+</div>
 
-и PHP выводил:
+И внизу перед подключением пагинации замени:
 
-```text
-Array
-```
+$query = [];
 
-После замены он будет доставать реальный текст из массива.
-Сделай замену, обнови страницу с `Ctrl + F5` и проверь опубликованную страницу.
+на:
+
+$query = [];
+
+if (!empty($search)) {
+    $query['q'] = $search;
+}
+
+
+---
+
+6. Проверка
+
+Сбрось OPcache:
+
+opcache_reset();
+echo 'OPcache reset OK';
+
+Проверь:
+
+/local/mvc_demo/notes?q=test
+/local/mvc_demo/notes?page=2&q=test
+/local/mvc_demo/notes/trash?q=test
+
+Теперь поиск должен работать вместе с пагинацией: при переходе на страницу 2 параметр q не должен пропадать.
+
+
+---
+
+Что мы добавили:
+
+$query->when($search !== '', function ($query) {
+    ...
+});
+
+Это очень похоже на Laravel-подход: фильтры добавляются только если они нужны.
