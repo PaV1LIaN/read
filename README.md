@@ -1,36 +1,46 @@
-local/sitebuilder/api/index.php
+Да, сюда. Только в твоей архитектуре лучше не в actions/page_access/..., а через один handler:
 
-<?php
+/local/sitebuilder/api/handlers/page_access.php
 
-require_once __DIR__ . '/bootstrap.php';
+А в index.php добавить маршрутизацию.
 
-$action = (string)($_POST['action'] ?? '');
 
-if ($action === 'ping') {
-    require __DIR__ . '/handlers/common.php';
-    exit;
-}
+---
+
+1. В index.php добавь блок
+
+Файл:
+
+/local/sitebuilder/api/index.php
+
+Лучше вставь после блока page.*, вот здесь:
 
 if (
-    $action === 'site.list' ||
-    $action === 'site.get' ||
-    $action === 'site.create' ||
-    $action === 'site.update' ||
-    $action === 'site.delete' ||
-    $action === 'site.setHome' ||
-    $action === 'site.syncAccess' ||
-    $action === 'site.ensureGroup' ||
-    $action === 'site.accessList' ||
-    $action === 'site.accessSet' ||
-    $action === 'site.accessRemove' ||
-    $action === 'site.appearanceGet' ||
-    $action === 'site.appearanceUpdate' ||
-    $action === 'site.appearanceUpload' ||
-    $action === 'site.appearanceRemove'
+    $action === 'page.list' ||
+    $action === 'page.create' ||
+    $action === 'page.delete' ||
+    $action === 'page.duplicate' ||
+    $action === 'page.updateMeta' ||
+    $action === 'page.setStatus' ||
+    $action === 'page.setParent' ||
+    $action === 'page.move'
 ) {
-    require __DIR__ . '/handlers/site.php';
+    require __DIR__ . '/handlers/page.php';
     exit;
 }
+
+Сразу после него вставь:
+
+if (
+    $action === 'pageAccess.list' ||
+    $action === 'pageAccess.save' ||
+    $action === 'pageAccess.delete'
+) {
+    require __DIR__ . '/handlers/page_access.php';
+    exit;
+}
+
+Итог:
 
 if (
     $action === 'page.list' ||
@@ -47,103 +57,55 @@ if (
 }
 
 if (
-    $action === 'menu.list' ||
-    $action === 'menu.create' ||
-    $action === 'menu.update' ||
-    $action === 'menu.delete' ||
-    $action === 'menu.setTop' ||
-    $action === 'menu.item.add' ||
-    $action === 'menu.item.update' ||
-    $action === 'menu.item.delete' ||
-    $action === 'menu.item.move'
+    $action === 'pageAccess.list' ||
+    $action === 'pageAccess.save' ||
+    $action === 'pageAccess.delete'
 ) {
-    require __DIR__ . '/handlers/menu.php';
+    require __DIR__ . '/handlers/page_access.php';
     exit;
 }
 
-if (
-    $action === 'block.list' ||
-    $action === 'block.create' ||
-    $action === 'block.update' ||
-    $action === 'block.delete' ||
-    $action === 'block.duplicate' ||
-    $action === 'block.move' ||
-    $action === 'block.reorder'
-) {
-    require __DIR__ . '/handlers/block.php';
-    exit;
-}
 
-if (
-    $action === 'file.list' ||
-    $action === 'file.upload' ||
-    $action === 'file.delete'
-) {
-    require __DIR__ . '/handlers/file.php';
-    exit;
-}
+---
 
-if (
-    $action === 'layout.get' ||
-    $action === 'layout.updateSettings' ||
-    $action === 'layout.block.list' ||
-    $action === 'layout.block.create' ||
-    $action === 'layout.block.update' ||
-    $action === 'layout.block.delete' ||
-    $action === 'layout.block.move'
-) {
-    require __DIR__ . '/handlers/layout.php';
-    exit;
-}
+2. Важно
 
-if (strpos($action, 'page.') === 0) {
-    require __DIR__ . '/handlers/page.php';
-    exit;
-}
+У тебя index.php берёт action так:
 
-if (
-    $action === 'section.list' ||
-    $action === 'section.create' ||
-    $action === 'section.update' ||
-    $action === 'section.delete' ||
-    $action === 'site.setSection'
-) {
-    require __DIR__ . '/handlers/section.php';
-    exit;
-}
+$action = (string)($_POST['action'] ?? '');
 
-if (
-    $action === 'template.list' ||
-    $action === 'template.get' ||
-    $action === 'template.createFromSite' ||
-    $action === 'template.update' ||
-    $action === 'template.delete' ||
-    $action === 'template.createSite'
-) {
-    require __DIR__ . '/handlers/template.php';
-    exit;
-}
+Значит вот такой запрос не сработает:
 
-if (
-    $action === 'user.search'
-) {
-    require __DIR__ . '/handlers/user.php';
-    exit;
-}
+fetch('/local/sitebuilder/api/?action=pageAccess.save')
 
-if (
-    $action === 'pageSection.list' ||
-    $action === 'pageSection.create' ||
-    $action === 'pageSection.update' ||
-    $action === 'pageSection.move' ||
-    $action === 'pageSection.delete' ||
-    $action === 'pageSection.assignBlock'
-) {
-    require __DIR__ . '/handlers/page_section.php';
-    exit;
-}
+Нужно отправлять action именно в POST.
 
-sb_json_error('UNKNOWN_ACTION', 400, [
-    'action' => $action,
-    'file' => __FILE__,
-]);
+То есть тесты потом будем делать так:
+
+const fd = new FormData();
+fd.append('action', 'pageAccess.save');
+fd.append('sessid', BX.bitrix_sessid());
+fd.append('siteId', siteId);
+fd.append('pageId', pageId);
+fd.append('accessCode', 'U' + userId);
+fd.append('canView', '1');
+fd.append('canEdit', '1');
+fd.append('includeChildren', '1');
+
+const res = await fetch('/local/sitebuilder/api/index.php', {
+  method: 'POST',
+  body: fd
+});
+
+console.log(await res.json());
+
+
+---
+
+3. Следующий файл
+
+Теперь создай:
+
+/local/sitebuilder/api/handlers/page_access.php
+
+И дальше уже туда вставим обработку pageAccess.list/save/delete.
