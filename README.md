@@ -1,191 +1,121 @@
-Идём дальше. Сейчас сделаем Laravel-like поиск + when() в QueryBuilder.
+Идём дальше. Сейчас сделаем Laravel-like view() helper для partials.
 
-В Laravel часто пишут так:
+Сейчас у нас в index.php и trash.php некрасиво:
 
-Note::query()
-    ->when($search, function ($query) use ($search) {
-        $query->where('title', 'like', "%{$search}%");
-    })
-    ->paginate(10);
+require $_SERVER['DOCUMENT_ROOT'] . '/local/mvc_demo/Views/partials/pagination.php';
 
-Сделаем похожее для наших заметок.
+Сделаем красиво, как в Laravel:
+
+<?= view('partials.pagination', [
+    'pagination' => $pagination,
+    'routeName' => 'notes.index',
+]) ?>
 
 
 ---
 
-1. Обнови /local/mvc/Core/QueryBuilder.php
+1. Создай файл /local/mvc/Core/View.php
 
-Внутрь класса QueryBuilder добавь метод, например рядом с where() / orWhere():
+<?php
 
-/**
- * Laravel-like when().
- *
- * Пример:
- * $query->when($search !== '', function ($query) use ($search) {
- *     $query->whereLike('title', $search);
- * });
- */
-public function when(mixed $value, callable $callback, ?callable $default = null): self
+namespace Local\Mvc\Core;
+
+use RuntimeException;
+
+class View
 {
-    if ($value) {
-        $callback($this, $value);
-        return $this;
+    /**
+     * Laravel-like render view.
+     *
+     * Пример:
+     * View::render('partials.pagination', ['pagination' => $pagination])
+     */
+    public static function render(string $view, array $data = []): string
+    {
+        $path = self::path($view);
+
+        if (!is_file($path)) {
+            throw new RuntimeException('VIEW_NOT_FOUND: ' . $path);
+        }
+
+        ob_start();
+
+        extract($data, EXTR_SKIP);
+
+        require $path;
+
+        return (string)ob_get_clean();
     }
 
-    if ($default !== null) {
-        $default($this, $value);
+    public static function exists(string $view): bool
+    {
+        return is_file(self::path($view));
     }
 
-    return $this;
-}
+    public static function path(string $view): string
+    {
+        $view = trim($view);
 
-Теперь можно будет условно добавлять фильтры.
+        if ($view === '') {
+            throw new RuntimeException('VIEW_NAME_IS_EMPTY');
+        }
 
+        /**
+         * Поддерживаем два варианта:
+         *
+         * partials.pagination
+         * partials/pagination
+         */
+        $view = str_replace('.', '/', $view);
+        $view = trim($view, '/');
 
----
+        if (!defined('LOCAL_MVC_PROJECT_ROOT')) {
+            throw new RuntimeException('LOCAL_MVC_PROJECT_ROOT_NOT_DEFINED');
+        }
 
-2. Обнови /local/mvc_demo/Models/Note.php
-
-Замени методы пагинации на эти:
-
-public static function paginateLatest(int $page = 1, int $perPage = 10, string $search = ''): array
-{
-    $search = trim($search);
-
-    $result = self::query()
-        ->when($search !== '', function (\Local\Mvc\Core\QueryBuilder $query) use ($search) {
-            $query->where(function (\Local\Mvc\Core\QueryBuilder $query) use ($search) {
-                $query
-                    ->whereRaw('CAST(id AS TEXT) LIKE :q', [
-                        'q' => '%' . $search . '%',
-                    ])
-                    ->orWhereLike('title', $search)
-                    ->orWhereLike('body', $search);
-            });
-        })
-        ->orderBy('id', 'desc')
-        ->paginate($page, $perPage);
-
-    $result['items'] = array_map([self::class, 'normalize'], $result['items']);
-
-    return $result;
-}
-
-public static function paginateTrashedLatest(int $page = 1, int $perPage = 10, string $search = ''): array
-{
-    $search = trim($search);
-
-    $result = self::onlyTrashed()
-        ->when($search !== '', function (\Local\Mvc\Core\QueryBuilder $query) use ($search) {
-            $query->where(function (\Local\Mvc\Core\QueryBuilder $query) use ($search) {
-                $query
-                    ->whereRaw('CAST(id AS TEXT) LIKE :q', [
-                        'q' => '%' . $search . '%',
-                    ])
-                    ->orWhereLike('title', $search)
-                    ->orWhereLike('body', $search);
-            });
-        })
-        ->orderBy('id', 'desc')
-        ->paginate($page, $perPage);
-
-    $result['items'] = array_map([self::class, 'normalize'], $result['items']);
-
-    return $result;
+        return rtrim(LOCAL_MVC_PROJECT_ROOT, '/') . '/Views/' . $view . '.php';
+    }
 }
 
 
 ---
 
-3. Обнови NoteController
+2. Обнови /local/mvc/helpers.php
 
-В /local/mvc_demo/Controllers/NoteController.php замени метод index() на:
+В конец файла добавь:
 
-public function index(): Response
-{
-    $this->authorize('viewAny', Note::class);
-
-    $page = (int)request('page', 1);
-    $search = trim((string)request('q', ''));
-
-    $result = Note::paginateLatest($page, 10, $search);
-
-    return $this->render('notes/index', [
-        'title' => 'Заметки',
-        'notes' => $result['items'],
-        'pagination' => $result['pagination'],
-        'search' => $search,
-    ]);
+if (!function_exists('view')) {
+    /**
+     * Laravel-like view() helper.
+     *
+     * Пример:
+     * echo view('partials.pagination', [
+     *     'pagination' => $pagination,
+     * ]);
+     */
+    function view(string $view, array $data = []): string
+    {
+        return \Local\Mvc\Core\View::render($view, $data);
+    }
 }
 
-И метод trash() на:
-
-public function trash(): Response
-{
-    $this->authorize('viewAny', Note::class);
-
-    $page = (int)request('page', 1);
-    $search = trim((string)request('q', ''));
-
-    $result = Note::paginateTrashedLatest($page, 10, $search);
-
-    return $this->render('notes/trash', [
-        'title' => 'Удалённые заметки',
-        'notes' => $result['items'],
-        'pagination' => $result['pagination'],
-        'search' => $search,
-    ]);
+if (!function_exists('view_exists')) {
+    function view_exists(string $view): bool
+    {
+        return \Local\Mvc\Core\View::exists($view);
+    }
 }
+
+Теперь можно писать:
+
+<?= view('partials.pagination', [...]) ?>
 
 
 ---
 
-4. Добавь форму поиска в notes/index.php
+3. Обнови подключение пагинации в notes/index.php
 
-В файле:
-
-/local/mvc_demo/Views/notes/index.php
-
-после блока со ссылкой на корзину добавь:
-
-<div class="mvc-info">
-    <form method="get" action="<?= e(route('notes.index')) ?>" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
-        <input
-            type="text"
-            name="q"
-            value="<?= e($search ?? '') ?>"
-            placeholder="Поиск по ID, названию или тексту"
-            style="flex:1;min-width:260px;min-height:42px;padding:8px 12px;border:1px solid #d1d5db;border-radius:10px;"
-        >
-
-        <button
-            type="submit"
-            style="min-height:42px;padding:0 18px;border:0;border-radius:10px;background:#2563eb;color:#fff;font-weight:600;cursor:pointer;"
-        >
-            Найти
-        </button>
-
-        <?php if (!empty($search)): ?>
-            <a href="<?= e(route('notes.index')) ?>">
-                Сбросить
-            </a>
-        <?php endif; ?>
-    </form>
-</div>
-
-И внизу, где подключается пагинация, замени:
-
-$query = [];
-
-на:
-
-$query = [];
-
-if (!empty($search)) {
-    $query['q'] = $search;
-}
-
-Должно получиться так:
+Внизу файла найди старый блок:
 
 <?php
 $routeName = 'notes.index';
@@ -199,79 +129,103 @@ if (!empty($search)) {
 require $_SERVER['DOCUMENT_ROOT'] . '/local/mvc_demo/Views/partials/pagination.php';
 ?>
 
+Замени на:
+
+<?php
+$query = [];
+
+if (!empty($search)) {
+    $query['q'] = $search;
+}
+?>
+
+<?= view('partials.pagination', [
+    'pagination' => $pagination ?? [],
+    'routeName' => 'notes.index',
+    'routeParams' => [],
+    'query' => $query,
+]) ?>
+
 
 ---
 
-5. Добавь поиск в notes/trash.php
+4. Обнови подключение пагинации в notes/trash.php
 
-В файле:
+Внизу файла найди старый блок:
 
-/local/mvc_demo/Views/notes/trash.php
-
-после ссылки назад добавь:
-
-<div class="mvc-info">
-    <form method="get" action="<?= e(route('notes.trash')) ?>" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
-        <input
-            type="text"
-            name="q"
-            value="<?= e($search ?? '') ?>"
-            placeholder="Поиск по удалённым заметкам"
-            style="flex:1;min-width:260px;min-height:42px;padding:8px 12px;border:1px solid #d1d5db;border-radius:10px;"
-        >
-
-        <button
-            type="submit"
-            style="min-height:42px;padding:0 18px;border:0;border-radius:10px;background:#2563eb;color:#fff;font-weight:600;cursor:pointer;"
-        >
-            Найти
-        </button>
-
-        <?php if (!empty($search)): ?>
-            <a href="<?= e(route('notes.trash')) ?>">
-                Сбросить
-            </a>
-        <?php endif; ?>
-    </form>
-</div>
-
-И внизу перед подключением пагинации замени:
-
-$query = [];
-
-на:
-
+<?php
+$routeName = 'notes.trash';
+$routeParams = [];
 $query = [];
 
 if (!empty($search)) {
     $query['q'] = $search;
 }
 
+require $_SERVER['DOCUMENT_ROOT'] . '/local/mvc_demo/Views/partials/pagination.php';
+?>
+
+Замени на:
+
+<?php
+$query = [];
+
+if (!empty($search)) {
+    $query['q'] = $search;
+}
+?>
+
+<?= view('partials.pagination', [
+    'pagination' => $pagination ?? [],
+    'routeName' => 'notes.trash',
+    'routeParams' => [],
+    'query' => $query,
+]) ?>
+
 
 ---
 
-6. Проверка
+5. Проверка
 
 Сбрось OPcache:
 
 opcache_reset();
 echo 'OPcache reset OK';
 
-Проверь:
+Открой:
 
-/local/mvc_demo/notes?q=test
-/local/mvc_demo/notes?page=2&q=test
-/local/mvc_demo/notes/trash?q=test
+/local/mvc_demo/notes
 
-Теперь поиск должен работать вместе с пагинацией: при переходе на страницу 2 параметр q не должен пропадать.
+Потом:
+
+/local/mvc_demo/notes/trash
+
+Пагинация должна отображаться как раньше.
 
 
 ---
 
-Что мы добавили:
+Что мы сделали
 
-$query->when($search !== '', function ($query) {
-    ...
-});
+Было так:
 
-Это очень похоже на Laravel-подход: фильтры добавляются только если они нужны.
+require $_SERVER['DOCUMENT_ROOT'] . '/local/mvc_demo/Views/partials/pagination.php';
+
+Стало так:
+
+<?= view('partials.pagination', [
+    'pagination' => $pagination,
+]) ?>
+
+Главная мысль:
+
+view() — это Laravel-like способ подключать маленькие части интерфейса.
+
+Теперь мы можем делать переиспользуемые partials:
+
+partials.pagination
+partials.alert
+partials.errors
+partials.form-input
+
+И не писать каждый раз длинные пути через $_SERVER['DOCUMENT_ROOT'].
