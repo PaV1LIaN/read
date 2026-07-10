@@ -1,202 +1,42 @@
-Да. Сейчас подключаем права непосредственно к страницам. Замени файл:
+Причина в текущей логике: у пользователя U99, скорее всего, уже есть глобальная роль в:
+
+sitebuilder.access
+
+А в page.php сейчас написано: если есть глобальное право просмотра сайта, показать все страницы.
+
+То есть право на страницу сейчас работает как дополнительное, а не как ограничение.
+
+Проверь запись:
+
+SELECT *
+FROM sitebuilder.access
+WHERE site_id = 13
+  AND access_code = 'U99';
+
+Скорее всего, там будет роль VIEWER.
+
+Исправляем правило так:
+
+OWNER, ADMIN, EDITOR видят все страницы;
+
+VIEWER без индивидуальных прав видит все страницы;
+
+VIEWER, которому добавлены права в page_access, видит только разрешённые страницы;
+
+пользователь без глобальной роли, но с page_access, тоже видит только разрешённые страницы.
+
+
+1. Замени функцию фильтрации
+
+В файле:
 
 /local/sitebuilder/api/handlers/page.php
 
-полностью на этот код:
+найди функцию:
 
-<?php
+sb_page_handler_filter_visible_pages
 
-require_once $_SERVER['DOCUMENT_ROOT'] . '/local/sitebuilder/lib/PageAccessRepository.php';
-require_once $_SERVER['DOCUMENT_ROOT'] . '/local/sitebuilder/lib/PageAccessService.php';
-
-/*
- * Локальные функции обработчика страниц.
- */
-
-if (!function_exists('sb_page_handler_find_by_id')) {
-    function sb_page_handler_find_by_id(array $pages, int $id): ?array
-    {
-        foreach ($pages as $page) {
-            if ((int)($page['id'] ?? 0) === $id) {
-                return $page;
-            }
-        }
-
-        return null;
-    }
-}
-
-if (!function_exists('sb_page_handler_find_index_by_id')) {
-    function sb_page_handler_find_index_by_id(array $pages, int $id): int
-    {
-        foreach ($pages as $index => $page) {
-            if ((int)($page['id'] ?? 0) === $id) {
-                return (int)$index;
-            }
-        }
-
-        return -1;
-    }
-}
-
-if (!function_exists('sb_page_handler_is_descendant')) {
-    function sb_page_handler_is_descendant(
-        array $pages,
-        int $pageId,
-        int $possibleParentId
-    ): bool {
-        $current = sb_page_handler_find_by_id($pages, $possibleParentId);
-        $safety = 0;
-
-        while ($current && $safety < 1000) {
-            $parentId = (int)($current['parentId'] ?? 0);
-
-            if ($parentId <= 0) {
-                return false;
-            }
-
-            if ($parentId === $pageId) {
-                return true;
-            }
-
-            $current = sb_page_handler_find_by_id($pages, $parentId);
-            $safety++;
-        }
-
-        return false;
-    }
-}
-
-if (!function_exists('sb_page_handler_current_user_id')) {
-    function sb_page_handler_current_user_id(): int
-    {
-        global $USER;
-
-        if (
-            !is_object($USER)
-            || !method_exists($USER, 'IsAuthorized')
-            || !$USER->IsAuthorized()
-        ) {
-            sb_json_error('AUTH_REQUIRED', 401);
-        }
-
-        return (int)$USER->GetID();
-    }
-}
-
-if (!function_exists('sb_page_handler_is_bitrix_admin')) {
-    function sb_page_handler_is_bitrix_admin(): bool
-    {
-        global $USER;
-
-        return is_object($USER)
-            && method_exists($USER, 'IsAdmin')
-            && $USER->IsAdmin();
-    }
-}
-
-if (!function_exists('sb_page_handler_has_global_view')) {
-    function sb_page_handler_has_global_view(
-        int $siteId,
-        int $userId
-    ): bool {
-        if (sb_page_handler_is_bitrix_admin()) {
-            return true;
-        }
-
-        return PageAccessService::hasGlobalSiteAccess(
-            $siteId,
-            $userId,
-            'view'
-        );
-    }
-}
-
-if (!function_exists('sb_page_handler_has_global_edit')) {
-    function sb_page_handler_has_global_edit(
-        int $siteId,
-        int $userId
-    ): bool {
-        if (sb_page_handler_is_bitrix_admin()) {
-            return true;
-        }
-
-        return PageAccessService::hasGlobalSiteAccess(
-            $siteId,
-            $userId,
-            'edit'
-        );
-    }
-}
-
-if (!function_exists('sb_page_handler_require_page_view')) {
-    function sb_page_handler_require_page_view(
-        int $siteId,
-        int $pageId,
-        int $userId
-    ): void {
-        if (
-            !PageAccessService::canViewPage(
-                $siteId,
-                $pageId,
-                $userId
-            )
-        ) {
-            sb_json_error('PAGE_VIEW_ACCESS_DENIED', 403, [
-                'siteId' => $siteId,
-                'pageId' => $pageId,
-            ]);
-        }
-    }
-}
-
-if (!function_exists('sb_page_handler_require_page_edit')) {
-    function sb_page_handler_require_page_edit(
-        int $siteId,
-        int $pageId,
-        int $userId
-    ): void {
-        if (
-            !PageAccessService::canEditPage(
-                $siteId,
-                $pageId,
-                $userId
-            )
-        ) {
-            sb_json_error('PAGE_EDIT_ACCESS_DENIED', 403, [
-                'siteId' => $siteId,
-                'pageId' => $pageId,
-            ]);
-        }
-    }
-}
-
-if (!function_exists('sb_page_handler_add_access_info')) {
-    function sb_page_handler_add_access_info(
-        array $page,
-        int $siteId,
-        int $userId
-    ): array {
-        $pageId = (int)($page['id'] ?? 0);
-
-        $access = PageAccessService::getPageAccessInfo(
-            $siteId,
-            $pageId,
-            $userId
-        );
-
-        $page['access'] = $access;
-
-        /*
-         * navigationOnly = true:
-         * пользователь не имеет доступа к самой странице,
-         * но она нужна в дереве как родитель доступной подстраницы.
-         */
-        $page['navigationOnly'] = !$access['canView'];
-
-        return $page;
-    }
-}
+И замени её полностью:
 
 if (!function_exists('sb_page_handler_filter_visible_pages')) {
     function sb_page_handler_filter_visible_pages(
@@ -204,10 +44,26 @@ if (!function_exists('sb_page_handler_filter_visible_pages')) {
         int $siteId,
         int $userId
     ): array {
+        $hasGlobalView = sb_page_handler_has_global_view(
+            $siteId,
+            $userId
+        );
+
+        $hasGlobalEdit = sb_page_handler_has_global_edit(
+            $siteId,
+            $userId
+        );
+
+        $hasPageAccess = PageAccessService::hasAnyPageAccess(
+            $siteId,
+            $userId
+        );
+
         /*
-         * Пользователь с глобальным доступом видит все страницы.
+         * Администратор Битрикса, OWNER, ADMIN и EDITOR
+         * видят все страницы сайта.
          */
-        if (sb_page_handler_has_global_view($siteId, $userId)) {
+        if ($hasGlobalEdit) {
             return array_values(array_map(
                 static function ($page) use ($siteId, $userId) {
                     $page = sb_normalize_page_record($page);
@@ -222,6 +78,36 @@ if (!function_exists('sb_page_handler_filter_visible_pages')) {
             ));
         }
 
+        /*
+         * Старое поведение:
+         * глобальный VIEWER без индивидуальных правил
+         * видит весь сайт.
+         */
+        if ($hasGlobalView && !$hasPageAccess) {
+            return array_values(array_map(
+                static function ($page) use ($siteId, $userId) {
+                    $page = sb_normalize_page_record($page);
+
+                    return sb_page_handler_add_access_info(
+                        $page,
+                        $siteId,
+                        $userId
+                    );
+                },
+                $pages
+            ));
+        }
+
+        /*
+         * Если существуют индивидуальные права страниц,
+         * фильтруем только по sitebuilder.page_access.
+         *
+         * Здесь нельзя использовать canViewPage(),
+         * потому что глобальный VIEWER через него снова
+         * получит доступ ко всем страницам.
+         */
+        $accessCode = PageAccessRepository::userAccessCode($userId);
+
         $pagesById = [];
 
         foreach ($pages as $page) {
@@ -232,11 +118,8 @@ if (!function_exists('sb_page_handler_filter_visible_pages')) {
             }
         }
 
-        /*
-         * Сначала находим страницы, к которым есть прямой
-         * или наследуемый доступ.
-         */
         $includedIds = [];
+        $permissionsByPageId = [];
 
         foreach ($pages as $page) {
             $pageId = (int)($page['id'] ?? 0);
@@ -245,20 +128,37 @@ if (!function_exists('sb_page_handler_filter_visible_pages')) {
                 continue;
             }
 
-            if (
-                PageAccessService::canViewPage(
-                    $siteId,
-                    $pageId,
-                    $userId
-                )
-            ) {
-                $includedIds[$pageId] = true;
+            $canView = PageAccessRepository::hasPagePermission(
+                $siteId,
+                $pageId,
+                $accessCode,
+                'view'
+            );
+
+            $canEdit = PageAccessRepository::hasPagePermission(
+                $siteId,
+                $pageId,
+                $accessCode,
+                'edit'
+            );
+
+            if (!$canView && !$canEdit) {
+                continue;
             }
+
+            $includedIds[$pageId] = true;
+
+            $permissionsByPageId[$pageId] = [
+                'canView' => $canView || $canEdit,
+                'canEdit' => $canEdit,
+            ];
         }
 
         /*
-         * Добавляем родителей доступных страниц.
-         * Родитель будет показан только как узел дерева.
+         * Добавляем родителей доступных страниц,
+         * чтобы не ломалась древовидная структура.
+         *
+         * Такие родители будут navigationOnly.
          */
         foreach (array_keys($includedIds) as $pageId) {
             $currentId = (int)$pageId;
@@ -278,6 +178,14 @@ if (!function_exists('sb_page_handler_filter_visible_pages')) {
                 }
 
                 $includedIds[$parentId] = true;
+
+                if (!isset($permissionsByPageId[$parentId])) {
+                    $permissionsByPageId[$parentId] = [
+                        'canView' => false,
+                        'canEdit' => false,
+                    ];
+                }
+
                 $currentId = $parentId;
                 $safety++;
             }
@@ -294,977 +202,94 @@ if (!function_exists('sb_page_handler_filter_visible_pages')) {
 
             $page = sb_normalize_page_record($page);
 
-            $result[] = sb_page_handler_add_access_info(
-                $page,
-                $siteId,
-                $userId
-            );
+            $permission = $permissionsByPageId[$pageId] ?? [
+                'canView' => false,
+                'canEdit' => false,
+            ];
+
+            $page['access'] = [
+                'canView' => (bool)$permission['canView'],
+                'canEdit' => (bool)$permission['canEdit'],
+            ];
+
+            $page['navigationOnly'] = !$permission['canView'];
+
+            $result[] = $page;
         }
 
         return array_values($result);
     }
 }
 
-if (!function_exists('sb_page_handler_delete_access_rows')) {
-    function sb_page_handler_delete_access_rows(
-        int $siteId,
-        array $pageIds
-    ): void {
-        $pageIds = array_values(array_unique(array_filter(
-            array_map('intval', $pageIds),
-            static fn(int $id): bool => $id > 0
-        )));
+2. Сам page.list менять не нужно
 
-        if ($siteId <= 0 || empty($pageIds)) {
-            return;
-        }
+В нём уже вызывается:
 
-        $pdo = sb_db();
+$pages = sb_page_handler_filter_visible_pages(
+    $pages,
+    $siteId,
+    $currentUserId
+);
 
-        $placeholders = [];
-        $params = [
-            ':site_id' => $siteId,
-        ];
+После замены функции пользователь 99 должен увидеть:
 
-        foreach ($pageIds as $index => $pageId) {
-            $placeholder = ':page_id_' . $index;
-            $placeholders[] = $placeholder;
-            $params[$placeholder] = $pageId;
-        }
+страницу 14;
 
-        $stmt = $pdo->prepare("
-            DELETE FROM sitebuilder.page_access
-            WHERE site_id = :site_id
-              AND page_id IN (" . implode(',', $placeholders) . ")
-        ");
+дочерние страницы страницы 14, потому что было выдано includeChildren = true;
 
-        $stmt->execute($params);
+родителей страницы 14 только как узлы дерева с navigationOnly: true;
+
+остальные страницы не должны приходить в ответе API.
+
+
+3. Проверка через консоль под пользователем 99
+
+На странице редактора выполни:
+
+(async function () {
+  const sessidData = await fetch(
+    '/local/sitebuilder/api/get_sessid.php',
+    {
+      credentials: 'same-origin',
+      cache: 'no-store'
     }
+  ).then(response => response.json());
+
+  const fd = new FormData();
+
+  fd.append('action', 'page.list');
+  fd.append('sessid', sessidData.sessid);
+  fd.append('siteId', '13');
+
+  const response = await fetch(
+    '/local/sitebuilder/api/index.php',
+    {
+      method: 'POST',
+      body: fd,
+      credentials: 'same-origin',
+      cache: 'no-store'
+    }
+  );
+
+  const result = await response.json();
+
+  console.log(
+    result.data?.pages?.map(page => ({
+      id: page.id,
+      title: page.title,
+      parentId: page.parentId,
+      navigationOnly: page.navigationOnly,
+      access: page.access
+    }))
+  );
+
+  return result;
+})();
+
+Ключевая ошибка была именно в этой проверке:
+
+if (sb_page_handler_has_global_view($siteId, $userId)) {
+    return все страницы;
 }
 
-if (!function_exists('sb_page_handler_grant_creator_access')) {
-    function sb_page_handler_grant_creator_access(
-        int $siteId,
-        int $pageId,
-        int $userId
-    ): void {
-        PageAccessRepository::save(
-            $siteId,
-            $pageId,
-            PageAccessRepository::userAccessCode($userId),
-            true,
-            true,
-            false,
-            $userId
-        );
-    }
-}
-
-/*
- * Получение списка страниц.
- */
-if ($action === 'page.list') {
-    $siteId = (int)($_POST['siteId'] ?? 0);
-
-    if ($siteId <= 0) {
-        sb_json_error('SITE_ID_REQUIRED', 422);
-    }
-
-    $currentUserId = sb_page_handler_current_user_id();
-
-    $hasGlobalView = sb_page_handler_has_global_view(
-        $siteId,
-        $currentUserId
-    );
-
-    $hasPageAccess = PageAccessService::hasAnyPageAccess(
-        $siteId,
-        $currentUserId
-    );
-
-    if (!$hasGlobalView && !$hasPageAccess) {
-        sb_json_error('SITE_OR_PAGE_ACCESS_DENIED', 403, [
-            'siteId' => $siteId,
-        ]);
-    }
-
-    $pages = array_values(array_filter(
-        sb_read_pages(),
-        static function ($page) use ($siteId) {
-            return (int)($page['siteId'] ?? 0) === $siteId;
-        }
-    ));
-
-    usort($pages, static function ($a, $b) {
-        $sortCompare =
-            (int)($a['sort'] ?? 500)
-            <=>
-            (int)($b['sort'] ?? 500);
-
-        if ($sortCompare !== 0) {
-            return $sortCompare;
-        }
-
-        return
-            (int)($a['id'] ?? 0)
-            <=>
-            (int)($b['id'] ?? 0);
-    });
-
-    $pages = sb_page_handler_filter_visible_pages(
-        $pages,
-        $siteId,
-        $currentUserId
-    );
-
-    sb_json_ok([
-        'pages' => $pages,
-        'access' => [
-            'globalView' => $hasGlobalView,
-            'globalEdit' => sb_page_handler_has_global_edit(
-                $siteId,
-                $currentUserId
-            ),
-            'hasPageAccess' => $hasPageAccess,
-        ],
-    ]);
-}
-
-/*
- * Создание страницы.
- */
-if ($action === 'page.create') {
-    $siteId = (int)($_POST['siteId'] ?? 0);
-    $title = trim((string)($_POST['title'] ?? ''));
-    $slug = trim((string)($_POST['slug'] ?? ''));
-    $parentId = (int)($_POST['parentId'] ?? 0);
-
-    if ($siteId <= 0) {
-        sb_json_error('SITE_ID_REQUIRED', 422);
-    }
-
-    if ($title === '') {
-        sb_json_error('TITLE_REQUIRED', 422);
-    }
-
-    $currentUserId = sb_page_handler_current_user_id();
-
-    $hasGlobalEdit = sb_page_handler_has_global_edit(
-        $siteId,
-        $currentUserId
-    );
-
-    $pages = sb_read_pages();
-
-    if ($parentId > 0) {
-        $parent = sb_page_handler_find_by_id($pages, $parentId);
-
-        if (
-            !$parent
-            || (int)($parent['siteId'] ?? 0) !== $siteId
-        ) {
-            sb_json_error('PARENT_PAGE_NOT_FOUND', 404);
-        }
-
-        if (
-            !$hasGlobalEdit
-            && !PageAccessService::canEditPage(
-                $siteId,
-                $parentId,
-                $currentUserId
-            )
-        ) {
-            sb_json_error('PARENT_PAGE_EDIT_ACCESS_DENIED', 403, [
-                'parentId' => $parentId,
-            ]);
-        }
-    } elseif (!$hasGlobalEdit) {
-        /*
-         * Корневые страницы может создавать только пользователь
-         * с глобальным правом редактирования сайта.
-         */
-        sb_json_error('ROOT_PAGE_CREATE_ACCESS_DENIED', 403);
-    }
-
-    if ($slug === '') {
-        $slug = sb_slugify($title);
-    }
-
-    $id = sb_next_id($pages, 'id');
-    $maxSort = 0;
-
-    foreach ($pages as $page) {
-        if (
-            (int)($page['siteId'] ?? 0) === $siteId
-            && (int)($page['parentId'] ?? 0) === $parentId
-        ) {
-            $maxSort = max(
-                $maxSort,
-                (int)($page['sort'] ?? 0)
-            );
-        }
-    }
-
-    $page = sb_normalize_page_record([
-        'id' => $id,
-        'siteId' => $siteId,
-        'title' => $title,
-        'slug' => $slug,
-        'parentId' => $parentId,
-        'sort' => $maxSort > 0 ? $maxSort + 10 : 10,
-        'status' => 'draft',
-        'publishedAt' => null,
-        'createdAt' => date('c'),
-        'updatedAt' => date('c'),
-    ]);
-
-    $pages[] = $page;
-
-    sb_write_pages($pages);
-
-    /*
-     * Если страницу создал пользователь с доступом только
-     * к отдельной ветке, выдаём ему прямое право на новую страницу.
-     */
-    if (!$hasGlobalEdit) {
-        sb_page_handler_grant_creator_access(
-            $siteId,
-            $id,
-            $currentUserId
-        );
-    }
-
-    $page = sb_page_handler_add_access_info(
-        $page,
-        $siteId,
-        $currentUserId
-    );
-
-    sb_json_ok([
-        'page' => $page,
-    ]);
-}
-
-/*
- * Изменение названия, URL и родителя.
- */
-if ($action === 'page.updateMeta') {
-    $id = (int)($_POST['id'] ?? 0);
-    $title = trim((string)($_POST['title'] ?? ''));
-    $slug = trim((string)($_POST['slug'] ?? ''));
-    $parentId = isset($_POST['parentId'])
-        ? (int)$_POST['parentId']
-        : null;
-
-    if ($id <= 0) {
-        sb_json_error('PAGE_ID_REQUIRED', 422);
-    }
-
-    if ($title === '') {
-        sb_json_error('TITLE_REQUIRED', 422);
-    }
-
-    $currentUserId = sb_page_handler_current_user_id();
-    $pages = sb_read_pages();
-
-    $index = sb_page_handler_find_index_by_id($pages, $id);
-
-    if ($index < 0) {
-        sb_json_error('PAGE_NOT_FOUND', 404);
-    }
-
-    $page = $pages[$index];
-    $siteId = (int)($page['siteId'] ?? 0);
-
-    if ($siteId <= 0) {
-        sb_json_error('SITE_ID_NOT_FOUND', 422);
-    }
-
-    sb_page_handler_require_page_edit(
-        $siteId,
-        $id,
-        $currentUserId
-    );
-
-    $hasGlobalEdit = sb_page_handler_has_global_edit(
-        $siteId,
-        $currentUserId
-    );
-
-    if ($slug === '') {
-        $slug = sb_slugify($title);
-    }
-
-    if ($parentId !== null) {
-        if ($parentId === $id) {
-            sb_json_error('PAGE_CANNOT_BE_OWN_PARENT', 422);
-        }
-
-        if ($parentId > 0) {
-            $parent = sb_page_handler_find_by_id(
-                $pages,
-                $parentId
-            );
-
-            if (
-                !$parent
-                || (int)($parent['siteId'] ?? 0) !== $siteId
-            ) {
-                sb_json_error('PARENT_PAGE_NOT_FOUND', 404);
-            }
-
-            if (
-                sb_page_handler_is_descendant(
-                    $pages,
-                    $id,
-                    $parentId
-                )
-            ) {
-                sb_json_error('CYCLIC_PARENT_RELATION', 422);
-            }
-
-            if (
-                !$hasGlobalEdit
-                && !PageAccessService::canEditPage(
-                    $siteId,
-                    $parentId,
-                    $currentUserId
-                )
-            ) {
-                sb_json_error(
-                    'PARENT_PAGE_EDIT_ACCESS_DENIED',
-                    403
-                );
-            }
-        } elseif (!$hasGlobalEdit) {
-            /*
-             * Перенос страницы в корень — изменение структуры сайта.
-             */
-            sb_json_error(
-                'MOVE_PAGE_TO_ROOT_ACCESS_DENIED',
-                403
-            );
-        }
-
-        $page['parentId'] = $parentId;
-    }
-
-    $page['title'] = $title;
-    $page['slug'] = $slug;
-    $page['updatedAt'] = date('c');
-
-    $pages[$index] = sb_normalize_page_record($page);
-
-    sb_write_pages($pages);
-
-    $resultPage = sb_page_handler_add_access_info(
-        $pages[$index],
-        $siteId,
-        $currentUserId
-    );
-
-    sb_json_ok([
-        'page' => $resultPage,
-    ]);
-}
-
-/*
- * Изменение родителя.
- */
-if ($action === 'page.setParent') {
-    $id = (int)($_POST['id'] ?? 0);
-    $parentId = (int)($_POST['parentId'] ?? 0);
-
-    if ($id <= 0) {
-        sb_json_error('PAGE_ID_REQUIRED', 422);
-    }
-
-    $currentUserId = sb_page_handler_current_user_id();
-    $pages = sb_read_pages();
-
-    $index = sb_page_handler_find_index_by_id($pages, $id);
-
-    if ($index < 0) {
-        sb_json_error('PAGE_NOT_FOUND', 404);
-    }
-
-    $page = $pages[$index];
-    $siteId = (int)($page['siteId'] ?? 0);
-
-    if ($siteId <= 0) {
-        sb_json_error('SITE_ID_NOT_FOUND', 422);
-    }
-
-    sb_page_handler_require_page_edit(
-        $siteId,
-        $id,
-        $currentUserId
-    );
-
-    $hasGlobalEdit = sb_page_handler_has_global_edit(
-        $siteId,
-        $currentUserId
-    );
-
-    if ($parentId === $id) {
-        sb_json_error('PAGE_CANNOT_BE_OWN_PARENT', 422);
-    }
-
-    if ($parentId > 0) {
-        $parent = sb_page_handler_find_by_id(
-            $pages,
-            $parentId
-        );
-
-        if (
-            !$parent
-            || (int)($parent['siteId'] ?? 0) !== $siteId
-        ) {
-            sb_json_error('PARENT_PAGE_NOT_FOUND', 404);
-        }
-
-        if (
-            sb_page_handler_is_descendant(
-                $pages,
-                $id,
-                $parentId
-            )
-        ) {
-            sb_json_error('CYCLIC_PARENT_RELATION', 422);
-        }
-
-        if (
-            !$hasGlobalEdit
-            && !PageAccessService::canEditPage(
-                $siteId,
-                $parentId,
-                $currentUserId
-            )
-        ) {
-            sb_json_error(
-                'PARENT_PAGE_EDIT_ACCESS_DENIED',
-                403
-            );
-        }
-    } elseif (!$hasGlobalEdit) {
-        sb_json_error(
-            'MOVE_PAGE_TO_ROOT_ACCESS_DENIED',
-            403
-        );
-    }
-
-    $page['parentId'] = $parentId;
-    $page['updatedAt'] = date('c');
-
-    $pages[$index] = sb_normalize_page_record($page);
-
-    sb_write_pages($pages);
-
-    $resultPage = sb_page_handler_add_access_info(
-        $pages[$index],
-        $siteId,
-        $currentUserId
-    );
-
-    sb_json_ok([
-        'page' => $resultPage,
-    ]);
-}
-
-/*
- * Публикация или снятие с публикации.
- */
-if ($action === 'page.setStatus') {
-    $id = (int)($_POST['id'] ?? 0);
-    $status = trim((string)($_POST['status'] ?? ''));
-
-    if ($id <= 0) {
-        sb_json_error('PAGE_ID_REQUIRED', 422);
-    }
-
-    if (!in_array($status, ['draft', 'published'], true)) {
-        sb_json_error('INVALID_STATUS', 422);
-    }
-
-    $currentUserId = sb_page_handler_current_user_id();
-    $pages = sb_read_pages();
-
-    $index = sb_page_handler_find_index_by_id($pages, $id);
-
-    if ($index < 0) {
-        sb_json_error('PAGE_NOT_FOUND', 404);
-    }
-
-    $page = $pages[$index];
-    $siteId = (int)($page['siteId'] ?? 0);
-
-    if ($siteId <= 0) {
-        sb_json_error('SITE_ID_NOT_FOUND', 422);
-    }
-
-    sb_page_handler_require_page_edit(
-        $siteId,
-        $id,
-        $currentUserId
-    );
-
-    $page['status'] = $status;
-    $page['publishedAt'] =
-        $status === 'published'
-            ? date('c')
-            : null;
-
-    $page['updatedAt'] = date('c');
-
-    $pages[$index] = sb_normalize_page_record($page);
-
-    sb_write_pages($pages);
-
-    $resultPage = sb_page_handler_add_access_info(
-        $pages[$index],
-        $siteId,
-        $currentUserId
-    );
-
-    sb_json_ok([
-        'page' => $resultPage,
-    ]);
-}
-
-/*
- * Перемещение страницы вверх или вниз.
- */
-if ($action === 'page.move') {
-    $id = (int)($_POST['id'] ?? 0);
-    $dir = trim((string)($_POST['dir'] ?? ''));
-
-    if ($id <= 0) {
-        sb_json_error('PAGE_ID_REQUIRED', 422);
-    }
-
-    if (!in_array($dir, ['up', 'down'], true)) {
-        sb_json_error('INVALID_DIR', 422);
-    }
-
-    $currentUserId = sb_page_handler_current_user_id();
-    $pages = sb_read_pages();
-
-    $page = sb_page_handler_find_by_id($pages, $id);
-
-    if (!$page) {
-        sb_json_error('PAGE_NOT_FOUND', 404);
-    }
-
-    $siteId = (int)($page['siteId'] ?? 0);
-    $parentId = (int)($page['parentId'] ?? 0);
-
-    if ($siteId <= 0) {
-        sb_json_error('SITE_ID_NOT_FOUND', 422);
-    }
-
-    sb_page_handler_require_page_edit(
-        $siteId,
-        $id,
-        $currentUserId
-    );
-
-    $hasGlobalEdit = sb_page_handler_has_global_edit(
-        $siteId,
-        $currentUserId
-    );
-
-    $siblings = [];
-
-    foreach ($pages as $index => $sibling) {
-        if (
-            (int)($sibling['siteId'] ?? 0) === $siteId
-            && (int)($sibling['parentId'] ?? 0) === $parentId
-        ) {
-            $siblings[] = [
-                'index' => $index,
-                'row' => $sibling,
-            ];
-        }
-    }
-
-    usort($siblings, static function ($a, $b) {
-        $sortCompare =
-            (int)($a['row']['sort'] ?? 500)
-            <=>
-            (int)($b['row']['sort'] ?? 500);
-
-        if ($sortCompare !== 0) {
-            return $sortCompare;
-        }
-
-        return
-            (int)($a['row']['id'] ?? 0)
-            <=>
-            (int)($b['row']['id'] ?? 0);
-    });
-
-    $position = null;
-
-    for ($i = 0; $i < count($siblings); $i++) {
-        if (
-            (int)($siblings[$i]['row']['id'] ?? 0) === $id
-        ) {
-            $position = $i;
-            break;
-        }
-    }
-
-    if ($position === null) {
-        sb_json_error(
-            'PAGE_NOT_FOUND_IN_SIBLINGS',
-            404
-        );
-    }
-
-    $swapPosition =
-        $dir === 'up'
-            ? $position - 1
-            : $position + 1;
-
-    if (!isset($siblings[$swapPosition])) {
-        sb_json_ok([
-            'moved' => false,
-        ]);
-    }
-
-    $targetPageId = (int)(
-        $siblings[$swapPosition]['row']['id'] ?? 0
-    );
-
-    /*
-     * Меняется сортировка сразу двух страниц.
-     * Поэтому нужны права и на соседнюю страницу.
-     */
-    if (
-        !$hasGlobalEdit
-        && !PageAccessService::canEditPage(
-            $siteId,
-            $targetPageId,
-            $currentUserId
-        )
-    ) {
-        sb_json_error(
-            'TARGET_PAGE_EDIT_ACCESS_DENIED',
-            403,
-            [
-                'pageId' => $targetPageId,
-            ]
-        );
-    }
-
-    $firstIndex = $siblings[$position]['index'];
-    $secondIndex = $siblings[$swapPosition]['index'];
-
-    $firstSort = (int)($pages[$firstIndex]['sort'] ?? 500);
-    $secondSort = (int)($pages[$secondIndex]['sort'] ?? 500);
-
-    $pages[$firstIndex]['sort'] = $secondSort;
-    $pages[$firstIndex]['updatedAt'] = date('c');
-
-    $pages[$secondIndex]['sort'] = $firstSort;
-    $pages[$secondIndex]['updatedAt'] = date('c');
-
-    $pages[$firstIndex] = sb_normalize_page_record(
-        $pages[$firstIndex]
-    );
-
-    $pages[$secondIndex] = sb_normalize_page_record(
-        $pages[$secondIndex]
-    );
-
-    sb_write_pages($pages);
-
-    sb_json_ok([
-        'moved' => true,
-    ]);
-}
-
-/*
- * Удаление страницы и всех подстраниц.
- */
-if ($action === 'page.delete') {
-    $id = (int)($_POST['id'] ?? 0);
-
-    if ($id <= 0) {
-        sb_json_error('PAGE_ID_REQUIRED', 422);
-    }
-
-    $currentUserId = sb_page_handler_current_user_id();
-    $pages = sb_read_pages();
-
-    $page = sb_page_handler_find_by_id($pages, $id);
-
-    if (!$page) {
-        sb_json_error('PAGE_NOT_FOUND', 404);
-    }
-
-    $siteId = (int)($page['siteId'] ?? 0);
-
-    if ($siteId <= 0) {
-        sb_json_error('SITE_ID_NOT_FOUND', 422);
-    }
-
-    $idsToDelete = [
-        $id => true,
-    ];
-
-    $changed = true;
-    $safety = 0;
-
-    while ($changed && $safety < 1000) {
-        $changed = false;
-
-        foreach ($pages as $childPage) {
-            $childId = (int)($childPage['id'] ?? 0);
-            $parentId = (int)($childPage['parentId'] ?? 0);
-
-            if (
-                $childId > 0
-                && !isset($idsToDelete[$childId])
-                && isset($idsToDelete[$parentId])
-            ) {
-                $idsToDelete[$childId] = true;
-                $changed = true;
-            }
-        }
-
-        $safety++;
-    }
-
-    $hasGlobalEdit = sb_page_handler_has_global_edit(
-        $siteId,
-        $currentUserId
-    );
-
-    /*
-     * При удалении ветки проверяем права на каждую страницу,
-     * потому что удалятся также все дочерние страницы.
-     */
-    if (!$hasGlobalEdit) {
-        foreach (array_keys($idsToDelete) as $deletePageId) {
-            if (
-                !PageAccessService::canEditPage(
-                    $siteId,
-                    (int)$deletePageId,
-                    $currentUserId
-                )
-            ) {
-                sb_json_error(
-                    'CHILD_PAGE_EDIT_ACCESS_DENIED',
-                    403,
-                    [
-                        'pageId' => (int)$deletePageId,
-                    ]
-                );
-            }
-        }
-    }
-
-    $pages = array_values(array_filter(
-        $pages,
-        static function ($page) use ($idsToDelete) {
-            return !isset(
-                $idsToDelete[(int)($page['id'] ?? 0)]
-            );
-        }
-    ));
-
-    sb_write_pages($pages);
-
-    $blocks = sb_read_blocks();
-
-    $blocks = array_values(array_filter(
-        $blocks,
-        static function ($block) use ($idsToDelete) {
-            return !isset(
-                $idsToDelete[(int)($block['pageId'] ?? 0)]
-            );
-        }
-    ));
-
-    sb_write_blocks($blocks);
-
-    /*
-     * Удаляем правила доступа удалённых страниц.
-     */
-    sb_page_handler_delete_access_rows(
-        $siteId,
-        array_keys($idsToDelete)
-    );
-
-    sb_json_ok([
-        'deleted' => true,
-        'deletedPageIds' => array_map(
-            'intval',
-            array_keys($idsToDelete)
-        ),
-    ]);
-}
-
-/*
- * Копирование страницы и её блоков.
- */
-if ($action === 'page.duplicate') {
-    $id = (int)($_POST['id'] ?? 0);
-
-    if ($id <= 0) {
-        sb_json_error('PAGE_ID_REQUIRED', 422);
-    }
-
-    $currentUserId = sb_page_handler_current_user_id();
-    $pages = sb_read_pages();
-
-    $source = sb_page_handler_find_by_id($pages, $id);
-
-    if (!$source) {
-        sb_json_error('PAGE_NOT_FOUND', 404);
-    }
-
-    $siteId = (int)($source['siteId'] ?? 0);
-
-    if ($siteId <= 0) {
-        sb_json_error('SITE_ID_NOT_FOUND', 422);
-    }
-
-    sb_page_handler_require_page_edit(
-        $siteId,
-        $id,
-        $currentUserId
-    );
-
-    $hasGlobalEdit = sb_page_handler_has_global_edit(
-        $siteId,
-        $currentUserId
-    );
-
-    $newId = sb_next_id($pages, 'id');
-    $maxSort = 0;
-
-    foreach ($pages as $page) {
-        if (
-            (int)($page['siteId'] ?? 0) === $siteId
-            && (int)($page['parentId'] ?? 0)
-                === (int)($source['parentId'] ?? 0)
-        ) {
-            $maxSort = max(
-                $maxSort,
-                (int)($page['sort'] ?? 0)
-            );
-        }
-    }
-
-    $copy = sb_normalize_page_record([
-        'id' => $newId,
-        'siteId' => $siteId,
-        'title' => (string)($source['title'] ?? '')
-            . ' (копия)',
-        'slug' => sb_slugify(
-            (string)($source['slug'] ?? 'page')
-            . '-'
-            . $newId
-        ),
-        'parentId' => (int)($source['parentId'] ?? 0),
-        'sort' => $maxSort > 0
-            ? $maxSort + 10
-            : (int)($source['sort'] ?? 10) + 10,
-        'status' => 'draft',
-        'publishedAt' => null,
-        'createdAt' => date('c'),
-        'updatedAt' => date('c'),
-    ]);
-
-    $pages[] = $copy;
-
-    sb_write_pages($pages);
-
-    $blocks = sb_read_blocks();
-
-    $sourceBlocks = array_values(array_filter(
-        $blocks,
-        static function ($block) use ($id) {
-            return (int)($block['pageId'] ?? 0) === $id;
-        }
-    ));
-
-    foreach ($sourceBlocks as $sourceBlock) {
-        $newBlockId = sb_next_id($blocks, 'id');
-
-        $newBlock = sb_normalize_block_record([
-            'id' => $newBlockId,
-            'pageId' => $newId,
-            'type' => (string)($sourceBlock['type'] ?? 'text'),
-            'sort' => (int)($sourceBlock['sort'] ?? 500),
-            'content' => is_array(
-                $sourceBlock['content'] ?? null
-            )
-                ? $sourceBlock['content']
-                : [],
-            'props' => is_array(
-                $sourceBlock['props'] ?? null
-            )
-                ? $sourceBlock['props']
-                : [],
-            'createdAt' => date('c'),
-            'updatedAt' => date('c'),
-        ]);
-
-        $blocks[] = $newBlock;
-    }
-
-    sb_write_blocks($blocks);
-
-    /*
-     * Пользователю с доступом только к отдельной странице
-     * выдаём прямое право на созданную копию.
-     */
-    if (!$hasGlobalEdit) {
-        sb_page_handler_grant_creator_access(
-            $siteId,
-            $newId,
-            $currentUserId
-        );
-    }
-
-    $copy = sb_page_handler_add_access_info(
-        $copy,
-        $siteId,
-        $currentUserId
-    );
-
-    sb_json_ok([
-        'page' => $copy,
-    ]);
-}
-
-sb_json_error('NOT_MOVED_YET', 501, [
-    'handler' => 'page',
-    'action' => $action,
-]);
-
-Теперь обработчик работает так:
-
-глобальный VIEWER видит все страницы сайта;
-
-пользователь только с правом страницы видит разрешённую ветку;
-
-родитель недоступной страницы передаётся с navigationOnly: true;
-
-изменение, публикация, копирование и удаление требуют page.edit;
-
-при удалении ветки проверяются права на все дочерние страницы;
-
-правила удалённых страниц очищаются из sitebuilder.page_access;
-
-корневые страницы может создавать только глобальный редактор;
-
-пользователь с доступом к ветке может создавать дочерние страницы;
-
-новая страница или копия автоматически остаётся доступной её создателю.
-
-
-После замены войди под пользователем 99 и открой сайт 13. В списке должна отображаться страница 14 и её доступные дочерние страницы.
+Теперь глобальный VIEWER с индивидуальными правами будет ограничен таблицей page_access.
