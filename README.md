@@ -1,66 +1,3 @@
-(async function () {
-  const sessidResponse = await fetch(
-    '/local/sitebuilder/api/get_sessid.php',
-    {
-      credentials: 'same-origin',
-      cache: 'no-store'
-    }
-  );
-
-  const sessidData = await sessidResponse.json();
-
-  if (!sessidData.ok || !sessidData.sessid) {
-    throw new Error('Не удалось получить sessid');
-  }
-
-  const siteId = Number(prompt('Введите siteId'));
-  const pageId = Number(prompt('Введите pageId'));
-  const userId = Number(prompt('Введите ID пользователя'));
-
-  const fd = new FormData();
-
-  fd.append('action', 'pageAccess.save');
-  fd.append('sessid', sessidData.sessid);
-  fd.append('siteId', String(siteId));
-  fd.append('pageId', String(pageId));
-  fd.append('accessCode', 'U' + userId);
-  fd.append('canView', '1');
-  fd.append('canEdit', '1');
-  fd.append('includeChildren', '1');
-
-  const response = await fetch(
-    '/local/sitebuilder/api/index.php',
-    {
-      method: 'POST',
-      body: fd,
-      credentials: 'same-origin',
-      cache: 'no-store'
-    }
-  );
-
-  const text = await response.text();
-
-  let data;
-
-  try {
-    data = JSON.parse(text);
-  } catch (error) {
-    data = {
-      ok: false,
-      error: 'Ответ сервера не является JSON',
-      raw: text
-    };
-  }
-
-  const result = {
-    httpStatus: response.status,
-    ...data
-  };
-
-  console.log('ИТОГ ПРОВЕРКИ:', result);
-
-  return result;
-})();
 Promise {<pending>}
 [[Prototype]]
 : 
@@ -71,3 +8,62 @@ Promise
 [[PromiseResult]]
 : 
 Object
+data
+: 
+item
+: 
+{id: 1, siteId: 13, pageId: 14, accessCode: 'U99', canView: true, …}
+[[Prototype]]
+: 
+Object
+httpStatus
+: 
+200
+ok
+: 
+true
+[[Prototype]]
+: 
+Object
+constructor
+: 
+ƒ Object()
+hasOwnProperty
+: 
+ƒ hasOwnProperty()
+isPrototypeOf
+: 
+ƒ isPrototypeOf()
+propertyIsEnumerable
+: 
+ƒ propertyIsEnumerable()
+toLocaleString
+: 
+ƒ toLocaleString()
+toString
+: 
+ƒ toString()
+valueOf
+: 
+ƒ valueOf()
+__defineGetter__
+: 
+ƒ __defineGetter__()
+__defineSetter__
+: 
+ƒ __defineSetter__()
+__lookupGetter__
+: 
+ƒ __lookupGetter__()
+__lookupSetter__
+: 
+ƒ __lookupSetter__()
+__proto__
+: 
+(...)
+get __proto__
+: 
+ƒ __proto__()
+set __proto__
+: 
+ƒ __proto__()
