@@ -1,229 +1,112 @@
-var config = window.SB_EDITOR_CONFIG || {};
+Теперь по коду можно сказать точно.
 
-var BASE_PATH = config.basePath || '';
+20-pages.js и 00-core.js работают правильно. Менять их не нужно.
+
+Функция api() отправляет запрос строго по адресу из:
+
 var API_URL = config.apiUrl || (BASE_PATH + '/api.php');
-var siteId = Number(config.siteId || 0);
-var IS_BITRIX_ADMIN = !!config.isBitrixAdmin;
 
-var state = {
-    site: null,
-    pages: [],
-    currentPageId: 0,
-    blocks: [],
-    currentBlockId: 0,
-    pageSections: [],
-    currentSectionId: 0,
-    currentColumn: 1,
-    draggedBlockId: 0,
-    accessItems: [],
-    userSearchResults: [],
-    selectedAccessUser: null,
-    userSearchTimer: null
+А config.apiUrl задаётся в editor.php. Сейчас там указан другой адрес:
+
+apiUrl: '<?= CUtil::JSEscape($basePath) ?>/api.php',
+
+При этом рабочий API, который ты уже проверил, находится по адресу:
+
+/local/sitebuilder/api/index.php
+
+Что изменить
+
+В самом низу файла:
+
+/local/sitebuilder/editor.php
+
+найди:
+
+<script>
+window.SB_EDITOR_CONFIG = {
+    basePath: '<?= CUtil::JSEscape($basePath) ?>',
+    apiUrl: '<?= CUtil::JSEscape($basePath) ?>/api.php',
+    siteId: <?= (int)$siteId ?>,
+    isBitrixAdmin: <?= $USER->IsAdmin() ? 'true' : 'false' ?>,
+    sessid: '<?= CUtil::JSEscape(bitrix_sessid()) ?>'
 };
+</script>
 
-var output = document.getElementById('output') || document.getElementById('outputFallback');
-var pagesList = document.getElementById('pagesList');
-var blocksList = document.getElementById('blocksList');
-var newPageParentId = document.getElementById('newPageParentId');
+Замени только строку apiUrl:
 
-function print(data) {
-    if (!output) return;
+<script>
+window.SB_EDITOR_CONFIG = {
+    basePath: '<?= CUtil::JSEscape($basePath) ?>',
+    apiUrl: '<?= CUtil::JSEscape($basePath) ?>/api/index.php',
+    siteId: <?= (int)$siteId ?>,
+    isBitrixAdmin: <?= $USER->IsAdmin() ? 'true' : 'false' ?>,
+    sessid: '<?= CUtil::JSEscape(bitrix_sessid()) ?>'
+};
+</script>
 
-    try {
-        output.textContent = typeof data === 'string' ? data : JSON.stringify(data, null, 2);
-    } catch (e) {
-        output.textContent = String(data);
-    }
+То есть:
+
+/api.php
+
+заменяется на:
+
+/api/index.php
+
+Что не менять
+
+В 20-pages.js оставить:
+
+state.pages = Array.isArray(res.pages) ? res.pages : [];
+
+и:
+
+state.blocks = Array.isArray(res.blocks) ? res.blocks : [];
+
+Они полностью соответствуют фактическому ответу API.
+
+В 00-core.js также ничего менять не нужно. После исправления конфигурации эта строка:
+
+var API_URL = config.apiUrl || (BASE_PATH + '/api.php');
+
+получит адрес /local/sitebuilder/api/index.php из window.SB_EDITOR_CONFIG.
+
+Проверка после изменения
+
+Обнови редактор через Ctrl + F5, затем выполни в консоли:
+
+console.log({
+    configApiUrl: window.SB_EDITOR_CONFIG.apiUrl,
+    actualApiUrl: API_URL,
+    siteId: siteId
+});
+
+Должно получиться:
+
+{
+    configApiUrl: "/local/sitebuilder/api/index.php",
+    actualApiUrl: "/local/sitebuilder/api/index.php",
+    siteId: 13
 }
 
-function escapeHtml(value) {
-    return String(value == null ? '' : value)
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;')
-        .replace(/"/g, '&quot;')
-        .replace(/'/g, '&#039;');
-}
+Затем выполни:
 
-function userAvatarHtml(user, className) {
-    user = user || {};
-    className = className || '';
+loadPages().then(function () {
+    console.log('Страницы:', state.pages);
+});
 
-    var avatar = user.avatarUrl || user.avatar || user.photoUrl || user.userAvatarUrl || '';
-    var title = user.title || user.name || user.userName || '';
-    var initials = 'U';
+Должны появиться две страницы:
 
-    if (title) {
-        var parts = String(title).trim().split(/\s+/).filter(Boolean);
+Диск
+Тест
 
-        if (parts.length === 1) {
-            initials = parts[0].substring(0, 1).toUpperCase();
-        } else if (parts.length >= 2) {
-            initials = (parts[0].substring(0, 1) + parts[1].substring(0, 1)).toUpperCase();
-        }
-    }
+После этого:
 
-    var size = '32px';
+state.currentPageId = 31;
 
-    if (className.indexOf('selected') !== -1) {
-        size = '42px';
-    }
+loadBlocks().then(function () {
+    console.log('Блоки:', state.blocks);
+});
 
-    var wrapStyle = [
-        'width:' + size,
-        'height:' + size,
-        'min-width:' + size,
-        'max-width:' + size,
-        'min-height:' + size,
-        'max-height:' + size,
-        'border-radius:50%',
-        'overflow:hidden',
-        'display:flex',
-        'align-items:center',
-        'justify-content:center',
-        'background:#eef2ff',
-        'color:#3730a3',
-        'font-size:11px',
-        'font-weight:700',
-        'line-height:1'
-    ].join(';');
+Должны загрузиться блоки 80 и 81.
 
-    if (avatar) {
-        return ''
-            + '<div class="' + className + '" style="' + wrapStyle + '">'
-            + '  <img src="' + escapeHtml(avatar) + '" alt="" style="width:' + size + ';height:' + size + ';min-width:' + size + ';max-width:' + size + ';min-height:' + size + ';max-height:' + size + ';object-fit:cover;display:block;">'
-            + '</div>';
-    }
-
-    return ''
-        + '<div class="' + className + '" style="' + wrapStyle + '">'
-        + escapeHtml(initials)
-        + '</div>';
-}
-
-function getSessid() {
-    if (window.BX && typeof BX.bitrix_sessid === 'function') {
-        return BX.bitrix_sessid();
-    }
-
-    return config.sessid || '';
-}
-
-function api(action, data) {
-    return new Promise(function (resolve, reject) {
-        BX.ajax({
-            url: API_URL,
-            method: 'POST',
-            dataType: 'json',
-            timeout: 60,
-            data: Object.assign({
-                action: action,
-                sessid: getSessid()
-            }, data || {}),
-            onsuccess: function (res) {
-                print(res);
-
-                if (res && res.ok) {
-                    resolve(res);
-                } else {
-                    reject(res || {error: 'UNKNOWN'});
-                }
-            },
-            onfailure: function (err) {
-                print({
-                    ok: false,
-                    error: 'AJAX_ERROR',
-                    detail: err
-                });
-
-                reject(err);
-            }
-        });
-    });
-}
-
-function apiData(res) {
-    return res && res.data ? res.data : res;
-}
-
-function getInputValue(id) {
-    var el = document.getElementById(id);
-    return el ? String(el.value || '') : '';
-}
-
-function getChecked(id) {
-    var el = document.getElementById(id);
-    return !!(el && el.checked);
-}
-
-function getCurrentPage() {
-    return state.pages.find(function (page) {
-        return Number(page.id || 0) === state.currentPageId;
-    }) || null;
-}
-
-function getCurrentBlock() {
-    return state.blocks.find(function (block) {
-        return Number(block.id || 0) === state.currentBlockId;
-    }) || null;
-}
-
-function getBlockSectionId(block) {
-    block = block || {};
-
-    var props = block.props || {};
-    var placement = props._placement || {};
-
-    return Number(
-        block.sectionId ||
-        props.sectionId ||
-        placement.sectionId ||
-        0
-    );
-}
-
-function getBlockColumn(block) {
-    block = block || {};
-
-    var props = block.props || {};
-    var placement = props._placement || {};
-
-    return Number(
-        block.column ||
-        props.column ||
-        placement.column ||
-        1
-    );
-}
-
-function pageHasChildren(pageId) {
-    return state.pages.some(function (page) {
-        return Number(page.parentId || 0) === Number(pageId || 0);
-    });
-}
-
-function buildPageTree(pages, parentId, depth, result) {
-    result = result || [];
-    depth = depth || 0;
-
-    var branch = pages
-        .filter(function (page) {
-            return Number(page.parentId || 0) === Number(parentId || 0);
-        })
-        .sort(function (a, b) {
-            var sortCmp = Number(a.sort || 0) - Number(b.sort || 0);
-            if (sortCmp !== 0) return sortCmp;
-            return Number(a.id || 0) - Number(b.id || 0);
-        });
-
-    branch.forEach(function (page) {
-        result.push({
-            page: page,
-            depth: depth
-        });
-
-        buildPageTree(pages, Number(page.id || 0), depth + 1, result);
-    });
-
-    return result;
-}
+Единственное, чего нельзя подтвердить по присланному коду: существует ли отдельный файл /local/sitebuilder/api.php, который перенаправляет запросы в /api/index.php. Но поскольку проверенный рабочий endpoint — /api/index.php, редактор сейчас нужно направить именно на него.
