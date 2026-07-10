@@ -1,130 +1,328 @@
-Миграция прошла нормально, но есть важный момент:
+Как я понял при разработке мы добавляли таблицы, но в дальнейшем некоторые из них не использовали вообще
 
-[page_access] => page_access
-[access] => access
+TABLES IN SCHEMA sitebuilder:
 
-— эти таблицы есть.
+Array
+(
+    [0] => Array
+        (
+            [table_schema] => sitebuilder
+            [table_name] => access
+        )
 
-А вот:
+    [1] => Array
+        (
+            [table_schema] => sitebuilder
+            [table_name] => block
+        )
 
-[pages] =>
+    [2] => Array
+        (
+            [table_schema] => sitebuilder
+            [table_name] => layout
+        )
 
-значит таблицы:
+    [3] => Array
+        (
+            [table_schema] => sitebuilder
+            [table_name] => menu
+        )
 
-sitebuilder.pages
+    [4] => Array
+        (
+            [table_schema] => sitebuilder
+            [table_name] => page
+        )
 
-нет. Поэтому дальше PageAccessRepository::getPageAndParentIds() может упасть, потому что я заложил название sitebuilder.pages, а у тебя таблица страниц, видимо, называется по-другому.
+    [5] => Array
+        (
+            [table_schema] => sitebuilder
+            [table_name] => page_access
+        )
 
-Нужно найти реальное название таблицы страниц.
+    [6] => Array
+        (
+            [table_schema] => sitebuilder
+            [table_name] => site
+        )
 
+    [7] => Array
+        (
+            [table_schema] => sitebuilder
+            [table_name] => site_section
+        )
 
----
+    [8] => Array
+        (
+            [table_schema] => sitebuilder
+            [table_name] => sitebuilder_block
+        )
 
-1. Создай временный диагностический файл
+    [9] => Array
+        (
+            [table_schema] => sitebuilder
+            [table_name] => sitebuilder_disk_file
+        )
 
-Файл:
+    [10] => Array
+        (
+            [table_schema] => sitebuilder
+            [table_name] => sitebuilder_disk_folder
+        )
 
-/local/sitebuilder/migrations/check_sitebuilder_tables.php
+    [11] => Array
+        (
+            [table_schema] => sitebuilder
+            [table_name] => sitebuilder_disk_permission
+        )
 
-Код:
+    [12] => Array
+        (
+            [table_schema] => sitebuilder
+            [table_name] => sitebuilder_disk_settings
+        )
 
-<?php
+    [13] => Array
+        (
+            [table_schema] => sitebuilder
+            [table_name] => sitebuilder_page
+        )
 
-require_once $_SERVER['DOCUMENT_ROOT'] . '/bitrix/modules/main/include/prolog_before.php';
-require_once $_SERVER['DOCUMENT_ROOT'] . '/local/sitebuilder/lib/db.php';
+    [14] => Array
+        (
+            [table_schema] => sitebuilder
+            [table_name] => sitebuilder_site
+        )
 
-global $USER;
+    [15] => Array
+        (
+            [table_schema] => sitebuilder
+            [table_name] => sitebuilder_site_disk
+        )
 
-if (!is_object($USER) || !$USER->IsAdmin()) {
-    die('ACCESS_DENIED');
-}
+    [16] => Array
+        (
+            [table_schema] => sitebuilder
+            [table_name] => sitebuilder_site_user_access
+        )
 
-$pdo = sb_db();
-
-echo '<pre>';
-
-echo "TABLES IN SCHEMA sitebuilder:\n\n";
-
-$stmt = $pdo->query("
-    SELECT table_schema, table_name
-    FROM information_schema.tables
-    WHERE table_schema = 'sitebuilder'
-    ORDER BY table_name
-");
-
-$tables = $stmt->fetchAll(PDO::FETCH_ASSOC);
-
-print_r($tables);
-
-echo "\n\nCOLUMNS:\n\n";
-
-$stmt = $pdo->query("
-    SELECT table_schema, table_name, column_name, data_type
-    FROM information_schema.columns
-    WHERE table_schema = 'sitebuilder'
-    ORDER BY table_name, ordinal_position
-");
-
-$columns = $stmt->fetchAll(PDO::FETCH_ASSOC);
-
-$currentTable = '';
-
-foreach ($columns as $column) {
-    $table = $column['table_name'];
-
-    if ($table !== $currentTable) {
-        $currentTable = $table;
-        echo "\n--- {$table} ---\n";
-    }
-
-    echo $column['column_name'] . ' : ' . $column['data_type'] . "\n";
-}
-
-echo '</pre>';
-
-Открой:
-
-/local/sitebuilder/migrations/check_sitebuilder_tables.php
-
-И пришли вывод, особенно список таблиц и таблицу, где есть поля примерно:
-
-id
-site_id
-parent_id
-title / name
-slug
-
-
----
-
-2. Почему это нужно
-
-Для прав на подстраницы нам обязательно надо знать родителя страницы:
-
-page_id → parent_id → parent_id → ...
-
-Сейчас код ищет это здесь:
-
-FROM sitebuilder.pages
-WHERE site_id = :site_id
-  AND id = :page_id
-
-Но у тебя таблица страниц называется иначе. Например может быть:
-
-sitebuilder.site_pages
-sitebuilder.page
-sitebuilder.pages_json
-sitebuilder.sb_pages
-
-Нужно подставить правильное название.
+)
 
 
----
+COLUMNS:
 
-3. Пока можно проверить pageAccess.save
 
-Если ты запускаешь тест под админом Битрикса, pageAccess.save уже может пройти, потому что админ обходится без проверки sitebuilder.pages.
+--- access ---
+id : bigint
+site_id : bigint
+access_code : character varying
+role : character varying
+created_by : bigint
+created_at : timestamp without time zone
+updated_by : bigint
+updated_at : timestamp without time zone
 
-Попробуй ещё раз консольный тест выдачи прав. Если вернётся ok: true, значит таблица page_access работает.
+--- block ---
+id : bigint
+page_id : bigint
+type : character varying
+sort : integer
+content_json : jsonb
+props_json : jsonb
+created_by : bigint
+created_at : timestamp without time zone
+updated_by : bigint
+updated_at : timestamp without time zone
 
-Но перед подключением прав к дереву страниц всё равно надо найти реальную таблицу страниц.
+--- layout ---
+site_id : bigint
+settings_json : jsonb
+zones_json : jsonb
+created_by : bigint
+created_at : timestamp without time zone
+updated_by : bigint
+updated_at : timestamp without time zone
+
+--- menu ---
+id : bigint
+site_id : bigint
+name : character varying
+items_json : jsonb
+created_by : bigint
+created_at : timestamp without time zone
+updated_by : bigint
+updated_at : timestamp without time zone
+
+--- page ---
+id : bigint
+site_id : bigint
+title : character varying
+slug : character varying
+parent_id : bigint
+sort : integer
+status : character varying
+published_at : timestamp without time zone
+created_by : bigint
+created_at : timestamp without time zone
+updated_by : bigint
+updated_at : timestamp without time zone
+
+--- page_access ---
+id : bigint
+site_id : bigint
+page_id : bigint
+access_code : character varying
+can_view : boolean
+can_edit : boolean
+include_children : boolean
+created_by : bigint
+created_at : timestamp without time zone
+updated_at : timestamp without time zone
+
+--- site ---
+id : bigint
+name : character varying
+slug : character varying
+home_page_id : bigint
+disk_folder_id : bigint
+top_menu_id : bigint
+settings_json : jsonb
+layout_json : jsonb
+created_by : bigint
+created_at : timestamp without time zone
+updated_by : bigint
+updated_at : timestamp without time zone
+bitrix_group_id : integer
+bitrix_group_created_by : integer
+bitrix_group_created_at : timestamp without time zone
+section_id : bigint
+
+--- site_section ---
+id : bigint
+name : character varying
+sort : integer
+created_by : integer
+created_at : timestamp without time zone
+updated_by : integer
+updated_at : timestamp without time zone
+
+--- sitebuilder_block ---
+id : bigint
+site_id : bigint
+page_id : bigint
+type : character varying
+sort : integer
+settings_json : text
+is_active : smallint
+created_by : bigint
+created_at : timestamp without time zone
+updated_at : timestamp without time zone
+
+--- sitebuilder_disk_file ---
+id : bigint
+external_id : bigint
+folder_id : bigint
+site_id : bigint
+block_id : bigint
+name : character varying
+original_name : character varying
+extension : character varying
+mime_type : character varying
+size : bigint
+path : text
+hash : character varying
+is_deleted : smallint
+created_by : bigint
+created_at : timestamp without time zone
+updated_at : timestamp without time zone
+download_url : text
+preview_url : text
+
+--- sitebuilder_disk_folder ---
+id : bigint
+external_id : bigint
+parent_id : bigint
+site_id : bigint
+block_id : bigint
+name : character varying
+path : text
+depth : integer
+is_deleted : smallint
+created_by : bigint
+created_at : timestamp without time zone
+updated_at : timestamp without time zone
+
+--- sitebuilder_disk_permission ---
+id : bigint
+site_id : bigint
+block_id : bigint
+folder_id : bigint
+subject_type : character varying
+subject_id : character varying
+can_view : smallint
+can_upload : smallint
+can_create_folder : smallint
+can_rename : smallint
+can_delete : smallint
+can_download : smallint
+can_manage_access : smallint
+can_edit_settings : smallint
+created_at : timestamp without time zone
+
+--- sitebuilder_disk_settings ---
+id : bigint
+block_id : bigint
+site_id : bigint
+page_id : bigint
+title : character varying
+root_folder_id : bigint
+view_mode : character varying
+allow_upload : smallint
+allow_create_folder : smallint
+allow_rename : smallint
+allow_delete : smallint
+allow_download : smallint
+show_search : smallint
+show_breadcrumbs : smallint
+default_sort : character varying
+default_sort_direction : character varying
+allowed_extensions_json : text
+max_file_size : bigint
+permission_mode : character varying
+use_site_root_fallback : smallint
+created_by : bigint
+created_at : timestamp without time zone
+updated_at : timestamp without time zone
+
+--- sitebuilder_page ---
+id : bigint
+site_id : bigint
+title : character varying
+slug : character varying
+sort : integer
+created_at : timestamp without time zone
+updated_at : timestamp without time zone
+
+--- sitebuilder_site ---
+id : bigint
+name : character varying
+code : character varying
+root_disk_folder_id : bigint
+settings_json : text
+created_at : timestamp without time zone
+updated_at : timestamp without time zone
+
+--- sitebuilder_site_disk ---
+site_id : bigint
+root_folder_id : bigint
+storage_type : character varying
+created_at : timestamp without time zone
+updated_at : timestamp without time zone
+
+--- sitebuilder_site_user_access ---
+id : bigint
+site_id : bigint
+user_id : bigint
+role_code : character varying
+created_at : timestamp without time zone
+updated_at : timestamp without time zone
