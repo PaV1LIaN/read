@@ -1,19 +1,3 @@
-Отлично, индекс создан правильно:
-
-uq_page_access_site_page_code
-(site_id, page_id, access_code)
-
-Теперь ошибка ON CONFLICT устранена.
-
-Результат:
-
-PromiseState: fulfilled
-PromiseResult: undefined
-
-сам по себе не показывает ответ API — функция просто ничего не возвращает. Нужно повторно выполнить тест после создания индекса.
-
-Вставь этот сокращённый вариант. Он вернёт итог прямо в результат Promise:
-
 (async function () {
   const sessidResponse = await fetch(
     '/local/sitebuilder/api/get_sessid.php',
@@ -77,22 +61,13 @@ PromiseResult: undefined
 
   return result;
 })();
-
-Теперь при успехе в консоли будет:
-
-ИТОГ ПРОВЕРКИ:
-{
-    httpStatus: 200,
-    ok: true,
-    data: {
-        item: ...
-    }
-}
-
-Существующий индекс:
-
-page_access_page_id_access_code_key
-
-пока не удаляй. Он дублирует часть новой проверки, но работе не мешает. После успешного теста можно удалить временный файл:
-
-/local/sitebuilder/migrations/fix_page_access_unique.php
+Promise {<pending>}
+[[Prototype]]
+: 
+Promise
+[[PromiseState]]
+: 
+"fulfilled"
+[[PromiseResult]]
+: 
+Object
