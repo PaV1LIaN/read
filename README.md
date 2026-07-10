@@ -1,12 +1,3 @@
-OK: migration completed through /local/sitebuilder/lib/db.php
-
-Array
-(
-    [page_access] => page_access
-    [page] => 
-    [access] => access
-)
-
 (async function () {
   const siteId = Number(prompt('siteId'));
   const pageId = Number(prompt('pageId'));
@@ -30,20 +21,15 @@ Array
 
   console.log(await res.json());
 })();
-
-Если всё нормально, должен вернуться:
-
-{
-  "ok": true,
-  "data": {
-    "item": {
-      "siteId": 1,
-      "pageId": 1,
-      "accessCode": "U99",
-      "canView": true,
-      "canEdit": true,
-      "includeChildren": true
-    }
-  }
-}
-VM13:25 Uncaught SyntaxError: Unexpected identifier 'всё'
+Promise {<rejected>: ReferenceError: BX is not defined
+    at <anonymous>:9:23
+    at <anonymous>:23:3}
+[[Prototype]]
+: 
+Promise
+[[PromiseState]]
+: 
+"rejected"
+[[PromiseResult]]
+: 
+ReferenceError: BX is not defined at <anonymous>:9:23 at <anonymous>:23:3
