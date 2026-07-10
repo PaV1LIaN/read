@@ -1,136 +1,135 @@
-Дальше идём по такому порядку.
+<?php
 
-1. Проверить синтаксис изменённых файлов
+global $USER;
 
-На сервере выполни:
+if ($action === 'file.list') {
+    $siteId = (int)($_POST['siteId'] ?? 0);
+    if ($siteId <= 0) {
+        sb_json_error('SITE_ID_REQUIRED', 422);
+    }
 
-php -l /srv/bx/docroot/local/sitebuilder/lib/PageAccessRepository.php
-php -l /srv/bx/docroot/local/sitebuilder/api/handlers/page_access.php
-php -l /srv/bx/docroot/local/sitebuilder/api/handlers/page.php
-php -l /srv/bx/docroot/local/sitebuilder/api/handlers/site.php
-php -l /srv/bx/docroot/local/sitebuilder/api/handlers/block.php
-php -l /srv/bx/docroot/local/sitebuilder/editor.php
+    sb_require_viewer($siteId);
 
-Везде должно быть:
+    try {
+        $folder = sb_disk_ensure_site_folder($siteId);
+        $children = sb_disk_get_children($folder);
 
-No syntax errors detected
+        $files = [];
+        foreach ($children as $child) {
+            if (!$child instanceof \Bitrix\Disk\File) {
+                continue;
+            }
 
-2. Проверить уникальный индекс
+            $files[] = [
+                'id' => (int)$child->getId(),
+                'name' => (string)$child->getName(),
+                'size' => (int)$child->getSize(),
+                'createTime' => method_exists($child, 'getCreateTime') && $child->getCreateTime()
+                    ? $child->getCreateTime()->format('c')
+                    : '',
+                'updateTime' => method_exists($child, 'getUpdateTime') && $child->getUpdateTime()
+                    ? $child->getUpdateTime()->format('c')
+                    : '',
+                'downloadUrl' => sb_disk_file_download_url($child),
+            ];
+        }
 
-В PostgreSQL выполни:
+        usort($files, static function ($a, $b) {
+            return strcmp((string)$a['name'], (string)$b['name']);
+        });
 
-CREATE UNIQUE INDEX IF NOT EXISTS uq_page_access_site_page_code
-ON sitebuilder.page_access (
-    site_id,
-    page_id,
-    access_code
-);
+        sb_json_ok([
+            'files' => $files,
+            'folderId' => (int)$folder->getId(),
+        ]);
+    } catch (Throwable $e) {
+        sb_json_error('DISK_ERROR', 500, [
+            'message' => $e->getMessage(),
+        ]);
+    }
+}
 
-Проверить существование:
+if ($action === 'file.upload') {
+    $siteId = (int)($_POST['siteId'] ?? 0);
+    if ($siteId <= 0) {
+        sb_json_error('SITE_ID_REQUIRED', 422);
+    }
 
-SELECT
-    indexname,
-    indexdef
-FROM pg_indexes
-WHERE schemaname = 'sitebuilder'
-  AND tablename = 'page_access';
+    sb_require_editor($siteId);
 
-3. Проверить права на блоки
+    if (empty($_FILES['file']) || !is_array($_FILES['file'])) {
+        sb_json_error('FILE_REQUIRED', 422);
+    }
 
-Нужны тестовые пользователи либо временная смена ролей.
+    $upload = $_FILES['file'];
 
-Глобальный VIEWER
+    if ((int)($upload['error'] ?? UPLOAD_ERR_NO_FILE) !== UPLOAD_ERR_OK) {
+        sb_json_error('UPLOAD_ERROR', 422, [
+            'phpUploadError' => (int)($upload['error'] ?? UPLOAD_ERR_NO_FILE),
+        ]);
+    }
 
-Должен:
+    if (!is_uploaded_file((string)($upload['tmp_name'] ?? ''))) {
+        sb_json_error('BAD_UPLOADED_FILE', 422);
+    }
 
-видеть все страницы;
+    try {
+        $folder = sb_disk_ensure_site_folder($siteId);
+        $file = sb_disk_upload_file_to_folder($folder, $upload);
 
-получать block.list;
+        sb_json_ok([
+            'file' => [
+                'id' => (int)$file->getId(),
+                'name' => (string)$file->getName(),
+                'size' => (int)$file->getSize(),
+                'downloadUrl' => sb_disk_file_download_url($file),
+            ],
+            'folderId' => (int)$folder->getId(),
+        ]);
+    } catch (Throwable $e) {
+        sb_json_error('DISK_ERROR', 500, [
+            'message' => $e->getMessage(),
+        ]);
+    }
+}
 
-не создавать блок;
+if ($action === 'file.delete') {
+    $siteId = (int)($_POST['siteId'] ?? 0);
+    $fileId = (int)($_POST['fileId'] ?? 0);
 
-не изменять блок;
+    if ($siteId <= 0) {
+        sb_json_error('SITE_ID_REQUIRED', 422);
+    }
+    if ($fileId <= 0) {
+        sb_json_error('FILE_ID_REQUIRED', 422);
+    }
 
-не удалять блок.
+    sb_require_editor($siteId);
 
+    try {
+        if (!sb_disk_file_belongs_to_site($siteId, $fileId)) {
+            sb_json_error('FILE_NOT_IN_SITE', 422);
+        }
 
-Глобальный EDITOR
+        $file = sb_disk_load_file_by_id($fileId);
+        if (!$file) {
+            sb_json_error('FILE_NOT_FOUND', 404);
+        }
 
-Должен:
+        $ok = sb_disk_delete_file($file);
+        if (!$ok) {
+            sb_json_error('DELETE_FAILED', 500);
+        }
 
-видеть все страницы;
+        sb_json_ok();
+    } catch (Throwable $e) {
+        sb_json_error('DISK_ERROR', 500, [
+            'message' => $e->getMessage(),
+        ]);
+    }
+}
 
-создавать и изменять блоки на всех страницах.
-
-
-Пользователь только с page.view
-
-Должен:
-
-видеть разрешённую страницу;
-
-получать блоки разрешённой страницы;
-
-получать 403 PAGE_VIEW_ACCESS_DENIED на другой странице;
-
-получать 403 PAGE_EDIT_ACCESS_DENIED при попытке изменить блок.
-
-
-Пользователь только с page.edit
-
-Должен:
-
-открыть редактор;
-
-видеть разрешённую страницу и родителей navigationOnly;
-
-создавать, изменять, перемещать и удалять блоки разрешённой страницы;
-
-получать отказ на остальных страницах.
-
-
-Проверка наследования
-
-Выдать право родительской странице:
-
-canView = true
-canEdit = true
-includeChildren = true
-
-Пользователь должен получить редактирование всех дочерних страниц.
-
-4. Следующий этап — права Диска
-
-Сейчас page.edit защищает изменение самого блока Диска, например его заголовок и настройки. Но операции с файлами пока требуют отдельной проверки:
-
-просмотр списка файлов;
-
-скачивание;
-
-загрузка;
-
-создание папки;
-
-переименование;
-
-удаление.
-
-
-Следующим пришли полный файл:
-
-/local/sitebuilder/api/handlers/file.php
-
-В нём добавим основу для:
-
-disk.view
-disk.edit
-
-На первом этапе:
-
-disk.view
-→ список файлов, открытие и скачивание
-
-disk.edit
-→ disk.view + загрузка, папки, переименование и удаление
-
-При этом настройки блока allowUpload, allowDelete, allowRename и остальные продолжат работать как дополнительное ограничение.
+sb_json_error('NOT_MOVED_YET', 501, [
+    'handler' => 'file',
+    'action' => $action,
+]);
