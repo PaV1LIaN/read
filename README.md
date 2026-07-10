@@ -1,120 +1,135 @@
-Ошибка теперь точная:
+(async function () {
+  try {
+    const sessidResponse = await fetch(
+      '/local/sitebuilder/api/get_sessid.php',
+      {
+        method: 'GET',
+        credentials: 'same-origin',
+        cache: 'no-store'
+      }
+    );
 
-SQLSTATE[42P10]
-нет уникального ограничения, соответствующего ON CONFLICT
+    const sessidText = await sessidResponse.text();
 
-В PageAccessRepository.php используется:
+    console.log('1. HTTP get_sessid:', sessidResponse.status);
+    console.log('2. Ответ get_sessid:', sessidText);
 
-ON CONFLICT (site_id, page_id, access_code)
+    let sessidData;
 
-Но в существующей таблице sitebuilder.page_access нет уникального индекса на эти три поля.
-
-CREATE TABLE IF NOT EXISTS не изменяет уже существующую таблицу, поэтому ограничение не добавилось.
-
-Создай исправляющую миграцию
-
-Файл:
-
-/local/sitebuilder/migrations/fix_page_access_unique.php
-
-Полный код:
-
-<?php
-
-require_once $_SERVER['DOCUMENT_ROOT'] . '/bitrix/modules/main/include/prolog_before.php';
-require_once $_SERVER['DOCUMENT_ROOT'] . '/local/sitebuilder/lib/db.php';
-
-global $USER;
-
-if (!is_object($USER) || !$USER->IsAdmin()) {
-    http_response_code(403);
-    die('ACCESS_DENIED');
-}
-
-header('Content-Type: text/plain; charset=UTF-8');
-
-try {
-    $pdo = sb_db();
-
-    $pdo->beginTransaction();
-
-    /*
-     * На случай, если уже появились повторяющиеся записи:
-     * оставляем запись с самым большим ID.
-     */
-    $pdo->exec("
-        DELETE FROM sitebuilder.page_access AS old_row
-        USING sitebuilder.page_access AS new_row
-        WHERE old_row.site_id = new_row.site_id
-          AND old_row.page_id = new_row.page_id
-          AND old_row.access_code = new_row.access_code
-          AND old_row.id < new_row.id
-    ");
-
-    /*
-     * Уникальный индекс нужен для:
-     *
-     * ON CONFLICT (site_id, page_id, access_code)
-     */
-    $pdo->exec("
-        CREATE UNIQUE INDEX IF NOT EXISTS uq_page_access_site_page_code
-        ON sitebuilder.page_access (
-            site_id,
-            page_id,
-            access_code
-        )
-    ");
-
-    $pdo->commit();
-
-    echo "OK: unique index created\n\n";
-
-    $stmt = $pdo->query("
-        SELECT
-            indexname,
-            indexdef
-        FROM pg_indexes
-        WHERE schemaname = 'sitebuilder'
-          AND tablename = 'page_access'
-        ORDER BY indexname
-    ");
-
-    $indexes = $stmt->fetchAll(PDO::FETCH_ASSOC);
-
-    print_r($indexes);
-} catch (Throwable $e) {
-    if (isset($pdo) && $pdo->inTransaction()) {
-        $pdo->rollBack();
+    try {
+      sessidData = JSON.parse(sessidText);
+    } catch (error) {
+      console.error('get_sessid.php вернул не JSON');
+      return;
     }
 
-    http_response_code(500);
+    if (!sessidData.ok || !sessidData.sessid) {
+      console.error('Не удалось получить sessid:', sessidData);
+      return;
+    }
 
-    echo "ERROR:\n";
-    echo $e->getMessage() . "\n";
-    echo $e->getFile() . ':' . $e->getLine();
-}
+    const siteId = Number(prompt('Введите siteId'));
+    const pageId = Number(prompt('Введите pageId'));
+    const userId = Number(prompt('Введите ID пользователя'));
 
-Открой:
+    if (siteId <= 0 || pageId <= 0 || userId <= 0) {
+      console.error('siteId, pageId и userId должны быть больше нуля');
+      return;
+    }
 
-https://portal24.itsnn.ru/local/sitebuilder/migrations/fix_page_access_unique.php
+    const fd = new FormData();
 
-Должен появиться индекс примерно такого вида:
+    fd.append('action', 'pageAccess.save');
+    fd.append('sessid', sessidData.sessid);
+    fd.append('siteId', String(siteId));
+    fd.append('pageId', String(pageId));
+    fd.append('accessCode', 'U' + userId);
+    fd.append('canView', '1');
+    fd.append('canEdit', '1');
+    fd.append('includeChildren', '1');
 
-[indexname] => uq_page_access_site_page_code
+    const response = await fetch(
+      '/local/sitebuilder/api/index.php',
+      {
+        method: 'POST',
+        body: fd,
+        credentials: 'same-origin',
+        cache: 'no-store'
+      }
+    );
 
-и определение:
+    const responseText = await response.text();
 
-CREATE UNIQUE INDEX uq_page_access_site_page_code
-ON sitebuilder.page_access
-USING btree (site_id, page_id, access_code)
+    console.log('3. HTTP pageAccess.save:', response.status);
+    console.log('4. Ответ pageAccess.save:', responseText);
 
-После этого снова выполни тот же консольный тест pageAccess.save.
+    try {
+      const result = JSON.parse(responseText);
+      console.log('5. JSON:', result);
 
-Ожидаемый результат:
+      if (result.ok) {
+        console.log('УСПЕШНО: право сохранено');
+      } else {
+        console.error('ОШИБКА API:', result);
+      }
+    } catch (error) {
+      console.error('pageAccess.save вернул не JSON');
+    }
+  } catch (error) {
+    console.error('Ошибка выполнения запроса:', error);
+  }
+})();
+Promise {<pending>}
+[[Prototype]]
+: 
+Promise
+[[PromiseState]]
+: 
+"fulfilled"
+[[PromiseResult]]
+: 
+undefined
 
-3. HTTP pageAccess.save: 200
-УСПЕШНО: право сохранено
 
-После успешного запуска удали временный файл:
 
-/local/sitebuilder/migrations/fix_page_access_unique.php
+OK: unique index created
+
+Array
+(
+    [0] => Array
+        (
+            [indexname] => ix_page_access_access_code
+            [indexdef] => CREATE INDEX ix_page_access_access_code ON sitebuilder.page_access USING btree (access_code)
+        )
+
+    [1] => Array
+        (
+            [indexname] => ix_page_access_page_id
+            [indexdef] => CREATE INDEX ix_page_access_page_id ON sitebuilder.page_access USING btree (page_id)
+        )
+
+    [2] => Array
+        (
+            [indexname] => ix_page_access_site_id
+            [indexdef] => CREATE INDEX ix_page_access_site_id ON sitebuilder.page_access USING btree (site_id)
+        )
+
+    [3] => Array
+        (
+            [indexname] => page_access_page_id_access_code_key
+            [indexdef] => CREATE UNIQUE INDEX page_access_page_id_access_code_key ON sitebuilder.page_access USING btree (page_id, access_code)
+        )
+
+    [4] => Array
+        (
+            [indexname] => page_access_pkey
+            [indexdef] => CREATE UNIQUE INDEX page_access_pkey ON sitebuilder.page_access USING btree (id)
+        )
+
+    [5] => Array
+        (
+            [indexname] => uq_page_access_site_page_code
+            [indexdef] => CREATE UNIQUE INDEX uq_page_access_site_page_code ON sitebuilder.page_access USING btree (site_id, page_id, access_code)
+        )
+
+)
