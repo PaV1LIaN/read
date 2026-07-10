@@ -1,28 +1,31 @@
-Проверка прошла успешно. Сейчас подтверждено:
+<?php
+require $_SERVER['DOCUMENT_ROOT'] . '/bitrix/modules/main/include/prolog_before.php';
 
-выбрана страница 31;
+header('Content-Type: text/html; charset=UTF-8');
 
-заголовок на полотне — «Тест»;
+$basePath = rtrim(str_replace($_SERVER['DOCUMENT_ROOT'], '', __DIR__), '/');
+$siteId = (int)($_GET['siteId'] ?? 0);
+$pageId = isset($_GET['pageId']) ? (int)$_GET['pageId'] : null;
 
-активный пункт слева — 31;
+require_once __DIR__ . '/lib/public_render.php';
 
-загружены блоки страницы: 80 и 81;
+$vm = $siteId > 0 ? sb_public_build_view_model($siteId, $pageId, $basePath) : null;
 
-переключение страниц работает;
+if (!$vm) {
+    ?>
+    <!doctype html>
+    <html lang="ru">
+    <head>
+        <meta charset="UTF-8">
+        <title>SiteBuilder / Public</title>
+    </head>
+    <body style="font-family:Arial,sans-serif;padding:24px;">
+        <h1>Сайт не найден</h1>
+        <p><a href="<?= sb_public_h($basePath) ?>/index.php">К списку сайтов</a></p>
+    </body>
+    </html>
+    <?php
+    exit;
+}
 
-повторного возврата на страницу 14 нет.
-
-
-Причина прежнего результата с «Диск» была не в коде переключения: проверка была выполнена, когда активной оставалась страница 14.
-
-Изменения нужны только в /local/sitebuilder/editor.php:
-
-apiUrl: '<?= CUtil::JSEscape($basePath) ?>/api/index.php',
-
-Файлы оставляем без изменений:
-
-/local/sitebuilder/assets/admin/editor/00-core.js
-/local/sitebuilder/assets/admin/editor/20-pages.js
-/local/sitebuilder/assets/admin/editor/60-events.js
-
-Теперь обнови страницу редактора через Ctrl + F5, чтобы убрать временный диагностический перехват currentPageId. После обновления проверь обычным кликом переключение между «Диск» и «Тест» — оно должно работать без консольных команд.
+include __DIR__ . '/views/layout/public_page.php';
