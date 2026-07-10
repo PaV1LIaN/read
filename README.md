@@ -1,298 +1,229 @@
-20-pages.js
+var config = window.SB_EDITOR_CONFIG || {};
 
-async function loadSite() {
-    var res = await api('site.get', {
-        siteId: siteId
-    });
+var BASE_PATH = config.basePath || '';
+var API_URL = config.apiUrl || (BASE_PATH + '/api.php');
+var siteId = Number(config.siteId || 0);
+var IS_BITRIX_ADMIN = !!config.isBitrixAdmin;
 
-    state.site = res.site || null;
+var state = {
+    site: null,
+    pages: [],
+    currentPageId: 0,
+    blocks: [],
+    currentBlockId: 0,
+    pageSections: [],
+    currentSectionId: 0,
+    currentColumn: 1,
+    draggedBlockId: 0,
+    accessItems: [],
+    userSearchResults: [],
+    selectedAccessUser: null,
+    userSearchTimer: null
+};
+
+var output = document.getElementById('output') || document.getElementById('outputFallback');
+var pagesList = document.getElementById('pagesList');
+var blocksList = document.getElementById('blocksList');
+var newPageParentId = document.getElementById('newPageParentId');
+
+function print(data) {
+    if (!output) return;
+
+    try {
+        output.textContent = typeof data === 'string' ? data : JSON.stringify(data, null, 2);
+    } catch (e) {
+        output.textContent = String(data);
+    }
 }
 
-async function loadPages() {
-    var res = await api('page.list', {
-        siteId: siteId
-    });
-
-    state.pages = Array.isArray(res.pages) ? res.pages : [];
-
-    if (!state.currentPageId && state.pages.length) {
-        state.currentPageId = Number(state.pages[0].id || 0);
-    }
-
-    fillParentOptions();
-    renderPages();
-    fillPageForm();
-    updateCanvasHeader();
+function escapeHtml(value) {
+    return String(value == null ? '' : value)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#039;');
 }
 
-async function loadBlocks() {
-    if (!state.currentPageId) {
-        state.blocks = [];
-        state.currentBlockId = 0;
-        state.pageSections = [];
-        state.currentSectionId = 0;
-        state.currentColumn = 1;
-        renderPageSectionsPanel();
-        renderBlocks();
-        fillBlockForm();
-        return;
+function userAvatarHtml(user, className) {
+    user = user || {};
+    className = className || '';
+
+    var avatar = user.avatarUrl || user.avatar || user.photoUrl || user.userAvatarUrl || '';
+    var title = user.title || user.name || user.userName || '';
+    var initials = 'U';
+
+    if (title) {
+        var parts = String(title).trim().split(/\s+/).filter(Boolean);
+
+        if (parts.length === 1) {
+            initials = parts[0].substring(0, 1).toUpperCase();
+        } else if (parts.length >= 2) {
+            initials = (parts[0].substring(0, 1) + parts[1].substring(0, 1)).toUpperCase();
+        }
     }
 
-    await loadPageSections();
+    var size = '32px';
 
-    var res = await api('block.list', {
-        pageId: state.currentPageId
+    if (className.indexOf('selected') !== -1) {
+        size = '42px';
+    }
+
+    var wrapStyle = [
+        'width:' + size,
+        'height:' + size,
+        'min-width:' + size,
+        'max-width:' + size,
+        'min-height:' + size,
+        'max-height:' + size,
+        'border-radius:50%',
+        'overflow:hidden',
+        'display:flex',
+        'align-items:center',
+        'justify-content:center',
+        'background:#eef2ff',
+        'color:#3730a3',
+        'font-size:11px',
+        'font-weight:700',
+        'line-height:1'
+    ].join(';');
+
+    if (avatar) {
+        return ''
+            + '<div class="' + className + '" style="' + wrapStyle + '">'
+            + '  <img src="' + escapeHtml(avatar) + '" alt="" style="width:' + size + ';height:' + size + ';min-width:' + size + ';max-width:' + size + ';min-height:' + size + ';max-height:' + size + ';object-fit:cover;display:block;">'
+            + '</div>';
+    }
+
+    return ''
+        + '<div class="' + className + '" style="' + wrapStyle + '">'
+        + escapeHtml(initials)
+        + '</div>';
+}
+
+function getSessid() {
+    if (window.BX && typeof BX.bitrix_sessid === 'function') {
+        return BX.bitrix_sessid();
+    }
+
+    return config.sessid || '';
+}
+
+function api(action, data) {
+    return new Promise(function (resolve, reject) {
+        BX.ajax({
+            url: API_URL,
+            method: 'POST',
+            dataType: 'json',
+            timeout: 60,
+            data: Object.assign({
+                action: action,
+                sessid: getSessid()
+            }, data || {}),
+            onsuccess: function (res) {
+                print(res);
+
+                if (res && res.ok) {
+                    resolve(res);
+                } else {
+                    reject(res || {error: 'UNKNOWN'});
+                }
+            },
+            onfailure: function (err) {
+                print({
+                    ok: false,
+                    error: 'AJAX_ERROR',
+                    detail: err
+                });
+
+                reject(err);
+            }
+        });
     });
+}
 
-    state.blocks = Array.isArray(res.blocks) ? res.blocks : [];
+function apiData(res) {
+    return res && res.data ? res.data : res;
+}
 
-    await ensureUnsectionedBlocksAssigned();
+function getInputValue(id) {
+    var el = document.getElementById(id);
+    return el ? String(el.value || '') : '';
+}
 
-    if (state.currentBlockId) {
-        var exists = state.blocks.some(function (b) {
-            return Number(b.id || 0) === state.currentBlockId;
+function getChecked(id) {
+    var el = document.getElementById(id);
+    return !!(el && el.checked);
+}
+
+function getCurrentPage() {
+    return state.pages.find(function (page) {
+        return Number(page.id || 0) === state.currentPageId;
+    }) || null;
+}
+
+function getCurrentBlock() {
+    return state.blocks.find(function (block) {
+        return Number(block.id || 0) === state.currentBlockId;
+    }) || null;
+}
+
+function getBlockSectionId(block) {
+    block = block || {};
+
+    var props = block.props || {};
+    var placement = props._placement || {};
+
+    return Number(
+        block.sectionId ||
+        props.sectionId ||
+        placement.sectionId ||
+        0
+    );
+}
+
+function getBlockColumn(block) {
+    block = block || {};
+
+    var props = block.props || {};
+    var placement = props._placement || {};
+
+    return Number(
+        block.column ||
+        props.column ||
+        placement.column ||
+        1
+    );
+}
+
+function pageHasChildren(pageId) {
+    return state.pages.some(function (page) {
+        return Number(page.parentId || 0) === Number(pageId || 0);
+    });
+}
+
+function buildPageTree(pages, parentId, depth, result) {
+    result = result || [];
+    depth = depth || 0;
+
+    var branch = pages
+        .filter(function (page) {
+            return Number(page.parentId || 0) === Number(parentId || 0);
+        })
+        .sort(function (a, b) {
+            var sortCmp = Number(a.sort || 0) - Number(b.sort || 0);
+            if (sortCmp !== 0) return sortCmp;
+            return Number(a.id || 0) - Number(b.id || 0);
         });
 
-        if (!exists) {
-            state.currentBlockId = 0;
-        }
-    }
+    branch.forEach(function (page) {
+        result.push({
+            page: page,
+            depth: depth
+        });
 
-    renderBlocks();
-    fillBlockForm();
-    updateCanvasHeader();
-}
-
-function fillParentOptions() {
-    if (!newPageParentId) {
-        return;
-    }
-
-    var currentValue = String(newPageParentId.value || '0');
-    var html = '<option value="0">Без родителя</option>';
-
-    state.pages.forEach(function (page) {
-        html += '<option value="' + Number(page.id || 0) + '">' + escapeHtml(page.title || ('Страница #' + page.id)) + '</option>';
+        buildPageTree(pages, Number(page.id || 0), depth + 1, result);
     });
 
-    newPageParentId.innerHTML = html;
-    newPageParentId.value = currentValue;
-}
-
-function fillPageParentEditorOptions() {
-    var select = document.getElementById('pageParentInput');
-    if (!select) return;
-
-    var currentPageId = Number(state.currentPageId || 0);
-    var currentValue = String(select.value || '0');
-
-    var html = '<option value="0">Без родителя</option>';
-
-    state.pages.forEach(function (page) {
-        var id = Number(page.id || 0);
-
-        if (id === currentPageId) {
-            return;
-        }
-
-        html += '<option value="' + id + '">' + escapeHtml(page.title || ('Страница #' + id)) + '</option>';
-    });
-
-    select.innerHTML = html;
-
-    if (currentValue && select.querySelector('option[value="' + currentValue + '"]')) {
-        select.value = currentValue;
-    }
-}
-
-function renderPages() {
-    if (!pagesList) {
-        return;
-    }
-
-    if (!state.pages.length) {
-        pagesList.innerHTML = '<div class="sb-empty">Страниц пока нет</div>';
-        return;
-    }
-
-    var tree = buildPageTree(state.pages, 0, 0, []);
-
-    pagesList.innerHTML = tree.map(function (item) {
-        var page = item.page;
-        var depth = item.depth;
-        var active = Number(page.id || 0) === state.currentPageId ? ' is-active' : '';
-        var hasChildren = pageHasChildren(page.id);
-        var status = String(page.status || 'draft');
-
-        return ''
-            + '<div class="sb-editor-page-item' + active + '" data-page-id="' + Number(page.id || 0) + '" style="margin-left:' + (depth * 18) + 'px;">'
-            + '  <div class="sb-editor-page-top">'
-            + '      <div>'
-            + '          <h3 class="sb-editor-page-title">' + escapeHtml(page.title || '') + '</h3>'
-            + '          <div class="sb-editor-page-meta">'
-            +               '<span class="sb-editor-chip">' + escapeHtml(page.slug || '') + '</span>'
-            +               '<span class="sb-editor-chip ' + (status === 'published' ? 'sb-editor-chip--green' : 'sb-editor-chip--yellow') + '">' + escapeHtml(status) + '</span>'
-            +               (hasChildren ? '<span class="sb-editor-chip sb-editor-chip--blue">section</span>' : '')
-            + '          </div>'
-            + '      </div>'
-            + '  </div>'
-            + '</div>';
-    }).join('');
-}
-
-function updateCanvasHeader() {
-    var page = getCurrentPage();
-    var pageTitle = document.getElementById('canvasPageTitle');
-    var pageMeta = document.getElementById('canvasPageMeta');
-    var previewHeading = document.getElementById('pagePreviewHeading');
-
-    if (!page) {
-        if (pageTitle) {
-            pageTitle.textContent = 'Страница';
-        }
-
-        if (pageMeta) {
-            pageMeta.textContent = 'Выберите страницу слева';
-        }
-
-        if (previewHeading) {
-            previewHeading.textContent = 'Выберите страницу';
-        }
-
-        return;
-    }
-
-    if (pageTitle) {
-        pageTitle.textContent = page.title || 'Страница';
-    }
-
-    if (pageMeta) {
-        pageMeta.textContent = 'slug: ' + (page.slug || '') + ' · статус: ' + (page.status || 'draft') + ' · блоков: ' + state.blocks.length;
-    }
-
-    if (previewHeading) {
-        previewHeading.textContent = page.title || 'Страница';
-    }
-}
-
-function fillPageForm() {
-    var page = getCurrentPage();
-
-    fillPageParentEditorOptions();
-
-    var titleInput = document.getElementById('pageTitleInput');
-    var slugInput = document.getElementById('pageSlugInput');
-    var statusInput = document.getElementById('pageStatusInput');
-    var parentSelect = document.getElementById('pageParentInput');
-
-    if (titleInput) {
-        titleInput.value = page ? (page.title || '') : '';
-    }
-
-    if (slugInput) {
-        slugInput.value = page ? (page.slug || '') : '';
-    }
-
-    if (statusInput) {
-        statusInput.value = page ? (page.status || 'draft') : 'draft';
-    }
-
-    if (parentSelect) {
-        parentSelect.value = page ? String(page.parentId || 0) : '0';
-    }
-}
-
-async function createPage() {
-    var title = getInputValue('newPageTitle').trim();
-    var slug = getInputValue('newPageSlug').trim();
-    var parentId = Number(getInputValue('newPageParentId') || 0);
-
-    if (!title) {
-        alert('Введите название страницы');
-
-        var titleInput = document.getElementById('newPageTitle');
-        if (titleInput) {
-            titleInput.focus();
-        }
-
-        return;
-    }
-
-    await api('page.create', {
-        siteId: siteId,
-        title: title,
-        slug: slug,
-        parentId: parentId
-    });
-
-    var newTitleInput = document.getElementById('newPageTitle');
-    var newSlugInput = document.getElementById('newPageSlug');
-    var newParentInput = document.getElementById('newPageParentId');
-
-    if (newTitleInput) {
-        newTitleInput.value = '';
-    }
-
-    if (newSlugInput) {
-        newSlugInput.value = '';
-    }
-
-    if (newParentInput) {
-        newParentInput.value = '0';
-    }
-
-    await loadPages();
-    await loadBlocks();
-}
-
-async function savePage() {
-    if (!state.currentPageId) return;
-
-    var parentId = Number(getInputValue('pageParentInput') || 0);
-
-    await api('page.updateMeta', {
-        id: state.currentPageId,
-        title: getInputValue('pageTitleInput').trim(),
-        slug: getInputValue('pageSlugInput').trim(),
-        parentId: parentId
-    });
-
-    await api('page.setStatus', {
-        id: state.currentPageId,
-        status: getInputValue('pageStatusInput')
-    });
-
-    await loadPages();
-    await loadBlocks();
-}
-
-async function deletePage() {
-    if (!state.currentPageId) return;
-    if (!confirm('Удалить страницу? Дочерние страницы и блоки этой страницы тоже будут удалены.')) return;
-
-    var idToDelete = state.currentPageId;
-
-    await api('page.delete', {
-        id: idToDelete
-    });
-
-    if (state.currentPageId === idToDelete) {
-        state.currentPageId = 0;
-        state.currentSectionId = 0;
-        state.currentColumn = 1;
-    }
-
-    await loadPages();
-    await loadBlocks();
-}
-
-async function movePage(dir) {
-    if (!state.currentPageId) return;
-
-    await api('page.move', {
-        id: state.currentPageId,
-        dir: dir
-    });
-
-    await loadPages();
+    return result;
 }
