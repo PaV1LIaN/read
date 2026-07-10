@@ -1,604 +1,332 @@
-Полный файл /local/sitebuilder/views/layout/public_page.php в исходном виде:
-
 <?php
-/** @var array $vm */
 
-$site = $vm['site'];
-$pages = $vm['pages'];
-$currentPage = $vm['currentPage'];
-$pageBlocks = $vm['pageBlocks'];
-$layout = $vm['layout'];
-$menu = $vm['menu'];
-$basePath = $vm['basePath'];
-$siteId = (int)$vm['siteId'];
+require_once __DIR__ . '/json.php';
+require_once __DIR__ . '/response.php';
 
-if (!function_exists('sb_public_appearance_file_url')) {
-    function sb_public_appearance_file_url(int $fileId): string
+if (!function_exists('sb_user_access_code')) {
+    function sb_user_access_code(): string
     {
-        if ($fileId <= 0 || !class_exists('CFile')) {
-            return '';
-        }
+        global $USER;
 
-        return (string)CFile::GetPath($fileId);
+        return 'U' . (int)$USER->GetID();
     }
 }
 
-if (!function_exists('sb_public_appearance_color')) {
-    function sb_public_appearance_color(string $color, string $fallback): string
+if (!function_exists('sb_get_role')) {
+    function sb_get_role(int $siteId, string $accessCode): ?string
     {
-        $color = trim($color);
+        $siteId = (int)$siteId;
+        $accessCode = trim((string)$accessCode);
 
-        if (preg_match('/^#[0-9a-fA-F]{6}$/', $color) || preg_match('/^#[0-9a-fA-F]{3}$/', $color)) {
-            return strtolower($color);
+        if ($siteId <= 0 || $accessCode === '') {
+            return null;
         }
 
-        return $fallback;
+        $directRole = sb_get_role_from_access_table($siteId, $accessCode);
+
+        if ($directRole !== null && $directRole !== '') {
+            return $directRole;
+        }
+
+        return sb_get_role_from_bitrix_group($siteId, $accessCode);
     }
 }
 
-if (!function_exists('sb_public_appearance_background_size')) {
-    function sb_public_appearance_background_size(string $mode): string
+if (!function_exists('sb_get_role_from_access_table')) {
+    function sb_get_role_from_access_table(int $siteId, string $accessCode): ?string
     {
-        switch ($mode) {
-            case 'contain':
-                return 'contain';
+        $access = sb_read_access();
 
-            case 'auto':
-                return 'auto';
+        foreach ($access as $row) {
+            if (
+                (int)($row['siteId'] ?? 0) === $siteId
+                && (string)($row['accessCode'] ?? '') === $accessCode
+            ) {
+                $role = trim((string)($row['role'] ?? ''));
 
-            case 'stretch':
-                return '100% 100%';
+                return $role !== '' ? $role : null;
+            }
+        }
 
-            case 'cover':
+        return null;
+    }
+}
+
+if (!function_exists('sb_get_role_from_bitrix_group')) {
+    function sb_get_role_from_bitrix_group(int $siteId, string $accessCode): ?string
+    {
+        static $cache = [];
+
+        $siteId = (int)$siteId;
+        $accessCode = trim((string)$accessCode);
+
+        if ($siteId <= 0 || $accessCode === '') {
+            return null;
+        }
+
+        if (!preg_match('/^U(\d+)$/', $accessCode, $m)) {
+            return null;
+        }
+
+        $userId = (int)$m[1];
+
+        if ($userId <= 0) {
+            return null;
+        }
+
+        $cacheKey = $siteId . ':' . $userId;
+
+        if (array_key_exists($cacheKey, $cache)) {
+            return $cache[$cacheKey];
+        }
+
+        $bitrixGroupId = sb_get_site_bitrix_group_id_for_access($siteId);
+
+        if ($bitrixGroupId <= 0) {
+            $cache[$cacheKey] = null;
+            return null;
+        }
+
+        if (!class_exists('\Bitrix\Main\Loader')) {
+            $cache[$cacheKey] = null;
+            return null;
+        }
+
+        if (!\Bitrix\Main\Loader::includeModule('socialnetwork')) {
+            $cache[$cacheKey] = null;
+            return null;
+        }
+
+        if (!class_exists('CSocNetUserToGroup')) {
+            $cache[$cacheKey] = null;
+            return null;
+        }
+
+        $rs = \CSocNetUserToGroup::GetList(
+            ['ID' => 'ASC'],
+            [
+                'GROUP_ID' => $bitrixGroupId,
+                'USER_ID' => $userId,
+            ],
+            false,
+            false,
+            [
+                'ID',
+                'USER_ID',
+                'GROUP_ID',
+                'ROLE',
+            ]
+        );
+
+        $bestRole = null;
+
+        while ($row = $rs->Fetch()) {
+            $sonetRole = (string)($row['ROLE'] ?? '');
+            $sitebuilderRole = sb_map_sonet_role_to_sitebuilder_role($sonetRole);
+
+            if ($sitebuilderRole === null) {
+                continue;
+            }
+
+            if (
+                $bestRole === null
+                || sb_role_rank($sitebuilderRole) > sb_role_rank($bestRole)
+            ) {
+                $bestRole = $sitebuilderRole;
+            }
+        }
+
+        $cache[$cacheKey] = $bestRole;
+
+        return $bestRole;
+    }
+}
+
+if (!function_exists('sb_get_site_bitrix_group_id_for_access')) {
+    function sb_get_site_bitrix_group_id_for_access(int $siteId): int
+    {
+        static $cache = [];
+
+        $siteId = (int)$siteId;
+
+        if ($siteId <= 0) {
+            return 0;
+        }
+
+        if (array_key_exists($siteId, $cache)) {
+            return $cache[$siteId];
+        }
+
+        $groupId = 0;
+
+        if (function_exists('sb_find_site')) {
+            try {
+                $site = sb_find_site($siteId);
+
+                if (is_array($site)) {
+                    $groupId = (int)(
+                        $site['bitrixGroupId']
+                        ?? $site['bitrix_group_id']
+                        ?? 0
+                    );
+                }
+            } catch (Throwable $e) {
+                $groupId = 0;
+            }
+        }
+
+        if ($groupId <= 0 && function_exists('sb_db')) {
+            try {
+                $pdo = sb_db();
+
+                $st = $pdo->prepare("
+                    SELECT bitrix_group_id
+                    FROM sitebuilder.site
+                    WHERE id = :site_id
+                    LIMIT 1
+                ");
+
+                $st->execute([
+                    ':site_id' => $siteId,
+                ]);
+
+                $row = $st->fetch(PDO::FETCH_ASSOC);
+
+                if ($row) {
+                    $groupId = (int)($row['bitrix_group_id'] ?? 0);
+                }
+            } catch (Throwable $e) {
+                $groupId = 0;
+            }
+        }
+
+        $cache[$siteId] = $groupId;
+
+        return $groupId;
+    }
+}
+
+if (!function_exists('sb_map_sonet_role_to_sitebuilder_role')) {
+    function sb_map_sonet_role_to_sitebuilder_role(string $sonetRole): ?string
+    {
+        $sonetRole = trim((string)$sonetRole);
+
+        $ownerRole = defined('SONET_ROLES_OWNER') ? SONET_ROLES_OWNER : 'A';
+        $moderatorRole = defined('SONET_ROLES_MODERATOR') ? SONET_ROLES_MODERATOR : 'E';
+        $userRole = defined('SONET_ROLES_USER') ? SONET_ROLES_USER : 'K';
+
+        if ($sonetRole === $ownerRole || $sonetRole === 'A') {
+            return 'OWNER';
+        }
+
+        if ($sonetRole === $moderatorRole || $sonetRole === 'E') {
+            /*
+             * В новой матрице прав EDITOR — это не редактор конструктора,
+             * а пользователь, который может работать с файлами диска.
+             */
+            return 'EDITOR';
+        }
+
+        if ($sonetRole === $userRole || $sonetRole === 'K') {
+            return 'VIEWER';
+        }
+
+        return null;
+    }
+}
+
+if (!function_exists('sb_role_rank')) {
+    function sb_role_rank(?string $role): int
+    {
+        switch ((string)$role) {
+            case 'VIEWER':
+                return 1;
+
+            case 'EDITOR':
+                return 2;
+
+            case 'ADMIN':
+                return 3;
+
+            case 'OWNER':
+                return 4;
+
             default:
-                return 'cover';
+                return 0;
         }
     }
 }
 
-if (!function_exists('sb_public_appearance_background_position')) {
-    function sb_public_appearance_background_position(string $position): string
+if (!function_exists('sb_require_site_role')) {
+    function sb_require_site_role(int $siteId, int $minRank): void
     {
-        $allowed = [
-            'center center',
-            'top center',
-            'bottom center',
-            'left center',
-            'right center',
-        ];
+        global $USER;
 
-        return in_array($position, $allowed, true) ? $position : 'center center';
+        /*
+         * Администратор Битрикс24 имеет полный доступ ко всем сайтам конструктора.
+         */
+        if ($USER && $USER->IsAdmin()) {
+            return;
+        }
+
+        $role = sb_get_role($siteId, sb_user_access_code());
+
+        if (sb_role_rank($role) < $minRank) {
+            sb_json_error('ACCESS_DENIED', 403, [
+                'siteId' => $siteId,
+                'requiredRank' => $minRank,
+                'actualRole' => $role,
+            ]);
+        }
     }
 }
 
-if (!function_exists('sb_public_appearance_background_repeat')) {
-    function sb_public_appearance_background_repeat(string $repeat): string
+if (!function_exists('sb_require_owner')) {
+    function sb_require_owner(int $siteId): void
     {
-        $allowed = [
-            'no-repeat',
-            'repeat',
-            'repeat-x',
-            'repeat-y',
-        ];
-
-        return in_array($repeat, $allowed, true) ? $repeat : 'no-repeat';
+        sb_require_site_role($siteId, 4);
     }
 }
 
-if (!function_exists('sb_public_appearance_get')) {
-    function sb_public_appearance_get(array $site, array $vm): array
+if (!function_exists('sb_require_admin')) {
+    function sb_require_admin(int $siteId): void
     {
-        $settings = is_array($site['settings'] ?? null) ? $site['settings'] : [];
-
-        $logoFileId = (int)($settings['logoFileId'] ?? 0);
-        $backgroundFileId = (int)($settings['backgroundFileId'] ?? 0);
-
-        $headerLogoMode = (string)($settings['headerLogoMode'] ?? 'image');
-
-        if (!in_array($headerLogoMode, ['image', 'text', 'both'], true)) {
-            $headerLogoMode = 'image';
-        }
-
-        return [
-            'accent' => sb_public_appearance_color(
-                (string)($settings['accent'] ?? ($vm['accent'] ?? '#2563eb')),
-                '#2563eb'
-            ),
-
-            'logoFileId' => $logoFileId,
-            'logoUrl' => sb_public_appearance_file_url($logoFileId),
-
-            'backgroundFileId' => $backgroundFileId,
-            'backgroundUrl' => sb_public_appearance_file_url($backgroundFileId),
-
-            'backgroundColor' => sb_public_appearance_color(
-                (string)($settings['backgroundColor'] ?? '#f8fafc'),
-                '#f8fafc'
-            ),
-
-            'backgroundMode' => (string)($settings['backgroundMode'] ?? 'cover'),
-
-            'backgroundPosition' => sb_public_appearance_background_position(
-                (string)($settings['backgroundPosition'] ?? 'center center')
-            ),
-
-            'backgroundRepeat' => sb_public_appearance_background_repeat(
-                (string)($settings['backgroundRepeat'] ?? 'no-repeat')
-            ),
-
-            'headerLogoMode' => $headerLogoMode,
-
-            'logoSize' => max(24, min(160, (int)($settings['logoSize'] ?? 42))),
-        ];
+        sb_require_site_role($siteId, 3);
     }
 }
 
-if (!function_exists('sb_public_appearance_style')) {
-    function sb_public_appearance_style(array $appearance): string
+if (!function_exists('sb_require_content_manager')) {
+    function sb_require_content_manager(int $siteId): void
     {
-        $styles = [];
-
-        $styles[] = '--sb-accent: ' . sb_public_h((string)($appearance['accent'] ?? '#2563eb'));
-        $styles[] = '--sb-logo-size: ' . max(24, min(160, (int)($appearance['logoSize'] ?? 42))) . 'px';
-        $styles[] = 'background-color: ' . sb_public_h((string)($appearance['backgroundColor'] ?? '#f8fafc'));
-
-        $backgroundUrl = (string)($appearance['backgroundUrl'] ?? '');
-
-        if ($backgroundUrl !== '') {
-            $styles[] = 'background-image: url("' . sb_public_h($backgroundUrl) . '")';
-            $styles[] = 'background-size: ' . sb_public_appearance_background_size((string)($appearance['backgroundMode'] ?? 'cover'));
-            $styles[] = 'background-position: ' . sb_public_h((string)($appearance['backgroundPosition'] ?? 'center center'));
-            $styles[] = 'background-repeat: ' . sb_public_h((string)($appearance['backgroundRepeat'] ?? 'no-repeat'));
-        }
-
-        return implode('; ', $styles);
+        /*
+         * Контент сайта: страницы, блоки, меню, layout, шаблоны.
+         *
+         * Доступ только:
+         * - ADMIN сайта
+         * - OWNER сайта
+         * - администратор Битрикс24
+         *
+         * EDITOR сюда НЕ проходит.
+         * EDITOR теперь нужен только для работы с файлами диска.
+         */
+        sb_require_site_role($siteId, 3);
     }
 }
 
-if (!function_exists('sb_public_appearance_brand')) {
-    function sb_public_appearance_brand(array $site, array $appearance): string
+if (!function_exists('sb_require_editor')) {
+    function sb_require_editor(int $siteId): void
     {
-        $siteName = (string)($site['name'] ?? 'SiteBuilder');
-        $logoUrl = (string)($appearance['logoUrl'] ?? '');
-        $mode = (string)($appearance['headerLogoMode'] ?? 'image');
-
-        if (!in_array($mode, ['image', 'text', 'both'], true)) {
-            $mode = 'image';
-        }
-
-        $html = '';
-
-        if (($mode === 'image' || $mode === 'both') && $logoUrl !== '') {
-            $html .= '<span class="sb-brand__logo">';
-            $html .= '<img src="' . sb_public_h($logoUrl) . '" alt="' . sb_public_h($siteName) . '">';
-            $html .= '</span>';
-        }
-
-        if ($mode === 'text' || $mode === 'both' || $logoUrl === '') {
-            $html .= '<span class="sb-brand__text">' . sb_public_h($siteName) . '</span>';
-        }
-
-        return $html;
+        /*
+         * Оставляем старую функцию для совместимости.
+         * EDITOR = файловый редактор диска.
+         */
+        sb_require_site_role($siteId, 2);
     }
 }
 
-if (!function_exists('sb_public_auto_menu_is_page_visible')) {
-    function sb_public_auto_menu_is_page_visible(array $page, int $currentPageId = 0): bool
+if (!function_exists('sb_require_viewer')) {
+    function sb_require_viewer(int $siteId): void
     {
-        $status = (string)($page['status'] ?? 'published');
-        $pageId = (int)($page['id'] ?? 0);
-
-        if ($pageId === $currentPageId) {
-            return true;
-        }
-
-        return $status === 'published';
+        sb_require_site_role($siteId, 1);
     }
 }
-
-if (!function_exists('sb_public_auto_menu_children')) {
-    function sb_public_auto_menu_children(array $pages, int $parentId, int $currentPageId = 0): array
-    {
-        $items = [];
-
-        foreach ($pages as $page) {
-            if ((int)($page['parentId'] ?? 0) !== $parentId) {
-                continue;
-            }
-
-            if (!sb_public_auto_menu_is_page_visible($page, $currentPageId)) {
-                continue;
-            }
-
-            $items[] = $page;
-        }
-
-        usort($items, static function ($a, $b) {
-            $sortCmp = (int)($a['sort'] ?? 500) <=> (int)($b['sort'] ?? 500);
-
-            if ($sortCmp !== 0) {
-                return $sortCmp;
-            }
-
-            return (int)($a['id'] ?? 0) <=> (int)($b['id'] ?? 0);
-        });
-
-        return $items;
-    }
-}
-
-if (!function_exists('sb_public_auto_menu_has_active_child')) {
-    function sb_public_auto_menu_has_active_child(array $pages, int $pageId, int $currentPageId): bool
-    {
-        foreach ($pages as $page) {
-            if ((int)($page['parentId'] ?? 0) !== $pageId) {
-                continue;
-            }
-
-            $childId = (int)($page['id'] ?? 0);
-
-            if ($childId === $currentPageId) {
-                return true;
-            }
-
-            if (sb_public_auto_menu_has_active_child($pages, $childId, $currentPageId)) {
-                return true;
-            }
-        }
-
-        return false;
-    }
-}
-
-if (!function_exists('sb_public_render_auto_menu_level')) {
-    function sb_public_render_auto_menu_level(
-        array $pages,
-        int $parentId,
-        string $basePath,
-        int $siteId,
-        int $currentPageId,
-        int $level = 0
-    ): string {
-        $children = sb_public_auto_menu_children(
-            $pages,
-            $parentId,
-            $currentPageId
-        );
-
-        if (empty($children)) {
-            return '';
-        }
-
-        $class = $level === 0
-            ? 'sb-public-menu'
-            : 'sb-public-menu__dropdown';
-
-        $html = '<nav class="' . $class . '">';
-
-        foreach ($children as $page) {
-            $pageId = (int)($page['id'] ?? 0);
-            $title = (string)($page['title'] ?? 'Страница');
-            $url = sb_public_page_url($basePath, $siteId, $pageId);
-
-            $childHtml = '';
-            $hasChildren = false;
-
-            $isActive =
-                $pageId === $currentPageId
-                || sb_public_auto_menu_has_active_child(
-                    $pages,
-                    $pageId,
-                    $currentPageId
-                );
-
-            $html .= '<div class="sb-public-menu__item'
-                . ($hasChildren ? ' has-children' : '')
-                . ($isActive ? ' is-active' : '')
-                . '">';
-
-            $html .= '<a class="sb-public-menu__link" href="'
-                . sb_public_h($url)
-                . '">';
-
-            $html .= sb_public_h($title);
-
-            if ($hasChildren) {
-                $html .= ' <span class="sb-public-menu__arrow">▾</span>';
-            }
-
-            $html .= '</a>';
-
-            if ($hasChildren) {
-                $html .= $childHtml;
-            }
-
-            $html .= '</div>';
-        }
-
-        $html .= '</nav>';
-
-        return $html;
-    }
-}
-
-if (!function_exists('sb_public_render_auto_pages_menu')) {
-    function sb_public_render_auto_pages_menu(
-        array $pages,
-        string $basePath,
-        int $siteId,
-        int $currentPageId = 0
-    ): string {
-        return sb_public_render_auto_menu_level(
-            $pages,
-            0,
-            $basePath,
-            $siteId,
-            $currentPageId,
-            0
-        );
-    }
-}
-
-$appearance = sb_public_appearance_get($site, $vm);
-$appearanceStyle = sb_public_appearance_style($appearance);
-
-$headerBlocks = $layout['zones']['header'] ?? [];
-$footerBlocks = $layout['zones']['footer'] ?? [];
-$leftBlocks = $layout['zones']['left'] ?? [];
-$rightBlocks = $layout['zones']['right'] ?? [];
-
-$headerHtml = sb_public_render_blocks($headerBlocks, $vm);
-$footerHtml = sb_public_render_blocks($footerBlocks, $vm);
-$leftHtml = sb_public_render_blocks($leftBlocks, $vm);
-$rightHtml = sb_public_render_blocks($rightBlocks, $vm);
-
-$pageSections = is_array($vm['pageSections'] ?? null)
-    ? $vm['pageSections']
-    : [];
-
-if (empty($pageSections) && function_exists('sb_public_page_sections')) {
-    $pageSections = sb_public_page_sections(
-        $siteId,
-        (int)($currentPage['id'] ?? 0)
-    );
-}
-
-$pageHtml = function_exists('sb_public_render_page_sections')
-    ? sb_public_render_page_sections($pageSections, $pageBlocks, $vm)
-    : sb_public_render_blocks($pageBlocks, $vm);
-
-$menuHtml = sb_public_render_auto_pages_menu(
-    $pages,
-    $basePath,
-    $siteId,
-    (int)($currentPage['id'] ?? 0)
-);
-
-$pageHasDiskBlock = false;
-
-foreach ($pageBlocks as $pageBlock) {
-    if ((string)($pageBlock['type'] ?? '') === 'disk') {
-        $pageHasDiskBlock = true;
-        break;
-    }
-}
-
-if (!$pageHasDiskBlock) {
-    foreach ($headerBlocks as $layoutBlock) {
-        if ((string)($layoutBlock['type'] ?? '') === 'disk') {
-            $pageHasDiskBlock = true;
-            break;
-        }
-    }
-}
-
-if (!$pageHasDiskBlock) {
-    foreach ($footerBlocks as $layoutBlock) {
-        if ((string)($layoutBlock['type'] ?? '') === 'disk') {
-            $pageHasDiskBlock = true;
-            break;
-        }
-    }
-}
-
-if (!$pageHasDiskBlock) {
-    foreach ($leftBlocks as $layoutBlock) {
-        if ((string)($layoutBlock['type'] ?? '') === 'disk') {
-            $pageHasDiskBlock = true;
-            break;
-        }
-    }
-}
-
-if (!$pageHasDiskBlock) {
-    foreach ($rightBlocks as $layoutBlock) {
-        if ((string)($layoutBlock['type'] ?? '') === 'disk') {
-            $pageHasDiskBlock = true;
-            break;
-        }
-    }
-}
-
-$leftContentHtml = $vm['leftMode'] === 'menu' && $menuHtml !== ''
-    ? $menuHtml
-    : $leftHtml;
-
-if ($vm['leftMode'] === 'menu' && $vm['sectionNavHtml'] !== '') {
-    $leftContentHtml = $vm['sectionNavHtml'];
-}
-
-global $APPLICATION;
-
-if ($pageHasDiskBlock) {
-    \CJSCore::Init([
-        'viewer',
-        'ui.viewer',
-    ]);
-
-    if (\Bitrix\Main\Loader::includeModule('disk')) {
-        \Bitrix\Main\UI\Extension::load([
-            'disk.viewer.document-item',
-        ]);
-    }
-}
-?>
-<!doctype html>
-<html lang="ru">
-<head>
-    <meta charset="UTF-8">
-
-    <?php $APPLICATION->ShowHead(); ?>
-
-    <title><?= sb_public_h((string)($currentPage['title'] ?? $site['name'] ?? 'SiteBuilder')) ?></title>
-
-    <link rel="stylesheet" href="<?= sb_public_h($basePath) ?>/assets/public/public.css?v=9">
-
-    <?php if ($pageHasDiskBlock): ?>
-        <link rel="stylesheet" href="<?= sb_public_h($basePath) ?>/components/disk/styles.css?v=4">
-    <?php endif; ?>
-
-    <style>
-        :root {
-            --sb-accent: <?= sb_public_h($appearance['accent']) ?>;
-            --sb-container-width: <?= (int)$vm['containerWidth'] ?>px;
-            --sb-left-width: <?= (int)$vm['leftWidth'] ?>px;
-            --sb-right-width: <?= (int)$vm['rightWidth'] ?>px;
-        }
-    </style>
-</head>
-<body>
-<div class="sb-public-shell" style="<?= sb_public_h($appearanceStyle) ?>">
-    <?php if ($vm['showHeader']): ?>
-        <header class="sb-public-header">
-            <div class="sb-container sb-header-container">
-                <div class="sb-header-brand-row">
-                    <div class="sb-brand">
-                        <?= sb_public_appearance_brand($site, $appearance) ?>
-                    </div>
-
-                    <?php if ($headerHtml !== ''): ?>
-                        <div class="sb-header-custom">
-                            <?= $headerHtml ?>
-                        </div>
-                    <?php endif; ?>
-                </div>
-
-                <?php if ($menuHtml !== ''): ?>
-                    <div class="sb-header-menu-row">
-                        <?= $menuHtml ?>
-                    </div>
-                <?php endif; ?>
-            </div>
-        </header>
-    <?php endif; ?>
-
-    <main class="sb-public-main">
-        <div class="sb-container">
-            <div class="sb-layout <?= $vm['showLeft'] ? 'sb-layout--left' : '' ?> <?= $vm['showRight'] ? 'sb-layout--right' : '' ?>">
-                <?php if ($vm['showLeft'] && trim($leftContentHtml) !== ''): ?>
-                    <aside class="sb-sidebar sb-sidebar--left">
-                        <div class="sb-box">
-                            <?= $leftContentHtml !== ''
-                                ? $leftContentHtml
-                                : '<div class="sb-empty">Левая зона пуста</div>' ?>
-                        </div>
-                    </aside>
-                <?php endif; ?>
-
-                <section class="sb-content">
-                    <div class="sb-box sb-box--content">
-                        <?php if ($currentPage): ?>
-                            <h1 class="sb-page-title">
-                                <?= sb_public_h((string)($currentPage['title'] ?? 'Страница')) ?>
-                            </h1>
-
-                            <?php if (!empty($vm['childPagesHtml'])): ?>
-                                <?= $vm['childPagesHtml'] ?>
-                            <?php endif; ?>
-
-                            <?= $pageHtml !== ''
-                                ? $pageHtml
-                                : '<div class="sb-empty">На странице пока нет блоков</div>' ?>
-                        <?php else: ?>
-                            <div class="sb-empty">У сайта пока нет страниц</div>
-                        <?php endif; ?>
-                    </div>
-                </section>
-
-                <?php if ($vm['showRight']): ?>
-                    <aside class="sb-sidebar sb-sidebar--right">
-                        <div class="sb-box">
-                            <?= $rightHtml !== ''
-                                ? $rightHtml
-                                : '<div class="sb-empty">Правая зона пуста</div>' ?>
-                        </div>
-                    </aside>
-                <?php endif; ?>
-            </div>
-        </div>
-    </main>
-
-    <?php if ($vm['showFooter'] && $footerHtml !== ''): ?>
-        <footer class="sb-public-footer">
-            <div class="sb-container">
-                <?= $footerHtml !== '' ? $footerHtml : '' ?>
-            </div>
-        </footer>
-    <?php endif; ?>
-</div>
-
-<script>
-document.addEventListener('click', function (e) {
-    var toggle = e.target.closest('[data-role="toggle"]');
-
-    if (!toggle) {
-        return;
-    }
-
-    var node = toggle.closest('.sb-tree-node');
-
-    if (!node) {
-        return;
-    }
-
-    var isOpen = node.classList.contains('is-open');
-
-    node.classList.toggle('is-open', !isOpen);
-    toggle.setAttribute(
-        'aria-expanded',
-        !isOpen ? 'true' : 'false'
-    );
-});
-</script>
-
-<?php if ($pageHasDiskBlock): ?>
-    <script src="<?= sb_public_h($basePath) ?>/components/disk/script.js?v=4"></script>
-<?php endif; ?>
-
-<?php
-global $USER;
-
-$isPublicEditMode = (
-    (string)($_GET['edit'] ?? '') === 'Y'
-    && is_object($USER)
-    && $USER->IsAuthorized()
-    && $USER->IsAdmin()
-);
-?>
-
-<link rel="stylesheet" href="<?= sb_public_h($basePath) ?>/components/table/styles.css">
-<script src="<?= sb_public_h($basePath) ?>/components/table/view.js"></script>
-
-<?php if ($isPublicEditMode): ?>
-    <script>
-        window.SB_PUBLIC_EDIT_CONFIG = <?= json_encode([
-            'apiUrl' => $basePath . '/api.php',
-            'sessid' => bitrix_sessid(),
-        ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) ?>;
-    </script>
-
-    <script src="<?= sb_public_h($basePath) ?>/components/table/edit.js"></script>
-<?php endif; ?>
-
-</body>
-</html>
