@@ -1,54 +1,28 @@
-(function () {
-    var currentValue = Number(state.currentPageId || 0);
+Проверка прошла успешно. Сейчас подтверждено:
 
-    Object.defineProperty(state, 'currentPageId', {
-        configurable: true,
-        enumerable: true,
+выбрана страница 31;
 
-        get: function () {
-            return currentValue;
-        },
+заголовок на полотне — «Тест»;
 
-        set: function (newValue) {
-            console.log(
-                '[currentPageId]',
-                currentValue,
-                '→',
-                newValue,
-                '\n',
-                new Error().stack
-            );
+активный пункт слева — 31;
 
-            currentValue = Number(newValue || 0);
-        }
-    });
+загружены блоки страницы: 80 и 81;
 
-    console.log('Перехват установлен. Текущее значение:', currentValue);
-})();
-undefined
-({
-    currentPageId: state.currentPageId,
-    pageTitle: document.getElementById('canvasPageTitle')?.textContent,
-    activePageId: document.querySelector(
-        '#pagesList .sb-editor-page-item.is-active'
-    )?.dataset.pageId,
-    blockIds: state.blocks.map(function (block) {
-        return Number(block.id || 0);
-    })
-})
-{currentPageId: 31, pageTitle: 'Тест', activePageId: '31', blockIds: Array(2)}
-activePageId
-: 
-"31"
-blockIds
-: 
-(2) [80, 81]
-currentPageId
-: 
-31
-pageTitle
-: 
-"Тест"
-[[Prototype]]
-: 
-Object
+переключение страниц работает;
+
+повторного возврата на страницу 14 нет.
+
+
+Причина прежнего результата с «Диск» была не в коде переключения: проверка была выполнена, когда активной оставалась страница 14.
+
+Изменения нужны только в /local/sitebuilder/editor.php:
+
+apiUrl: '<?= CUtil::JSEscape($basePath) ?>/api/index.php',
+
+Файлы оставляем без изменений:
+
+/local/sitebuilder/assets/admin/editor/00-core.js
+/local/sitebuilder/assets/admin/editor/20-pages.js
+/local/sitebuilder/assets/admin/editor/60-events.js
+
+Теперь обнови страницу редактора через Ctrl + F5, чтобы убрать временный диагностический перехват currentPageId. После обновления проверь обычным кликом переключение между «Диск» и «Тест» — оно должно работать без консольных команд.
