@@ -1,270 +1,415 @@
-site.php нужно доработать точечно. site.update, site.delete, site.setHome, управление ролями и оформлением пока оставляем привязанными к глобальным ролям.
+<?php
 
-1. Подключи сервисы точечных прав
+global $USER;
 
-Сразу после:
+if ($action === 'block.list') {
+    $pageId = (int)($_POST['pageId'] ?? 0);
+    if ($pageId <= 0) {
+        sb_json_error('PAGE_ID_REQUIRED', 422);
+    }
 
-require_once $_SERVER['DOCUMENT_ROOT'] . '/local/sitebuilder/lib/SiteAppearanceService.php';
+    $page = sb_find_page($pageId);
+    if (!$page) {
+        sb_json_error('PAGE_NOT_FOUND', 404);
+    }
 
-добавь:
+    $siteId = (int)($page['siteId'] ?? 0);
+    sb_require_viewer($siteId);
 
-require_once $_SERVER['DOCUMENT_ROOT'] . '/local/sitebuilder/lib/PageAccessRepository.php';
-require_once $_SERVER['DOCUMENT_ROOT'] . '/local/sitebuilder/lib/PageAccessService.php';
+    $blocks = sb_blocks_for_page($pageId);
+    $blocks = array_map('sb_normalize_block_record', $blocks);
 
-2. Добавь общий метод определения доступа к сайту
+    sb_json_ok(['blocks' => $blocks]);
+}
 
-После sb_site_handler_require_viewer() добавь:
+if ($action === 'block.create') {
+    $pageId = (int)($_POST['pageId'] ?? 0);
+    $type = trim((string)($_POST['type'] ?? 'text'));
 
-if (!function_exists('sb_site_handler_get_access_context')) {
-    function sb_site_handler_get_access_context(int $siteId): array
-    {
-        global $USER;
+    if ($pageId <= 0) {
+        sb_json_error('PAGE_ID_REQUIRED', 422);
+    }
+    if ($type === '') {
+        sb_json_error('TYPE_REQUIRED', 422);
+    }
 
+    $page = sb_find_page($pageId);
+    if (!$page) {
+        sb_json_error('PAGE_NOT_FOUND', 404);
+    }
+
+    $siteId = (int)($page['siteId'] ?? 0);
+    sb_require_content_manager($siteId);
+
+    $blocks = sb_read_blocks();
+
+    $block = [
+        'id' => sb_next_block_id($blocks),
+        'pageId' => $pageId,
+        'type' => $type,
+        'sort' => sb_next_block_sort($pageId, $blocks),
+        'content' => sb_default_block_content($type),
+        'props' => [],
+        'createdBy' => (int)$USER->GetID(),
+        'createdAt' => date('c'),
+        'updatedAt' => date('c'),
+        'updatedBy' => (int)$USER->GetID(),
+    ];
+
+    $blocks[] = $block;
+    sb_write_blocks($blocks);
+
+    sb_json_ok([
+        'block' => sb_normalize_block_record($block),
+    ]);
+}
+
+if ($action === 'block.update') {
+    $id = (int)($_POST['id'] ?? 0);
+    if ($id <= 0) {
+        sb_json_error('ID_REQUIRED', 422);
+    }
+
+    $block = sb_find_block($id);
+    if (!$block) {
+        sb_json_error('BLOCK_NOT_FOUND', 404);
+    }
+
+    $page = sb_find_page((int)($block['pageId'] ?? 0));
+    if (!$page) {
+        sb_json_error('PAGE_NOT_FOUND', 404);
+    }
+
+    $siteId = (int)($page['siteId'] ?? 0);
+    sb_require_content_manager($siteId);
+
+    $contentRaw = $_POST['content'] ?? null;
+    $propsRaw = $_POST['props'] ?? null;
+    $typeRaw = $_POST['type'] ?? null;
+
+    $newContent = null;
+    $newProps = null;
+    $newType = null;
+
+    if ($contentRaw !== null) {
+        if (is_array($contentRaw)) {
+            $newContent = $contentRaw;
+        } else {
+            $decoded = json_decode((string)$contentRaw, true);
+            if (!is_array($decoded)) {
+                sb_json_error('BAD_CONTENT_JSON', 422);
+            }
+            $newContent = $decoded;
+        }
+    }
+
+    if ($propsRaw !== null) {
+        if (is_array($propsRaw)) {
+            $newProps = $propsRaw;
+        } else {
+            $decoded = json_decode((string)$propsRaw, true);
+            if (!is_array($decoded)) {
+                sb_json_error('BAD_PROPS_JSON', 422);
+            }
+            $newProps = $decoded;
+        }
+    }
+
+    if ($typeRaw !== null) {
+        $newType = trim((string)$typeRaw);
+        if ($newType === '') {
+            sb_json_error('TYPE_REQUIRED', 422);
+        }
+    }
+
+    $blocks = sb_read_blocks();
+    $updated = null;
+
+    foreach ($blocks as &$b) {
+        if ((int)($b['id'] ?? 0) === $id) {
+            if ($newType !== null) {
+                $b['type'] = $newType;
+            }
+            if ($newContent !== null) {
+                $b['content'] = $newContent;
+            }
+            if ($newProps !== null) {
+                $b['props'] = $newProps;
+            }
+
+            $b['updatedAt'] = date('c');
+            $b['updatedBy'] = (int)$USER->GetID();
+
+            $updated = $b;
+            break;
+        }
+    }
+    unset($b);
+
+    if (!$updated) {
+        sb_json_error('BLOCK_NOT_FOUND', 404);
+    }
+
+    sb_write_blocks($blocks);
+
+    sb_json_ok([
+        'block' => sb_normalize_block_record($updated),
+    ]);
+}
+
+if ($action === 'block.delete') {
+    $id = (int)($_POST['id'] ?? 0);
+    if ($id <= 0) {
+        sb_json_error('ID_REQUIRED', 422);
+    }
+
+    $block = sb_find_block($id);
+    if (!$block) {
+        sb_json_error('BLOCK_NOT_FOUND', 404);
+    }
+
+    $page = sb_find_page((int)($block['pageId'] ?? 0));
+    if (!$page) {
+        sb_json_error('PAGE_NOT_FOUND', 404);
+    }
+
+    $siteId = (int)($page['siteId'] ?? 0);
+    sb_require_content_manager($siteId);
+
+    $blocks = sb_read_blocks();
+    $before = count($blocks);
+
+    $blocks = array_values(array_filter($blocks, static function ($b) use ($id) {
+        return (int)($b['id'] ?? 0) !== $id;
+    }));
+
+    if (count($blocks) === $before) {
+        sb_json_error('BLOCK_NOT_FOUND', 404);
+    }
+
+    sb_write_blocks($blocks);
+    sb_json_ok();
+}
+
+if ($action === 'block.duplicate') {
+    $id = (int)($_POST['id'] ?? 0);
+    if ($id <= 0) {
+        sb_json_error('ID_REQUIRED', 422);
+    }
+
+    $src = sb_find_block($id);
+    if (!$src) {
+        sb_json_error('BLOCK_NOT_FOUND', 404);
+    }
+
+    $pageId = (int)($src['pageId'] ?? 0);
+    $page = sb_find_page($pageId);
+    if (!$page) {
+        sb_json_error('PAGE_NOT_FOUND', 404);
+    }
+
+    $siteId = (int)($page['siteId'] ?? 0);
+    sb_require_content_manager($siteId);
+
+    $blocks = sb_read_blocks();
+    $srcSort = (int)($src['sort'] ?? 500);
+
+    foreach ($blocks as &$b) {
         if (
-            $siteId <= 0
-            || !is_object($USER)
-            || !$USER->IsAuthorized()
+            (int)($b['pageId'] ?? 0) === $pageId
+            && (int)($b['sort'] ?? 0) > $srcSort
         ) {
-            return [
-                'allowed' => false,
-                'userId' => 0,
-                'role' => '',
-                'roleRank' => 0,
-                'hasGlobalView' => false,
-                'hasGlobalEdit' => false,
-                'hasPageAccess' => false,
-            ];
+            $b['sort'] = (int)($b['sort'] ?? 0) + 10;
+            $b['updatedAt'] = date('c');
+            $b['updatedBy'] = (int)$USER->GetID();
         }
-
-        $userId = (int)$USER->GetID();
-
-        if ($USER->IsAdmin()) {
-            return [
-                'allowed' => true,
-                'userId' => $userId,
-                'role' => 'OWNER',
-                'roleRank' => 4,
-                'hasGlobalView' => true,
-                'hasGlobalEdit' => true,
-                'hasPageAccess' => true,
-            ];
-        }
-
-        $accessCode = PageAccessRepository::userAccessCode(
-            $userId
-        );
-
-        /*
-         * sb_get_role() учитывает как sitebuilder.access,
-         * так и резервную роль группы Битрикс24.
-         */
-        $role = (string)sb_get_role(
-            $siteId,
-            $accessCode
-        );
-
-        $roleRank = sb_role_rank($role);
-
-        $hasPageAccess = PageAccessService::hasAnyPageAccess(
-            $siteId,
-            $userId
-        );
-
-        return [
-            'allowed' => $roleRank >= 1 || $hasPageAccess,
-            'userId' => $userId,
-            'role' => $role,
-            'roleRank' => $roleRank,
-            'hasGlobalView' => $roleRank >= 1,
-            'hasGlobalEdit' => $roleRank >= 2,
-            'hasPageAccess' => $hasPageAccess,
-        ];
     }
-}
+    unset($b);
 
-3. Замени site.list
+    $copy = $src;
+    $copy['id'] = sb_next_block_id($blocks);
+    $copy['sort'] = $srcSort + 10;
+    $copy['createdBy'] = (int)$USER->GetID();
+    $copy['createdAt'] = date('c');
+    $copy['updatedAt'] = date('c');
+    $copy['updatedBy'] = (int)$USER->GetID();
 
-Полностью замени текущий блок:
-
-if ($action === 'site.list') {
-    // ...
-}
-
-на:
-
-if ($action === 'site.list') {
-    $sites = sb_read_sites();
-    $allowedSites = [];
-
-    foreach ($sites as $site) {
-        $currentSiteId = (int)($site['id'] ?? 0);
-
-        if ($currentSiteId <= 0) {
-            continue;
-        }
-
-        $accessContext =
-            sb_site_handler_get_access_context(
-                $currentSiteId
-            );
-
-        /*
-         * Сайт показывается, если пользователь:
-         *
-         * 1. Имеет глобальную роль VIEWER или выше.
-         * 2. Либо имеет хотя бы одно точечное право страницы.
-         */
-        if (!$accessContext['allowed']) {
-            continue;
-        }
-
-        $site['currentUserRole'] =
-            $accessContext['role'];
-
-        $site['currentUserRoleRank'] =
-            $accessContext['roleRank'];
-
-        $site['currentUserHasGlobalView'] =
-            $accessContext['hasGlobalView'];
-
-        $site['currentUserHasGlobalEdit'] =
-            $accessContext['hasGlobalEdit'];
-
-        $site['currentUserHasPageAccess'] =
-            $accessContext['hasPageAccess'];
-
-        $allowedSites[] = $site;
-    }
-
-    usort(
-        $allowedSites,
-        static function ($a, $b) {
-            return
-                (int)($a['id'] ?? 0)
-                <=>
-                (int)($b['id'] ?? 0);
-        }
-    );
+    $blocks[] = $copy;
+    sb_write_blocks($blocks);
 
     sb_json_ok([
-        'sites' => $allowedSites,
-        'handler' => 'site',
-        'file' => __FILE__,
+        'block' => sb_normalize_block_record($copy),
     ]);
 }
 
-Теперь сайт появится в списке даже у пользователя без глобальной роли, если ему выдали доступ хотя бы к одной странице.
+if ($action === 'block.move') {
+    $id = (int)($_POST['id'] ?? 0);
+    $dir = trim((string)($_POST['dir'] ?? ''));
 
-4. Замени site.get
+    if ($id <= 0) {
+        sb_json_error('ID_REQUIRED', 422);
+    }
+    if ($dir !== 'up' && $dir !== 'down') {
+        sb_json_error('DIR_REQUIRED', 422);
+    }
 
-Полностью замени текущий блок:
+    $block = sb_find_block($id);
+    if (!$block) {
+        sb_json_error('BLOCK_NOT_FOUND', 404);
+    }
 
-if ($action === 'site.get') {
-    // ...
+    $pageId = (int)($block['pageId'] ?? 0);
+    $page = sb_find_page($pageId);
+    if (!$page) {
+        sb_json_error('PAGE_NOT_FOUND', 404);
+    }
+
+    $siteId = (int)($page['siteId'] ?? 0);
+    sb_require_content_manager($siteId);
+
+    $blocks = sb_read_blocks();
+
+    $siblings = array_values(array_filter($blocks, static function ($b) use ($pageId) {
+        return (int)($b['pageId'] ?? 0) === $pageId;
+    }));
+
+    usort($siblings, static function ($a, $b) {
+        $sortCmp = (int)($a['sort'] ?? 500) <=> (int)($b['sort'] ?? 500);
+        if ($sortCmp !== 0) {
+            return $sortCmp;
+        }
+        return (int)($a['id'] ?? 0) <=> (int)($b['id'] ?? 0);
+    });
+
+    $pos = null;
+    for ($i = 0, $cnt = count($siblings); $i < $cnt; $i++) {
+        if ((int)($siblings[$i]['id'] ?? 0) === $id) {
+            $pos = $i;
+            break;
+        }
+    }
+
+    if ($pos === null) {
+        sb_json_ok();
+    }
+
+    if ($dir === 'up' && $pos === 0) {
+        sb_json_ok();
+    }
+
+    if ($dir === 'down' && $pos === count($siblings) - 1) {
+        sb_json_ok();
+    }
+
+    $swapPos = ($dir === 'up') ? $pos - 1 : $pos + 1;
+
+    $idA = (int)$siblings[$pos]['id'];
+    $idB = (int)$siblings[$swapPos]['id'];
+    $sortA = (int)($siblings[$pos]['sort'] ?? 500);
+    $sortB = (int)($siblings[$swapPos]['sort'] ?? 500);
+
+    foreach ($blocks as &$b) {
+        $bid = (int)($b['id'] ?? 0);
+
+        if ($bid === $idA) {
+            $b['sort'] = $sortB;
+            $b['updatedAt'] = date('c');
+            $b['updatedBy'] = (int)$USER->GetID();
+        }
+
+        if ($bid === $idB) {
+            $b['sort'] = $sortA;
+            $b['updatedAt'] = date('c');
+            $b['updatedBy'] = (int)$USER->GetID();
+        }
+    }
+    unset($b);
+
+    sb_write_blocks($blocks);
+    sb_json_ok();
 }
 
-на:
-
-if ($action === 'site.get') {
-    $siteId = (int)($_POST['siteId'] ?? 0);
-
-    if ($siteId <= 0) {
-        sb_json_error('SITE_ID_REQUIRED', 422);
+if ($action === 'block.reorder') {
+    $pageId = (int)($_POST['pageId'] ?? 0);
+    if ($pageId <= 0) {
+        sb_json_error('PAGE_ID_REQUIRED', 422);
     }
 
-    /*
-     * Сначала проверяем существование сайта,
-     * затем его права.
-     */
-    $site = sb_find_site($siteId);
-
-    if (!$site) {
-        sb_json_error('SITE_NOT_FOUND', 404);
+    $page = sb_find_page($pageId);
+    if (!$page) {
+        sb_json_error('PAGE_NOT_FOUND', 404);
     }
 
-    $accessContext =
-        sb_site_handler_get_access_context($siteId);
+    $siteId = (int)($page['siteId'] ?? 0);
+    sb_require_content_manager($siteId);
 
-    if (!$accessContext['allowed']) {
-        sb_json_error(
-            'SITE_OR_PAGE_ACCESS_DENIED',
-            403,
-            [
-                'siteId' => $siteId,
-            ]
-        );
+    $orderRaw = $_POST['order'] ?? null;
+    if ($orderRaw === null) {
+        sb_json_error('ORDER_REQUIRED', 422);
     }
 
-    /*
-     * Эти поля нужны клиентской части для понимания
-     * уровня текущего пользователя.
-     */
-    $site['currentUserRole'] =
-        $accessContext['role'];
+    if (is_array($orderRaw)) {
+        $order = $orderRaw;
+    } else {
+        $order = json_decode((string)$orderRaw, true);
+        if (!is_array($order)) {
+            sb_json_error('BAD_ORDER_JSON', 422);
+        }
+    }
 
-    $site['currentUserRoleRank'] =
-        $accessContext['roleRank'];
+    $orderIds = [];
+    foreach ($order as $item) {
+        $bid = (int)$item;
+        if ($bid > 0) {
+            $orderIds[] = $bid;
+        }
+    }
 
-    $site['currentUserHasGlobalView'] =
-        $accessContext['hasGlobalView'];
+    $pageBlocks = sb_blocks_for_page($pageId);
+    $pageBlockIds = [];
+    foreach ($pageBlocks as $b) {
+        $pageBlockIds[(int)($b['id'] ?? 0)] = true;
+    }
 
-    $site['currentUserHasGlobalEdit'] =
-        $accessContext['hasGlobalEdit'];
+    foreach ($orderIds as $bid) {
+        if (!isset($pageBlockIds[$bid])) {
+            sb_json_error('BLOCK_NOT_IN_PAGE', 422, ['blockId' => $bid]);
+        }
+    }
 
-    $site['currentUserHasPageAccess'] =
-        $accessContext['hasPageAccess'];
+    $missing = array_diff(array_keys($pageBlockIds), $orderIds);
+    if (!empty($missing)) {
+        foreach ($missing as $bid) {
+            $orderIds[] = (int)$bid;
+        }
+    }
+
+    $sortMap = [];
+    $sort = 10;
+    foreach ($orderIds as $bid) {
+        $sortMap[(int)$bid] = $sort;
+        $sort += 10;
+    }
+
+    $blocks = sb_read_blocks();
+    foreach ($blocks as &$b) {
+        $bid = (int)($b['id'] ?? 0);
+        if ((int)($b['pageId'] ?? 0) === $pageId && isset($sortMap[$bid])) {
+            $b['sort'] = $sortMap[$bid];
+            $b['updatedAt'] = date('c');
+            $b['updatedBy'] = (int)$USER->GetID();
+        }
+    }
+    unset($b);
+
+    sb_write_blocks($blocks);
 
     sb_json_ok([
-        'site' => $site,
-        'access' => [
-            'role' => $accessContext['role'],
-            'roleRank' => $accessContext['roleRank'],
-            'globalView' =>
-                $accessContext['hasGlobalView'],
-            'globalEdit' =>
-                $accessContext['hasGlobalEdit'],
-            'hasPageAccess' =>
-                $accessContext['hasPageAccess'],
-        ],
-        'handler' => 'site',
-        'file' => __FILE__,
+        'blocks' => array_map('sb_normalize_block_record', sb_blocks_for_page($pageId)),
     ]);
 }
 
-5. Очищай точечные права при удалении сайта
-
-Внутри site.delete, после:
-
-sb_write_access($access);
-
-добавь:
-
-/*
- * Удаляем точечные права страниц удалённого сайта.
- */
-sb_db_execute("
-    DELETE FROM sitebuilder.page_access
-    WHERE site_id = :site_id
-", [
-    ':site_id' => $id,
+sb_json_error('NOT_MOVED_YET', 501, [
+    'handler' => 'block',
+    'action' => $action,
 ]);
-
-Иначе в sitebuilder.page_access будут оставаться осиротевшие записи.
-
-Что получится
-
-Пользователь	site.list	site.get	Редактор
-
-Администратор Битрикс	Да	Да	Да
-OWNER	Да	Да	Да
-ADMIN	Да	Да	Да
-EDITOR	Да	Да	Да
-VIEWER	Да	Да	Нет
-Только page.edit	Да	Да	Да
-Только page.view	Да	Да	Нет
-Без прав	Нет	Нет	Нет
-
-
-40-access.js менять не требуется: у пользователя без OWNER запрос site.accessList получит отказ, а панели управления ролями будут автоматически скрыты.
-
-Следующим нужно проверить block.php, потому что точечное page.edit должно обязательно применяться ко всем операциям с блоками страницы.
