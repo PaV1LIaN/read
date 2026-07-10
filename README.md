@@ -1,135 +1,122 @@
-<?php
+В текущем виде file.php работает только с общим Диском сайта:
 
-global $USER;
+file.list проверяет глобальный VIEWER;
 
-if ($action === 'file.list') {
-    $siteId = (int)($_POST['siteId'] ?? 0);
-    if ($siteId <= 0) {
-        sb_json_error('SITE_ID_REQUIRED', 422);
-    }
+file.upload и file.delete проверяют глобальный EDITOR;
 
-    sb_require_viewer($siteId);
+запросы не содержат pageId;
 
-    try {
-        $folder = sb_disk_ensure_site_folder($siteId);
-        $children = sb_disk_get_children($folder);
+запросы не содержат blockId;
 
-        $files = [];
-        foreach ($children as $child) {
-            if (!$child instanceof \Bitrix\Disk\File) {
-                continue;
-            }
+сервер не может определить, к какой странице и к какому блоку Диска относится операция.
 
-            $files[] = [
-                'id' => (int)$child->getId(),
-                'name' => (string)$child->getName(),
-                'size' => (int)$child->getSize(),
-                'createTime' => method_exists($child, 'getCreateTime') && $child->getCreateTime()
-                    ? $child->getCreateTime()->format('c')
-                    : '',
-                'updateTime' => method_exists($child, 'getUpdateTime') && $child->getUpdateTime()
-                    ? $child->getUpdateTime()->format('c')
-                    : '',
-                'downloadUrl' => sb_disk_file_download_url($child),
-            ];
-        }
 
-        usort($files, static function ($a, $b) {
-            return strcmp((string)$a['name'], (string)$b['name']);
-        });
+Поэтому этот файл пока не заменяем. Сначала нужно добавить права Диска в sitebuilder.page_access.
 
-        sb_json_ok([
-            'files' => $files,
-            'folderId' => (int)$folder->getId(),
-        ]);
-    } catch (Throwable $e) {
-        sb_json_error('DISK_ERROR', 500, [
-            'message' => $e->getMessage(),
-        ]);
-    }
-}
+Следующий шаг: расширить таблицу прав
 
-if ($action === 'file.upload') {
-    $siteId = (int)($_POST['siteId'] ?? 0);
-    if ($siteId <= 0) {
-        sb_json_error('SITE_ID_REQUIRED', 422);
-    }
+В PostgreSQL выполни:
 
-    sb_require_editor($siteId);
+ALTER TABLE sitebuilder.page_access
+    ADD COLUMN IF NOT EXISTS can_disk_view BOOLEAN NOT NULL DEFAULT FALSE,
+    ADD COLUMN IF NOT EXISTS can_disk_edit BOOLEAN NOT NULL DEFAULT FALSE;
 
-    if (empty($_FILES['file']) || !is_array($_FILES['file'])) {
-        sb_json_error('FILE_REQUIRED', 422);
-    }
+Проверить структуру:
 
-    $upload = $_FILES['file'];
+SELECT
+    column_name,
+    data_type,
+    is_nullable,
+    column_default
+FROM information_schema.columns
+WHERE table_schema = 'sitebuilder'
+  AND table_name = 'page_access'
+ORDER BY ordinal_position;
 
-    if ((int)($upload['error'] ?? UPLOAD_ERR_NO_FILE) !== UPLOAD_ERR_OK) {
-        sb_json_error('UPLOAD_ERROR', 422, [
-            'phpUploadError' => (int)($upload['error'] ?? UPLOAD_ERR_NO_FILE),
-        ]);
-    }
+В таблице должны появиться:
 
-    if (!is_uploaded_file((string)($upload['tmp_name'] ?? ''))) {
-        sb_json_error('BAD_UPLOADED_FILE', 422);
-    }
+can_disk_view
+can_disk_edit
 
-    try {
-        $folder = sb_disk_ensure_site_folder($siteId);
-        $file = sb_disk_upload_file_to_folder($folder, $upload);
+Итоговые права одной страницы
 
-        sb_json_ok([
-            'file' => [
-                'id' => (int)$file->getId(),
-                'name' => (string)$file->getName(),
-                'size' => (int)$file->getSize(),
-                'downloadUrl' => sb_disk_file_download_url($file),
-            ],
-            'folderId' => (int)$folder->getId(),
-        ]);
-    } catch (Throwable $e) {
-        sb_json_error('DISK_ERROR', 500, [
-            'message' => $e->getMessage(),
-        ]);
-    }
-}
+Запись будет содержать:
 
-if ($action === 'file.delete') {
-    $siteId = (int)($_POST['siteId'] ?? 0);
-    $fileId = (int)($_POST['fileId'] ?? 0);
+can_view          — просмотр страницы
+can_edit          — изменение страницы и блоков
+can_disk_view     — просмотр и скачивание файлов
+can_disk_edit     — загрузка, создание папок, переименование, удаление
+include_children  — наследование на дочерние страницы
 
-    if ($siteId <= 0) {
-        sb_json_error('SITE_ID_REQUIRED', 422);
-    }
-    if ($fileId <= 0) {
-        sb_json_error('FILE_ID_REQUIRED', 422);
-    }
+Зависимости:
 
-    sb_require_editor($siteId);
+can_edit → can_view
+can_disk_edit → can_disk_view
 
-    try {
-        if (!sb_disk_file_belongs_to_site($siteId, $fileId)) {
-            sb_json_error('FILE_NOT_IN_SITE', 422);
-        }
+При этом can_disk_edit не должен автоматически давать can_edit: сотрудник сможет работать с документами, но не менять страницу.
 
-        $file = sb_disk_load_file_by_id($fileId);
-        if (!$file) {
-            sb_json_error('FILE_NOT_FOUND', 404);
-        }
+Как глобальные роли будут работать с Диском
 
-        $ok = sb_disk_delete_file($file);
-        if (!$ok) {
-            sb_json_error('DELETE_FAILED', 500);
-        }
+Глобальная роль	Диск
 
-        sb_json_ok();
-    } catch (Throwable $e) {
-        sb_json_error('DISK_ERROR', 500, [
-            'message' => $e->getMessage(),
-        ]);
-    }
-}
+VIEWER	Просмотр и скачивание
+EDITOR	Просмотр и изменение
+ADMIN	Полный доступ
+OWNER	Полный доступ
+Нет глобальной роли	По can_disk_view/can_disk_edit
 
-sb_json_error('NOT_MOVED_YET', 501, [
-    'handler' => 'file',
-    'action' => $action,
-]);
+
+Новый контракт file.php
+
+Каждый запрос к блоку Диска должен передавать:
+
+siteId
+pageId
+blockId
+
+Например:
+
+api('file.list', {
+    siteId: siteId,
+    pageId: currentPageId,
+    blockId: diskBlockId
+});
+
+На сервере должна проверяться вся цепочка:
+
+сайт существует
+↓
+страница принадлежит сайту
+↓
+блок принадлежит странице
+↓
+тип блока = disk
+↓
+у пользователя есть disk.view или disk.edit
+↓
+операция разрешена настройками блока
+
+Для удаления файла одновременно должны выполняться условия:
+
+can_disk_edit = true
+и
+diskAllowDelete = true
+и
+файл находится внутри папки этого блока/сайта
+
+Важное ограничение текущего файла
+
+Сейчас используется:
+
+$folder = sb_disk_ensure_site_folder($siteId);
+
+То есть все операции идут в корень сайта. Параметр blockId не используется, а режим:
+
+rootMode = site
+rootMode = block
+
+из настроек блока тоже не учитывается.
+
+Нельзя сейчас просто заменить sb_require_editor() на canEditDisk(): пользователь с правом на одну страницу получил бы доступ ко всему Диску сайта.
+
+После выполнения SQL следующим обновляем PageAccessRepository.php, добавляя canDiskView и canDiskEdit. Затем PageAccessService.php, и только после этого безопасно переписываем file.php.
