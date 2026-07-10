@@ -1,7 +1,3 @@
-BX is not defined означает, что на этой странице не подключено JavaScript-ядро Битрикса. Сам PHP-Битрикс работает, но функции BX.bitrix_sessid() в браузере нет.
-
-Используй код, который ищет sessid несколькими способами, включая компонент диска и скрытые поля:
-
 (async function () {
   const diskComponent = document.querySelector('.sb-disk')?.__diskComponent;
 
@@ -58,18 +54,11 @@ BX is not defined означает, что на этой странице не �
     console.error('Сервер вернул не JSON');
   }
 })();
-
-Если код напишет:
-
-sessid не найден на странице
-
-вставь отдельно эту диагностику:
-
+Promise {<fulfilled>: undefined}[[Prototype]]: Promise[[PromiseState]]: "fulfilled"[[PromiseResult]]: undefined
 console.log({
   BX: typeof window.BX,
   hiddenSessid: document.querySelector('input[name="sessid"]')?.value,
   dataSessid: document.querySelector('[data-sessid]')?.getAttribute('data-sessid'),
   diskSessid: document.querySelector('.sb-disk')?.__diskComponent?.getSessid?.()
 });
-
-Нормальное постоянное решение — передавать bitrix_sessid() в конфигурацию редактора при генерации страницы, чтобы все API-запросы использовали один готовый sessid, даже когда BX не подключён.
+undefined
