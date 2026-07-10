@@ -1,388 +1,182 @@
-function setManagementPanelsVisible(canManage) {
-    var groupPanel = document.getElementById('siteGroupPanel');
-    var accessPanel = document.getElementById('siteAccessPanel');
-    var apiPanel = document.getElementById('apiOutputPanel');
-    var deleteSiteBtn = document.getElementById('deleteSiteBtn');
+40-access.js менять не нужно. Он уже корректно работает для ограниченных пользователей:
 
-    if (groupPanel) {
-        groupPanel.hidden = !canManage;
-    }
+try {
+    var res = await api('site.accessList', {
+        siteId: siteId
+    });
 
-    if (accessPanel) {
-        accessPanel.hidden = !canManage;
-    }
+    // ...
+} catch (e) {
+    state.accessItems = [];
+    setManagementPanelsVisible(false);
+}
 
-    if (apiPanel) {
-        apiPanel.hidden = !canManage;
-    }
+Если пользователь не OWNER, сервер отклонит site.accessList, ошибка будет перехвачена, а панели прав просто скроются.
 
-    if (deleteSiteBtn) {
-        var role = state.site && state.site.currentUserRole
-            ? String(state.site.currentUserRole)
-            : '';
+Также setManagementPanelsVisible(false) скрывает:
 
-        var canDeleteSite = IS_BITRIX_ADMIN || role === 'OWNER' || canManage;
+управление группой Битрикс24;
 
-        deleteSiteBtn.classList.toggle('sb-hidden', !canDeleteSite);
+глобальные роли;
+
+технический ответ API;
+
+кнопку удаления сайта.
+
+
+Что изменить в editor.php
+
+Добавь в $libFiles два файла:
+
+__DIR__ . '/lib/PageAccessRepository.php',
+__DIR__ . '/lib/PageAccessService.php',
+
+Должно получиться:
+
+$libFiles = [
+    __DIR__ . '/lib/db.php',
+    __DIR__ . '/lib/json.php',
+    __DIR__ . '/lib/storage_db.php',
+    __DIR__ . '/lib/response.php',
+    __DIR__ . '/lib/helpers.php',
+    __DIR__ . '/lib/access.php',
+    __DIR__ . '/lib/PageAccessRepository.php',
+    __DIR__ . '/lib/PageAccessService.php',
+];
+
+После проверки $siteId замени:
+
+if (!$USER->IsAdmin()) {
+    sb_require_content_manager($siteId);
+}
+
+на:
+
+$currentUserId = (int)$USER->GetID();
+
+$canOpenEditor = false;
+
+if ($USER->IsAdmin()) {
+    $canOpenEditor = true;
+}
+
+/*
+ * Глобальные роли:
+ * EDITOR, ADMIN и OWNER.
+ *
+ * Используем access.php, потому что он также учитывает
+ * резервные роли группы Битрикс24.
+ */
+if (!$canOpenEditor) {
+    $globalRole = sb_get_role($siteId);
+    $globalRoleRank = sb_role_rank($globalRole);
+
+    if ($globalRoleRank >= 2) {
+        $canOpenEditor = true;
     }
 }
 
-function renderBitrixGroupPanel() {
-    var site = state.site || {};
-    var groupId = Number(site.bitrixGroupId || 0);
-    var node = document.getElementById('bitrixGroupInfo');
+/*
+ * Пользователь без глобальной роли может открыть редактор,
+ * если у него есть canEdit хотя бы на одну страницу.
+ */
+if (!$canOpenEditor && $currentUserId > 0) {
+    $accessCode = PageAccessRepository::userAccessCode(
+        $currentUserId
+    );
 
-    if (!node) return;
+    $pageIds = PageAccessRepository::getPageIdsWithAccess(
+        $siteId,
+        $accessCode
+    );
 
-    if (groupId > 0) {
-        node.innerHTML = ''
-            + '<div><strong>Группа создана</strong></div>'
-            + '<div class="sb-muted">ID группы: ' + groupId + '</div>'
-            + '<div style="margin-top:8px;">'
-            + '  <a class="sb-btn sb-btn-light sb-btn-small" target="_blank" href="/workgroups/group/' + groupId + '/">Открыть группу</a>'
-            + '</div>';
-
-        return;
-    }
-
-    node.innerHTML = ''
-        + '<div><strong>Группа Битрикс24 не создана</strong></div>'
-        + '<div class="sb-muted">Можно создать группу и затем синхронизировать права.</div>';
-}
-
-async function ensureBitrixGroup() {
-    var resultNode = document.getElementById('syncAccessResult');
-
-    try {
-        var res = await api('site.ensureGroup', {
-            siteId: siteId
-        });
-
-        state.site = res.site || state.site;
-
-        renderBitrixGroupPanel();
-
-        if (resultNode) {
-            resultNode.textContent = JSON.stringify(res, null, 2);
+    foreach ($pageIds as $availablePageId) {
+        if (
+            PageAccessService::canEditPage(
+                $siteId,
+                (int)$availablePageId,
+                $currentUserId
+            )
+        ) {
+            $canOpenEditor = true;
+            break;
         }
-    } catch (e) {
-        if (resultNode) {
-            resultNode.textContent = JSON.stringify(e, null, 2);
-        }
     }
 }
 
-async function syncAccess() {
-    var resultNode = document.getElementById('syncAccessResult');
+if (!$canOpenEditor) {
+    http_response_code(403);
 
-    try {
-        var res = await api('site.syncAccess', {
-            siteId: siteId
-        });
+    ?>
+    <!doctype html>
+    <html lang="ru">
+    <head>
+        <meta charset="UTF-8">
+        <title>Доступ запрещён</title>
+        <?php $APPLICATION->ShowHead(); ?>
 
-        if (resultNode) {
-            resultNode.textContent = JSON.stringify(res, null, 2);
-        }
+        <link
+            rel="stylesheet"
+            href="<?= htmlspecialchars(
+                $basePath,
+                ENT_QUOTES | ENT_SUBSTITUTE,
+                'UTF-8'
+            ) ?>/assets/admin/admin.css"
+        >
+    </head>
 
-        await loadAccessList();
-    } catch (e) {
-        if (resultNode) {
-            resultNode.textContent = JSON.stringify(e, null, 2);
-        }
-    }
+    <body class="sb-admin-body">
+    <div class="sb-page">
+        <h1 class="sb-title">Доступ к редактору запрещён</h1>
+
+        <p class="sb-subtitle">
+            Для открытия редактора требуется глобальная роль
+            EDITOR, ADMIN или OWNER либо право редактирования
+            хотя бы одной страницы.
+        </p>
+
+        <p>
+            <a
+                class="sb-back-link"
+                href="<?= htmlspecialchars(
+                    $basePath,
+                    ENT_QUOTES | ENT_SUBSTITUTE,
+                    'UTF-8'
+                ) ?>/index.php"
+            >
+                Вернуться к списку сайтов
+            </a>
+        </p>
+    </div>
+    </body>
+    </html>
+    <?php
+
+    exit;
 }
 
-function setAccessMessage(message, type) {
-    var node = document.getElementById('accessMessage');
-    if (!node) return;
+После этого вход будет таким:
 
-    node.classList.remove('sb-hidden', 'is-success', 'is-error');
+Доступ	Открытие редактора
 
-    if (type === 'success') {
-        node.classList.add('is-success');
-    }
+Администратор Битрикс	Да
+OWNER	Да
+ADMIN	Да
+EDITOR	Да
+VIEWER	Нет
+Только page.view	Нет
+Хотя бы одно page.edit	Да
+Нет прав	Нет
 
-    if (type === 'error') {
-        node.classList.add('is-error');
-    }
 
-    node.textContent = message || '';
-}
+Что ещё блокирует точечного пользователя
 
-function hideAccessMessage() {
-    var node = document.getElementById('accessMessage');
-    if (!node) return;
+После открытия страницы JavaScript запрашивает информацию о сайте через site.get. По текущей архитектуре этот API, вероятнее всего, проверяет глобальный VIEWER.
 
-    node.classList.add('sb-hidden');
-    node.textContent = '';
-}
+Поэтому пользователь только с page.edit сможет пройти PHP-проверку editor.php, но может получить отказ на этапе загрузки site.get.
 
-function renderAccessUserSearchResults(users) {
-    var results = document.getElementById('accessUserSearchResults');
-    if (!results) return;
+Следующим нужно проверить:
 
-    state.userSearchResults = Array.isArray(users) ? users : [];
+/local/sitebuilder/api/handlers/site.php
 
-    if (!state.userSearchResults.length) {
-        results.innerHTML = '';
-        results.classList.add('sb-hidden');
-        return;
-    }
-
-    results.innerHTML = state.userSearchResults.map(function (user) {
-        var id = Number(user.id || 0);
-        var title = user.title || user.name || ('Пользователь #' + id);
-        var meta = [];
-
-        if (user.login) meta.push(user.login);
-        if (user.email) meta.push(user.email);
-
-        return ''
-            + '<button class="sb-access-result-item" type="button" data-select-access-user="' + id + '" style="display:grid;grid-template-columns:32px minmax(0,1fr);gap:10px;align-items:center;width:100%;min-height:44px;padding:7px 10px;box-sizing:border-box;">'
-            +      userAvatarHtml(user, 'sb-access-result-avatar')
-            + '  <div class="sb-access-result-body" style="min-width:0;overflow:hidden;">'
-            + '      <div class="sb-access-result-title" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + escapeHtml(title) + '</div>'
-            + '      <div class="sb-access-result-meta" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">ID: ' + id + (meta.length ? ' · ' + escapeHtml(meta.join(' · ')) : '') + '</div>'
-            + '  </div>'
-            + '</button>';
-    }).join('');
-
-    results.classList.remove('sb-hidden');
-}
-
-function renderSelectedAccessUser() {
-    var selectedNode = document.getElementById('accessSelectedUser');
-    if (!selectedNode) return;
-
-    var user = state.selectedAccessUser;
-
-    if (!user) {
-        selectedNode.innerHTML = '';
-        selectedNode.classList.add('sb-hidden');
-        return;
-    }
-
-    var userId = Number(user.id || 0);
-    var meta = [];
-
-    if (user.login) meta.push(user.login);
-    if (user.email) meta.push(user.email);
-
-    selectedNode.innerHTML = ''
-        + '<div class="sb-access-selected-user">'
-        +      userAvatarHtml(user, 'sb-access-selected-avatar')
-        + '  <div class="sb-access-selected-body">'
-        + '      <div class="sb-access-selected-title">' + escapeHtml(user.title || user.name || ('Пользователь #' + userId)) + '</div>'
-        + '      <div class="sb-access-selected-meta">ID: ' + userId + (meta.length ? ' · ' + escapeHtml(meta.join(' · ')) : '') + '</div>'
-        + '  </div>'
-        + '  <div class="sb-access-selected-actions">'
-        + '      <button class="sb-btn sb-btn-light sb-btn-small" type="button" data-clear-access-user>Сбросить</button>'
-        + '  </div>'
-        + '</div>';
-
-    selectedNode.classList.remove('sb-hidden');
-}
-
-async function searchAccessUsers() {
-    var input = document.getElementById('accessUserSearchInput');
-    if (!input) return;
-
-    var query = String(input.value || '').trim();
-
-    state.selectedAccessUser = null;
-    renderSelectedAccessUser();
-
-    if (query === '') {
-        renderAccessUserSearchResults([]);
-        return;
-    }
-
-    if (!/^\d+$/.test(query) && query.length < 2) {
-        renderAccessUserSearchResults([]);
-        return;
-    }
-
-    try {
-        var res = await api('user.search', {
-            siteId: siteId,
-            query: query,
-            limit: 10
-        });
-
-        renderAccessUserSearchResults(Array.isArray(res.users) ? res.users : []);
-    } catch (e) {
-        renderAccessUserSearchResults([]);
-    }
-}
-
-function selectAccessUser(user) {
-    state.selectedAccessUser = user || null;
-
-    var input = document.getElementById('accessUserSearchInput');
-    if (input && user) {
-        input.value = user.title || user.name || '';
-    }
-
-    renderAccessUserSearchResults([]);
-    renderSelectedAccessUser();
-}
-
-function clearSelectedAccessUser() {
-    state.selectedAccessUser = null;
-
-    var input = document.getElementById('accessUserSearchInput');
-    if (input) {
-        input.value = '';
-        input.focus();
-    }
-
-    renderSelectedAccessUser();
-    renderAccessUserSearchResults([]);
-}
-
-function roleBadge(role) {
-    role = String(role || 'VIEWER');
-
-    var cls = 'sb-role-badge--viewer';
-
-    if (role === 'OWNER') {
-        cls = 'sb-role-badge--owner';
-    } else if (role === 'ADMIN') {
-        cls = 'sb-role-badge--admin';
-    } else if (role === 'EDITOR') {
-        cls = 'sb-role-badge--editor';
-    }
-
-    return '<span class="sb-role-badge ' + cls + '">' + escapeHtml(role) + '</span>';
-}
-
-function renderAccessList() {
-    var list = document.getElementById('accessList');
-    if (!list) return;
-
-    if (!Array.isArray(state.accessItems) || !state.accessItems.length) {
-        list.innerHTML = '<div class="sb-empty">Права ещё не выданы</div>';
-        return;
-    }
-
-    list.innerHTML = state.accessItems.map(function (item) {
-        var userId = Number(item.userId || 0);
-        var name = item.userName || item.title || ('Пользователь #' + userId);
-        var role = item.role || '';
-
-        return ''
-            + '<div class="sb-access-item">'
-            + '  <div class="sb-access-item__main">'
-            + '      <div class="sb-access-item__name">' + escapeHtml(name) + '</div>'
-            + '      <div class="sb-access-item__meta">ID: ' + userId + ' · ' + escapeHtml(item.accessCode || '') + '</div>'
-            + '  </div>'
-            + '  <div class="sb-access-item__side">'
-            +        roleBadge(role)
-            + '      <button class="sb-btn sb-btn-danger sb-btn-small" type="button" data-access-remove-user="' + userId + '">Удалить</button>'
-            + '  </div>'
-            + '</div>';
-    }).join('');
-}
-
-async function loadAccessList() {
-    var panel = document.getElementById('siteAccessPanel');
-    if (!panel) return;
-
-    try {
-        var res = await api('site.accessList', {
-            siteId: siteId
-        });
-
-        state.accessItems = Array.isArray(res.items) ? res.items : [];
-
-        setManagementPanelsVisible(true);
-        renderBitrixGroupPanel();
-        renderAccessList();
-    } catch (e) {
-        state.accessItems = [];
-        setManagementPanelsVisible(false);
-    }
-}
-
-async function grantAccessRole() {
-    var roleInput = document.getElementById('accessRoleInput');
-    if (!roleInput) return;
-
-    var user = state.selectedAccessUser;
-    var userId = user ? Number(user.id || 0) : 0;
-    var role = String(roleInput.value || '').trim();
-
-    if (userId <= 0) {
-        setAccessMessage('Сначала найди и выбери пользователя из списка', 'error');
-
-        var searchInput = document.getElementById('accessUserSearchInput');
-        if (searchInput) {
-            searchInput.focus();
-        }
-
-        return;
-    }
-
-    if (!role) {
-        setAccessMessage('Выбери роль', 'error');
-        return;
-    }
-
-    try {
-        setAccessMessage('Сохраняю права...', '');
-
-        var res = await api('site.accessSet', {
-            siteId: siteId,
-            userId: userId,
-            role: role
-        });
-
-        state.accessItems = Array.isArray(res.items) ? res.items : [];
-
-        clearSelectedAccessUser();
-        renderAccessList();
-
-        var groupSync = res.result && res.result.groupSync ? res.result.groupSync : null;
-        var syncText = '';
-
-        if (groupSync) {
-            if (groupSync.ok) {
-                syncText = '\nПользователь также синхронизирован с группой Битрикс24.';
-            } else if (groupSync.error) {
-                syncText = '\nНо с группой Битрикс24 не синхронизировался: ' + groupSync.error;
-            } else if (groupSync.message) {
-                syncText = '\nГруппа Битрикс24: ' + groupSync.message;
-            }
-        }
-
-        setAccessMessage('Роль выдана: U' + userId + ' → ' + role + syncText, 'success');
-    } catch (e) {
-        setAccessMessage('Ошибка выдачи роли: ' + ((e && (e.error || e.message)) || 'UNKNOWN_ERROR'), 'error');
-    }
-}
-
-async function removeAccessRole(userId) {
-    userId = Number(userId || 0);
-
-    if (userId <= 0) return;
-
-    if (!confirm('Удалить доступ пользователя #' + userId + '?')) {
-        return;
-    }
-
-    try {
-        hideAccessMessage();
-
-        var res = await api('site.accessRemove', {
-            siteId: siteId,
-            userId: userId
-        });
-
-        state.accessItems = Array.isArray(res.items) ? res.items : [];
-        renderAccessList();
-
-        setAccessMessage('Доступ удалён', 'success');
-    } catch (e) {
-        setAccessMessage('Ошибка удаления доступа: ' + ((e && (e.error || e.message)) || 'UNKNOWN_ERROR'), 'error');
-    }
-}
+Там надо разрешить site.get пользователю, если у него есть хотя бы одно точечное право страницы, не открывая ему управление настройками сайта.
