@@ -1,408 +1,226 @@
-<?php
+Да, этот репозиторий реализует нужную базовую модель прав на страницы:
 
-require_once __DIR__ . '/db.php';
+прямой canView;
 
-class PageAccessRepository
+прямой canEdit;
+
+canEdit автоматически включает просмотр;
+
+includeChildren=true наследует право на всех потомков;
+
+права складываются с глобальными ролями;
+
+явных запретов пока нет.
+
+
+Фактическое поведение
+
+Доступ пользователя	Результат
+
+Глобальный VIEWER	Просмотр всех страниц
+Глобальный EDITOR	Просмотр и изменение всех страниц
+Глобальный ADMIN	Изменение всех страниц и управление
+Глобальный OWNER	Полный доступ
+Нет глобальной роли	Только страницы из page_access
+Право родителя с includeChildren=true	Действует на всех потомков
+
+
+Это соответствует принятой модели.
+
+Но перед тестированием нужно закрыть две реальные ошибки.
+
+1. Проверять принадлежность страницы сайту
+
+Сейчас можно передать:
+
+siteId = сайт, где пользователь ADMIN
+pageId = страница другого сайта
+
+И save() не проверит, что эта страница принадлежит указанному сайту.
+
+Добавь в PageAccessRepository публичный метод:
+
+public static function pageBelongsToSite(int $siteId, int $pageId): bool
 {
-    public static function userAccessCode(int $userId): string
-    {
-        return 'U' . $userId;
-    }
-
-    public static function normalizeAccessCode(string $accessCode): string
-    {
-        $accessCode = trim($accessCode);
-        $accessCode = mb_strtoupper($accessCode);
-
-        if ($accessCode === '') {
-            throw new RuntimeException('EMPTY_ACCESS_CODE');
-        }
-
-        if (!preg_match('/^[A-Z]\d+$/', $accessCode)) {
-            throw new RuntimeException('INVALID_ACCESS_CODE');
-        }
-
-        return $accessCode;
-    }
-
-    public static function listByPage(int $siteId, int $pageId): array
-    {
-        if ($siteId <= 0 || $pageId <= 0) {
-            return [];
-        }
-
-        $pdo = sb_db();
-
-        $stmt = $pdo->prepare("
-            SELECT
-                id,
-                site_id,
-                page_id,
-                access_code,
-                can_view,
-                can_edit,
-                include_children,
-                created_by,
-                created_at,
-                updated_at
-            FROM sitebuilder.page_access
-            WHERE site_id = :site_id
-              AND page_id = :page_id
-            ORDER BY id DESC
-        ");
-
-        $stmt->execute([
-            ':site_id' => $siteId,
-            ':page_id' => $pageId,
-        ]);
-
-        $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
-
-        return array_map([self::class, 'mapRow'], $rows ?: []);
-    }
-
-    public static function save(
-        int $siteId,
-        int $pageId,
-        string $accessCode,
-        bool $canView,
-        bool $canEdit,
-        bool $includeChildren,
-        int $createdBy = 0
-    ): array {
-        if ($siteId <= 0) {
-            throw new RuntimeException('INVALID_SITE_ID');
-        }
-
-        if ($pageId <= 0) {
-            throw new RuntimeException('INVALID_PAGE_ID');
-        }
-
-        $accessCode = self::normalizeAccessCode($accessCode);
-
-        if ($canEdit) {
-            $canView = true;
-        }
-
-        $pdo = sb_db();
-
-        $stmt = $pdo->prepare("
-            INSERT INTO sitebuilder.page_access (
-                site_id,
-                page_id,
-                access_code,
-                can_view,
-                can_edit,
-                include_children,
-                created_by,
-                created_at,
-                updated_at
-            )
-            VALUES (
-                :site_id,
-                :page_id,
-                :access_code,
-                :can_view,
-                :can_edit,
-                :include_children,
-                :created_by,
-                NOW(),
-                NOW()
-            )
-            ON CONFLICT (site_id, page_id, access_code)
-            DO UPDATE SET
-                can_view = EXCLUDED.can_view,
-                can_edit = EXCLUDED.can_edit,
-                include_children = EXCLUDED.include_children,
-                updated_at = NOW()
-            RETURNING
-                id,
-                site_id,
-                page_id,
-                access_code,
-                can_view,
-                can_edit,
-                include_children,
-                created_by,
-                created_at,
-                updated_at
-        ");
-
-        $stmt->execute([
-            ':site_id' => $siteId,
-            ':page_id' => $pageId,
-            ':access_code' => $accessCode,
-            ':can_view' => $canView,
-            ':can_edit' => $canEdit,
-            ':include_children' => $includeChildren,
-            ':created_by' => $createdBy > 0 ? $createdBy : null,
-        ]);
-
-        $row = $stmt->fetch(PDO::FETCH_ASSOC);
-
-        if (!$row) {
-            throw new RuntimeException('PAGE_ACCESS_SAVE_ERROR');
-        }
-
-        return self::mapRow($row);
-    }
-
-    public static function delete(int $id, int $siteId = 0, int $pageId = 0): bool
-    {
-        if ($id <= 0) {
-            throw new RuntimeException('INVALID_PAGE_ACCESS_ID');
-        }
-
-        $pdo = sb_db();
-
-        $where = ['id = :id'];
-        $params = [
-            ':id' => $id,
-        ];
-
-        if ($siteId > 0) {
-            $where[] = 'site_id = :site_id';
-            $params[':site_id'] = $siteId;
-        }
-
-        if ($pageId > 0) {
-            $where[] = 'page_id = :page_id';
-            $params[':page_id'] = $pageId;
-        }
-
-        $stmt = $pdo->prepare("
-            DELETE FROM sitebuilder.page_access
-            WHERE " . implode(' AND ', $where)
-        );
-
-        $stmt->execute($params);
-
-        return true;
-    }
-
-    public static function hasAnyPageAccess(int $siteId, string $accessCode): bool
-    {
-        if ($siteId <= 0) {
-            return false;
-        }
-
-        $accessCode = self::normalizeAccessCode($accessCode);
-
-        $pdo = sb_db();
-
-        $stmt = $pdo->prepare("
-            SELECT id
-            FROM sitebuilder.page_access
-            WHERE site_id = :site_id
-              AND access_code = :access_code
-            LIMIT 1
-        ");
-
-        $stmt->execute([
-            ':site_id' => $siteId,
-            ':access_code' => $accessCode,
-        ]);
-
-        return (bool)$stmt->fetch(PDO::FETCH_ASSOC);
-    }
-
-    public static function hasPagePermission(
-        int $siteId,
-        int $pageId,
-        string $accessCode,
-        string $permission
-    ): bool {
-        if ($siteId <= 0 || $pageId <= 0) {
-            return false;
-        }
-
-        $accessCode = self::normalizeAccessCode($accessCode);
-
-        if (!in_array($permission, ['view', 'edit'], true)) {
-            return false;
-        }
-
-        $pageAndParents = self::getPageAndParentIds($siteId, $pageId);
-
-        if (empty($pageAndParents)) {
-            return false;
-        }
-
-        $placeholders = [];
-
-        foreach ($pageAndParents as $index => $id) {
-            $placeholders[] = ':page_id_' . $index;
-        }
-
-        $pdo = sb_db();
-
-        $params = [
-            ':site_id' => $siteId,
-            ':access_code' => $accessCode,
-        ];
-
-        foreach ($pageAndParents as $index => $id) {
-            $params[':page_id_' . $index] = (int)$id;
-        }
-
-        $stmt = $pdo->prepare("
-            SELECT
-                page_id,
-                can_view,
-                can_edit,
-                include_children
-            FROM sitebuilder.page_access
-            WHERE site_id = :site_id
-              AND access_code = :access_code
-              AND page_id IN (" . implode(',', $placeholders) . ")
-        ");
-
-        $stmt->execute($params);
-
-        $rulesByPageId = [];
-
-        while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
-            $rulesByPageId[(int)$row['page_id']] = [
-                'canView' => self::boolValue($row['can_view']),
-                'canEdit' => self::boolValue($row['can_edit']),
-                'includeChildren' => self::boolValue($row['include_children']),
-            ];
-        }
-
-        foreach ($pageAndParents as $index => $currentPageId) {
-            $currentPageId = (int)$currentPageId;
-
-            if (!isset($rulesByPageId[$currentPageId])) {
-                continue;
-            }
-
-            $rule = $rulesByPageId[$currentPageId];
-
-            /*
-             * index = 0 — сама страница.
-             * index > 0 — родительская страница.
-             */
-            $isDirectPage = $index === 0;
-
-            if (!$isDirectPage && !$rule['includeChildren']) {
-                continue;
-            }
-
-            if ($permission === 'view' && ($rule['canView'] || $rule['canEdit'])) {
-                return true;
-            }
-
-            if ($permission === 'edit' && $rule['canEdit']) {
-                return true;
-            }
-        }
-
+    if ($siteId <= 0 || $pageId <= 0) {
         return false;
     }
 
-    public static function getPageAndParentIds(int $siteId, int $pageId): array
-    {
-        if ($siteId <= 0 || $pageId <= 0) {
-            return [];
-        }
+    $pdo = sb_db();
 
-        $pdo = sb_db();
+    $stmt = $pdo->prepare("
+        SELECT 1
+        FROM sitebuilder.page
+        WHERE site_id = :site_id
+          AND id = :page_id
+        LIMIT 1
+    ");
 
-        $ids = [];
-        $visited = [];
-        $currentPageId = $pageId;
+    $stmt->execute([
+        ':site_id' => $siteId,
+        ':page_id' => $pageId,
+    ]);
 
-        for ($i = 0; $i < 100; $i++) {
-            if ($currentPageId <= 0) {
-                break;
-            }
+    return (bool)$stmt->fetchColumn();
+}
 
-            if (isset($visited[$currentPageId])) {
-                break;
-            }
+Также добавь:
 
-            $visited[$currentPageId] = true;
-
-            $stmt = $pdo->prepare("
-                SELECT id, parent_id
-                FROM sitebuilder.page
-                WHERE site_id = :site_id
-                  AND id = :page_id
-                LIMIT 1
-            ");
-
-            $stmt->execute([
-                ':site_id' => $siteId,
-                ':page_id' => $currentPageId,
-            ]);
-
-            $row = $stmt->fetch(PDO::FETCH_ASSOC);
-
-            if (!$row) {
-                break;
-            }
-
-            $ids[] = (int)$row['id'];
-            $currentPageId = (int)($row['parent_id'] ?? 0);
-        }
-
-        return $ids;
-    }
-
-    public static function getPageIdsWithAccess(int $siteId, string $accessCode): array
-    {
-        if ($siteId <= 0) {
-            return [];
-        }
-
-        $accessCode = self::normalizeAccessCode($accessCode);
-
-        $pdo = sb_db();
-
-        $stmt = $pdo->prepare("
-            SELECT page_id
-            FROM sitebuilder.page_access
-            WHERE site_id = :site_id
-              AND access_code = :access_code
-        ");
-
-        $stmt->execute([
-            ':site_id' => $siteId,
-            ':access_code' => $accessCode,
-        ]);
-
-        $ids = [];
-
-        while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
-            $ids[] = (int)$row['page_id'];
-        }
-
-        return array_values(array_unique($ids));
-    }
-
-    private static function mapRow(array $row): array
-    {
-        return [
-            'id' => (int)$row['id'],
-            'siteId' => (int)$row['site_id'],
-            'pageId' => (int)$row['page_id'],
-            'accessCode' => (string)$row['access_code'],
-            'canView' => self::boolValue($row['can_view']),
-            'canEdit' => self::boolValue($row['can_edit']),
-            'includeChildren' => self::boolValue($row['include_children']),
-            'createdBy' => isset($row['created_by']) ? (int)$row['created_by'] : 0,
-            'createdAt' => (string)($row['created_at'] ?? ''),
-            'updatedAt' => (string)($row['updated_at'] ?? ''),
-        ];
-    }
-
-    private static function boolValue($value): bool
-    {
-        return $value === true
-            || $value === 1
-            || $value === '1'
-            || $value === 't'
-            || $value === 'true'
-            || $value === 'Y';
+public static function requirePageInSite(int $siteId, int $pageId): void
+{
+    if (!self::pageBelongsToSite($siteId, $pageId)) {
+        throw new RuntimeException('PAGE_NOT_IN_SITE');
     }
 }
+
+В listByPage() после проверки ID:
+
+self::requirePageInSite($siteId, $pageId);
+
+В save() после проверок ID:
+
+self::requirePageInSite($siteId, $pageId);
+
+В delete() — если переданы оба значения:
+
+if ($siteId > 0 && $pageId > 0) {
+    self::requirePageInSite($siteId, $pageId);
+}
+
+2. Проверять страницу до определения возможности управления
+
+В page_access.php функция сейчас сначала может разрешить доступ по глобальной роли сайта, не удостоверившись, что страница относится к этому сайту.
+
+Замени её на:
+
+if (!function_exists('sb_page_access_can_manage')) {
+    function sb_page_access_can_manage(
+        int $siteId,
+        int $pageId,
+        int $userId
+    ): bool {
+        global $USER;
+
+        if (
+            $siteId <= 0
+            || $pageId <= 0
+            || $userId <= 0
+            || !PageAccessRepository::pageBelongsToSite($siteId, $pageId)
+        ) {
+            return false;
+        }
+
+        if (
+            is_object($USER)
+            && method_exists($USER, 'IsAdmin')
+            && $USER->IsAdmin()
+        ) {
+            return true;
+        }
+
+        if (
+            PageAccessService::hasGlobalSiteAccess(
+                $siteId,
+                $userId,
+                'admin'
+            )
+        ) {
+            return true;
+        }
+
+        return PageAccessService::canEditPage(
+            $siteId,
+            $pageId,
+            $userId
+        );
+    }
+}
+
+Теперь невозможно использовать права одного сайта для управления правами страницы другого сайта.
+
+3. Исправить результат удаления
+
+Сейчас delete() всегда возвращает true, даже если запись не найдена.
+
+Замени:
+
+$stmt->execute($params);
+
+return true;
+
+на:
+
+$stmt->execute($params);
+
+return $stmt->rowCount() > 0;
+
+А в page_access.php:
+
+$deleted = PageAccessRepository::delete(
+    $id,
+    $siteId,
+    $pageId
+);
+
+if (!$deleted) {
+    throw new RuntimeException('PAGE_ACCESS_NOT_FOUND');
+}
+
+4. Ограничить формат accessCode
+
+Сейчас разрешена любая буква:
+
+/^[A-Z]\d+$/
+
+Например, пройдут X12 или Z900.
+
+Если пока права выдаются только пользователям, замени на:
+
+if (!preg_match('/^U[1-9]\d*$/', $accessCode)) {
+    throw new RuntimeException('INVALID_ACCESS_CODE');
+}
+
+Если планируется выдача группам, можно сразу разрешить два типа:
+
+if (!preg_match('/^(U|G)[1-9]\d*$/', $accessCode)) {
+    throw new RuntimeException('INVALID_ACCESS_CODE');
+}
+
+5. Проверить уникальный индекс PostgreSQL
+
+Этот запрос:
+
+ON CONFLICT (site_id, page_id, access_code)
+
+работает только при наличии уникального ограничения.
+
+В таблице должно быть:
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_page_access_site_page_code
+ON sitebuilder.page_access (
+    site_id,
+    page_id,
+    access_code
+);
+
+Что пока не реализовано
+
+В этой таблице присутствуют только:
+
+can_view
+can_edit
+include_children
+
+Прав для Диска пока нет:
+
+disk.view
+disk.edit
+disk.download
+disk.upload
+disk.delete
+
+Сначала нужно полностью проверить применение canView/canEdit в страницах и блоках. Следующим нужен файл:
+
+/local/sitebuilder/api/handlers/page.php
+
+В нём проверим, действительно ли пользователь без глобальной роли получает только разрешённые страницы и не может изменить чужую страницу прямым API-запросом.
