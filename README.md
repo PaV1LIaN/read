@@ -1,5 +1,3 @@
-Вставь в консоль браузера только этот код:
-
 (async function () {
   try {
     const sessidResponse = await fetch(
@@ -81,11 +79,9 @@
     console.error('Ошибка выполнения запроса:', error);
   }
 })();
-
-После ввода трёх ID скопируй строки из консоли, начинающиеся с:
-
-1. HTTP get_sessid:
-2. Ответ get_sessid:
-3. HTTP pageAccess.save:
-4. Ответ pageAccess.save:
-5. JSON:
+Promise {<pending>}
+VM239:51  POST https://portal24.itsnn.ru/local/sitebuilder/api/index.php 400 (Bad Request)
+(anonymous) @ VM239:51
+await in (anonymous)
+(anonymous) @ VM239:81
+VM239:73 ОШИБКА API: {ok: false, error: 'SQLSTATE[42P10]: Invalid column reference: 7 ОШИБК…исключения, соответствующего указанию ON CONFLICT', action: 'pageAccess.save', file: '/srv/bx/docroot/local/sitebuilder/lib/PageAccessRepository.php', line: 132}
