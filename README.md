@@ -1,87 +1,120 @@
-(async function () {
-  try {
-    const sessidResponse = await fetch(
-      '/local/sitebuilder/api/get_sessid.php',
-      {
-        method: 'GET',
-        credentials: 'same-origin',
-        cache: 'no-store'
-      }
-    );
+Ошибка теперь точная:
 
-    const sessidText = await sessidResponse.text();
+SQLSTATE[42P10]
+нет уникального ограничения, соответствующего ON CONFLICT
 
-    console.log('1. HTTP get_sessid:', sessidResponse.status);
-    console.log('2. Ответ get_sessid:', sessidText);
+В PageAccessRepository.php используется:
 
-    let sessidData;
+ON CONFLICT (site_id, page_id, access_code)
 
-    try {
-      sessidData = JSON.parse(sessidText);
-    } catch (error) {
-      console.error('get_sessid.php вернул не JSON');
-      return;
+Но в существующей таблице sitebuilder.page_access нет уникального индекса на эти три поля.
+
+CREATE TABLE IF NOT EXISTS не изменяет уже существующую таблицу, поэтому ограничение не добавилось.
+
+Создай исправляющую миграцию
+
+Файл:
+
+/local/sitebuilder/migrations/fix_page_access_unique.php
+
+Полный код:
+
+<?php
+
+require_once $_SERVER['DOCUMENT_ROOT'] . '/bitrix/modules/main/include/prolog_before.php';
+require_once $_SERVER['DOCUMENT_ROOT'] . '/local/sitebuilder/lib/db.php';
+
+global $USER;
+
+if (!is_object($USER) || !$USER->IsAdmin()) {
+    http_response_code(403);
+    die('ACCESS_DENIED');
+}
+
+header('Content-Type: text/plain; charset=UTF-8');
+
+try {
+    $pdo = sb_db();
+
+    $pdo->beginTransaction();
+
+    /*
+     * На случай, если уже появились повторяющиеся записи:
+     * оставляем запись с самым большим ID.
+     */
+    $pdo->exec("
+        DELETE FROM sitebuilder.page_access AS old_row
+        USING sitebuilder.page_access AS new_row
+        WHERE old_row.site_id = new_row.site_id
+          AND old_row.page_id = new_row.page_id
+          AND old_row.access_code = new_row.access_code
+          AND old_row.id < new_row.id
+    ");
+
+    /*
+     * Уникальный индекс нужен для:
+     *
+     * ON CONFLICT (site_id, page_id, access_code)
+     */
+    $pdo->exec("
+        CREATE UNIQUE INDEX IF NOT EXISTS uq_page_access_site_page_code
+        ON sitebuilder.page_access (
+            site_id,
+            page_id,
+            access_code
+        )
+    ");
+
+    $pdo->commit();
+
+    echo "OK: unique index created\n\n";
+
+    $stmt = $pdo->query("
+        SELECT
+            indexname,
+            indexdef
+        FROM pg_indexes
+        WHERE schemaname = 'sitebuilder'
+          AND tablename = 'page_access'
+        ORDER BY indexname
+    ");
+
+    $indexes = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+    print_r($indexes);
+} catch (Throwable $e) {
+    if (isset($pdo) && $pdo->inTransaction()) {
+        $pdo->rollBack();
     }
 
-    if (!sessidData.ok || !sessidData.sessid) {
-      console.error('Не удалось получить sessid:', sessidData);
-      return;
-    }
+    http_response_code(500);
 
-    const siteId = Number(prompt('Введите siteId'));
-    const pageId = Number(prompt('Введите pageId'));
-    const userId = Number(prompt('Введите ID пользователя'));
+    echo "ERROR:\n";
+    echo $e->getMessage() . "\n";
+    echo $e->getFile() . ':' . $e->getLine();
+}
 
-    if (siteId <= 0 || pageId <= 0 || userId <= 0) {
-      console.error('siteId, pageId и userId должны быть больше нуля');
-      return;
-    }
+Открой:
 
-    const fd = new FormData();
+https://portal24.itsnn.ru/local/sitebuilder/migrations/fix_page_access_unique.php
 
-    fd.append('action', 'pageAccess.save');
-    fd.append('sessid', sessidData.sessid);
-    fd.append('siteId', String(siteId));
-    fd.append('pageId', String(pageId));
-    fd.append('accessCode', 'U' + userId);
-    fd.append('canView', '1');
-    fd.append('canEdit', '1');
-    fd.append('includeChildren', '1');
+Должен появиться индекс примерно такого вида:
 
-    const response = await fetch(
-      '/local/sitebuilder/api/index.php',
-      {
-        method: 'POST',
-        body: fd,
-        credentials: 'same-origin',
-        cache: 'no-store'
-      }
-    );
+[indexname] => uq_page_access_site_page_code
 
-    const responseText = await response.text();
+и определение:
 
-    console.log('3. HTTP pageAccess.save:', response.status);
-    console.log('4. Ответ pageAccess.save:', responseText);
+CREATE UNIQUE INDEX uq_page_access_site_page_code
+ON sitebuilder.page_access
+USING btree (site_id, page_id, access_code)
 
-    try {
-      const result = JSON.parse(responseText);
-      console.log('5. JSON:', result);
+После этого снова выполни тот же консольный тест pageAccess.save.
 
-      if (result.ok) {
-        console.log('УСПЕШНО: право сохранено');
-      } else {
-        console.error('ОШИБКА API:', result);
-      }
-    } catch (error) {
-      console.error('pageAccess.save вернул не JSON');
-    }
-  } catch (error) {
-    console.error('Ошибка выполнения запроса:', error);
-  }
-})();
-Promise {<pending>}
-VM239:51  POST https://portal24.itsnn.ru/local/sitebuilder/api/index.php 400 (Bad Request)
-(anonymous) @ VM239:51
-await in (anonymous)
-(anonymous) @ VM239:81
-VM239:73 ОШИБКА API: {ok: false, error: 'SQLSTATE[42P10]: Invalid column reference: 7 ОШИБК…исключения, соответствующего указанию ON CONFLICT', action: 'pageAccess.save', file: '/srv/bx/docroot/local/sitebuilder/lib/PageAccessRepository.php', line: 132}
+Ожидаемый результат:
+
+3. HTTP pageAccess.save: 200
+УСПЕШНО: право сохранено
+
+После успешного запуска удали временный файл:
+
+/local/sitebuilder/migrations/fix_page_access_unique.php
