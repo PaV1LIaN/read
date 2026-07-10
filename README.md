@@ -1,328 +1,189 @@
-Как я понял при разработке мы добавляли таблицы, но в дальнейшем некоторые из них не использовали вообще
+Да, понял. У тебя рабочая таблица страниц называется:
 
-TABLES IN SCHEMA sitebuilder:
+sitebuilder.page
 
-Array
-(
-    [0] => Array
-        (
-            [table_schema] => sitebuilder
-            [table_name] => access
-        )
+А я в PageAccessRepository.php указал:
 
-    [1] => Array
-        (
-            [table_schema] => sitebuilder
-            [table_name] => block
-        )
+sitebuilder.pages
 
-    [2] => Array
-        (
-            [table_schema] => sitebuilder
-            [table_name] => layout
-        )
+Поэтому надо заменить только это место.
 
-    [3] => Array
-        (
-            [table_schema] => sitebuilder
-            [table_name] => menu
-        )
+Старые таблицы типа:
 
-    [4] => Array
-        (
-            [table_schema] => sitebuilder
-            [table_name] => page
-        )
+sitebuilder_page
+sitebuilder_site
+sitebuilder_block
+sitebuilder_site_user_access
 
-    [5] => Array
-        (
-            [table_schema] => sitebuilder
-            [table_name] => page_access
-        )
-
-    [6] => Array
-        (
-            [table_schema] => sitebuilder
-            [table_name] => site
-        )
-
-    [7] => Array
-        (
-            [table_schema] => sitebuilder
-            [table_name] => site_section
-        )
-
-    [8] => Array
-        (
-            [table_schema] => sitebuilder
-            [table_name] => sitebuilder_block
-        )
-
-    [9] => Array
-        (
-            [table_schema] => sitebuilder
-            [table_name] => sitebuilder_disk_file
-        )
-
-    [10] => Array
-        (
-            [table_schema] => sitebuilder
-            [table_name] => sitebuilder_disk_folder
-        )
-
-    [11] => Array
-        (
-            [table_schema] => sitebuilder
-            [table_name] => sitebuilder_disk_permission
-        )
-
-    [12] => Array
-        (
-            [table_schema] => sitebuilder
-            [table_name] => sitebuilder_disk_settings
-        )
-
-    [13] => Array
-        (
-            [table_schema] => sitebuilder
-            [table_name] => sitebuilder_page
-        )
-
-    [14] => Array
-        (
-            [table_schema] => sitebuilder
-            [table_name] => sitebuilder_site
-        )
-
-    [15] => Array
-        (
-            [table_schema] => sitebuilder
-            [table_name] => sitebuilder_site_disk
-        )
-
-    [16] => Array
-        (
-            [table_schema] => sitebuilder
-            [table_name] => sitebuilder_site_user_access
-        )
-
-)
+пока не удаляй. Да, похоже, часть из них осталась от ранних вариантов разработки, но сейчас трогать их опасно, пока не проверим, какие реально используются кодом.
 
 
-COLUMNS:
+---
+
+Исправь PageAccessRepository.php
+
+Файл:
+
+/local/sitebuilder/lib/PageAccessRepository.php
+
+Найди метод:
+
+public static function getPageAndParentIds(int $siteId, int $pageId): array
+
+Внутри него сейчас есть запрос:
+
+$stmt = $pdo->prepare("
+    SELECT id, parent_id
+    FROM sitebuilder.pages
+    WHERE site_id = :site_id
+      AND id = :page_id
+    LIMIT 1
+");
+
+Замени sitebuilder.pages на sitebuilder.page:
+
+$stmt = $pdo->prepare("
+    SELECT id, parent_id
+    FROM sitebuilder.page
+    WHERE site_id = :site_id
+      AND id = :page_id
+    LIMIT 1
+");
 
 
---- access ---
-id : bigint
-site_id : bigint
-access_code : character varying
-role : character varying
-created_by : bigint
-created_at : timestamp without time zone
-updated_by : bigint
-updated_at : timestamp without time zone
+---
 
---- block ---
-id : bigint
-page_id : bigint
-type : character varying
-sort : integer
-content_json : jsonb
-props_json : jsonb
-created_by : bigint
-created_at : timestamp without time zone
-updated_by : bigint
-updated_at : timestamp without time zone
+Полный правильный метод
 
---- layout ---
-site_id : bigint
-settings_json : jsonb
-zones_json : jsonb
-created_by : bigint
-created_at : timestamp without time zone
-updated_by : bigint
-updated_at : timestamp without time zone
+Можешь заменить весь метод целиком:
 
---- menu ---
-id : bigint
-site_id : bigint
-name : character varying
-items_json : jsonb
-created_by : bigint
-created_at : timestamp without time zone
-updated_by : bigint
-updated_at : timestamp without time zone
+public static function getPageAndParentIds(int $siteId, int $pageId): array
+{
+    if ($siteId <= 0 || $pageId <= 0) {
+        return [];
+    }
 
---- page ---
-id : bigint
-site_id : bigint
-title : character varying
-slug : character varying
-parent_id : bigint
-sort : integer
-status : character varying
-published_at : timestamp without time zone
-created_by : bigint
-created_at : timestamp without time zone
-updated_by : bigint
-updated_at : timestamp without time zone
+    $pdo = sb_db();
 
---- page_access ---
-id : bigint
-site_id : bigint
-page_id : bigint
-access_code : character varying
-can_view : boolean
-can_edit : boolean
-include_children : boolean
-created_by : bigint
-created_at : timestamp without time zone
-updated_at : timestamp without time zone
+    $ids = [];
+    $visited = [];
+    $currentPageId = $pageId;
 
---- site ---
-id : bigint
-name : character varying
-slug : character varying
-home_page_id : bigint
-disk_folder_id : bigint
-top_menu_id : bigint
-settings_json : jsonb
-layout_json : jsonb
-created_by : bigint
-created_at : timestamp without time zone
-updated_by : bigint
-updated_at : timestamp without time zone
-bitrix_group_id : integer
-bitrix_group_created_by : integer
-bitrix_group_created_at : timestamp without time zone
-section_id : bigint
+    for ($i = 0; $i < 100; $i++) {
+        if ($currentPageId <= 0) {
+            break;
+        }
 
---- site_section ---
-id : bigint
-name : character varying
-sort : integer
-created_by : integer
-created_at : timestamp without time zone
-updated_by : integer
-updated_at : timestamp without time zone
+        if (isset($visited[$currentPageId])) {
+            break;
+        }
 
---- sitebuilder_block ---
-id : bigint
-site_id : bigint
-page_id : bigint
-type : character varying
-sort : integer
-settings_json : text
-is_active : smallint
-created_by : bigint
-created_at : timestamp without time zone
-updated_at : timestamp without time zone
+        $visited[$currentPageId] = true;
 
---- sitebuilder_disk_file ---
-id : bigint
-external_id : bigint
-folder_id : bigint
-site_id : bigint
-block_id : bigint
-name : character varying
-original_name : character varying
-extension : character varying
-mime_type : character varying
-size : bigint
-path : text
-hash : character varying
-is_deleted : smallint
-created_by : bigint
-created_at : timestamp without time zone
-updated_at : timestamp without time zone
-download_url : text
-preview_url : text
+        $stmt = $pdo->prepare("
+            SELECT id, parent_id
+            FROM sitebuilder.page
+            WHERE site_id = :site_id
+              AND id = :page_id
+            LIMIT 1
+        ");
 
---- sitebuilder_disk_folder ---
-id : bigint
-external_id : bigint
-parent_id : bigint
-site_id : bigint
-block_id : bigint
-name : character varying
-path : text
-depth : integer
-is_deleted : smallint
-created_by : bigint
-created_at : timestamp without time zone
-updated_at : timestamp without time zone
+        $stmt->execute([
+            ':site_id' => $siteId,
+            ':page_id' => $currentPageId,
+        ]);
 
---- sitebuilder_disk_permission ---
-id : bigint
-site_id : bigint
-block_id : bigint
-folder_id : bigint
-subject_type : character varying
-subject_id : character varying
-can_view : smallint
-can_upload : smallint
-can_create_folder : smallint
-can_rename : smallint
-can_delete : smallint
-can_download : smallint
-can_manage_access : smallint
-can_edit_settings : smallint
-created_at : timestamp without time zone
+        $row = $stmt->fetch(PDO::FETCH_ASSOC);
 
---- sitebuilder_disk_settings ---
-id : bigint
-block_id : bigint
-site_id : bigint
-page_id : bigint
-title : character varying
-root_folder_id : bigint
-view_mode : character varying
-allow_upload : smallint
-allow_create_folder : smallint
-allow_rename : smallint
-allow_delete : smallint
-allow_download : smallint
-show_search : smallint
-show_breadcrumbs : smallint
-default_sort : character varying
-default_sort_direction : character varying
-allowed_extensions_json : text
-max_file_size : bigint
-permission_mode : character varying
-use_site_root_fallback : smallint
-created_by : bigint
-created_at : timestamp without time zone
-updated_at : timestamp without time zone
+        if (!$row) {
+            break;
+        }
 
---- sitebuilder_page ---
-id : bigint
-site_id : bigint
-title : character varying
-slug : character varying
-sort : integer
-created_at : timestamp without time zone
-updated_at : timestamp without time zone
+        $ids[] = (int)$row['id'];
+        $currentPageId = (int)($row['parent_id'] ?? 0);
+    }
 
---- sitebuilder_site ---
-id : bigint
-name : character varying
-code : character varying
-root_disk_folder_id : bigint
-settings_json : text
-created_at : timestamp without time zone
-updated_at : timestamp without time zone
+    return $ids;
+}
 
---- sitebuilder_site_disk ---
-site_id : bigint
-root_folder_id : bigint
-storage_type : character varying
-created_at : timestamp without time zone
-updated_at : timestamp without time zone
 
---- sitebuilder_site_user_access ---
-id : bigint
-site_id : bigint
-user_id : bigint
-role_code : character varying
-created_at : timestamp without time zone
-updated_at : timestamp without time zone
+---
+
+Ещё поправь диагностический файл, если используешь
+
+В run_page_access.php у тебя проверка была:
+
+to_regclass('sitebuilder.pages') AS pages
+
+Замени на:
+
+to_regclass('sitebuilder.page') AS page
+
+То есть:
+
+$stmt = $pdo->query("
+    SELECT
+        to_regclass('sitebuilder.page_access') AS page_access,
+        to_regclass('sitebuilder.page') AS page,
+        to_regclass('sitebuilder.access') AS access
+");
+
+
+---
+
+После правки снова проверь pageAccess.save
+
+Запусти консольный тест ещё раз:
+
+(async function () {
+  const siteId = Number(prompt('siteId'));
+  const pageId = Number(prompt('pageId'));
+  const userId = Number(prompt('ID пользователя, кому выдать доступ'));
+
+  const fd = new FormData();
+
+  fd.append('action', 'pageAccess.save');
+  fd.append('sessid', BX.bitrix_sessid());
+  fd.append('siteId', siteId);
+  fd.append('pageId', pageId);
+  fd.append('accessCode', 'U' + userId);
+  fd.append('canView', '1');
+  fd.append('canEdit', '1');
+  fd.append('includeChildren', '1');
+
+  const res = await fetch('/local/sitebuilder/api/index.php', {
+    method: 'POST',
+    body: fd
+  });
+
+  console.log(await res.json());
+})();
+
+Если всё нормально, должен вернуться:
+
+{
+  "ok": true,
+  "data": {
+    "item": {
+      "siteId": 1,
+      "pageId": 1,
+      "accessCode": "U99",
+      "canView": true,
+      "canEdit": true,
+      "includeChildren": true
+    }
+  }
+}
+
+
+---
+
+Кратко: рабочие новые таблицы у нас сейчас:
+
+sitebuilder.site
+sitebuilder.page
+sitebuilder.block
+sitebuilder.access
+sitebuilder.page_access
+
+А sitebuilder_site, sitebuilder_page, sitebuilder_block пока считаем старым хвостом и не используем.
