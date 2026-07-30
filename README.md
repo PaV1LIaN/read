@@ -1,89 +1,22 @@
-Обработка заняла 3m 30s
-
-Сейчас видно следующее:
-
-этап 13 применился — реестр миграций создан;
-
-этап 5 завершился ошибкой;
-
-этапы 6–12 поэтому не запускались;
-
-изменения этапа 5 выполнялись в транзакции, поэтому при ошибке должны были откатиться.
-
-
-Надпись «Fingerprint: не найден» не означает, что SQL-файл потерян. Она означает, что ожидаемые таблицы и столбцы этой миграции ещё не появились в базе.
-
-Пока не нажимай кнопку повторно и не работай в SiteBuilder.
-
-1. Посмотреть, какая миграция упала
-
-В pgAdmin открой:
-
-projectsDB → Tools → Query Tool
-
-Выполни:
-
-SELECT
-    id,
-    mode,
-    status,
-    applied_count,
-    baseline_count,
-    skipped_count,
-    failed_migration_key,
-    error_code,
-    started_at,
-    finished_at
-FROM sitebuilder.deployment_run
-ORDER BY id DESC
-LIMIT 5;
-
-Скорее всего, будет:
-
-failed_migration_key:
-20260729_001_entity_versions
-
-error_code:
-MIGRATION_FAILED
-
-2. Проверить текущую структуру таблиц
-
-Затем выполни:
-
-SELECT
-    table_name,
-    ordinal_position,
-    column_name,
-    data_type,
-    is_nullable
-FROM information_schema.columns
-WHERE table_schema = 'sitebuilder'
-  AND table_name IN ('page', 'block')
-ORDER BY table_name, ordinal_position;
-
-Пришли фотографию или скопированный результат этого запроса.
-
-3. Найти точную ошибку на сервере
-
-При наличии SSH выполни:
-
-sudo grep -R \
-  "SiteBuilder migration 20260729_001_entity_versions failed" \
-  /var/log /home/bitrix 2>/dev/null | tail -30
-
-Если ничего не найдено:
-
-sudo journalctl --since "30 minutes ago" \
-  | grep -i "SiteBuilder migration"
-
-Нужна строка примерно такого вида:
-
-SiteBuilder migration 20260729_001_entity_versions failed: ...
-
-Именно текст после failed: покажет настоящую причину PostgreSQL.
-
-После исправления запускать нужно будет уже страницу:
-
-/local/sitebuilder/deployment.php
-
-и кнопку «Применить ожидающие миграции», а не восстанавливать базу из backup.
+"block"	1	"id"	"bigint"	"NO"
+"block"	2	"page_id"	"bigint"	"NO"
+"block"	3	"type"	"character varying"	"NO"
+"block"	4	"sort"	"integer"	"NO"
+"block"	5	"content_json"	"jsonb"	"NO"
+"block"	6	"props_json"	"jsonb"	"NO"
+"block"	7	"created_by"	"bigint"	"YES"
+"block"	8	"created_at"	"timestamp without time zone"	"NO"
+"block"	9	"updated_by"	"bigint"	"YES"
+"block"	10	"updated_at"	"timestamp without time zone"	"NO"
+"page"	1	"id"	"bigint"	"NO"
+"page"	2	"site_id"	"bigint"	"NO"
+"page"	3	"title"	"character varying"	"NO"
+"page"	4	"slug"	"character varying"	"NO"
+"page"	5	"parent_id"	"bigint"	"YES"
+"page"	6	"sort"	"integer"	"NO"
+"page"	7	"status"	"character varying"	"NO"
+"page"	8	"published_at"	"timestamp without time zone"	"YES"
+"page"	9	"created_by"	"bigint"	"YES"
+"page"	10	"created_at"	"timestamp without time zone"	"NO"
+"page"	11	"updated_by"	"bigint"	"YES"
+"page"	12	"updated_at"	"timestamp without time zone"	"NO"
