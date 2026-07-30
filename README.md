@@ -1,54 +1,116 @@
-Обработка заняла 3m 3s
+"ProjectsDB"	"bx_user"	"192.168.7.100/32"	5432	true	"on"	"off"
 
-Понял. Серверные команды не нужны.
+<?php
+const DB_USER = 'bx_user';
+const DB_PASS = '25##PostPassBX';
 
-Эта ошибка означает, что подключение pgAdmin сейчас работает в режиме только чтения. Диагностический скрипт даже не дошёл до проверки миграции — он остановился на создании временной таблицы.
+const DB_NODES = [
+    "pgsql:host=192.168.7.101;port=5432;dbname=ProjectsDB",
+    "pgsql:host=192.168.7.102;port=5432;dbname=ProjectsDB",
+    "pgsql:host=192.168.7.100;port=5432;dbname=ProjectsDB",
+];
 
-В pgAdmin выполни только этот безопасный запрос:
+const DB_MASTER_CACHE_TTL = 5;
 
-SELECT
-    current_database() AS database_name,
-    current_user AS database_user,
-    inet_server_addr()::text AS server_ip,
-    inet_server_port() AS server_port,
-    pg_is_in_recovery() AS is_replica,
-    current_setting('transaction_read_only') AS transaction_read_only,
-    current_setting('default_transaction_read_only') AS default_transaction_read_only;
+function cacheGet(string $key): ?string
+{
+    if (function_exists('apcu_fetch')) {
+        $ok = false;
+        $val = apcu_fetch($key, $ok);
+        return $ok ? (string)$val : null;
+    }
+    return null;
+}
 
-Пришли результат целиком.
+function cacheSet(string $key, string $value, int $ttl): void
+{
+    if (function_exists('apcu_store')) {
+        apcu_store($key, $value, $ttl);
+    }
+}
 
-Как понимать результат
+function makePdo(string $dsn): PDO
+{
+    if (stripos($dsn, 'pgsql:') !== 0) {
+        $dsn = 'pgsql:' . $dsn;
+    }
 
-Если будет:
+    return new PDO(
+        $dsn,
+        DB_USER,
+        DB_PASS,
+        [
+            PDO::ATTR_ERRMODE            => PDO::ERRMODE_EXCEPTION,
+            PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
+            PDO::ATTR_EMULATE_PREPARES   => false,
+        ]
+    );
+}
 
-is_replica = true
-transaction_read_only = on
+function isMaster(PDO $pdo): bool
+{
+    $inRecovery = $pdo->query("SELECT pg_is_in_recovery()")->fetchColumn();
+    return !((string)$inRecovery === 't' || (string)$inRecovery === '1' || $inRecovery === true || $inRecovery === 1);
+}
 
-значит pgAdmin подключён к реплике PostgreSQL. На ней миграции выполнить невозможно — нужен адрес основного сервера PostgreSQL.
+function findMasterDsn(): string
+{
+    $cacheKey = 'db_master_dsn';
+    $cached = cacheGet($cacheKey);
+    if ($cached) {
+        return $cached;
+    }
 
-Если будет:
+    $nodes = DB_NODES;
+    shuffle($nodes);
 
-is_replica = false
-default_transaction_read_only = on
+    $diag = [];
 
-значит режим только чтения установлен для базы или пользователя bx_user. Это должен отключить администратор PostgreSQL.
+    foreach ($nodes as $dsn) {
+        try {
+            $pdo = makePdo($dsn);
+            $rec = $pdo->query("SELECT pg_is_in_recovery()")->fetchColumn();
+            $diag[] = $dsn . " pg_is_in_recovery=" . (string)$rec;
 
-Если будет:
+            if (isMaster($pdo)) {
+                cacheSet($cacheKey, $dsn, DB_MASTER_CACHE_TTL);
+                return $dsn;
+            }
+        } catch (Throwable $e) {
+            $diag[] = $dsn . " ERROR=" . $e->getMessage();
+        }
+    }
 
-is_replica = false
-transaction_read_only = off
+    error_log("MASTER NOT FOUND. DIAG: " . implode(" | ", $diag));
+	throw new RuntimeException('DB_UNAVAILABLE');
+}
 
-значит pgAdmin подключён не к тому серверу, что SiteBuilder, либо ошибка миграции вызвана другим SQL-запросом.
+function getPdo(): PDO
+{
+    static $pdo = null;
+    static $dsnUsed = null;
 
-Также посмотри в:
+    $dsn = findMasterDsn();
 
-/local/php_interface/lib/pg_master.php
+    if ($pdo instanceof PDO && $dsnUsed === $dsn) {
+        return $pdo;
+    }
 
-и пришли без пароля только значения:
+    $pdo = makePdo($dsn);
+    $dsnUsed = $dsn;
 
-DB_HOST
-DB_PORT
-DB_NAME
-DB_USER
+    if (!isMaster($pdo)) {
+        cacheSet('db_master_dsn', '', 1);
+        $dsn2 = findMasterDsn();
+        $pdo2 = makePdo($dsn2);
 
-Миграцию пока больше не запускай. Базу восстанавливать не нужно — неудачная попытка откатилась.
+        if (!isMaster($pdo2)) {
+            throw new RuntimeException('Мастер не найден');
+        }
+
+        $pdo = $pdo2;
+        $dsnUsed = $dsn2;
+    }
+
+    return $pdo;
+}
