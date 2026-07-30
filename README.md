@@ -1,83 +1,76 @@
-Обработка заняла 4m 21s
+Обработка заняла 3m 30s
 
-Отлично: владелец таблиц совпадает с пользователем подключения bx_user. Значит, права владельца менять не нужно — предыдущая версия причины исключена.
+Ничего страшного — серверные команды не нужны. Точную причину найдём через pgAdmin.
 
-Теперь проверим две наиболее вероятные причины: остаточная таблица от старой попытки или блокировка таблиц.
+Я подготовил безопасный диагностический SQL:
 
-1. Проверь, осталась ли entity_revision
+Скачать диагностику миграции этапа 5
 
-В pgAdmin выполни:
+Он повторяет ключевые шаги миграции, но в конце выполняет:
 
-SELECT to_regclass('sitebuilder.entity_revision') AS entity_revision;
+ROLLBACK;
 
-Если результат:
+Поэтому постоянных изменений в базе не оставит.
 
-NULL
+Как запустить
 
-миграция этапа 5 откатилась полностью.
-
-Если будет:
-
-sitebuilder.entity_revision
-
-выполни дополнительно:
-
-SELECT
-    ordinal_position,
-    column_name,
-    data_type,
-    is_nullable
-FROM information_schema.columns
-WHERE table_schema = 'sitebuilder'
-  AND table_name = 'entity_revision'
-ORDER BY ordinal_position;
-
-2. Проверь блокировки page и block
-
-Закрой вкладку с главной страницей SiteBuilder, чтобы она не выполняла AJAX-запросы. Затем выполни:
-
-SELECT
-    a.pid,
-    a.usename,
-    a.state,
-    a.xact_start,
-    a.wait_event_type,
-    a.wait_event,
-    c.relname AS table_name,
-    l.mode,
-    l.granted,
-    LEFT(a.query, 200) AS query
-FROM pg_locks l
-JOIN pg_class c
-    ON c.oid = l.relation
-JOIN pg_namespace n
-    ON n.oid = c.relnamespace
-JOIN pg_stat_activity a
-    ON a.pid = l.pid
-WHERE n.nspname = 'sitebuilder'
-  AND c.relname IN ('page', 'block')
-  AND a.pid <> pg_backend_pid()
-ORDER BY a.xact_start NULLS LAST;
-
-Если запрос не вернул строк либо нет старых сессий idle in transaction, можно сделать одну повторную попытку:
-
-/local/sitebuilder/tools/apply_stage13_migration.php
-
-Перед повтором:
-
-закрой остальные страницы SiteBuilder;
-
-worker пока не запускай;
-
-не открывай редактор;
-
-оставь только страницу миграции.
+1. В pgAdmin выбери:
 
 
-Если снова появится MIGRATION_FAILED, больше не повторяй. Тогда нужна точная ошибка PHP. На сервере выполни:
 
-sudo grep -R \
-  "SiteBuilder migration 20260729_001_entity_versions failed" \
-  /var/log /home/bitrix 2>/dev/null | tail -20
+projectsDB → Tools → Query Tool
 
-Нужна строка после failed: — она покажет конкретную команду PostgreSQL, на которой остановилась миграция.
+2. Открой скачанный файл через значок папки либо скопируй его содержимое в Query Tool.
+
+
+3. Выдели весь скрипт и нажми Execute.
+
+
+4. Внизу появятся результаты. Нужна таблица с колонками:
+
+
+
+step_no
+step_name
+ok
+sqlstate
+error_message
+
+Пример:
+
+1 | page.version             | true
+2 | block.version            | false | 42703 | ...
+3 | entity_revision.table    | true
+
+Пришли строки, где:
+
+ok = false
+
+Особенно нужны значения:
+
+step_name
+sqlstate
+error_message
+
+Скрипт проверяет отдельно:
+
+1. добавление версии странице;
+
+
+2. добавление версии блоку;
+
+
+3. создание таблицы ревизий;
+
+
+4. создание индексов;
+
+
+5. заполнение истории страниц;
+
+
+6. заполнение истории блоков.
+
+
+
+Пока страницу миграции повторно не запускай. Backup восстанавливать тоже не нужно — неуспешная миграция откатилась.
