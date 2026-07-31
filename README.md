@@ -1,5 +1,5 @@
 {
-    "generatedAt": "2026-07-31T13:22:57+03:00",
+    "generatedAt": "2026-07-31T15:11:39+03:00",
     "phpVersion": "8.1.12-1ubuntu4.3+ci6",
     "userId": 1,
     "siteId": 13,
@@ -18,7 +18,7 @@
         {
             "name": "schema.objects",
             "ok": true,
-            "durationMs": 16,
+            "durationMs": 15,
             "result": {
                 "sitebuilder.site": true,
                 "sitebuilder.page": true,
@@ -32,7 +32,7 @@
         {
             "name": "schema.columns",
             "ok": true,
-            "durationMs": 30,
+            "durationMs": 29,
             "result": {
                 "sitebuilder.page.version": true,
                 "sitebuilder.page.seo_json": true,
@@ -44,7 +44,7 @@
         {
             "name": "schema.page_constraints",
             "ok": true,
-            "durationMs": 4,
+            "durationMs": 5,
             "result": [
                 {
                     "conname": "page_pkey",
@@ -78,7 +78,7 @@
         {
             "name": "migration.status",
             "ok": true,
-            "durationMs": 96,
+            "durationMs": 112,
             "result": {
                 "registryReady": true,
                 "ready": true,
@@ -146,7 +146,7 @@
         {
             "name": "site.context",
             "ok": true,
-            "durationMs": 5,
+            "durationMs": 7,
             "result": {
                 "site": {
                     "id": 13,
@@ -195,23 +195,33 @@
     "writeTests": [
         {
             "name": "write.page_create.full_path",
-            "durationMs": 17,
-            "ok": false,
-            "exception": "PDOException",
-            "message": "SQLSTATE[23514]: Check violation: 7 ОШИБКА:  новая строка в отношении \"page\" нарушает ограничение-проверку \"page_seo_json_chk\"\nDETAIL:  Ошибочная строка содержит (50, 13, SiteBuilder diagnostic page, __diagnostic-50-20260731132257, null, 2147483000, draft, null, 1, 2026-07-31 13:22:57, 1, 2026-07-31 13:22:57, 1, []).",
-            "sqlState": "23514",
-            "file": "/local/sitebuilder/lib/storage_db.php",
-            "line": 133
+            "ok": true,
+            "durationMs": 23,
+            "result": {
+                "allocatedPageId": 53,
+                "pageInserted": true,
+                "revisionInserted": true,
+                "revision": {
+                    "id": 162,
+                    "entity_type": "page",
+                    "entity_id": 53,
+                    "entity_version": 1,
+                    "operation": "create"
+                },
+                "rolledBack": true
+            }
         },
         {
             "name": "write.page_publish.full_path",
-            "durationMs": 29,
-            "ok": false,
-            "exception": "PDOException",
-            "message": "SQLSTATE[23514]: Check violation: 7 ОШИБКА:  новая строка в отношении \"page\" нарушает ограничение-проверку \"page_seo_json_chk\"\nDETAIL:  Ошибочная строка содержит (14, 13, Диск, disk, null, 20, draft, null, 0, 2026-04-30 13:42:26, 1, 2026-07-31 13:22:57.495096, 2, []).",
-            "sqlState": "23514",
-            "file": "/local/sitebuilder/lib/RevisionService.php",
-            "line": 226
+            "ok": true,
+            "durationMs": 26,
+            "result": {
+                "pageId": 14,
+                "oldVersion": 1,
+                "newVersion": 2,
+                "newStatus": "draft",
+                "rolledBack": true
+            }
         }
     ],
     "notes": [
