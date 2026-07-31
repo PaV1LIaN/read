@@ -1,315 +1,98 @@
-Обработка заняла 3m 30s
-
-Да. Сейчас заменим два небольших участка, чтобы вместо бесполезного сообщения «Не удалось загрузить редактор» редактор показал точное API-действие и реальный ответ сервера.
-
-Это пока диагностическое исправление: после него станет понятно, какой именно запрос падает.
-
-1. Файл assets/admin/editor/00-core.js
-
-Найди функцию:
-
-function api(action, data) {
-
-Замени её целиком — от function api... до строки перед:
-
-function apiData(res) {
-
-на этот код:
-
-function sbAppendPostValue(params, key, value) {
-    if (value === undefined || value === null) {
-        return;
-    }
-
-    if (Array.isArray(value)) {
-        value.forEach(function (item, index) {
-            sbAppendPostValue(
-                params,
-                key + '[' + index + ']',
-                item
-            );
-        });
-
-        return;
-    }
-
-    if (typeof value === 'object') {
-        Object.keys(value).forEach(function (childKey) {
-            sbAppendPostValue(
-                params,
-                key + '[' + childKey + ']',
-                value[childKey]
-            );
-        });
-
-        return;
-    }
-
-    if (typeof value === 'boolean') {
-        params.append(key, value ? '1' : '0');
-        return;
-    }
-
-    params.append(key, String(value));
-}
-
-function sbApiErrorMessage(error) {
-    if (!error) {
-        return 'Неизвестная ошибка';
-    }
-
-    var parts = [];
-
-    if (error.action) {
-        parts.push('Действие: ' + error.action);
-    }
-
-    if (error.error) {
-        parts.push('Ошибка: ' + error.error);
-    }
-
-    if (error.message) {
-        parts.push('Сообщение: ' + error.message);
-    }
-
-    if (error.status) {
-        parts.push('HTTP: ' + error.status);
-    }
-
-    if (error.responseText) {
-        parts.push(
-            'Ответ сервера: ' +
-            String(error.responseText).substring(0, 1500)
-        );
-    }
-
-    return parts.length
-        ? parts.join('\n')
-        : JSON.stringify(error, null, 2);
-}
-
-function api(action, data) {
-    var actionName = String(action || '');
-
-    var isReadOnly =
-        /\.(list|get|search|status|health|check)$/i.test(actionName)
-        || actionName === 'common.site'
-        || actionName === 'common.bootstrap';
-
-    if (typeof setEditorStatus === 'function') {
-        setEditorStatus(
-            'working',
-            isReadOnly ? 'Загрузка…' : 'Сохранение…'
-        );
-    }
-
-    var params = new URLSearchParams();
-
-    sbAppendPostValue(params, 'action', actionName);
-    sbAppendPostValue(params, 'sessid', getSessid());
-
-    Object.keys(data || {}).forEach(function (key) {
-        sbAppendPostValue(params, key, data[key]);
-    });
-
-    return fetch(API_URL, {
-        method: 'POST',
-        credentials: 'same-origin',
-        headers: {
-            'Content-Type':
-                'application/x-www-form-urlencoded; charset=UTF-8',
-            'X-Requested-With': 'XMLHttpRequest'
-        },
-        body: params.toString()
-    })
-        .then(async function (response) {
-            var responseText = await response.text();
-            var result = null;
-
-            try {
-                result = JSON.parse(responseText);
-            } catch (parseError) {
-                throw {
-                    ok: false,
-                    error: 'INVALID_JSON_RESPONSE',
-                    message:
-                        'Сервер вернул не JSON. Возможно, произошла PHP-ошибка.',
-                    action: actionName,
-                    status: response.status,
-                    responseText: responseText
-                };
-            }
-
-            print(result);
-
-            if (!response.ok || !result || !result.ok) {
-                var apiError = Object.assign(
-                    {
-                        ok: false,
-                        action: actionName,
-                        status: response.status,
-                        responseText: responseText
-                    },
-                    result || {}
-                );
-
-                if (apiError.error === 'VERSION_CONFLICT') {
-                    handleVersionConflict(apiError);
-                }
-
-                throw apiError;
-            }
-
-            if (typeof setEditorStatus === 'function') {
-                setEditorStatus(
-                    'ready',
-                    isReadOnly ? 'Готово' : 'Сохранено'
-                );
-            }
-
-            return result;
-        })
-        .catch(function (error) {
-            if (typeof setEditorStatus === 'function') {
-                setEditorStatus('error', 'Ошибка');
-            }
-
-            console.error(
-                'SiteBuilder API error:',
-                actionName,
-                error
-            );
-
-            print({
-                ok: false,
-                action: actionName,
-                error: error
-            });
-
-            throw error;
-        });
-}
-
-
----
-
-2. Файл assets/admin/editor/60-events.js
-
-В самом конце файла найди:
-
-(async function init() {
-    try {
-        setManagementPanelsVisible(false);
-
-        await loadSite();
-        await loadPages();
-        await loadBlocks();
-        await loadAccessList();
-    } catch (e) {
-        print(e);
-        alert('Не удалось загрузить редактор');
-    }
-})();
-
-Замени на:
-
-(async function init() {
-    setManagementPanelsVisible(false);
-
-    var steps = [
-        {
-            name: 'Загрузка сайта',
-            action: 'site.get',
-            run: loadSite
-        },
-        {
-            name: 'Загрузка страниц',
-            action: 'page.list',
-            run: loadPages
-        },
-        {
-            name: 'Загрузка секций и блоков',
-            action: 'pageSection.list / block.list',
-            run: loadBlocks
-        },
-        {
-            name: 'Загрузка прав доступа',
-            action: 'access.list',
-            run: loadAccessList
-        }
-    ];
-
-    for (var index = 0; index < steps.length; index++) {
-        var step = steps[index];
-
-        try {
-            console.log(
-                'SiteBuilder init:',
-                step.name,
-                step.action
-            );
-
-            await step.run();
-        } catch (error) {
-            console.error(
-                'SiteBuilder initialization failed:',
-                step,
-                error
-            );
-
-            var errorText =
-                typeof sbApiErrorMessage === 'function'
-                    ? sbApiErrorMessage(error)
-                    : JSON.stringify(error, null, 2);
-
-            print({
-                ok: false,
-                initializationStep: step.name,
-                expectedAction: step.action,
-                error: error
-            });
-
-            alert(
-                'Не удалось загрузить редактор.\n\n' +
-                'Этап: ' + step.name + '\n' +
-                'Запрос: ' + step.action + '\n\n' +
-                errorText
-            );
-
-            return;
-        }
-    }
-
-    console.log('SiteBuilder editor initialized successfully');
-})();
-
-3. Обнови версию файлов в editor.php
-
-Найди подключения:
-
-/assets/admin/editor/00-core.js?v=17
-/assets/admin/editor/60-events.js?v=17
-
-Замени, например, на:
-
-/assets/admin/editor/00-core.js?v=21
-/assets/admin/editor/60-events.js?v=21
-
-Это нужно, чтобы браузер не использовал старый кеш.
-
-4. После замены
-
-Открой редактор и нажми:
-
-Ctrl + F5
-
-Теперь окно должно показать примерно такое:
-
-Этап: Загрузка страниц
-Запрос: page.list
-
-Ошибка: INTERNAL_ERROR
-HTTP: 500
-Ответ сервера: ...
-
-Пришли полный текст нового окна. По нему уже дам конкретное исправление PHP-файла, а не будем гадать.
+SiteBuilder init: Загрузка сайта site.get
+60-events.js?v=17:581 SiteBuilder init: Загрузка страниц page.list
+60-events.js?v=17:581 SiteBuilder init: Загрузка секций и блоков pageSection.list / block.list
+60-events.js?v=17:581 SiteBuilder init: Загрузка прав доступа access.list
+60-events.js?v=17:618 SiteBuilder editor initialized successfully
+core.js:6364 BX.debug:  
+(3) ['status', 500, {…}]
+0
+: 
+"status"
+1
+: 
+500
+2
+: 
+async
+: 
+true
+cache
+: 
+true
+data
+: 
+"action=page.create&sessid=37dd0f1d1c546192387e63f5b1f2b98d&siteId=14&title=%D0%A2%D0%B5%D1%81%D1%82%D0%BE%D0%B2%D0%B0%D1%8F&slug=test&parentId=0"
+dataType
+: 
+"json"
+emulateOnload
+: 
+false
+headers
+: 
+false
+lsForce
+: 
+false
+lsTimeout
+: 
+30
+method
+: 
+"POST"
+onfailure
+: 
+ƒ (err)
+onsuccess
+: 
+ƒ (res)
+preparePost
+: 
+true
+processData
+: 
+true
+scriptsRunFirst
+: 
+false
+skipAuthCheck
+: 
+false
+start
+: 
+true
+timeout
+: 
+60
+url
+: 
+"/local/sitebuilder/api/index.php"
+xhr
+: 
+null
+[[Prototype]]
+: 
+Object
+length
+: 
+3
+[[Prototype]]
+: 
+Array(0)
+core.js:6371 console.trace
+debug	@	core.js:6371
+value	@	core.js:7718
+onCustomEvent	@	core.js:11135
+(anonymous)	@	core.js:15741
+XMLHttpRequest.send		
+(anonymous)	@	core.js:15764
+(anonymous)	@	00-core.js?v=20.1:131
+api	@	00-core.js?v=20.1:130
+createPage	@	20-pages.js?v=20:314
+
+core.js:15764  POST https://portal24.itsnn.ru/local/sitebuilder/api/index.php 500 (Internal Server Error)
+(anonymous) @ core.js:15764
+(anonymous) @ 00-core.js?v=20.1:131
+api @ 00-core.js?v=20.1:130
+createPage @ 20-pages.js?v=20:314
+20-pages.js?v=20:343 Uncaught (in promise) status
