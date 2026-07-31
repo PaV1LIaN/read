@@ -4,7 +4,7 @@ SiteBuilder init: Загрузка сайта site.get
 60-events.js?v=17:581 SiteBuilder init: Загрузка прав доступа access.list
 60-events.js?v=17:618 SiteBuilder editor initialized successfully
 core.js:6364 BX.debug:  
-(3) ['status', 500, {…}]
+Array(3)
 0
 : 
 "status"
@@ -13,66 +13,7 @@ core.js:6364 BX.debug:
 500
 2
 : 
-async
-: 
-true
-cache
-: 
-true
-data
-: 
-"action=page.create&sessid=37dd0f1d1c546192387e63f5b1f2b98d&siteId=14&title=%D0%A2%D0%B5%D1%81%D1%82%D0%BE%D0%B2%D0%B0%D1%8F&slug=test&parentId=0"
-dataType
-: 
-"json"
-emulateOnload
-: 
-false
-headers
-: 
-false
-lsForce
-: 
-false
-lsTimeout
-: 
-30
-method
-: 
-"POST"
-onfailure
-: 
-ƒ (err)
-onsuccess
-: 
-ƒ (res)
-preparePost
-: 
-true
-processData
-: 
-true
-scriptsRunFirst
-: 
-false
-skipAuthCheck
-: 
-false
-start
-: 
-true
-timeout
-: 
-60
-url
-: 
-"/local/sitebuilder/api/index.php"
-xhr
-: 
-null
-[[Prototype]]
-: 
-Object
+{url: '/local/sitebuilder/api/index.php', method: 'POST', dataType: 'json', timeout: 60, data: 'action=page.create&sessid=5d944fba9236975829dbd96f…f8b&siteId=13&title=123123&slug=123123&parentId=0', …}
 length
 : 
 3
@@ -84,15 +25,3 @@ debug	@	core.js:6371
 value	@	core.js:7718
 onCustomEvent	@	core.js:11135
 (anonymous)	@	core.js:15741
-XMLHttpRequest.send		
-(anonymous)	@	core.js:15764
-(anonymous)	@	00-core.js?v=20.1:131
-api	@	00-core.js?v=20.1:130
-createPage	@	20-pages.js?v=20:314
-
-core.js:15764  POST https://portal24.itsnn.ru/local/sitebuilder/api/index.php 500 (Internal Server Error)
-(anonymous) @ core.js:15764
-(anonymous) @ 00-core.js?v=20.1:131
-api @ 00-core.js?v=20.1:130
-createPage @ 20-pages.js?v=20:314
-20-pages.js?v=20:343 Uncaught (in promise) status
