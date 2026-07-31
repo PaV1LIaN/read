@@ -1,18 +1,135 @@
-Promise {<pending>}[[Prototype]]: Promisecatch: ƒ catch()length: 1name: "catch"arguments: (...)caller: (...)[[Prototype]]: ƒ ()[[Scopes]]: Scopes[0]constructor: ƒ Promise()finally: ƒ finally()length: 1name: "finally"arguments: (...)caller: (...)[[Prototype]]: ƒ ()apply: ƒ apply()arguments: (...)bind: ƒ bind()call: ƒ call()caller: (...)constructor: ƒ Function()length: 0name: ""toString: ƒ e()Symbol(Symbol.hasInstance): ƒ [Symbol.hasInstance]()get arguments: ƒ arguments()set arguments: ƒ arguments()get caller: ƒ caller()set caller: ƒ caller()[[FunctionLocation]]: [[Prototype]]: Object[[Scopes]]: Scopes[0][[Scopes]]: Scopes[0]No propertiesthen: ƒ then()length: 2name: "then"arguments: (...)caller: (...)[[Prototype]]: ƒ ()[[Scopes]]: Scopes[0]Symbol(Symbol.toStringTag): "Promise"[[Prototype]]: Object[[PromiseState]]: "fulfilled"[[PromiseResult]]: undefined
-VM225:40  POST https://portal24.itsnn.ru/local/sitebuilder/api/index.php 400 (Bad Request)
-(anonymous) @ VM225:40
-(anonymous) @ VM225:61
-VM225:40  POST https://portal24.itsnn.ru/local/sitebuilder/api/index.php 400 (Bad Request)
+Обработка заняла 3m 2s
+
+Причина ещё не найдена, но важное уже ясно:
+
+common.bootstrap и common.site в Stage 20 не существуют, поэтому UNKNOWN_ACTION для них ожидаем и не связан с ошибкой редактора.
+
+Редактор реально загружает site.get, затем page.list, а после выбора страницы — block.list.
+
+На скриншоте открыт siteId=14, а успешный page.list ты проверил для siteId=13.
 
 
-===== common.bootstrap =====
-HTTP: 400
-{"ok":false,"error":"UNKNOWN_ACTION","action":"common.bootstrap"}
-VM225:52 
-===== common.site =====
-HTTP: 400
-{"ok":false,"error":"UNKNOWN_ACTION","action":"common.site"}
-VM225:52 
-===== page.list =====
-HTTP: 200
-{"ok":true,"pages":[{"id":34,"siteId":13,"title":"Вложенная тестовая","slug":"nested-test","parentId":31,"sort":10,"status":"published","publishedAt":"2026-07-10 11:12:27","seo":[],"createdBy":0,"createdAt":"2026-07-10 11:12:16","updatedBy":0,"updatedAt":"2026-07-10 11:12:27","version":1,"access":{"canView":true,"canEdit":true,"canDiskView":true,"canDiskEdit":true},"navigationOnly":false},{"id":14,"siteId":13,"title":"Диск","slug":"disk","parentId":0,"sort":20,"status":"published","publishedAt":"2026-06-05 08:48:35","seo":[],"createdBy":0,"createdAt":"2026-04-30 13:42:26","updatedBy":0,"updatedAt":"2026-06-05 08:48:35","version":1,"access":{"canView":true,"canEdit":true,"canDiskView":true,"canDiskEdit":true},"navigationOnly":false},{"id":31,"siteId":13,"title":"Тест","slug":"test","parentId":0,"sort":30,"status":"published","publishedAt":"2026-07-10 09:23:22","seo":[],"createdBy":0,"createdAt":"2026-07-01 08:36:53","updatedBy":0,"updatedAt":"2026-07-10 09:23:22","version":1,"access":{"canView":true,"canEdit":true,"canDiskView":true,"canDiskEdit":true},"navigationOnly":false}],"access":{"globalView":true,"globalEdit":true,"hasPageAccess":true}}
+Promise fulfilled: undefined — это нормально, скрипт просто ничего не возвращал.
+
+Проверь реальные запросы редактора
+
+Открой консоль именно на странице:
+
+editor.php?siteId=14
+
+Вставь целиком:
+
+(async function () {
+    const config = window.SB_EDITOR_CONFIG || {};
+
+    const currentSiteId = Number(
+        config.siteId ||
+        new URL(window.location.href).searchParams.get('siteId') ||
+        0
+    );
+
+    const apiUrl =
+        config.apiUrl ||
+        '/local/sitebuilder/api/index.php';
+
+    const sessid =
+        window.BX && typeof BX.bitrix_sessid === 'function'
+            ? BX.bitrix_sessid()
+            : String(config.sessid || '');
+
+    async function request(action, data = {}) {
+        const body = new URLSearchParams();
+
+        body.set('action', action);
+        body.set('sessid', sessid);
+
+        Object.entries(data).forEach(([key, value]) => {
+            body.set(key, String(value));
+        });
+
+        const response = await fetch(apiUrl, {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: {
+                'Content-Type':
+                    'application/x-www-form-urlencoded; charset=UTF-8'
+            },
+            body: body.toString()
+        });
+
+        const text = await response.text();
+
+        console.group(
+            `${action} — HTTP ${response.status}`
+        );
+        console.log(text);
+        console.groupEnd();
+
+        try {
+            return JSON.parse(text);
+        } catch (error) {
+            return null;
+        }
+    }
+
+    console.clear();
+    console.log('Проверяем siteId:', currentSiteId);
+
+    const siteResult = await request(
+        'site.get',
+        {siteId: currentSiteId}
+    );
+
+    if (!siteResult || !siteResult.ok) {
+        console.error('ОШИБКА НА ЭТАПЕ site.get');
+        return;
+    }
+
+    const pagesResult = await request(
+        'page.list',
+        {siteId: currentSiteId}
+    );
+
+    if (!pagesResult || !pagesResult.ok) {
+        console.error('ОШИБКА НА ЭТАПЕ page.list');
+        return;
+    }
+
+    const pages = Array.isArray(pagesResult.pages)
+        ? pagesResult.pages
+        : [];
+
+    if (!pages.length) {
+        console.log(
+            'У сайта нет страниц. Основная загрузка API успешна.'
+        );
+        return;
+    }
+
+    const pageId = Number(pages[0].id || 0);
+
+    await request('pageSection.list', {
+        siteId: currentSiteId,
+        pageId: pageId
+    });
+
+    const blocksResult = await request(
+        'block.list',
+        {pageId: pageId}
+    );
+
+    if (!blocksResult || !blocksResult.ok) {
+        console.error('ОШИБКА НА ЭТАПЕ block.list');
+        return;
+    }
+
+    console.log('ВСЕ ОСНОВНЫЕ ЗАПРОСЫ УСПЕШНЫ');
+})();
+
+Пришли блок, где будет первая ошибка:
+
+site.get
+page.list
+или block.list
+
+По этому ответу уже можно будет дать конкретное исправление, а не продолжать проверять миграцию вслепую.
