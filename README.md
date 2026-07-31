@@ -1,9 +1,85 @@
-VM299:41 site.get — HTTP 200
-VM299:44 {"ok":true,"site":{"id":14,"name":"Тестовый","slug":"test-s","sectionId":0,"homePageId":0,"diskFolderId":515,"topMenuId":0,"bitrixGroupId":10,"bitrixGroupCreatedBy":1,"bitrixGroupCreatedAt":"2026-05-29 09:49:16.964005","bitrixGroupUrl":"/workgroups/group/10/","settings":{"accent":"#2563eb","logoFileId":0,"containerWidth":1100},"layout":{"leftMode":"blocks","showLeft":false,"leftWidth":260,"showRight":false,"rightWidth":260,"showFooter":true,"showHeader":true},"createdBy":1,"createdAt":"2026-05-29 09:49:16","updatedBy":1,"updatedAt":"2026-05-29 09:49:37.516628","version":1,"currentUserRole":"OWNER","currentUserRoleRank":4,"currentUserHasGlobalView":true,"currentUserHasGlobalEdit":true,"currentUserHasGlobalDiskEdit":true,"currentUserHasPageAccess":true},"access":{"role":"OWNER","roleRank":4,"globalView":true,"globalEdit":true,"hasPageAccess":true},"handler":"site"}
-VM299:41 page.list — HTTP 200
-VM299:44 {"ok":true,"pages":[{"id":20,"siteId":14,"title":"Страница","slug":"page","parentId":0,"sort":10,"status":"published","publishedAt":"2026-05-29 09:49:34","seo":[],"createdBy":0,"createdAt":"2026-05-29 09:49:29","updatedBy":0,"updatedAt":"2026-05-29 09:49:34","version":1,"access":{"canView":true,"canEdit":true,"canDiskView":true,"canDiskEdit":true},"navigationOnly":false}],"access":{"globalView":true,"globalEdit":true,"hasPageAccess":true}}
-VM299:41 pageSection.list — HTTP 200
-VM299:44 {"ok":true,"defaultSection":{"id":6,"siteId":14,"pageId":20,"type":"section","title":"Основная секция","sort":10,"layout":{"container":"default","columns":1,"gap":24},"props":{"backgroundColor":"","backgroundImage":"","paddingTop":40,"paddingBottom":40,"minHeight":0},"createdBy":1,"createdAt":"2026-07-30 13:05:13.819649+03","updatedBy":1,"updatedAt":"2026-07-30 13:05:13.819649+03","version":1},"sections":[{"id":6,"siteId":14,"pageId":20,"type":"section","title":"Основная секция","sort":10,"layout":{"container":"default","columns":1,"gap":24},"props":{"backgroundColor":"","backgroundImage":"","paddingTop":40,"paddingBottom":40,"minHeight":0},"createdBy":1,"createdAt":"2026-07-30 13:05:13.819649+03","updatedBy":1,"updatedAt":"2026-07-30 13:05:13.819649+03","version":1}]}
-VM299:41 block.list — HTTP 200
-VM299:44 {"ok":true,"blocks":[{"id":28,"pageId":20,"type":"text","sort":20,"content":{"html":"<p>Новый текст</p>"},"props":{"column":1,"sectionId":17,"_placement":{"column":1,"sectionId":17}},"createdBy":1,"createdAt":"2026-05-29 10:37:41","updatedBy":1,"updatedAt":"2026-05-29 10:37:41","version":1},{"id":94,"pageId":20,"type":"table","sort":30,"content":{"rows":[{"id":"row_1","cells":{"col_1":"","col_2":"","col_3":""}}],"title":"Таблица","columns":[{"id":"col_1","label":"Столбец 1"},{"id":"col_2","label":"Столбец 2"},{"id":"col_3","label":"Столбец 3"}]},"props":{"column":1,"sectionId":6,"_placement":{"column":1,"sectionId":6}},"createdBy":1,"createdAt":"2026-07-30 13:05:27","updatedBy":1,"updatedAt":"2026-07-30 13:05:27","version":1}]}
-VM299:105 ВСЕ ОСНОВНЫЕ ЗАПРОСЫ УСПЕШНЫ
+Обработка заняла 6m 3s
+
+API и миграция работают. Ошибка находится во фронтенде редактора.
+
+В Stage 20 функция fillPageForm() вызывает:
+
+setInputValue(...)
+
+но эта функция объявлена только внутри замкнутого модуля 34-editor-ux.js и недоступна остальным JS-файлам. В результате возникает ReferenceError, а общий обработчик показывает «Не удалось загрузить редактор».
+
+Promise fulfilled → undefined в твоём выводе — это нормально.
+
+Быстрая проверка прямо сейчас
+
+В консоли браузера вставь:
+
+window.setInputValue = function (id, value) {
+    var element = document.getElementById(id);
+
+    if (element) {
+        element.value = value == null ? '' : String(value);
+    }
+};
+
+(async function () {
+    await loadSite();
+    await loadPages();
+    await loadBlocks();
+    await loadAccessList();
+    console.log('РЕДАКТОР ЗАГРУЖЕН');
+})();
+
+Редактор должен загрузиться без сообщения об ошибке. После обновления страницы временное исправление исчезнет.
+
+Постоянное исправление
+
+Скачай patch:
+
+Скачать исправление загрузки Stage 20
+
+В Termux:
+
+cd ~/sitebuilder
+
+PATCH=$(find ~/storage/downloads \
+  -maxdepth 1 \
+  -name 'sitebuilder-stage20-editor-load-fix*.patch' \
+  | head -1)
+
+echo "$PATCH"
+git apply --check "$PATCH"
+git apply "$PATCH"
+
+Проверь:
+
+git diff --check
+git --no-pager diff --stat
+
+Будут изменены только:
+
+assets/admin/editor/00-core.js
+editor.php
+
+В editor.php также увеличена версия подключаемого JS до v=20.1, чтобы браузер не использовал старый файл из кеша.
+
+Создай коммит:
+
+git add assets/admin/editor/00-core.js editor.php
+
+git commit -m "Fix Stage 20 editor initialization"
+
+git push
+
+После обновления этих двух файлов на портале закрой вкладку редактора, открой заново и нажми:
+
+Ctrl + F5
+
+Ещё один найденный дефект данных
+
+У страницы 20 существует секция 6, но блок 28 всё ещё ссылается на старую секцию 17:
+
+block 28 → sectionId 17
+существующая секция → ID 6
+
+Это не является причиной текущего падения — редактор умеет временно показать такой блок в первой секции. Но после загрузки редактора выбери блок 28, укажи секцию «Основная секция» и сохрани его размещение. Это устранит повреждённую ссылку в данных.
