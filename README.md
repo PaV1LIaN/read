@@ -1,85 +1,315 @@
-Обработка заняла 6m 3s
+Обработка заняла 3m 30s
 
-API и миграция работают. Ошибка находится во фронтенде редактора.
+Да. Сейчас заменим два небольших участка, чтобы вместо бесполезного сообщения «Не удалось загрузить редактор» редактор показал точное API-действие и реальный ответ сервера.
 
-В Stage 20 функция fillPageForm() вызывает:
+Это пока диагностическое исправление: после него станет понятно, какой именно запрос падает.
 
-setInputValue(...)
+1. Файл assets/admin/editor/00-core.js
 
-но эта функция объявлена только внутри замкнутого модуля 34-editor-ux.js и недоступна остальным JS-файлам. В результате возникает ReferenceError, а общий обработчик показывает «Не удалось загрузить редактор».
+Найди функцию:
 
-Promise fulfilled → undefined в твоём выводе — это нормально.
+function api(action, data) {
 
-Быстрая проверка прямо сейчас
+Замени её целиком — от function api... до строки перед:
 
-В консоли браузера вставь:
+function apiData(res) {
 
-window.setInputValue = function (id, value) {
-    var element = document.getElementById(id);
+на этот код:
 
-    if (element) {
-        element.value = value == null ? '' : String(value);
+function sbAppendPostValue(params, key, value) {
+    if (value === undefined || value === null) {
+        return;
     }
-};
 
-(async function () {
-    await loadSite();
-    await loadPages();
-    await loadBlocks();
-    await loadAccessList();
-    console.log('РЕДАКТОР ЗАГРУЖЕН');
+    if (Array.isArray(value)) {
+        value.forEach(function (item, index) {
+            sbAppendPostValue(
+                params,
+                key + '[' + index + ']',
+                item
+            );
+        });
+
+        return;
+    }
+
+    if (typeof value === 'object') {
+        Object.keys(value).forEach(function (childKey) {
+            sbAppendPostValue(
+                params,
+                key + '[' + childKey + ']',
+                value[childKey]
+            );
+        });
+
+        return;
+    }
+
+    if (typeof value === 'boolean') {
+        params.append(key, value ? '1' : '0');
+        return;
+    }
+
+    params.append(key, String(value));
+}
+
+function sbApiErrorMessage(error) {
+    if (!error) {
+        return 'Неизвестная ошибка';
+    }
+
+    var parts = [];
+
+    if (error.action) {
+        parts.push('Действие: ' + error.action);
+    }
+
+    if (error.error) {
+        parts.push('Ошибка: ' + error.error);
+    }
+
+    if (error.message) {
+        parts.push('Сообщение: ' + error.message);
+    }
+
+    if (error.status) {
+        parts.push('HTTP: ' + error.status);
+    }
+
+    if (error.responseText) {
+        parts.push(
+            'Ответ сервера: ' +
+            String(error.responseText).substring(0, 1500)
+        );
+    }
+
+    return parts.length
+        ? parts.join('\n')
+        : JSON.stringify(error, null, 2);
+}
+
+function api(action, data) {
+    var actionName = String(action || '');
+
+    var isReadOnly =
+        /\.(list|get|search|status|health|check)$/i.test(actionName)
+        || actionName === 'common.site'
+        || actionName === 'common.bootstrap';
+
+    if (typeof setEditorStatus === 'function') {
+        setEditorStatus(
+            'working',
+            isReadOnly ? 'Загрузка…' : 'Сохранение…'
+        );
+    }
+
+    var params = new URLSearchParams();
+
+    sbAppendPostValue(params, 'action', actionName);
+    sbAppendPostValue(params, 'sessid', getSessid());
+
+    Object.keys(data || {}).forEach(function (key) {
+        sbAppendPostValue(params, key, data[key]);
+    });
+
+    return fetch(API_URL, {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: {
+            'Content-Type':
+                'application/x-www-form-urlencoded; charset=UTF-8',
+            'X-Requested-With': 'XMLHttpRequest'
+        },
+        body: params.toString()
+    })
+        .then(async function (response) {
+            var responseText = await response.text();
+            var result = null;
+
+            try {
+                result = JSON.parse(responseText);
+            } catch (parseError) {
+                throw {
+                    ok: false,
+                    error: 'INVALID_JSON_RESPONSE',
+                    message:
+                        'Сервер вернул не JSON. Возможно, произошла PHP-ошибка.',
+                    action: actionName,
+                    status: response.status,
+                    responseText: responseText
+                };
+            }
+
+            print(result);
+
+            if (!response.ok || !result || !result.ok) {
+                var apiError = Object.assign(
+                    {
+                        ok: false,
+                        action: actionName,
+                        status: response.status,
+                        responseText: responseText
+                    },
+                    result || {}
+                );
+
+                if (apiError.error === 'VERSION_CONFLICT') {
+                    handleVersionConflict(apiError);
+                }
+
+                throw apiError;
+            }
+
+            if (typeof setEditorStatus === 'function') {
+                setEditorStatus(
+                    'ready',
+                    isReadOnly ? 'Готово' : 'Сохранено'
+                );
+            }
+
+            return result;
+        })
+        .catch(function (error) {
+            if (typeof setEditorStatus === 'function') {
+                setEditorStatus('error', 'Ошибка');
+            }
+
+            console.error(
+                'SiteBuilder API error:',
+                actionName,
+                error
+            );
+
+            print({
+                ok: false,
+                action: actionName,
+                error: error
+            });
+
+            throw error;
+        });
+}
+
+
+---
+
+2. Файл assets/admin/editor/60-events.js
+
+В самом конце файла найди:
+
+(async function init() {
+    try {
+        setManagementPanelsVisible(false);
+
+        await loadSite();
+        await loadPages();
+        await loadBlocks();
+        await loadAccessList();
+    } catch (e) {
+        print(e);
+        alert('Не удалось загрузить редактор');
+    }
 })();
 
-Редактор должен загрузиться без сообщения об ошибке. После обновления страницы временное исправление исчезнет.
+Замени на:
 
-Постоянное исправление
+(async function init() {
+    setManagementPanelsVisible(false);
 
-Скачай patch:
+    var steps = [
+        {
+            name: 'Загрузка сайта',
+            action: 'site.get',
+            run: loadSite
+        },
+        {
+            name: 'Загрузка страниц',
+            action: 'page.list',
+            run: loadPages
+        },
+        {
+            name: 'Загрузка секций и блоков',
+            action: 'pageSection.list / block.list',
+            run: loadBlocks
+        },
+        {
+            name: 'Загрузка прав доступа',
+            action: 'access.list',
+            run: loadAccessList
+        }
+    ];
 
-Скачать исправление загрузки Stage 20
+    for (var index = 0; index < steps.length; index++) {
+        var step = steps[index];
 
-В Termux:
+        try {
+            console.log(
+                'SiteBuilder init:',
+                step.name,
+                step.action
+            );
 
-cd ~/sitebuilder
+            await step.run();
+        } catch (error) {
+            console.error(
+                'SiteBuilder initialization failed:',
+                step,
+                error
+            );
 
-PATCH=$(find ~/storage/downloads \
-  -maxdepth 1 \
-  -name 'sitebuilder-stage20-editor-load-fix*.patch' \
-  | head -1)
+            var errorText =
+                typeof sbApiErrorMessage === 'function'
+                    ? sbApiErrorMessage(error)
+                    : JSON.stringify(error, null, 2);
 
-echo "$PATCH"
-git apply --check "$PATCH"
-git apply "$PATCH"
+            print({
+                ok: false,
+                initializationStep: step.name,
+                expectedAction: step.action,
+                error: error
+            });
 
-Проверь:
+            alert(
+                'Не удалось загрузить редактор.\n\n' +
+                'Этап: ' + step.name + '\n' +
+                'Запрос: ' + step.action + '\n\n' +
+                errorText
+            );
 
-git diff --check
-git --no-pager diff --stat
+            return;
+        }
+    }
 
-Будут изменены только:
+    console.log('SiteBuilder editor initialized successfully');
+})();
 
-assets/admin/editor/00-core.js
-editor.php
+3. Обнови версию файлов в editor.php
 
-В editor.php также увеличена версия подключаемого JS до v=20.1, чтобы браузер не использовал старый файл из кеша.
+Найди подключения:
 
-Создай коммит:
+/assets/admin/editor/00-core.js?v=17
+/assets/admin/editor/60-events.js?v=17
 
-git add assets/admin/editor/00-core.js editor.php
+Замени, например, на:
 
-git commit -m "Fix Stage 20 editor initialization"
+/assets/admin/editor/00-core.js?v=21
+/assets/admin/editor/60-events.js?v=21
 
-git push
+Это нужно, чтобы браузер не использовал старый кеш.
 
-После обновления этих двух файлов на портале закрой вкладку редактора, открой заново и нажми:
+4. После замены
+
+Открой редактор и нажми:
 
 Ctrl + F5
 
-Ещё один найденный дефект данных
+Теперь окно должно показать примерно такое:
 
-У страницы 20 существует секция 6, но блок 28 всё ещё ссылается на старую секцию 17:
+Этап: Загрузка страниц
+Запрос: page.list
 
-block 28 → sectionId 17
-существующая секция → ID 6
+Ошибка: INTERNAL_ERROR
+HTTP: 500
+Ответ сервера: ...
 
-Это не является причиной текущего падения — редактор умеет временно показать такой блок в первой секции. Но после загрузки редактора выбери блок 28, укажи секцию «Основная секция» и сохрани его размещение. Это устранит повреждённую ссылку в данных.
+Пришли полный текст нового окна. По нему уже дам конкретное исправление PHP-файла, а не будем гадать.
