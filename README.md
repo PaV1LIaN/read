@@ -1,24 +1,2 @@
-https://github.com/PaV1LIaN/sitebuilder/tree/visual-builder-codex-1
-
-SiteBuilder init: Загрузка сайта site.get
-60-events.js?v=21:581 SiteBuilder init: Загрузка страниц page.list
-60-events.js?v=21:589 SiteBuilder initialization failed: 
-Object
-action
-: 
-"page.list"
-name
-: 
-"Загрузка страниц"
-run
-: 
-async ƒ ()
-[[Prototype]]
-: 
-Object
- ReferenceError: setInputValue is not defined
-    at fillPageForm (20-pages.js?v=21:259:5)
-    at Object.loadPages (20-pages.js?v=21:22:5)
-    at async Object.run (34-editor-ux.js?v=17:1134:30)
-    at async init (60-events.js?v=21:587:13)
-init	@	60-events.js?v=21:589
+public.php?siteId=13&pageId=14:137  GET https://portal24.itsnn.ru/upload/sitebuilder/appearance/00d/tn0g0wdasxohu2bvlzgcw64xgjxs3drg/company.png 404 (Not Found)
+public.php?siteId=13&pageId=14:433  GET https://portal24.itsnn.ru/upload/sitebuilder/appearance/d5c/lbunf7c3uzxf3sjln0xszxgkoann28lv/logo_gaz.png 404 (Not Found)
