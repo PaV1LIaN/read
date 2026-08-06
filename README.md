@@ -1,2 +1,13 @@
-public.php?siteId=13&pageId=14:137  GET https://portal24.itsnn.ru/upload/sitebuilder/appearance/00d/tn0g0wdasxohu2bvlzgcw64xgjxs3drg/company.png 404 (Not Found)
-public.php?siteId=13&pageId=14:433  GET https://portal24.itsnn.ru/upload/sitebuilder/appearance/d5c/lbunf7c3uzxf3sjln0xszxgkoann28lv/logo_gaz.png 404 (Not Found)
+При загрузке эмблемы 
+
+Failed to load resource: the server responded with a status of 404 (Not Found)
+company.png:1  Failed to load resource: the server responded with a status of 404 (Not Found)
+/local/sitebuilder/api.php:1  Failed to load resource: the server responded with a status of 500 (Internal Server Error)
+
+Ответ API
+{
+  "ok": false,
+  "error": "SITE_APPEARANCEUPLOAD_FAILED",
+  "handler": "site",
+  "action": "site.appearanceUpload"
+}
