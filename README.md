@@ -1,4 +1,4 @@
-{
+[{
     "generatedAt": "2026-07-31T15:11:39+03:00",
     "phpVersion": "8.1.12-1ubuntu4.3+ci6",
     "userId": 1,
@@ -229,3 +229,4 @@
         "PostgreSQL sequence не откатывается, поэтому после теста возможен пропуск одного ID страницы. Это нормально."
     ]
 }
+](https://github.com/PaV1LIaN/sitebuilder/tree/visual-builder-codex-1)
