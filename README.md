@@ -1,1 +1,1 @@
-editor-v2.css?v=17:1  GET https://portal24.itsnn.ru/local/sitebuilder/media_preview.php?siteId=13&fileId=554 502 (Bad Gateway)
+Я так понимаю он хочет сделать предосмотр файла находящегося в компоненте диск downloadFile.php:1  Failed to load resource: the server responded with a status of 404 (Not Found)
