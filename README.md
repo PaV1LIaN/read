@@ -1,6 +1,6 @@
 <?php
 
-declare(stict_types=1);
+declare(strict_types=1);
 
 header('Content-Type: application/json; charset=utf-8');
 
@@ -25,7 +25,10 @@ if(!is_numeric($aRaw) || !is_numeric($bRaw) || $aRaw === '' || $bRaw === '') {
     );
 }
 
-if((float)$bRaw === 0.0) {
+$a = (float)$aRaw;
+$b = (float)$bRaw;
+
+if((float)$b === 0.0 && $operation === 'divide') {
     respond(
         [
             'error' => 'DIVISION_BY_ZERO',
@@ -36,10 +39,10 @@ if((float)$bRaw === 0.0) {
 }
 
 $result = match($operation) {
-    'add' => $aRaw + $bRaw,
-    'subtract' => $aRaw - $bRaw,
-    'multiply' => $aRaw * $bRaw,
-    'divide' => $aRaw / $bRaw,
+    'add' => $a + $bRaw,
+    'subtract' => $a - $b,
+    'multiply' => $a * $b,
+    'divide' => $a / $b,
     default => null
 };
 
@@ -53,10 +56,10 @@ if($result === null) {
     );
 }
 
-echo respond(
+respond(
     [
-        'a' => $aRaw,
-        'b' => $bRaw,
+        'a' => $a,
+        'b' => $b,
         'operation' => $operation,
         'result' => $result
     ]
