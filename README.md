@@ -8,11 +8,8 @@ function respond(array $data, int $statusCode = 200): never {
     http_response_code($statusCode);
 
     echo json_encode(
-        [
-            $data,
-            JSON_UNESCAPED_UNICODE
-        ],
-        $statusCode
+        $data,
+        JSON_UNESCAPED_UNICODE
     );
 
     exit();
@@ -32,9 +29,19 @@ $rawBody = file_get_contents('php://input');
 
 $data = json_decode($rawBody, true);
 
-$nameRaw = $data['name'];
+if(!is_array($data)) {
+    respond(
+        [
+            'error' => 'INVALID_JSON',
+            'message' => 'Некорректный JSON'
+        ],
+        400
+    );
+}
 
-$ageRaw = $data['age'];
+$nameRaw = $data['name'] ?? '';
+
+$ageRaw = $data['age'] ?? '';
 
 if($nameRaw === '') {
     respond(
@@ -46,7 +53,7 @@ if($nameRaw === '') {
     );
 }
 
-if($ageRaw <= 0 && !is_numeric($ageRaw)) {
+if(!is_numeric($ageRaw)) {
     respond(
         [
             'error' => 'INVALID_AGE',
@@ -56,13 +63,25 @@ if($ageRaw <= 0 && !is_numeric($ageRaw)) {
     );
 }
 
-$name = (string)$nameRaw;
-$age = (float)$ageRaw;
+$name = trim((string)$nameRaw);
+$age = (int)$ageRaw;
+
+if($age <= 0) {
+    respond(
+        [
+            'error' => 'INVALID_AGE',
+            'message' => 'Возраст должен быть числом больше 0'
+        ]
+    );
+}
+
+$id = 1;
 
 respond([
     'data' => [
         'id' => $id,
         'name' => $name,
         'age' => $age
-    ]
-]);'
+    ],
+    201
+]);
