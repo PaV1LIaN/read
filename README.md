@@ -2,9 +2,9 @@
 
 declare(strict_types=1);
 
-header('Content-Type: application/json');
+header('Content-Type: application/json; charser=utf-8');
 
-function respond(array $data, int $statusCode = 200) {
+function respond(array $data, int $statusCode = 200): never {
     http_response_code($statusCode);
 
     echo json_encode($data, JSON_UNESCAPED_UNICODE);
@@ -14,7 +14,7 @@ function respond(array $data, int $statusCode = 200) {
 
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
 	respond([
-		'error' => "METHOD_NOT_POST",
+		'error' => "METHOD_NOT_ALLOWED",
 		'message' => "Метод должен быть POST"
 	],
 	405
@@ -26,9 +26,14 @@ $data = json_decode($bodyRaw, true);
 
 if (!is_array($data)) {
 	respond([
-		'error' => '$data_IS_NOT_ARRAY',
+		'error' => '$INVALID_JSON',
 		'message' => '$data должен быть массивом'
 	],
 	400
 	);
 }
+
+$titleRaw = ($data['title'] ?? '');
+$priorityRaw = ($data['priority'] ?? '');
+$deviceCountRaw = ($data['deviceCount'] ?? '');
+
