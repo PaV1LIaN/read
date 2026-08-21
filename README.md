@@ -1,32 +1,34 @@
-<!DOCTYPE HTML5>
-<html lang="ru">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Создание заявки</title>
-</head>
-<body>
-    <h1>Создание заявки</h1>   
-    <form id="requestInvoice"action="">
-        <div>
-            <label for="invoiceTheme">Тема заявки</label>
-            <input id="invoiceTheme" type="text">
-        </div>
-        <div>
-            <label>Приоритет</label>
-            <input id="priorityLow" name="priority" type="radio" value="low"> 
-            <label for="priorityLow">low</label>
-            <input id="priorityNormal" name="priority" type="radio" value="normal"> 
-            <label for="priorityNormal">normal</label>
-            <input id="priorityHigh" name="priority" type="radio" value="high">
-            <label for="priorityHigh">high</label>
-        </div>
-        <div>
-            <label for="deviceCount">Количество устройств</label>
-            <input id="deviceCount" type="number">
-        </div>
-        <button type="submit">Создать заявку</button>
-    </form>
-    <p id="result">Здесь появится результат</p>
-</body>
-</html>
+<?php
+
+declare(strict_types=1);
+
+header('Content-Type: application/json');
+
+function respond(array $data, int $statusCode = 200) {
+    http_response_code($statusCode);
+
+    echo json_encode($data, JSON_UNESCAPED_UNICODE);
+
+	exit();
+}
+
+if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
+	respond([
+		'error' => "METHOD_NOT_POST",
+		'message' => "Метод должен быть POST"
+	],
+	405
+	);
+}
+
+$bodyRaw = file_get_contents('php://input');
+$data = json_decode($bodyRaw, true);
+
+if (!is_array($data)) {
+	respond([
+		'error' => '$data_IS_NOT_ARRAY',
+		'message' => '$data должен быть массивом'
+	],
+	400
+	);
+}
