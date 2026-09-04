@@ -1,25 +1,67 @@
-Обработка заняла 1m 6s
+SELECT
+    a.id AS attempt_id,
+    s.id AS survey_id,
+    s.title AS survey_title,
 
-Да, причина найдена в header.php: браузер ждёт недоступный StackPath до тайм-аута.
+    a.user_id,
+    a.user_fio,
+    COALESCE(NULLIF(a.department_name, ''), 'Не указано')
+        AS department_name,
 
-Замените только эту строку:
+    a.status,
+    a.started_at,
+    a.completed_at,
 
-<script src="https://stackpath.bootstrapcdn.com/bootstrap/4.5.2/js/bootstrap.min.js"></script>
+    qg.id AS group_id,
+    COALESCE(qg.title, 'Без группы') AS group_title,
 
-на:
+    q.id AS question_id,
+    q.question_text,
+    q.question_type,
 
-<script src="https://cdn.jsdelivr.net/npm/bootstrap@4.5.2/dist/js/bootstrap.bundle.min.js"></script>
+    ans.id AS answer_id,
+    ans.option_id,
+    o.option_text,
 
-Итоговый блок:
+    CASE
+        WHEN ans.option_id IS NOT NULL
+             AND NULLIF(TRIM(ans.answer_text), '') IS NOT NULL
+            THEN o.option_text || ': ' || ans.answer_text
 
-<script src="<?=SITE_TEMPLATE_PATH?>/js/jquery.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/bootstrap@4.5.2/dist/js/bootstrap.bundle.min.js"></script>
-<script src="<?=SITE_TEMPLATE_PATH?>/js/script.js"></script>
+        WHEN ans.option_id IS NOT NULL
+            THEN o.option_text
 
-Именно замените старое подключение, не добавляйте второе. Версия bundle нужна для корректной работы модального окна авторизации.
+        ELSE ans.answer_text
+    END AS answer_value,
 
-Если jsDelivr также окажется недоступен, файл следует загрузить в папку js активного шаблона и подключить локально:
+    ans.created_at AS answer_created_at,
+    ans.updated_at AS answer_updated_at
 
-<script src="<?=SITE_TEMPLATE_PATH?>/js/bootstrap.bundle.min.js"></script>
+FROM survey.attempts a
 
-Шаблон у вас, вероятно, расположен в /bitrix/templates/..., раз /local/templates отсутствует. После сохранения обновите страницу через Ctrl+F5. Ошибка stackpath.bootstrapcdn.com ... ERR_CONNECTION_TIMED_OUT должна исчезнуть.
+INNER JOIN survey.surveys s
+    ON s.id = a.survey_id
+
+INNER JOIN survey.answers ans
+    ON ans.attempt_id = a.id
+   AND ans.is_active = TRUE
+
+INNER JOIN survey.questions q
+    ON q.id = ans.question_id
+
+LEFT JOIN survey.question_groups qg
+    ON qg.id = q.group_id
+
+LEFT JOIN survey.options o
+    ON o.id = ans.option_id
+
+WHERE a.status = 'completed'
+
+ORDER BY
+    s.id,
+    a.completed_at DESC,
+    a.id,
+    COALESCE(qg.sort_order, 999999),
+    q.sort_order,
+    o.sort_order,
+    ans.id;
