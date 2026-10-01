@@ -1,144 +1,89 @@
-cat /etc/os-release
-PRETTY_NAME="Astra Linux"
-NAME="Astra Linux"
-ID=astra
-ID_LIKE=debian
-ANSI_COLOR="1;31"
-HOME_URL="https://astralinux.ru"
-SUPPORT_URL="https://astralinux.ru/support"
-LOGO=astra
-VERSION_ID=1.7_x86-64
-VERSION_CODENAME=1.7_x86-64
-VARIANT_ID=se
+# Подготовка перехода Битрикс24 на PHP 8.4
 
-uname -m
-x86_64
+Выполнять команды на тестовом **сервере приложения**. Они читают настройки: пакеты не устанавливаются, службы не перезапускаются.
 
-command -v php
-/usr/bin/php
+## Уже известно
 
- php -v
-PHP 8.1.12-1ubuntu4.3.astra2 (cli) (built: Sep 26 2025 01:43:38) (NTS)
-Copyright (c) The PHP Group
-Zend Engine v4.1.12, Copyright (c) Zend Technologies
-    with Zend OPcache v8.1.12-1ubuntu4.3.astra2, Copyright (c), by Zend Technologies
+- Битрикс24 «Энтерпрайз для PostgreSQL», главный модуль 25.900.0.
+- Astra Linux SE 1.7 x86_64, самостоятельная установка.
+- PHP CLI 8.1.12-1ubuntu4.3.astra2; запущены PHP 8.1-FPM и Angie.
+- В CLI есть pgsql, pdo_pgsql, LDAP, GD, OPcache и другие расширения.
+- Около 8 ГБ RAM и 118 ГБ свободного места.
+- Два сервера: приложение и БД. Есть sudo и снапшот.
+- На обследованном сервере также запущены Redis и PostgreSQL 11.
 
-php --ini
-Configuration File (php.ini) Path: /etc/php/8.1/cli
-Loaded Configuration File:         /etc/php/8.1/cli/php.ini
-Scan for additional .ini files in: /etc/php/8.1/cli/conf.d
-Additional .ini files parsed:      /etc/php/8.1/cli/conf.d/10-mysqlnd.ini,
-/etc/php/8.1/cli/conf.d/10-opcache.ini,
-/etc/php/8.1/cli/conf.d/10-pdo.ini,
-/etc/php/8.1/cli/conf.d/15-xml.ini,
-/etc/php/8.1/cli/conf.d/20-calendar.ini,
-/etc/php/8.1/cli/conf.d/20-ctype.ini,
-/etc/php/8.1/cli/conf.d/20-curl.ini,
-/etc/php/8.1/cli/conf.d/20-dom.ini,
-/etc/php/8.1/cli/conf.d/20-exif.ini,
-/etc/php/8.1/cli/conf.d/20-ffi.ini,
-/etc/php/8.1/cli/conf.d/20-fileinfo.ini,
-/etc/php/8.1/cli/conf.d/20-ftp.ini,
-/etc/php/8.1/cli/conf.d/20-gd.ini,
-/etc/php/8.1/cli/conf.d/20-gettext.ini,
-/etc/php/8.1/cli/conf.d/20-iconv.ini,
-/etc/php/8.1/cli/conf.d/20-ldap.ini,
-/etc/php/8.1/cli/conf.d/20-mbstring.ini,
-/etc/php/8.1/cli/conf.d/20-mysqli.ini,
-/etc/php/8.1/cli/conf.d/20-pdo_mysql.ini,
-/etc/php/8.1/cli/conf.d/20-pdo_pgsql.ini,
-/etc/php/8.1/cli/conf.d/20-pgsql.ini,
-/etc/php/8.1/cli/conf.d/20-phar.ini,
-/etc/php/8.1/cli/conf.d/20-posix.ini,
-/etc/php/8.1/cli/conf.d/20-readline.ini,
-/etc/php/8.1/cli/conf.d/20-shmop.ini,
-/etc/php/8.1/cli/conf.d/20-simplexml.ini,
-/etc/php/8.1/cli/conf.d/20-sockets.ini,
-/etc/php/8.1/cli/conf.d/20-sysvmsg.ini,
-/etc/php/8.1/cli/conf.d/20-sysvsem.ini,
-/etc/php/8.1/cli/conf.d/20-sysvshm.ini,
-/etc/php/8.1/cli/conf.d/20-tokenizer.ini,
-/etc/php/8.1/cli/conf.d/20-xmlreader.ini,
-/etc/php/8.1/cli/conf.d/20-xmlwriter.ini,
-/etc/php/8.1/cli/conf.d/20-xsl.ini,
-/etc/php/8.1/cli/conf.d/20-zip.ini,
-/etc/php/8.1/cli/conf.d/~bx.ini
+Исходный подробный вывод заменён этой сводкой; он доступен в истории Git.
 
-php -m
-[PHP Modules]
-calendar
-Core
-ctype
-curl
-date
-dom
-exif
-FFI
-fileinfo
-filter
-ftp
-gd
-gettext
-hash
-iconv
-json
-ldap
-libxml
-mbstring
-mysqli
-mysqlnd
-openssl
-pcntl
-pcre
-PDO
-pdo_mysql
-pdo_pgsql
-pgsql
-Phar
-posix
-readline
-Reflection
-session
-shmop
-SimpleXML
-sockets
-sodium
-SPL
-standard
-sysvmsg
-sysvsem
-sysvshm
-tokenizer
-xml
-xmlreader
-xmlwriter
-xsl
-Zend OPcache
-zip
-zlib
+## Как прислать результаты
 
-[Zend Modules]
-Zend OPcache
+Запускай блоки по очереди. Добавь вывод ниже соответствующего блока либо в отдельный файл results.txt в этом репозитории. Ошибки «файл не найден» и «команда не найдена» также сохрани.
 
- free -h
-              total        used        free      shared  buff/cache   available
-Mem:          7,7Gi       1,1Gi       618Mi       247Mi       6,1Gi       6,2Gi
-Swap:         1,0Gi       3,0Mi       1,0Gi
+Перед публикацией просмотри результаты и замени пароли, токены и учётные данные в URL на <СКРЫТО>. Не присылай .settings.php, dbconn.php, .env, ключи TLS и полный phpinfo().
 
- df -h
-Файловая система Размер Использовано  Дост Использовано% Cмонтировано в
-udev               3,9G            0  3,9G            0% /dev
-tmpfs              794M          79M  716M           10% /run
-/dev/sda1          147G          22G  118G           16% /
-tmpfs              3,9G          16K  3,9G            1% /dev/shm
-tmpfs              5,0M            0  5,0M            0% /run/lock
-tmpfs              794M            0  794M            0% /run/user/999
-tmpfs              794M            0  794M            0% /run/user/1000
+## 1. Версия ОС, пакеты и процессор
 
-systemctl list-units --type=service --all --no-pager | grep -Ei 'php|nginx|angie|apache|httpd|mysql|maryadb|postgres|redis|memcached'
-  angie.service                               loaded    active   running Angie - high performance web server
-  php8.1-fpm.service                          loaded    active   running The PHP 8.1 FastCGI Process Manager
-  postgresql.service                          loaded    active   exited  PostgreSQL RDBMS
-  postgresql@11-main.service                  loaded    active   running PostgreSQL Cluster 11-main
-  redis-server.service                        loaded    active   running Advanced key-value store
+```bash
+cat /etc/astra_version
+cat /etc/astra/build_version
+apt-cache policy php8.1-fpm php8.4-fpm php8.4-cli php8.4-pgsql
+dpkg-query -W 'php*' 'angie*' 2>/dev/null
+nproc
+```
 
+apt-cache показывает текущий локальный индекс; отсутствие кандидата само по себе ещё не доказывает отсутствие пакета в репозитории.
+
+## 2. Подключённые репозитории
+
+```bash
+cat /etc/apt/sources.list
+sudo find /etc/apt/sources.list.d -maxdepth 1 -type f \( -name '*.list' -o -name '*.sources' \) -print -exec cat {} \;
+```
+
+## 3. PHP-FPM и PHP
+
+```bash
+sudo cat /etc/php/8.1/fpm/php-fpm.conf
+sudo find /etc/php/8.1/fpm/pool.d -maxdepth 1 -type f -name '*.conf' -print -exec cat {} \;
+sudo cat /etc/php/8.1/fpm/php.ini
+sudo cat /etc/php/8.1/cli/php.ini
+sudo ls -la /etc/php/8.1/fpm/conf.d /etc/php/8.1/cli/conf.d
+sudo cat /etc/php/8.1/fpm/conf.d/'~bx.ini'
+sudo cat /etc/php/8.1/cli/conf.d/'~bx.ini'
+systemctl cat php8.1-fpm.service
+```
+
+Если в conf.d есть другие собственные .ini с настройками проекта, добавь их содержимое отдельно. Переносить старые бинарные расширения .so в PHP 8.4 нельзя.
+
+## 4. Angie
+
+```bash
+sudo angie -T 2>&1
+systemctl cat angie.service
+```
+
+Вывод нужен целиком, включая подключаемые конфиги: по нему определим корень портала, сокет FPM и обработку PHP.
+
+## 5. Фоновые задания
+
+```bash
+crontab -l
+sudo crontab -l
+sudo cat /etc/crontab
+sudo grep -RInE 'php|cron_events|bitrix' /etc/cron.d /etc/systemd/system
+systemctl list-timers --all --no-pager
+```
+
+После определения пользователя пула FPM проверим также его crontab.
+
+## 6. Уточнения (впиши ответы)
+
+- Это точно сервер приложения?
+- Для чего на нём запущен локальный PostgreSQL 11? К какой БД фактически подключён портал? Пароль не нужен.
+- Снапшот сделан приложения, БД или обоих серверов?
+- Есть ли ограничения на внешние репозитории, сборку PHP из исходников или контейнеры?
+- Какие сторонние модули, интеграции и собственные разработки необходимо проверить?
+- Какая версия PHP показана в административной проверке системы Битрикса?
+
+## Следующий этап
+
+По результатам выбираем источник PHP 8.4 и готовим отдельную установку с собственным FPM-пулом. Сначала проверяем настройки, расширения и портал; затем переключаем Angie и фоновые задания. PHP 8.1 сохраняем для отката. Сервер БД в рамках смены PHP не обновляем.
