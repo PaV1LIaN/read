@@ -1,138 +1,115 @@
-# Подготовка перехода Битрикс24 на PHP 8.4
+Обработка заняла 2m 38s
 
-**Скачивание программ:** [SFTP-плагин для Total Commander](https://www.ghisler.com/plugins.htm) (найди SFTP) · [WinSCP](https://winscp.net/eng/downloads.php).
+Нашёл официальный репозиторий: bitrix-tools/bi-builder. В нём готовая сборка Битрикс: Superset, Trino, MySQL, Redis и Nginx.
 
-Собирать данные нужно на тестовом **сервере приложения**. Ниже только чтение конфигураций и создание диагностических файлов в домашней папке. Установка PHP будет отдельным этапом.
+Перед подключением проверь версии портала: согласно README нужны:
 
-## Что уже известно — повторно присылать не нужно
+- Главный модуль — 26.750.0+. Ранее ты указывал 25.900.0: если не обновлял, потребуется обновление.
+- BI-коннектор — 26.1050.0+.
+- BI Конструктор — 26.400.0+.
+- Активное расширение лицензии для локального BI Конструктора. 
 
-- Битрикс24 «Энтерпрайз для PostgreSQL», главный модуль 25.900.0.
-- Astra Linux SE 1.7 x86_64; самостоятельная установка.
-- PHP CLI 8.1.12-1ubuntu4.3.astra2; работают PHP 8.1-FPM и Angie.
-- В CLI есть pgsql, pdo_pgsql, LDAP, GD, OPcache и другие расширения.
-- Около 8 ГБ RAM и 118 ГБ свободного места.
-- Два сервера: приложение и БД; есть sudo и снапшот.
-- На обследованном сервере также запущены Redis и PostgreSQL 11; назначение локальной БД нужно уточнить.
+Серверу нужно минимум 8 CPU, 12 ГБ RAM и 40 ГБ свободного диска. Ниже команды для отдельного сервера с Debian 12/13 без установленного Docker.
 
-## Какие файлы нужны
+1. Установить Docker
 
-| Исходный файл или каталог на сервере приложения | Что прислать |
-|---|---|
-| /etc/php/8.1/fpm/php.ini | Полный файл; назвать php-fpm.ini |
-| /etc/php/8.1/cli/php.ini | Полный файл; назвать php-cli.ini |
-| /etc/php/8.1/fpm/php-fpm.conf | Полный файл |
-| /etc/php/8.1/fpm/pool.d/ | Все конфиги пулов .conf |
-| /etc/php/8.1/fpm/conf.d/ | Список файлов и содержимое подключённых .ini, включая ~bx.ini |
-| /etc/php/8.1/cli/conf.d/ | Список файлов и содержимое подключённых .ini, включая ~bx.ini |
-| /etc/apt/sources.list и /etc/apt/sources.list.d/ | sources.list и файлы .list/.sources |
-| Конфигурация Angie со всеми include | Полный вывод sudo angie -T |
-| Службы и фоновые задания | Отчёты из блока ниже |
+Выполняй блоки по очереди в PuTTY. Если команда завершилась ошибкой — дальше не продолжай.
 
-**Проще всего выполнить следующий блок: он соберёт перечисленное в одну папку. Скачивать исходные файлы отдельно тогда не требуется.**
+sudo apt update
+sudo apt install -y ca-certificates curl git openssl
 
-## 1. Собери файлы через PuTTY
+sudo install -m 0755 -d /etc/apt/keyrings
+sudo curl -fsSL https://download.docker.com/linux/debian/gpg \
+  -o /etc/apt/keyrings/docker.asc
+sudo chmod a+r /etc/apt/keyrings/docker.asc
 
-Вставь весь блок целиком в обычную Bash-сессию своего SSH-пользователя. При запросе sudo введи пароль: символы при вводе не отображаются.
+sudo tee /etc/apt/sources.list.d/docker.sources >/dev/null <<EOF
+Types: deb
+URIs: https://download.docker.com/linux/debian
+Suites: $(. /etc/os-release && echo "$VERSION_CODENAME")
+Components: stable
+Architectures: $(dpkg --print-architecture)
+Signed-By: /etc/apt/keyrings/docker.asc
+EOF
 
-Если увидишь ошибку проверки sudo или создания папки, остановись и пришли её. Если отсутствует отдельный конфигурационный файл, сообщение попадёт в отчёт — это нормально.
+sudo apt update
+sudo apt install -y docker-ce docker-ce-cli containerd.io \
+  docker-buildx-plugin docker-compose-plugin
 
-```bash
-(
-    umask 077
-    sudo -v || exit 1
-    report_dir=$(mktemp -d "$HOME/php84-check.XXXXXX") || exit 1
+sudo systemctl enable --now docker
+sudo docker compose version
 
-    (
-        set -x
-        cat /etc/astra_version
-        cat /etc/astra/build_version
-        apt-cache policy php8.1-fpm php8.4-fpm php8.4-cli php8.4-pgsql
-        dpkg-query -W 'php*' 'angie*'
-        nproc
-    ) > "$report_dir/01-system.txt" 2>&1
+Это установка из официального репозитория Docker. 
 
-    (
-        set -x
-        sudo cat /etc/apt/sources.list
-        sudo find /etc/apt/sources.list.d -maxdepth 1 -type f \( -name '*.list' -o -name '*.sources' \) -print -exec cat {} \;
-    ) > "$report_dir/02-repositories.txt" 2>&1
+2. Скачать BI Конструктор и создать настройки
 
-    sudo cat /etc/php/8.1/fpm/php.ini > "$report_dir/03-php-fpm.ini" 2> "$report_dir/03-php-fpm-errors.txt"
-    sudo cat /etc/php/8.1/cli/php.ini > "$report_dir/04-php-cli.ini" 2> "$report_dir/04-php-cli-errors.txt"
+git clone https://github.com/bitrix-tools/bi-builder.git "$HOME/bi-builder"
+cd "$HOME/bi-builder"
 
-    (
-        set -x
-        sudo cat /etc/php/8.1/fpm/php-fpm.conf
-        sudo find /etc/php/8.1/fpm/pool.d -maxdepth 1 -type f -name '*.conf' -print -exec cat {} \;
-        sudo systemctl cat php8.1-fpm.service --no-pager
-    ) > "$report_dir/05-fpm-pools-service.txt" 2>&1
+umask 077
+bash generate-env.sh
+chmod 600 .env
 
-    (
-        set -x
-        sudo ls -la /etc/php/8.1/fpm/conf.d /etc/php/8.1/cli/conf.d
-        sudo find -L /etc/php/8.1/fpm/conf.d /etc/php/8.1/cli/conf.d -maxdepth 1 -type f -name '*.ini' -print -exec cat {} \;
-    ) > "$report_dir/06-php-extra-ini.txt" 2>&1
+Скрипт спросит:
 
-    (
-        set -x
-        sudo angie -T
-        sudo systemctl cat angie.service --no-pager
-    ) > "$report_dir/07-angie-config.txt" 2>&1
+- Протокол портала: обычно 1 — HTTPS.
+- Адрес существующего Битрикс24, например portal.company.ru, без https:// и без пути.
 
-    (
-        set -x
-        crontab -l
-        sudo crontab -l
-        sudo cat /etc/crontab
-        sudo grep -RInE 'php|cron_events|bitrix' /etc/cron.d /etc/systemd/system
-        systemctl list-timers --all --no-pager
-    ) > "$report_dir/08-background-tasks.txt" 2>&1
+Пароли и ключи сгенерируются автоматически. Файл .env сохрани вместе с резервной копией; в Git его не загружай.
 
-    printf '\nПапка с результатами: %s\n' "$report_dir"
-    ls -lh "$report_dir"
-)
-```
+Диагностический порт ограничим доступом с самого сервера:
 
-Этот блок не перезапускает службы, не меняет системные настройки и не обновляет пакеты. Каждый запуск создаёт новую папку. Длинные конфиги сохраняются целиком, независимо от истории прокрутки PuTTY.
+sed -i 's/^SUPERSET_PORT=.*/SUPERSET_PORT=127.0.0.1:8088/' .env
 
-Файлы *-errors.txt могут быть пустыми — значит, cat не сообщил об ошибке. В отчётах строки с + показывают, какая команда выполнялась. apt-cache использует текущий локальный индекс: отсутствие кандидата ещё не доказывает отсутствие пакета в репозитории.
+3. Подготовить HTTPS
 
-Если основной файл ссылается на конфиги за пределами перечисленных каталогов, их запросим после проверки. Crontab пользователя пула FPM проверим после определения этого пользователя.
+Для рабочего подключения нужен DNS-адрес нового сервера, например bi.company.ru, и доверенный сертификат на него.
 
-## 2. Скачай папку через Total Commander
+mkdir -p "$HOME/bi-builder/ssl"
 
-1. Открой «Сетевое окружение → Secure FTP», затем своё подключение или «Быстрое подключение».
-2. Адрес, порт SSH и логин должны совпадать с PuTTY. Если используется ключ или прокси, их также нужно настроить.
-3. На серверной панели открой **точный путь**, который напечатала команда «Папка с результатами». Например: /home/имя/php84-check.ABC123.
-4. На другой панели выбери папку своего компьютера.
-5. Выдели файлы на серверной панели и нажми **F5 — Копировать**.
+Через Total Commander загрузи:
 
-Подключайся тем же пользователем, от имени которого запускался блок. Папка доступна только ему. При отказе в доступе сохрани текст ошибки; права исходных системных файлов менять не нужно.
+- Сертификат с цепочкой → ~/bi-builder/ssl/cert.pem
+- Приватный ключ → ~/bi-builder/ssl/key.pem
 
-Если Secure FTP отсутствует: скачай ZIP плагина SFTP по ссылке вверху, открой его двойным щелчком **в Total Commander** и подтверди установку. Ctrl+F открывает обычный FTP, для этой задачи нужен Secure FTP.
+Если это пока только пробный запуск, вместо загрузки можно выполнить:
 
-## 3. Проверь и отправь результаты
+cd "$HOME/bi-builder"
+bash generate-ssl.sh
 
-Перед загрузкой просмотри файлы: конфиги Angie, PHP, cron и URL репозиториев могут содержать пароли или токены. Замени секретные значения на <СКРЫТО>, сохранив названия параметров.
+Этот скрипт создаёт самоподписанный сертификат на localhost; для штатного подключения портала его потребуется заменить.
 
-Не присылай .settings.php, dbconn.php, .env, приватные ключи SSH/TLS, пароли, cookie и URL вебхуков с секретом.
+4. Запустить
 
-Загрузи проверенные файлы в отдельную папку results/ в этом репозитории через **Add file → Upload files**, либо прикрепи сюда ZIP. README удалять и заменять результатами не нужно. Собирать весь /etc или весь портал не требуется.
+cd "$HOME/bi-builder"
+sudo docker compose pull
+sudo docker compose up -d
+sudo docker compose ps -a
 
-## 4. Ответы на уточнения
+Контейнер superset-init должен завершиться с кодом 0 — это штатная инициализация.
 
-Можно добавить answers.txt рядом с отчётами:
+Если запуск завершился ошибкой:
 
-- Подтверди, что сбор выполнен на сервере приложения.
-- Снапшот сделан приложения, БД или обоих серверов?
-- Для чего на сервере приложения работает локальный PostgreSQL 11? Если неизвестно — так и напиши.
-- База тестового портала отдельная от рабочей?
-- Есть ли у сервера доступ в интернет? Разрешены ли внешние репозитории, сборка PHP из исходников или контейнеры?
-- Какие сторонние модули и интеграции нужно сохранить (например, LDAP, Oracle, почта)?
-- Какая версия PHP отображается в проверке системы в админке Битрикса? Можно прислать скриншот этого пункта без полного phpinfo().
+sudo docker compose logs --tail=100 superset-init mysql trino nginx
 
-## Что будет дальше
+Для скачивания нужны доступ к репозиториям Debian, Docker, GitHub, Docker Hub и quay.io. Для работы — связь BI с порталом, а также доступ портала и браузеров пользователей к BI по HTTPS/443.
 
-После анализа подготовим конкретный источник установки PHP 8.4, расширения для PostgreSQL и других интеграций, настройки FPM/CLI, переключение Angie и фоновых задач, проверку работы и откат.
+5. Подключить в Битрикс24
 
-Предварительный план — параллельная установка PHP 8.4 с сохранением PHP 8.1. Доступность подходящих пакетов Astra 1.7 и совместимость ядра/модулей с PHP 8.4 пока не подтверждены.
+Открой:
+
+Настройки → Настройки продукта → Настройки модулей → BI-коннектор → BI Конструктор.
+
+Выбери локальный режим, укажи https://bi.company.ru и пароль из файла .env. Посмотреть только нужный пароль:
+
+cd "$HOME/bi-builder"
+sed -n '/^BI_BUILDER_ADMIN_PASSWORD=/p' .env
+
+Пароль вводится в настройках портала; присылать его мне не нужно.
+
+Остановить сборку с сохранением данных:
+
+cd "$HOME/bi-builder"
+sudo docker compose down
+
+Не добавляй -v: этот параметр удаляет тома с данными BI.
